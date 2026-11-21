@@ -2,14 +2,15 @@
  * ONE GROUP OF THE OHBOX: its heading and its rows, as options of one listbox. Each row is the kit's row; what it
  * says comes from the model (who waits, whether it is open, Done) and from the shell's words (names, times, tags).
  */
-import { useState } from "react";
+import { useContext, useState } from "react";
+import { Contact } from "../reader/contact/Screening.js";
 import type { EngineMessage } from "@ohmail/wire";
 import type { OhboxRow, ThreadMark } from "@ohmail/client-engine";
 import { useWalkedSquares, type OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { claimFact, senderCheckSentence } from "@ohmail/app-logic/screener";
 import { Tag } from "@ohmail/ui/base";
 import { GroupHeading, ReadSquares, Row, Rows, type SquareKind } from "@ohmail/ui/mail";
-import { useFrame } from "../frame/index.js";
+import { FrameContext } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
 import type { ContactOf } from "../reader/contact/Contact.js";
 import { useLocale, useText } from "../text/index.js";
@@ -54,12 +55,8 @@ export function OhboxGroup({
   heading,
 }: OhboxGroupProps) {
   const t = useText("ohbox");
-  const {
-    host: {
-      features: { reader },
-    },
-  } = useFrame();
-  const ScreenContact = reader === NONE ? undefined : reader.Screening;
+  const reader = useContext(FrameContext)?.api.host.features.reader;
+  const ScreenContact = reader === NONE ? undefined : reader?.Screening;
   const [contact, setContact] = useState<{ person: ContactOf; openId: string | undefined } | null>(null);
   const openId = model.selected?.id;
   const showScreening = (letter: EngineMessage, anchor: HTMLElement) =>
@@ -68,12 +65,19 @@ export function OhboxGroup({
         messageId: letter.id,
         slot: `${letter.id} from`,
         name: beside.words.name(letter),
+        displayName: letter.from.name,
+        onSender: true,
+        direct: true,
         address: letter.from.address,
         anchor,
       },
       openId,
     });
-  const [menu, setMenu] = useState<{ row: OhboxRow; at: { x: number; y: number } } | null>(null);
+  const [menu, setMenu] = useState<{
+    row: OhboxRow;
+    at: { x: number; y: number };
+    anchor: HTMLElement;
+  } | null>(null);
   const drawn = rows.slice(from, to);
   const hot = rows.some(model.rowUnread);
   return (
@@ -96,7 +100,7 @@ export function OhboxGroup({
               row={row}
               index={rowBase === undefined ? undefined : rowBase + from + k}
               place={{ at: from + k + 1, of: rows.length }}
-              onMenu={(at) => setMenu({ row, at })}
+              onMenu={(at, anchor) => setMenu({ row, at, anchor })}
               onContact={ScreenContact && model.picked.size === 0 ? showScreening : undefined}
               words={t}
             />
@@ -108,16 +112,23 @@ export function OhboxGroup({
       contact.openId === openId &&
       model.picked.size === 0 &&
       contact.person.anchor.isConnected ? (
-        <ScreenContact
-          key={contact.person.slot}
-          direct
-          person={contact.person}
-          onClose={() => setContact(null)}
-        >
-          {() => null}
-        </ScreenContact>
+        <Contact person={contact.person} onClose={() => setContact(null)} />
       ) : null}
-      {menu ? <OhboxRowMenu model={model} row={menu.row} at={menu.at} onClose={() => setMenu(null)} /> : null}
+      {menu ? (
+        <OhboxRowMenu
+          model={model}
+          row={menu.row}
+          at={menu.at}
+          onClose={() => setMenu(null)}
+          onScreen={
+            ScreenContact && model.picked.size === 0 && !beside.words.sentTo(menu.row.openTarget)
+              ? () => showScreening(menu.row.openTarget, menu.anchor)
+              : undefined
+          }
+          onAsk={beside.askRow}
+          canDelete={beside.canDelete?.(menu.row.openTarget.id) === true}
+        />
+      ) : null}
     </>
   );
 }
@@ -132,7 +143,7 @@ interface OhboxRowItemProps {
   row: OhboxRow;
   index: number | undefined;
   place: { at: number; of: number };
-  onMenu: (at: { x: number; y: number }) => void;
+  onMenu: NonNullable<Parameters<typeof Row>[0]["onMenu"]>;
   onContact?: (letter: EngineMessage, anchor: HTMLElement) => void;
   words: ReturnType<typeof useText>;
 }

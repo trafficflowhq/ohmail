@@ -15,7 +15,7 @@ import {
   REFRESH_ENDPOINT, isRecoverable, jarMark, mayRefreshFor, otherTabRenewalSettled, refreshInFlight, refreshSettled,
   resumeSession, retryAfterMsOf, sessionMints, withSessionCookieLock,
 } from "./session-refresh";
-import { sessionEndedResponse } from "@ohmail/client-engine";
+import { sessionEndedResponse, SyncAbortedError } from "@ohmail/client-engine";
 import { registerSessionTransport, sessionMayAsk } from "@ohmail/app-logic/session/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
 import { readOwner, readOwnerMarker, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
@@ -326,6 +326,30 @@ export function boundApiOwner(): string | null {
   return binding.kind === "bound" ? binding.owner : null;
 }
 
+export interface EnrollmentExpectation {
+  expectedOwner: string;
+  expectedFamily: string;
+  mayProceed(): boolean;
+}
+
+/** Capture the server-confirmed enrollment before handing control to a factor prompt. */
+export function captureEnrollment(owner: string, family: string | undefined): EnrollmentExpectation {
+  const marker = readOwnerMarker();
+  if (!family || readSessionFamily() !== family || marker.kind === "signed-out"
+    || (marker.kind === "account" && marker.id !== owner)) throw ownerRefusal("mismatch");
+  if (binding.kind === "public") {
+    bindApiOwner(owner, family);
+    rememberOwner(owner);
+  }
+  if (boundApiFamily(owner) !== family || readOwner() !== owner) throw ownerRefusal("mismatch");
+  const captured = binding;
+  return {
+    expectedOwner: owner,
+    expectedFamily: family,
+    mayProceed: () => binding === captured && readOwner() === owner && readSessionFamily() === family,
+  };
+}
+
 /** The whole state, for the tests and guards that reason about the four cases. */
 export function apiOwnerBinding(): OwnerBinding {
   return binding;
@@ -507,13 +531,15 @@ export function reResolveApiOwner(): void {
  * `seen === undefined` means the request never reached a server (offline, unconfigured), which is
  * a different failure and already thrown by the caller.
  */
-function checkAnswerOwner(path: string, seen: string | null | undefined, ceremony: boolean): void {
+function checkAnswerOwner(
+  path: string, seen: string | null | undefined, ceremony: boolean, family?: string,
+): void {
   if (seen === undefined) return;
 
   if (credentialRouteSet().includes(path)) {
     if (seen === null) return;              // established nothing — never "still you"
-    bindApiOwner(seen);
-    rememberOwner(seen);                    // the pair, and it must be a pair: see `rememberOwner`
+    bindApiOwner(seen, family);
+    if (family === undefined) rememberOwner(seen); // the exchange already proved who owns the session
     clearAccountErased();                   // a sign-in lifts an erased-account wall
     return;
   }
@@ -679,20 +705,37 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
   };
 
   if (writesSessionCookies(path)) {
+    const factor = path === "/auth/2fa/totp/activate" || path === "/auth/2fa/webauthn/register/verify";
+    const captured = binding;
     return withSessionCookieLock(async () => {
-      // The caller's own question, asked once the wait is over: the jar may have changed hands in it.
-      if (opts.expectedOwner !== undefined || opts.expectedFamily !== undefined) mustHold();
-      if (opts.mayProceed !== undefined && !opts.mayProceed()) throw ownerRefusal("mismatch");
+      if (factor || opts.expectedOwner !== undefined || opts.expectedFamily !== undefined) mustHold();
+      if (opts.mayProceed?.() === false || (factor && (captured !== binding
+        || (opts.expectedFamily !== undefined && readSessionFamily() !== opts.expectedFamily)))) {
+        throw ownerRefusal("mismatch");
+      }
       const seen: { account?: string | null } = {};
       const answer = await hearing<T>(path, opts, seen, ticket);
-      answerHolds();
-      checkAnswerOwner(path, seen.account, ceremony);
+      let confirmedFamily: string | undefined;
+      if (factor) {
+        if (binding !== captured) throw ownerRefusal("mismatch");
+        const session = (answer as { session?: AuthenticatedSession } | null)?.session;
+        if (session !== undefined || opts.expectedFamily !== undefined) {
+          confirmedFamily = confirmedEnrollmentFamily(session, seen.account, opts.expectedOwner, opts.expectedFamily);
+          if (confirmedFamily === undefined) throw ownerRefusal("mismatch");
+        } else {
+          answerHolds();
+        }
+      } else {
+        answerHolds();
+      }
+      checkAnswerOwner(path, seen.account, ceremony, confirmedFamily);
       return answer;
     }, path === SIGN_OUT_PATH ? {
       waitMs: SIGN_OUT_LOCK_WAIT_MS, unlockedAfterWait: true,
     } : {});
   }
 
+  if (opts.mayProceed?.() === false) throw ownerRefusal("mismatch");
   const mintsAtSend = sessionMints();
   const jarAtSend = jarMark();
   try {
@@ -721,7 +764,8 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
     // Renewed since this left (`sessionMints`; another tab's past the jar it left on, `staleJar`): the new
     // jar is the remedy, not another rotation. The same question rides into the lock: its wait is long
     // enough for another account to sign in.
-    const retryOwner = (): OwnerVerdict => whose(opts.ceremony === true ? { ceremony: true } : {});
+    const retryOwner = (): OwnerVerdict => opts.mayProceed?.() === false ? "mismatch"
+      : whose(opts.ceremony === true ? { ceremony: true } : {});
     const resumed = sessionMints() !== mintsAtSend
       ? "resumed" : await resumeSession({
         mayProceed: () => retryOwner() === "holds", staleJar: jarAtSend,
@@ -736,6 +780,7 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
     // A new suggestion attempt belongs to its caller, which can check the current grant.
     if (path === SUGGESTION_PATH && opts.method === "POST") throw err;
     // A second failure is the real answer: the caller sees the refused request, not a loop.
+    if (opts.mayProceed?.() === false) throw ownerRefusal("mismatch");
     const seenAgain: { account?: string | null } = {};
     const retried = await hearing<T>(path, opts, seenAgain);
     mustHold();
@@ -745,6 +790,19 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
     checkAnswerOwner(path, seenAgain.account, ceremony);
     return retried;
   }
+}
+
+function confirmedEnrollmentFamily(
+  session: AuthenticatedSession | undefined,
+  account: string | null | undefined,
+  owner: string | null | undefined,
+  enrollmentFamily: string | undefined,
+): string | undefined {
+  const family = session?.familyId;
+  if (owner && enrollmentFamily && family && family !== enrollmentFamily
+    && account === owner && session?.status === "authenticated" && session.user?.accountId === owner
+    && readOwner() === owner && readSessionFamily() === family) return family;
+  return undefined;
 }
 
 /**
@@ -853,6 +911,11 @@ async function transported(
     && (expected === null || (readOwner() === expected && sessionFamilyHolds(family)));
   const checked = (res: Response): Response => {
     const seen = res.headers.get(OWNER_HEADER);
+    if (expected !== null && !press && (path === "/sync" || path === "/sync/snapshot")
+      && (apiOwnerVerdict(path) === "signed-out" || sessionEnded())) {
+      void res.body?.cancel().catch(() => undefined);
+      throw new SyncAbortedError("the local session closed while the reply was in flight");
+    }
     if (expected === null || (seen === expected && holds()) || (!res.ok && seen === null)) return res;
     void res.body?.cancel().catch(() => undefined);
     if (press) return keptPressResponse("switched");
@@ -1329,6 +1392,7 @@ export interface SessionUser {
 
 /** `POST /auth/register`, and `POST /auth/login` for a user with no factor yet (the re-entry path). */
 export interface EnrollmentSession {
+  familyId?: string;
   status: "enrollment";
   user: SessionUser;
   next: "enroll_2fa";
@@ -1357,6 +1421,7 @@ export type LoginResult = EnrollmentSession | TwofaChallenge;
 
 /** A completed sign-in. The cookie client never sees `tokens` — they are stripped by design. */
 export interface AuthenticatedSession {
+  familyId?: string;
   status: "authenticated";
   user: SessionUser;
 }
@@ -1792,9 +1857,9 @@ export const auth = {
 
   // ── 2FA enrollment (the enrollment-session surface: the server's `enrollmentOk` routes) ──
 
-  webauthnRegisterOptions: () =>
+  webauthnRegisterOptions: (enrollment?: EnrollmentExpectation) =>
     api<{ options: PublicKeyCredentialCreationOptionsJSON }>("/auth/2fa/webauthn/register/options", {
-      method: "POST", body: {},
+      ...enrollment, method: "POST", body: {},
     }),
 
   /**
@@ -1802,18 +1867,18 @@ export const auth = {
    * enrollment session for a full one, which is what makes the passkey step the
    * moment onboarding stops being password-only.
    */
-  webauthnRegisterVerify: (b: { credential: unknown; label: string }) =>
+  webauthnRegisterVerify: (b: { credential: unknown; label: string }, enrollment?: EnrollmentExpectation) =>
     api<{ credentialId: string; twofaEnrolled: SessionUser["twofaEnrolled"]; session?: AuthenticatedSession }>(
-      "/auth/2fa/webauthn/register/verify", { method: "POST", body: b },
+      "/auth/2fa/webauthn/register/verify", { ...enrollment, method: "POST", body: b },
     ),
 
-  totpEnroll: (expectedOwner?: string | null) => api<{ secret: string; otpauthUrl: string }>("/auth/2fa/totp/enroll", {
-    expectedOwner, method: "POST", body: {},
+  totpEnroll: (expectedOwner?: string | null, enrollment?: EnrollmentExpectation) => api<{ secret: string; otpauthUrl: string }>("/auth/2fa/totp/enroll", {
+    expectedOwner, ...enrollment, method: "POST", body: {},
   }),
 
-  totpActivate: (b: { code: string }, expectedOwner?: string | null) =>
+  totpActivate: (b: { code: string }, expectedOwner?: string | null, enrollment?: EnrollmentExpectation) =>
     api<{ twofaEnrolled: SessionUser["twofaEnrolled"]; session?: AuthenticatedSession }>(
-      "/auth/2fa/totp/activate", { expectedOwner, method: "POST", body: b },
+      "/auth/2fa/totp/activate", { expectedOwner, ...enrollment, method: "POST", body: b },
     ),
 
   /**
@@ -2862,8 +2927,9 @@ export interface SeedReviewWire {
  */
 export const push = {
   vapidKey: () => api<{ publicKey: string | null }>("/push/vapid-key"),
-  subscribe: (endpoint: string, p256dh: string, auth: string) =>
+  subscribe: (endpoint: string, p256dh: string, auth: string, scope?: { expectedOwner?: string; expectedFamily?: string }) =>
     api<{ id: string }>("/push/subscriptions", {
+      ...scope,
       method: "POST",
       body: { transport: "webpush", endpoint, p256dh, auth },
     }),
@@ -2871,7 +2937,7 @@ export const push = {
    * Idempotent by intent: a 404 means the row is already gone, which is the desired state.
    * `signingOutOf`: the sign-out press's pass for its own row (`RequestOptions`).
    */
-  unsubscribe: (id: string, opts: { signingOutOf?: string; expectedFamily?: string } = {}) =>
+  unsubscribe: (id: string, opts: { signingOutOf?: string; expectedOwner?: string; expectedFamily?: string } = {}) =>
     api<void>(`/push/subscriptions/${encodeURIComponent(id)}`, {
       method: "DELETE",
       ...opts,

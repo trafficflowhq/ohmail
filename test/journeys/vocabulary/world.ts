@@ -1,6 +1,6 @@
 import { ohbox, reads, receipts, waiting } from "@ohmail/testing";
 import { eq } from "drizzle-orm";
-import { messages } from "@trafficflow/db";
+import { folderState, mailboxes, mailboxFolders, messages } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services";
 import { seedBody, seedContact, seedMailbox, seedMessage, seedRule, seedThread } from "../../../packages/api/test/helpers.js";
 
@@ -17,6 +17,8 @@ export interface ConversationSpec {
   /** How many letters the conversation holds (default 1). */
   letters?: number;
   unread?: boolean;
+  /** The account deleted the letters from their original pile. */
+  deleted?: boolean;
   /** The newest letter's text. */
   text?: string;
   /** The newest letter as HTML, for a journey about what a letter may load. */
@@ -91,6 +93,12 @@ export function apiPlanter(db: Db, account: { accountId: string }, now: () => Da
     mailboxId: () => mailboxId(),
     async plant(spec) {
       const box = await mailboxId(spec.mailbox?.address);
+      if (spec.conversations.some((conv) => conv.deleted)) {
+        await db.insert(mailboxFolders).values({
+          mailboxId: box, accountId: account.accountId, folder: "Trash",
+        }).onConflictDoNothing();
+        await db.update(mailboxes).set({ trashFolder: "Trash" }).where(eq(mailboxes.id, box));
+      }
       const out: Planted[] = [];
       for (const rule of spec.rules ?? []) await seedRule(db, { accountId: account.accountId, match: rule.from.address, destination: FOLDER[rule.pile] });
       let age = spec.conversations.length * 10;
@@ -109,13 +117,18 @@ export function apiPlanter(db: Db, account: { accountId: string }, now: () => Da
           const last = i === count - 1;
           const { id } = await seedMessage(db, {
             accountId: account.accountId, mailboxId: box, threadId, subject: conv.subject,
-            fromAddress: conv.from.address, folder: FOLDER[conv.pile],
+            fromAddress: conv.from.address, folder: conv.deleted ? "Trash" : FOLDER[conv.pile],
             date: new Date(newest.getTime() - (count - 1 - i) * 60_000),
             unread: last ? conv.unread ?? true : false,
             snippet: last ? (conv.text ?? "A short letter.").slice(0, 80) : "An earlier letter.",
           });
           // The helper seeds no sender name; the row is named by it.
-          await db.update(messages).set({ fromName: conv.from.name }).where(eq(messages.id, id));
+          await db.update(messages).set({
+            fromName: conv.from.name, ...(conv.deleted ? { deletedAt: now() } : {}),
+          }).where(eq(messages.id, id));
+          if (conv.deleted) {
+            await db.update(folderState).set({ trashedFrom: FOLDER[conv.pile] }).where(eq(folderState.messageId, id));
+          }
           await seedBody(db, {
             messageId: id, text: last ? conv.text ?? "A short letter." : "An earlier letter.",
             html: last ? conv.html ?? null : null,

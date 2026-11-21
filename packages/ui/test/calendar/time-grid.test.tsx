@@ -111,15 +111,17 @@ describe("the time grid", () => {
 });
 
 describe("the all-day row", () => {
-  it("says its name only while it holds something", () => {
+  it("names the row for assistive technology while it holds something", () => {
     const { rerender } = render(<AllDayRow label="all day" days={3} />);
-    expect(screen.queryByText("all day")).toBeNull();
+    expect(screen.queryByRole("group", { name: "all day" })).toBeNull();
     rerender(
       <AllDayRow label="all day" days={3}>
         <EventChip size="pill" tone={150} title="Makersfest" />
       </AllDayRow>,
     );
-    expect(screen.queryByText("all day")).not.toBeNull();
+    const lane = screen.getByRole("group", { name: "all day" });
+    expect(lane.contains(screen.getByRole("button", { name: "Makersfest" }))).toBe(true);
+    expect(screen.queryByText("all day")).toBeNull();
   });
 });
 

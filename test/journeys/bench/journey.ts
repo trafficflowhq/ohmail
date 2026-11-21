@@ -17,7 +17,7 @@ export const BENCHES: Record<BenchId, Start> = {
   async web(setting, place, size) {
     const f = FLAVOUR_OF[setting as keyof typeof FLAVOUR_OF];
     if (!f) throw new Error(`the web bench has no setting ${setting}`);
-    return (await import("./web.js")).startBench(f, place, undefined, size);
+    return (await import("./web.js")).startBench(f, place, { calendar: place === "calendar" }, size);
   },
   async stack(_setting, place, size) {
     return (await import("./stack.js")).startStack(place, size);

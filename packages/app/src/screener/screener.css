@@ -1,4 +1,9 @@
 /* The Screener's layout and the progress it reports. */
+.sc-next-sender {
+  height: 100%;
+  min-height: 0;
+}
+
 .sc-list {
   display: flex;
   flex-direction: column;

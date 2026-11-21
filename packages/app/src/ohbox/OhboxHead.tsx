@@ -9,6 +9,7 @@ import { Button, Menu, MenuItem } from "@ohmail/ui/base";
 import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { Doorbell, ListHead } from "@ohmail/ui/mail";
 import type { LayoutPlan } from "../frame/contract.js";
+import { useLastMailCheckLabel } from "../place-list/ListMenu.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
 import type { OhboxBeside } from "./beside.js";
@@ -34,6 +35,7 @@ export function OhboxHead({
      dot is a claim about the mailbox and waits until the Ohbox may say it. */
   const unread = model.unreadIds.length;
   const pull = beside.pull;
+  const checked = useLastMailCheckLabel(menuOpen && pull !== NONE);
   const markAll = onMarkAllRead && unread > 0 ? () => onMarkAllRead(model.unreadIds) : null;
   return (
     <>
@@ -67,10 +69,12 @@ export function OhboxHead({
         anchor={menuButton}
         right
         label={t("list.menu")}
+        title={checked}
       >
         {pull !== NONE ? (
           <MenuItem
             icon="pull"
+            keyHint="p"
             disabled={pull.busy}
             onPress={() => {
               setMenuOpen(false);

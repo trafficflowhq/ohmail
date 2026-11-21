@@ -1,6 +1,6 @@
 # Installing ohmail
 
-Moved here from the README, word for word; the README keeps the short version. Download links point at the latest release.
+The README keeps the short version. Download links point at the latest release.
 
 ## Install
 
@@ -270,7 +270,7 @@ is the open client of it, and `ENTITLEMENTS_URL` is the one setting that points
 at one.
 
 Self-hosting has no plans, no metering and no billing surface — every limit
-is off, and AI features run on the provider keys you configure. [Run the server
+is off, and AI features use the model the operator configures, if any. [Run the server
 yourself](../README.md#run-the-server-yourself) in the README is the supported way to do that.
 
 ## Build the desktop app yourself

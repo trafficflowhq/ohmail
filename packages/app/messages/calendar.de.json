@@ -2,6 +2,9 @@
   "calendar": {
     "connect": "Einen Kalender verbinden",
     "actions": {
+      "resizeStart": "Ersten Tag ändern",
+      "resizePreview": "{first} – {last} · {title}",
+      "resizeEnd": "Letzten Tag ändern",
       "delete": "Löschen",
       "moveTo": "Verschieben nach",
       "whichMove": "Welche Termine sollen verschoben werden?",
@@ -24,7 +27,12 @@
         "yearlyWeekday": "Jedes Jahr am {ordinal} {weekday} im {month}"
       }
     },
+    "draft": {
+      "discarded": "Verworfen",
+      "undo": "Rückgängig"
+    },
     "edit": {
+      "save": "Speichern",
       "whichEvents": "Welche Termine ändern sich?",
       "thisEvent": "Dieser Termin",
       "following": "Dieser und folgende",
@@ -41,6 +49,8 @@
       "discard": "Änderungen verwerfen"
     },
     "create": {
+      "endDate": "Enddatum",
+      "nextDay": "nächster Tag",
       "title": "Neuer Termin",
       "name": "Termintitel",
       "date": "Datum",

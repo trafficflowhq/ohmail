@@ -97,6 +97,7 @@ export function CalSetupStage({ route }: PaneProps) {
   if (at.step === "calendars") {
     return (
       <CalendarsStep
+        way={at.way}
         mirror={mirror}
         connection={at.connection}
         port={port}

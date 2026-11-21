@@ -55,7 +55,7 @@ export function HistoryList({ plan }: PaneProps) {
           ? t("metaCount", { count: model.count })
           : undefined
       }
-      aside={<ListMenu label={t("list.menu")} items={[]} />}
+      aside={<ListMenu label={t("list.menu")} mail />}
       below={
         inHead && years.length > 0 ? (
           <Seg

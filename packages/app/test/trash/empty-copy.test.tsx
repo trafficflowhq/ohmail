@@ -27,4 +27,7 @@ it.each([
     </TextProvider>,
   );
   expect(await screen.findByText(messages.trash.empty)).toBeTruthy();
+  expect(screen.getAllByRole("paragraph").map((paragraph) => paragraph.textContent)).toContain(
+    messages.trash.emptyTitle,
+  );
 });

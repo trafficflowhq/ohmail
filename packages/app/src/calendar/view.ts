@@ -14,7 +14,7 @@ export interface CalendarEventView extends GridEvent {
   readonly ref: EventRef;
 }
 
-/** The settings a view draws by; until the account's settings answer: no week numbers, no second zone, the whole day. */
+/** The settings a view draws by; until the account's settings answer: no week numbers, no second zone, and 06:00–22:00. */
 export interface CalendarViewSettings {
   readonly newEventsCalendarId?: string | null;
   /** The week's first day, Monday 0 to Sunday 6. */
@@ -25,6 +25,7 @@ export interface CalendarViewSettings {
   readonly hours: { readonly from: number; readonly to: number };
 }
 
+export type DayEdge = "start" | "end";
 export type CalendarEventDrag = (id: string, event: PointerEvent<HTMLButtonElement>) => void;
 
 export interface CalendarViewProps {

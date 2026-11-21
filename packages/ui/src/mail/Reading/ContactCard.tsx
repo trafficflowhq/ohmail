@@ -1,4 +1,4 @@
-import { Fragment, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import {
   Avatar,
   Button,
@@ -33,17 +33,31 @@ export interface ContactCardProps {
     onChange?: (value: string) => void;
   };
   /** Where that mail is now, as one whole line; `place` is the word in it that is set in ink. */
-  now?: { line: string; place: string; all?: { label: string; onPress?: () => void } };
+  now?: {
+    line: string;
+    place: string;
+    description?: string;
+    all?: { label: string; ariaLabel?: string; onPress?: () => void };
+  };
   /** Where their mail goes: the places, one of them taken. A press changes it at once. */
   goes?: {
     label: string;
-    places: readonly { value: string; label: string }[];
+    description?: string;
+    focus?: string;
+    places: readonly { value: string; label: string; warning?: boolean }[];
     value?: string;
     onChange?: (value: string) => void;
   };
   /** The rules that stand: the place, and what the rule is about. */
-  rules?: readonly { place: string; note: string }[];
-  switches?: readonly { label: string; on: boolean; onChange?: (on: boolean) => void }[];
+  rulesLabel?: string;
+  rules?: readonly { place: string; note: string; detail?: string }[];
+  switches?: readonly {
+    label: string;
+    ariaLabel?: string;
+    description?: string;
+    on: boolean;
+    onChange?: (on: boolean) => void;
+  }[];
   /** What another product adds between the switches and the verbs. */
   more?: ReactNode;
   /** The verbs at its foot, as menu items. */
@@ -80,21 +94,24 @@ export function ContactCard(props: ContactCardProps) {
     now,
     goes,
     rules,
+    rulesLabel,
     switches,
     more,
     children,
   } = props;
+  const destination = useRef<HTMLButtonElement>(null);
   return (
     <Menu
       open={open}
       id={id}
-      modal={goes !== undefined}
+      modal={goes !== undefined || closeWhenFull !== undefined}
       onClose={onClose}
       anchor={anchor}
       label={label}
       kind="card"
       onKey={onKey}
       fit="whole"
+      initialFocus={goes?.focus === undefined ? undefined : destination}
       closeWhenFull={closeWhenFull}
     >
       <div className="oh-contactcard-head">
@@ -116,30 +133,40 @@ export function ContactCard(props: ContactCardProps) {
       ) : null}
       {now ? (
         <p className="oh-text oh-contactcard-now">
-          <span className="oh-contactcard-line">{marked(now.line, now.place)}</span>
+          <span className="oh-contactcard-line" title={now.description} aria-description={now.description}>
+            {marked(now.line, now.place)}
+          </span>
           {now.all ? (
-            <Button kind="quiet" size="s" onPress={now.all.onPress}>
+            <Button kind="quiet" size="s" label={now.all.ariaLabel} onPress={now.all.onPress}>
               {now.all.label}
             </Button>
           ) : null}
         </p>
       ) : null}
-      {goes ? <ContactDestinations goes={goes} /> : null}
+      {goes ? <ContactDestinations goes={goes} destination={destination} /> : null}
       {rules?.length ? (
-        <div className="oh-contactcard-rules">
+        <div className="oh-contactcard-rules" role={rulesLabel ? "group" : undefined} aria-label={rulesLabel}>
           {rules.map((rule, i) => (
             <p key={i} className="oh-text oh-contactcard-rule">
               <b className="oh-contactcard-mark">{rule.place}</b>
-              <span className="oh-contactcard-about">{rule.note}</span>
+              <span className="oh-contactcard-about" title={rule.note}>
+                {rule.note}
+              </span>
+              {rule.detail ? <small>{rule.detail}</small> : null}
             </p>
           ))}
         </div>
       ) : null}
       {switches?.map((line) => (
-        <div key={line.label} className="oh-contactcard-row">
+        <label key={line.label} className="oh-contactcard-row">
           <span aria-hidden="true">{line.label}</span>
-          <Switch label={line.label} on={line.on} onChange={line.onChange} />
-        </div>
+          <Switch
+            label={line.ariaLabel ?? line.label}
+            on={line.on}
+            onChange={line.onChange}
+            description={line.description}
+          />
+        </label>
       ))}
       {more}
       {children ? (
@@ -152,7 +179,13 @@ export function ContactCard(props: ContactCardProps) {
   );
 }
 
-function ContactDestinations({ goes }: { goes: NonNullable<ContactCardProps["goes"]> }) {
+function ContactDestinations({
+  goes,
+  destination,
+}: {
+  goes: NonNullable<ContactCardProps["goes"]>;
+  destination: RefObject<HTMLButtonElement | null>;
+}) {
   const group = useRef<HTMLDivElement | null>(null);
   const walk = (event: KeyboardEvent<HTMLDivElement>) => {
     const step =
@@ -189,13 +222,17 @@ function ContactDestinations({ goes }: { goes: NonNullable<ContactCardProps["goe
             <button
               key={place.value}
               type="button"
+              ref={place.value === goes.focus ? destination : undefined}
               className="oh-control oh-contactcard-place"
               role="radio"
               aria-checked={checked}
+              aria-description={goes.description}
+              title={goes.description}
               tabIndex={checked || (!taken && i === 0) ? 0 : -1}
               onClick={() => goes.onChange?.(place.value)}
             >
               {place.label}
+              {place.warning ? <span aria-hidden="true"> ↗</span> : null}
             </button>
           );
         })}

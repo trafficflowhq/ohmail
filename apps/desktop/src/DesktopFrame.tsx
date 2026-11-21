@@ -462,7 +462,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
     if ("event" in opening) {
       if (calendar === NONE || !p.engine.store.list<{ calendarEnabledAt?: string | null }>("settings")
         .some(({ calendarEnabledAt }) => typeof calendarEnabledAt === "string" && calendarEnabledAt !== "")) return;
-      const fragment = calendarNoticeFragment(calendar, opening.event, readerZone());
+      const fragment = calendarNoticeFragment(calendar, opening.event, readerZone(), opening.startMs);
       if (fragment !== null) setNoticeView({ fragment, owner: calendar, document: opening.document });
       return;
     }

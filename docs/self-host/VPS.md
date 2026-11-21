@@ -274,6 +274,14 @@ about providers:
   Set either, or neither. With both set the app uses your own registration.
 - A mail server on your own LAN needs the probe allowance from step 4.
 
+## Calendar
+
+The bundled compose file turns Calendar on for the server. For calendars on
+your own network, set `OHCAL_ALLOW_PRIVATE=1` in `.env`; this allows every
+account on the server to reach that network, including without TLS. See
+[Calendar](./README.md#calendar) for the supported connections and the trust
+this setting requires.
+
 ## 7b. Screener suggestions and reply drafts (optional)
 
 Both are off until you configure a model, and the install works without one:

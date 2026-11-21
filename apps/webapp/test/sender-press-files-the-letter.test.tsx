@@ -126,6 +126,12 @@ async function press(r: Rig, o: { retroOff?: boolean; domain?: boolean } = {}): 
   const sheet = screen.queryByRole("dialog", { name: /^Screening for / });
   expect(sheet, "pressing the Ohbox row's sender opens their screening sheet").toBeTruthy();
   const choices = within(sheet!);
+  expect(choices.getByRole("button", { name: "Copy address" })).toBeTruthy();
+  expect(choices.getByRole("radiogroup", { name: "Goes to" })).toBeTruthy();
+  expect(choices.getByRole("button", { name: /^See all / })).toBeTruthy();
+  expect(choices.getByRole("menuitem", { name: "Write" })).toBeTruthy();
+  expect(choices.getByRole("menuitem", { name: "All mail" })).toBeTruthy();
+  const before = r.wire.length;
   if (o.domain) {
     await act(async () => { choices.getByRole("radio", { name: /^Everyone at host\.example/ }).click(); });
     await tick(10);
@@ -134,7 +140,8 @@ async function press(r: Rig, o: { retroOff?: boolean; domain?: boolean } = {}): 
     await act(async () => { choices.getByRole("switch", { name: en.screening.retroToggleAria }).click(); });
     await tick(10);
   }
-  const option = choices.queryByRole("option", { name: /^Receipts\b/ });
+  expect(r.wire.slice(before)).toEqual([]);
+  const option = within(choices.getByRole("radiogroup", { name: "Goes to" })).getByRole("radio", { name: "Receipts" });
   expect(option, "the sheet offers the place").toBeTruthy();
   await act(async () => { option!.click(); });
   await tick(20);

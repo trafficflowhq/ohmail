@@ -69,6 +69,31 @@ describe("the three triage piles in the shared mail frame", () => {
     expect(sent(mail)).toEqual([]);
   });
 
+  it.each([
+    ["#/triage", "Reply to the kiln", "2 to answer"],
+    ["#/triage/aside", "Save the studio plans", "2 parked"],
+    ["#/triage/resurface", "Remember the market", "1 set to come back"],
+  ])("rests at %s until a letter is chosen", async (hash, subject, summary) => {
+    const { address, mail } = listSeat({ letters: LETTERS, first: hash });
+    await settled();
+    expect(address.read()).toBe(hash);
+    expect(option(subject).getAttribute("aria-selected")).toBe("false");
+    expect(reading().queryByRole("heading", { name: subject })).toBeNull();
+    expect(reading().getByRole("paragraph").textContent).toBe(summary);
+    expect(sent(mail)).toEqual([]);
+
+    fireEvent.click(option(subject));
+    await settled();
+    expect(reading().getByRole("heading", { name: subject })).toBeTruthy();
+  });
+
+  it("shows the unread count for a resting wide pile with unread mail", async () => {
+    const parked = filed("unread", "Look at the glaze samples", "set_aside", 15);
+    listSeat({ letters: [...LETTERS, { ...parked, unread: true }], first: "#/triage/aside" });
+    await settled();
+    expect(reading().getByRole("paragraph").textContent).toBe("1 unread");
+  });
+
   it("keeps the selected Parked letter when leaving via the rail and coming back", async () => {
     const { address } = listSeat({ letters: LETTERS, first: "#/triage/aside" });
     fireEvent.click(option("Save the glaze samples"));
@@ -131,6 +156,7 @@ describe("the three triage piles in the shared mail frame", () => {
     fireEvent.click(screen.getByRole("button", { name: /Reply Run/ }));
     await settled();
     expect(address.read()).toBe("#/triage/m/reply");
+    await reading().findByRole("textbox", { name: "Reply body" }); // the reply's editor loads its own code; the run's count is read once the reply is ready
     const run = () => reading().getByRole("toolbar", { name: "Reply run" });
     expect(reading().getByRole("status").textContent).toBe("1 of 2");
     fireEvent.click(within(run()).getByRole("button", { name: "Skip" }));
@@ -151,6 +177,7 @@ describe("the three triage piles in the shared mail frame", () => {
     await settled();
     const reader = () => within(screen.getByRole("dialog", { name: "Reading" }));
     const reply = () => reader().getByRole("textbox", { name: "Reply body" });
+    await reader().findByRole("textbox", { name: "Reply body" }); // the reply's editor loads its own code before it can hold words
     const editor = (reply() as HTMLElement & { editor: Editor }).editor;
     await act(async () => {
       editor.commands.setContent("<p>Keep these reply words</p>");

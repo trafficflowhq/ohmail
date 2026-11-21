@@ -286,6 +286,10 @@
     white-space: nowrap;
     transition: box-shadow var(--d-hover) var(--e-std);
   }
+  .oh-ev[data-size="pill"]:not(:hover, [data-open], [data-state="from-mail"], [data-state="draft"]) {
+    --oh-ev-pill-edge: inset 0 0 0 var(--oh-hair) var(--oh-cal-mark, var(--line));
+    box-shadow: var(--oh-ev-pill-edge);
+  }
   .oh-ev[data-size="pill"] .oh-ev-tt,
   .oh-ev[data-size="line"] .oh-ev-tt {
     text-overflow: ellipsis;
@@ -420,12 +424,45 @@
   .oh-ev[data-lap][data-open]:hover {
     box-shadow: var(--oh-ev-apart), var(--oh-ev-open);
   }
-  .oh-ev[data-open] .oh-ev-tt {
+  .oh-ev[data-open] :is(.oh-ev-tt, .oh-ev-p),
+  .oh-ev[data-open]:not([data-failed]) .oh-ev-st {
     color: var(--ink);
   }
-  .oh-ev[data-open][data-state="maybe"] .oh-ev-tt,
-  .oh-ev[data-open][data-state="off"] .oh-ev-tt {
-    color: var(--ink2);
+
+  .oh-ev:has([data-cal-resize]) {
+    position: relative;
+    cursor: grab;
+  }
+  .oh-ev [data-cal-resize] {
+    position: absolute;
+    inset-block: 0;
+    width: calc(var(--s2) + var(--oh-focus));
+    cursor: ew-resize;
+  }
+  .oh-ev [data-cal-resize="start"] {
+    inset-inline-start: 0;
+  }
+  .oh-ev [data-cal-resize="end"] {
+    inset-inline-end: 0;
+  }
+  .oh-ev [data-cal-resize]::after {
+    position: absolute;
+    inset: 0;
+    width: var(--oh-focus);
+    height: calc(var(--s2) + var(--oh-focus));
+    margin: auto;
+    border-radius: var(--r-pill);
+    background: var(--oh-cal-mark, var(--ink2));
+    opacity: 0;
+    content: "";
+  }
+  .oh-ev:is(:hover, :focus-visible, [data-open]) [data-cal-resize]::after {
+    opacity: 1;
+  }
+  @media (pointer: coarse) {
+    .oh-ev [data-cal-resize] {
+      width: min(calc(var(--s5) - var(--oh-focus)), 50%);
+    }
   }
 
   /* Being dragged: the original stays at 40 %, a ringed copy stands at the target and says the new time. */
@@ -438,6 +475,9 @@
     box-shadow: var(--oh-ev-copy);
     pointer-events: none;
     transition: none;
+  }
+  .oh-ev[data-drag="copy"][data-size="line"] {
+    border: var(--oh-hair) dashed var(--oh-cal-mark, var(--ink));
   }
   .oh-ev[data-drag="copy"] .oh-ev-p {
     color: var(--ink);
@@ -491,8 +531,6 @@
       [data-state="draft"],
       [data-state="off"]
     ),
-  :root[data-face="ohmarchy"]
-    .oh-ev[data-size="pill"]:not([data-open], [data-state="from-mail"], [data-state="draft"]),
   :root[data-face="ohmarchy"] .oh-ev[data-size="line"][data-run]:not([data-open]) {
     box-shadow: var(--oh-ev-box);
   }

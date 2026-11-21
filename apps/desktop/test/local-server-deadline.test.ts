@@ -239,6 +239,7 @@ const reaches = (r: Route, c: Call): boolean => c.method === r.method && c.path 
 
 /** The bridge calls whose target a reading cannot know, each with what it reaches instead. */
 const UNRESOLVED: Readonly<Record<string, string>> = {
+  "bridge-fetch.ts fetch": "readDesktopCalendarSettings calls only the adapter's GET /calendar/settings, pinned below",
   "cloud-suggest.ts ask": "the Cloud suggest door's helper: its two callers name the Screener page and the suggest buy, neither a probe",
   "main.tsx post": "the network-return relay's poster: it posts the one retry path (`network-return.ts`), which re-dials and probes nothing",
   "DesktopGate.tsx liveBodyBridge": "Load it now's bridge door: liveBodyVia hands it GET /messages/:id/live-body alone, a hosted read that probes no /local route",
@@ -291,6 +292,14 @@ describe("the census — every bridge call to a route that probes rides the loca
   it("every probing call passes the constant, and nothing else passes any deadline", () => {
     expect(calls.length, "the reading found almost nothing").toBeGreaterThan(40);
     expect(calls.filter((c) => engine.routes.some((r) => reaches(r, c))).length).toBeGreaterThanOrEqual(4);
+    const bridge = files.find(({ file }) => file === "bridge-fetch.ts")?.code ?? "";
+    expect(bridge).toMatch(
+      /export function readDesktopCalendarSettings\(session: number\) \{\s*return new HttpAdapter\(\{\s*baseUrl: "",\s*fetch: \(url, init\) => bridgeFetch\(url, \{ \.\.\.init, expectedCalendarSession: session \}\),\s*\}\)\.calendarSettings\(\);\s*\}/,
+    );
+    const adapter = readFileSync(new URL("../../../packages/client-engine/src/adapters/http-adapter.ts", import.meta.url), "utf8");
+    expect(adapter).toMatch(
+      /async calendarSettings\(\): Promise<CalendarSettingsWire> \{\s*const res = await this.call\("GET \/calendar\/settings", \{\}\);\s*if \(!res.ok\) throw await this.rejectionOf\(res\);\s*return this.readAnswer<"GET \/calendar\/settings">\(res\);\s*\}/,
+    );
     expect(wrong(engine.routes, calls)).toEqual([]);
     const unread = calls.filter((c) => c.path === null || c.method === null).map((c) => c.at).sort();
     expect([...new Set(unread)], "UNRESOLVED names a call that is gone, or misses one").toEqual(Object.keys(UNRESOLVED).sort());

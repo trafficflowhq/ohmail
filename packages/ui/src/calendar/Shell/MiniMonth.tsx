@@ -61,7 +61,7 @@ export interface MiniMonthProps {
 
 /**
  * A month to find a day in. A day with something is marked by a bold date alone; today and the
- * picked day carry their disc; only the week on screen is banded. It has no colour but hot.
+ * picked day carry their disc. A selected week or a multi-day event may carry a band.
  * Its days are one stop of Tab, walked by the keys (`day-keys.ts`).
  */
 export function MiniMonth({
@@ -141,7 +141,9 @@ export function MiniMonth({
                         style={toneStyle(d.run.tone)}
                       />
                     ) : null}
-                    <span className="oh-mini-disc">{d.number}</span>
+                    <span className="oh-mini-disc" data-today-pulse-target={d.today ? "badge" : undefined}>
+                      {d.number}
+                    </span>
                     {d.marks?.length ? (
                       <span className="oh-mini-marks" aria-hidden>
                         {d.marks.map((tone, index) => (

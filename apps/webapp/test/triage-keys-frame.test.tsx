@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { Frame } from "@ohmail/app/frame";
 import { TextProvider } from "@ohmail/app/text";
@@ -139,6 +139,7 @@ describe("⇧F inside Triage — the pill's keycap and the key are one claim", (
    */
   it("`⇧F` on the shown message opens the forward dock — the key the pill advertises here", async () => {
     await openLater();
+    await act(() => { fireEvent.click(laterRows()[0]!); });
 
     // The bar in this view prints the keycap, which is the claim the key has to honour.
     const fwd = reading().getByRole("button", { name: /^Forward/ });

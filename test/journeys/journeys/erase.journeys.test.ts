@@ -8,7 +8,10 @@ export const GUARDS: Guard[] = [
 
 journeysOf("erase", () => {
   journey(GUARDS[0]!, async (b) => {
-    const { person, account } = await openPane(b, "settings-account", "erase-begin");
+    const { person, account } = await openPane(b, "settings-account", "erase-open");
+    await person.act("press", "erase-open");
+    await person.here("erase");
+    await person.see("erase-confirm", { args: { email: account!.email } });
     expect((await person.spoken("erase-begin")).disabled).toBe(true);
     await person.act("type", "erase-confirm", { args: { email: account!.email }, value: account!.email });
     await person.until(async () => !(await person.spoken("erase-begin")).disabled, "Delete my account to be offered");

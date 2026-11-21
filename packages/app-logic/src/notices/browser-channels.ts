@@ -7,6 +7,8 @@ import {
   type NoticePermission,
   type NotificationChannels,
 } from "@ohmail/client-engine";
+import { scopeMayMount } from "../storage/scope.js";
+import { isDemoOwned } from "../storage/storage-owner.js";
 import { localStorageDoor, type DurableWrite } from "../storage/durable.js";
 
 export { channelsAreLive, DEFAULT_CHANNELS } from "@ohmail/client-engine";
@@ -15,8 +17,13 @@ export { channelsAreLive, DEFAULT_CHANNELS } from "@ohmail/client-engine";
 export const NOTIFICATION_CHANNELS_KEY = "ohmail.notifications.channels";
 const preferences = localStorageDoor("notifications.channels");
 
+/** Legacy install-wide records did not identify who wrote them. They stay at their original keys. */
+function preferenceKey(base: string, scope: string | null): string | null {
+  return scopeMayMount(scope) && !isDemoOwned(scope) ? `${base}.${scope}` : null;
+}
+
 /**
- * Read this install's switches, falling back to {@link DEFAULT_CHANNELS}.
+ * Read this account's switches on this install, falling back to {@link DEFAULT_CHANNELS}.
  * A failed read reads as the DEFAULTS — not off, not on: the defaults are
  * what a fresh install believes, so a browser with storage blocked behaves
  * like a fresh install rather than like an account that turned everything
@@ -25,8 +32,9 @@ const preferences = localStorageDoor("notifications.channels");
  * defaulted field by field: a newer build's catalogue must not make an
  * older one throw, and a boolean that is not a boolean is not a preference.
  */
-export function readChannels(): NotificationChannels {
-  const raw = preferences.get(NOTIFICATION_CHANNELS_KEY);
+export function readChannels(scope: string | null): NotificationChannels {
+  const key = preferenceKey(NOTIFICATION_CHANNELS_KEY, scope);
+  const raw = key === null ? null : preferences.get(key);
   if (raw === null) return { ...DEFAULT_CHANNELS };
   let parsed: unknown;
   try {
@@ -47,11 +55,13 @@ export function readChannels(): NotificationChannels {
  * Write them. Best-effort by construction: a blocked store is not a reason to refuse the press,
  * because the switch still governs this session and the pane still reads back what it holds.
  */
-export function writeChannels(next: NotificationChannels): DurableWrite {
-  const record: Record<string, unknown> = { ...storedBeside() };
+export function writeChannels(next: NotificationChannels, scope: string | null): DurableWrite {
+  const key = preferenceKey(NOTIFICATION_CHANNELS_KEY, scope);
+  if (key === null) return "lost";
+  const record = storedBeside(key);
   for (const k of Object.keys(DEFAULT_CHANNELS) as (keyof NotificationChannels)[]) record[k] = next[k];
   // The in-memory value still drives this session; the refusal is no longer silent.
-  const written = preferences.set(NOTIFICATION_CHANNELS_KEY, JSON.stringify(record));
+  const written = preferences.set(key, JSON.stringify(record));
   choicesWritten();
   return written;
 }
@@ -63,19 +73,27 @@ export function writeChannels(next: NotificationChannels): DurableWrite {
 export const CALENDAR_NOTICES_KEY = "ohmail.notices.calendar";
 
 /** The calendar's stored record as it stands, or `null` where none is stored or it cannot be read: the start values hold. */
-export function readCalendarNotices(): unknown {
+export function readCalendarNotices(scope: string | null): unknown {
+  const key = preferenceKey(CALENDAR_NOTICES_KEY, scope);
+  if (key === null) return null;
   try {
-    const raw = preferences.get(CALENDAR_NOTICES_KEY);
+    const raw = preferences.get(key);
     return raw === null ? null : (JSON.parse(raw) as unknown);
   } catch {
     return null;
   }
 }
 
-export function writeCalendarNotice(key: CalendarNoticeKind | "showTitles", value: boolean): DurableWrite {
-  const held = readCalendarNotices();
+export function writeCalendarNotice(
+  key: CalendarNoticeKind | "showTitles",
+  value: boolean,
+  scope: string | null,
+): DurableWrite {
+  const storageKey = preferenceKey(CALENDAR_NOTICES_KEY, scope);
+  if (storageKey === null) return "lost";
+  const held = readCalendarNotices(scope);
   const record = typeof held === "object" && held !== null && !Array.isArray(held) ? held : {};
-  const written = preferences.set(CALENDAR_NOTICES_KEY, JSON.stringify({ ...record, [key]: value }));
+  const written = preferences.set(storageKey, JSON.stringify({ ...record, [key]: value }));
   choicesWritten();
   return written;
 }
@@ -92,7 +110,11 @@ function choicesWritten(): void {
   for (const heard of [...choicesHeard]) heard();
 }
 function choicesStored(event: StorageEvent): void {
-  if (event.key === null || event.key === NOTIFICATION_CHANNELS_KEY || event.key === CALENDAR_NOTICES_KEY)
+  if (
+    event.key === null ||
+    event.key.startsWith(`${NOTIFICATION_CHANNELS_KEY}.`) ||
+    event.key.startsWith(`${CALENDAR_NOTICES_KEY}.`)
+  )
     choicesWritten();
 }
 function hearChoices(heard: () => void): () => void {
@@ -117,9 +139,9 @@ export function useNoticesVersion(copy: number): number {
  * newer build's. Kept as they are and read by nothing, so a write here never changes a record
  * another build of this device still reads.
  */
-function storedBeside(): Record<string, unknown> {
+function storedBeside(key: string): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(preferences.get(NOTIFICATION_CHANNELS_KEY) ?? "null");
+    const parsed: unknown = JSON.parse(preferences.get(key) ?? "null");
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
     const beside: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(parsed))
@@ -134,8 +156,8 @@ function storedBeside(): Record<string, unknown> {
  * THIS INSTALL'S SWITCHES AS THE NOTICES' GATE READS THEM: {@link readChannels} at every call, so a switch pressed a
  * moment ago counts at the next settle. The calendar's record belongs to this same device.
  */
-export const storedNoticeChoices = (): NoticeChoices =>
-  noticeChoicesOf(readChannels(), readCalendarNotices(), { ohcalPhone: false });
+export const storedNoticeChoices = (scope: string | null): NoticeChoices =>
+  noticeChoicesOf(readChannels(scope), readCalendarNotices(scope), { ohcalPhone: false });
 
 /**
  * Should this browser have a push subscription at all? Pure, and separated from every call it

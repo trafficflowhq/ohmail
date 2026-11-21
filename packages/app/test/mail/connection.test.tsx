@@ -116,7 +116,7 @@ describe("the connection said by the mail ground", () => {
     expect(said?.querySelector("b")?.textContent).toContain("is not syncing");
     expect(said?.querySelector("b")?.textContent).not.toContain(frameEn.sync.blocked_mailbox_full);
     expect(said?.textContent, "the frame's own words stood where the strip's sentence belongs").toContain(
-      frameEn.sync.blocked_mailbox_full,
+      "The mailbox is full.",
     );
     fireEvent.click(within(said!).getByRole("button", { name: frameEn.frame.connection.act.mailboxes }));
     expect(address.read(), "the words were followed by anything but the frame's address").toBe(
@@ -150,7 +150,7 @@ describe("the connection said by the mail ground", () => {
 
 it("keeps a provider's wait reason in the notice body", async () => {
   const since = new Date(Date.now() - 5 * 60_000).toISOString();
-  mount({
+  const { address } = mount({
     mailboxes: async () => [
       mailbox("mbx-1", { syncBlockedReason: "provider_unavailable", syncBlockedSince: since }),
     ],
@@ -158,5 +158,27 @@ it("keeps a provider's wait reason in the notice body", async () => {
   await answered();
   const said = notice(frameEn.frame.connection.act.mailboxes);
   expect(said?.querySelector("b")?.textContent).toContain("is not syncing");
-  expect(said?.textContent).toContain(frameEn.sync.blocked_provider_unavailable);
+  expect(said?.textContent).toContain("The mail server asked ohmail to wait.");
+  fireEvent.click(within(said!).getByRole("button", { name: frameEn.frame.connection.act.mailboxes }));
+  expect(address.read()).toBe("#/settings/mailboxes");
+});
+
+it.each([
+  ["en", "mailbox_full", "The mailbox is full."],
+  ["en", "provider_unavailable", "The mail server asked ohmail to wait."],
+  ["de", "mailbox_full", "Das Postfach ist voll."],
+  ["de", "provider_unavailable", "Der Mailserver hat ohmail gebeten zu warten."],
+] as const)("%s keeps the short notice and Mailboxes action for %s", async (locale, reason, line) => {
+  const { connectionReason } = await import("@ohmail/app-logic/mail-state/connection-reason");
+  const messages = (await import(`../../messages/frame.${locale}.json`)).default.sync as Record<
+    string,
+    string
+  >;
+  const state = { key: "blocked", reason, minutes: 5 } as Parameters<typeof connectionReason>[0];
+  const text = (key: string) => messages[key] ?? key;
+  expect(connectionReason(state, text, text, false, "account", { locale, zone: "UTC" })).toEqual({
+    line,
+    href: "#/settings/mailboxes",
+  });
+  expect(messages[`blocked_${reason}`].length).toBeGreaterThan(line.length);
 });

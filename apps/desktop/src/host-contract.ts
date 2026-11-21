@@ -165,7 +165,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
     },
     features: {
       ...has.features,
-      account: account && isManagedDoor(status) ? has.features.account : NONE,
+      account: account && (isManagedDoor(status) || facts.account !== null) ? has.features.account : NONE,
       security: account ? has.features.security : NONE,
       ai: account ? has.features.ai : NONE,
       accountStrip: account ? has.features.accountStrip : NONE,

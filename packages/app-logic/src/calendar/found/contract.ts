@@ -10,6 +10,8 @@ import type { DaySpan } from "../spans/days.js";
 export interface FoundRow {
   /** The suggestion's id. */
   readonly id: string;
+  readonly messageId: string;
+  readonly mailboxId: string;
   readonly title: string;
   /** Its first day on the reader's clock, `YYYY-MM-DD`. */
   readonly day: string;

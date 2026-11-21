@@ -7,7 +7,7 @@ import { useRef, type KeyboardEvent } from "react";
 import { Button, Empty, RefusalLine } from "@ohmail/ui/base";
 import { SidePanel } from "@ohmail/ui/calendar";
 import { GroupHeading, ListHead } from "@ohmail/ui/mail";
-import { hueOf, pressAndHear, type CalendarPort } from "@ohmail/app-logic/calendar";
+import { pressAndHear, type CalendarPort } from "@ohmail/app-logic/calendar";
 import {
   pressAnswer,
   type AnswerOutcome,
@@ -92,7 +92,7 @@ function PanelOn({ port, route, onClose }: CalendarPanelProps & { readonly port:
   const { groups, today, sources } = found;
   const calendarOf = (id: string) => {
     const c = sources.calendars.find((x) => x.id === id);
-    return { name: c?.name ?? "", tone: c ? hueOf(c.color) : null };
+    return { name: c?.name ?? "", tone: sources.tones.get(id) ?? null };
   };
   const clear = groups.toAnswer.length === 0 && groups.changed.length === 0;
   return (

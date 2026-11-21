@@ -23,6 +23,12 @@
   .oh-erow[data-cursor] {
     background: var(--hover);
   }
+  .oh-erow[data-tinted] {
+    background: var(--oh-cal-tint);
+  }
+  .oh-erow[data-tinted]:is(:hover, :focus-visible, [data-cursor]) {
+    background: var(--oh-cal-open);
+  }
   .oh-erow:focus-visible {
     outline: var(--oh-focus) solid var(--focus);
     outline-offset: calc(var(--oh-focus) * -1);
@@ -140,6 +146,14 @@
   .oh-erow[data-off] .oh-erow-title {
     color: var(--ink2);
     text-decoration: line-through;
+  }
+  :root .oh-erow[data-tinted] :is(.oh-erow-second, .oh-erow-time) {
+    color: var(--ink2);
+  }
+  :root
+    .oh-erow[data-tinted]:is(:hover, :focus-visible, [data-cursor])
+    :is(.oh-erow-title, .oh-erow-second, .oh-erow-time) {
+    color: var(--ink);
   }
   /* What the typing line makes: dashed in its place among the day's rows. */
   .oh-erow[data-draft] {

@@ -221,6 +221,7 @@ export interface DecideInput {
  */
 export function useDecide(input: DecideInput) {
   const { state, openWaiting, scopeOf } = input;
+  const [decisionMotion, setDecisionMotion] = useState(0);
   const [unsub, setUnsub] = useState<Extract<ScreenerAsk, { kind: "unsub" }> | null>(null);
   const engine = useEngineOrNull();
   const account = state.accountScope;
@@ -244,6 +245,7 @@ export function useDecide(input: DecideInput) {
     state.decide(sender, dest, { read, scope, applyRetro: retro, unsubscribeIds });
     if (refused(state.role) || stay) return;
     input.left(next);
+    if (next !== null) setDecisionMotion((n) => n + 1);
   };
   const askUnsubscribe = (
     sender: ScreenerSenderDTO,
@@ -308,7 +310,7 @@ export function useDecide(input: DecideInput) {
       );
     }
   };
-  return { decide, decideRow, answerUnsub, unsub, dropUnsub: () => setUnsub(null) };
+  return { decide, decideRow, answerUnsub, unsub, dropUnsub: () => setUnsub(null), decisionMotion };
 }
 
 /** The first of the closers that stands, or null where nothing is open. */

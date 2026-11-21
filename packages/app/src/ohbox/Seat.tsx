@@ -200,7 +200,6 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
   const { host, plan, commands, route } = useFrame();
   const storageCard = host.features.storageCard;
   const page = usePage();
-  /* The cursor row's question (`m`, `d` where one column stands): drawn here, answered by the list's own path. */
   const [rowAsk, setRowAsk] = useState<RowAsk | null>(null);
   const [tagAsk, setTagAsk] = useState<{ ids: string[]; anchor: HTMLElement | null } | null>(null);
   const own = useOwn(page.read, setRowAsk, (ids, anchor) => setTagAsk({ ids, anchor }));
@@ -211,7 +210,6 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
   const located = useLocatedLetter(args.entered.letter, route.open);
   const { model, now, absoluteTime, flipTime, tags, mail, notOrganizing, sentLabelOf } = live;
   useOhboxTagOffers(live);
-  /* A move here ends where the Ohbox is its own answer on screen (the contract's recipe for a seat: one call). */
   useSwitchEnded(route, live.onScreen);
   const scroller = model.listScrollerRef;
   useLayoutEffect(() => page.from(scroller), [page, scroller]);
@@ -249,6 +247,8 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
       first: storageCard === NONE ? null : storageCard.render(),
       pull: pull === null ? NONE : { busy: pull.pulling, run: pull.pull },
       keysShown: plan.pointer !== "coarse",
+      askRow: setRowAsk,
+      canDelete: (id) => host.engine.verbRead()?.get<EngineMessage>("message", id) != null,
       flipTime,
       located,
       go: {
@@ -275,6 +275,7 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
       doorbell.settled,
       notOrganizing,
       storageCard,
+      host.engine,
       plan.pointer,
       flipTime,
       located,

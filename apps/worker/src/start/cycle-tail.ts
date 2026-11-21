@@ -107,7 +107,8 @@ export function cycleTailSection(scope: WorkerScope): void {
     }
 
     /** The identity backfill's per-account retirement, for this process's life. */
-    const senderCheckTail = senderCheckRetirement();
+    const forAccount = (accountId: string): Tx => scope.forAccount(accountId).db as unknown as Tx;
+    const senderCheckTail = senderCheckRetirement({ forAccount });
     // BEGIN TAIL_IMPL — the no-IMAP census reads this block: no adapter, runtime or lease here.
     const TAIL_IMPL: { readonly [K in TailSectionName]: Omit<TailSection, "name"> } = {
       screener_suggest_owed: {
@@ -284,10 +285,9 @@ export function cycleTailSection(scope: WorkerScope): void {
       sender_check_backfill: {
         // The identity fact for the Ohbox and Screener rows ingested before mail 0148, one page per
         // account per tail, then the act's contacts from before it, each contact written once. Once
-        // both sets answer empty the account RETIRES in this process and costs nothing; one read on
+        // both sets answer empty the account RETIRES in this process; a scoped read on
         // entry re-arms an account a row re-entered (`senderCheckRetirement`). Contained: a failure
         // leaves the rows unchecked until the next tail.
-        // The entry's read is ONE statement over every retired account of the walk: on the roster's view.
         enter: (accounts) => senderCheckTail.enter(scope.roster as unknown as Tx, accounts, scope.log,
           scope.tailFaultNote("cycle.senderCheckReentered")),
         run: async (accountId) => {
@@ -749,7 +749,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           let owed: string[] = [];
           await scope.runTailStage("cycle.htmlWordsOwedAccounts", "database", async () => {
             owed = await htmlWordsOwedAccounts(scope.roster as unknown as Tx, {
-              limit: HTML_WORDS_ACCOUNTS_PER_TAIL, shard: accountShardFilter(scope.selection, accounts.id),
+              limit: HTML_WORDS_ACCOUNTS_PER_TAIL, shard: accountShardFilter(scope.selection, accounts.id), forAccount,
             });
           }, (err) => {
             scope.log.warn("html_words_owed_read_failed", {
@@ -786,7 +786,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           let owed: string[] = [];
           await scope.runTailStage("cycle.searchIndexOwedAccounts", "database", async () => {
             owed = await searchIndexOwedAccounts(scope.roster as unknown as Tx, {
-              limit: SEARCH_INDEX_ACCOUNTS_PER_TAIL, shard: accountShardFilter(scope.selection, accounts.id),
+              limit: SEARCH_INDEX_ACCOUNTS_PER_TAIL, shard: accountShardFilter(scope.selection, accounts.id), forAccount,
             });
           }, (err) => {
             scope.log.warn("search_index_owed_read_failed", {

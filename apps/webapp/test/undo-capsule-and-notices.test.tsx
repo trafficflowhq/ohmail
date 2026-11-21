@@ -156,6 +156,7 @@ const onBody = (): boolean => document.activeElement === null || document.active
 /** A row's delete through the keyboard, then Tab to the capsule's Undo. */
 async function deleteAndReachUndo(): Promise<HTMLElement> {
   await shell("#/ohbox");
+  await vi.waitFor(() => expect(within(host!).getAllByRole("option").length).toBeGreaterThan(0));
   await key("j");
   await key("ArrowLeft");
   await key("ArrowRight");

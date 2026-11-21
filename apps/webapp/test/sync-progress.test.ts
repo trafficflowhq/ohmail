@@ -445,7 +445,7 @@ async function importFor(polls: number, n = 30): Promise<void> {
  * right and the probe was wrong, which is the cheaper of the two mistakes only if you check.
  */
 function counted(s: string, where: string): number {
-  const m = /First sync, ([\d,]+)/.exec(s); // the frame's first-sync sentence carries the count
+  const m = /First sync ([\d,]+)/.exec(s); // the count stands beside the frame's First sync title
   expect(m, `${where}: the strip stopped saying anything at all`).not.toBeNull();
   return Number(m![1]!.replace(/,/g, ""));
 }
@@ -485,8 +485,8 @@ describe("a mailbox nobody is syncing says so wherever you are standing", () => 
 
     // THE PREMISE, ASSERTED. Without rows this whole file could pass against an empty state,
     // which is the mistake `sync-visible.test.ts`'s header was written about.
-    expect(rowCount(c), "the fixture never landed — nothing below would prove anything")
-      .toBeGreaterThan(0);
+    await vi.waitFor(() => expect(rowCount(c), "the fixture never landed — nothing below would prove anything")
+      .toBeGreaterThan(0));
 
     for (const [view, letter] of [
       ["ohbox", "subject of ohb1"],
@@ -512,8 +512,8 @@ describe("a mailbox nobody is syncing says so wherever you are standing", () => 
     facts = [mailbox({ syncBlockedReason: "at_capacity" })];
     const c = await shell();
     await tick(0);
+    await vi.waitFor(() => expect(bar(c)).toBeTruthy());
     const b = bar(c);
-    expect(b).toBeTruthy();
     // Structural, because "does not scroll away" cannot be measured in jsdom.
     // The deck is the frame's main column; the strip stands in the notice slot's place.
     expect(b!.closest(".fr-main"), "the strip was rendered inside the deck").toBeNull();
@@ -855,7 +855,7 @@ describe("mail 0029 becomes visible", () => {
       ["clock_off", "clock is too far from the mail server's"],
       // mail 0130 — the server's own "not now": a throttle or UNAVAILABLE/LIMIT, which used to
       // arrive as the mailbox-error sentence over a mailbox that was never broken.
-      ["provider_unavailable", "the mail server asked ohmail to wait"],
+      ["provider_unavailable", "The mail server asked ohmail to wait"],
       // mail 0142 — a full `ohmail/_meta`, whose cure is in the person's mailbox: MOVE, never remove.
       ["meta_folder_full", "Move mail that was filed into it to another folder"],
       // mail 0143 — a `_meta` that takes no delete: the cure is a PERMISSION, never a deletion.

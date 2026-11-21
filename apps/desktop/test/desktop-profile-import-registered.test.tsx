@@ -237,7 +237,7 @@ it("schedules a mirrored calendar reminder from the native mail frame and withdr
   const now = new Date("2026-11-16T06:00:00Z");
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(now);
-  localStorage.setItem(CALENDAR_NOTICES_KEY, JSON.stringify({ cal_alert: true, showTitles: false }));
+  localStorage.setItem(`${CALENDAR_NOTICES_KEY}.${MB.id}`, JSON.stringify({ cal_alert: true, showTitles: false }));
   const calendar = calendarOf();
   const reminder = event("appointment", "20261116", {
     alarms: [{ method: "notice", minutesBefore: 10 }],
@@ -288,13 +288,13 @@ it("schedules a mirrored calendar reminder from the native mail frame and withdr
   expect(titles.getAttribute("aria-checked")).toBe("false");
   await click(reminderSwitch);
   expect(alerts.at(-1)).toEqual({ scope: MB.id, alerts: [] });
-  expect(JSON.parse(localStorage.getItem(CALENDAR_NOTICES_KEY)!)).toEqual({ cal_alert: false, showTitles: false });
+  expect(JSON.parse(localStorage.getItem(`${CALENDAR_NOTICES_KEY}.${MB.id}`)!)).toEqual({ cal_alert: false, showTitles: false });
   await click(reminderSwitch);
   expect(alerts.at(-1)?.alerts).toHaveLength(1);
   expect(master.getAttribute("aria-checked")).toBe("true");
   await click(master);
   expect(alerts.at(-1)).toEqual({ scope: MB.id, alerts: [] });
-  const opening = { scope: MB.id, document: 1, session: 2, event: reminder.id };
+  const opening = { scope: MB.id, document: 1, session: 2, event: reminder.id, startMs: Date.parse("2026-11-16T08:00:00Z") };
   await act(async () => openings[0]!({ payload: { ...opening, session: 1 } }));
   expect(window.location.hash).toBe("#/settings/notifications");
   await act(async () => openings[0]!({ payload: opening }));
@@ -308,6 +308,39 @@ it("schedules a mirrored calendar reminder from the native mail frame and withdr
   await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
   await act(async () => { window.location.hash = "#/cal/week/2026-11-16/e/appointment"; });
   await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
+});
+
+it("opens the second occurrence of a weekly reminder", async () => {
+  const calendar = calendarOf();
+  const reminder = event("weekly", "20261116", {
+    start: { kind: "instant", value: "20261116T080000Z" },
+    end: { kind: "instant", value: "20261116T083000Z" },
+    repeat: { rules: ["FREQ=WEEKLY;COUNT=4"], excluded: [], added: [] },
+  });
+  const change = (type: string, id: string, entity: unknown) => ({
+    type, id, entity, op: "create", seq: 1, updatedAt: CONNECTED,
+  });
+  const openings: Array<(value: unknown) => void> = [];
+  await mountRegisteredWindow({
+    status: { ...STANDALONE, mode: "cloud", flavor: "selfhost", accountId: MB.id, noticeDocument: 1, noticeSession: 2 },
+    calendarSnapshot: {
+      asOfSeq: 1,
+      changes: [
+        change("settings", MB.id, { accountId: MB.id, calendarEnabledAt: CONNECTED, updatedAt: CONNECTED }),
+        change("calendar_connection", connection().id, connection()),
+        change("calendar", calendar.id, calendar),
+        change("calendar_event", reminder.id, reminder),
+      ],
+      nextCursor: null,
+      window: { days: 90, minRows: 500 },
+      calendarWindow: { daysBack: 366, daysAhead: 731, maxRows: 10_000 },
+    },
+    openings,
+  });
+  const second = Date.parse("2026-11-23T08:00:00Z");
+  await act(async () => openings[0]!({ payload: { scope: MB.id, document: 1, session: 2, event: reminder.id, startMs: second } }));
+  await waitFor(() => expect(window.location.hash).toBe(`#/cal/week/2026-11-23/e/weekly%40${second}`));
+  expect(await within(hostEl).findByRole("heading", { name: "weekly" })).toBeTruthy();
 });
 
 it("opens a native mail notification only in the matching mounted session", async () => {

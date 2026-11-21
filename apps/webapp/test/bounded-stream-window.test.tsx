@@ -234,13 +234,14 @@ describe("the reading stream is a sliding window", () => {
     const scroller = armGeometry(big, 800);
     await scrollTo(scroller, (N - 3) * STREAM_CARD_ESTIMATE_PX);
     expect(cardIndices(big)).toContain(N - 1);
-    expect(within(big).queryByText("No older unread items.")).not.toBeNull();
+    // The stream shows no end-of-pile sentence.
+    expect(within(big).queryByText("No older unread items.")).toBeNull();
 
     cleanup();
     restoreRect?.();
     restoreRect = null;
     const small = (await visit(issue, OPENING() - 1)).host;
-    expect(within(small).queryByText("No older unread items.")).not.toBeNull();
+    expect(within(small).queryByText("No older unread items.")).toBeNull();
   });
 
   /* End in News: WebKit animates the stream over a dozen frames, each far past the mounted

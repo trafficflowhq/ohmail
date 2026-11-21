@@ -98,7 +98,9 @@ function Week({ week, props }: { week: MonthGridWeek; props: MonthGridProps }) {
             aria-current={d.today ? "date" : undefined}
             onClick={onDayPress ? () => onDayPress(d.id) : undefined}
           >
-            <span className="oh-mo-disc">{d.number}</span>
+            <span className="oh-mo-disc" data-today-pulse-target={d.today ? "badge" : undefined}>
+              {d.number}
+            </span>
           </button>
           {d.mail ? <Icon name={d.mail} size={16} className="oh-mo-mail" /> : null}
         </div>

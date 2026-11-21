@@ -11,6 +11,7 @@ import { NONE } from "../../host/index.js";
 import type { PaneBodyProps, PaneSummary } from "../../settings/contract.js";
 import { useLocale, useText, useTimeZone } from "../../text/index.js";
 import { useCalendarMirror, useSetupPort } from "../../calsetup/index.js";
+import { hoursInView } from "../hours.js";
 import { useCalendarSettings } from "../settings-read.js";
 import { Choice, type ChoiceItem } from "./Choice.js";
 import { Hours } from "./Hours.js";
@@ -36,10 +37,10 @@ export function useViewSummary(): PaneSummary | null {
     said.newEventsCalendarId,
     writableOf(mirror.calendars, mirror.connections),
   );
+  const { from, to } = hoursInView(said);
   const hours = t("view.hourRange", {
-    from: clockTime(said.dayFromMinute ?? 0, locale),
-    to:
-      said.dayToMinute === null || said.dayToMinute === 1440 ? "24:00" : clockTime(said.dayToMinute, locale),
+    from: clockTime(from, locale),
+    to: to === 1440 ? "24:00" : clockTime(to, locale),
   });
   return {
     value: t("view.summary"),

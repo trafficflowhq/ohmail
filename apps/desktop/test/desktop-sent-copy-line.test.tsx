@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { getByRole } from "@testing-library/react";
 import { JSDOM } from "jsdom";
 import { buttonNamed } from "../../../test/support/dom-role.js";
 
@@ -111,10 +112,9 @@ describe("the desktop's Settings catalogue", () => {
       }));
       const { window } = new JSDOM(html);
       try {
-        const switches = Array.from(window.document.querySelectorAll('[role="switch"]'));
-        const labels = switches.map((control) => control.getAttribute("aria-label"));
         const expected = (locale === "de" ? de : en).settingsNotifications;
-        expect(labels).toEqual(expect.arrayContaining([expected.alert, expected.showTitles]));
+        expect(getByRole(window.document.body, "switch", { name: expected.alert })).toBeDefined();
+        expect(getByRole(window.document.body, "switch", { name: expected.showTitles })).toBeDefined();
       } finally {
         window.close();
       }

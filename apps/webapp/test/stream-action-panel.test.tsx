@@ -51,8 +51,7 @@ describe("the action panel follows the open reading", () => {
       expect(address.read()).toBe(`${base}/m/b`);
       expect(panels()).toHaveLength(1);
       await toggle(19, "Collapse");
-      // The studio folds the paper and hides its actions while keeping the selected letter.
-      expect(address.read()).toBe(`${base}/m/b`);
+      expect(address.read()).toBe(base);
       expect(card(19).hasAttribute("data-expanded")).toBe(false);
       expect(panels()).toHaveLength(0);
       await toggle(19, "Expand");

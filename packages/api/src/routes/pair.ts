@@ -260,7 +260,7 @@ export const pairHandoffRoutes: Route[] = [
     pattern: "/pair/handoff",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true, replaySafe: true, middleware: [withSessionAcquireCeiling] },
+    options: { public: true, credentialSubject: true, credentialLookup: true, replaySafe: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
       const b = await readObjectBody<{ refreshToken?: unknown; attemptId?: unknown; challenge?: unknown; target?: unknown }>(req);
       if (typeof b.refreshToken !== "string" || (b.attemptId !== undefined && typeof b.attemptId !== "string")

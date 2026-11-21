@@ -13,11 +13,13 @@ import {
 } from "@ohmail/app-logic/calendar/setup";
 import { useReport } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
+import type { CalendarTones } from "../../calendar/tones.js";
 import { CalendarLine } from "../../calsetup/index.js";
 import { useWhen } from "../when.js";
 
 export interface AccountLinesProps {
   readonly account: CalendarAccount;
+  readonly tones: CalendarTones;
   readonly port: CalendarSetupPort;
   /** Where new events go now, and the calendars they may go to. */
   readonly newEvents: string | null;
@@ -33,6 +35,7 @@ type Open = { readonly id: string; readonly as: "menu" | "rename" } | null;
 
 export function AccountLines({
   account,
+  tones,
   port,
   newEvents,
   writable,
@@ -60,6 +63,7 @@ export function AccountLines({
           <CalendarLine
             key={k.id}
             calendar={k}
+            tone={tones.get(k.id) ?? "neutral"}
             switchLabel={t("accounts.show", { name: k.name })}
             onToggle={
               setCalendar === "none"

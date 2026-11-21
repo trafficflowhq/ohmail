@@ -4,12 +4,13 @@
  * drawn).
  */
 import type { MouseEventHandler } from "react";
-import { CalendarRow, CalendarSquare } from "@ohmail/ui/calendar";
+import { CalendarRow, CalendarSquare, type CalendarTone } from "@ohmail/ui/calendar";
 import { SettingLine } from "@ohmail/ui/mail";
-import { hueOf, type CalendarRecord } from "@ohmail/app-logic/calendar";
+import type { CalendarRecord } from "@ohmail/app-logic/calendar";
 
 export interface CalendarLineProps {
   readonly calendar: CalendarRecord;
+  readonly tone: CalendarTone;
   readonly switchLabel: string;
   /** Shows or hides it; left out where nothing can. */
   readonly onToggle?: (shown: boolean) => void;
@@ -20,13 +21,12 @@ export interface CalendarLineProps {
 }
 
 export function CalendarLine(p: CalendarLineProps) {
-  const tone = hueOf(p.calendar.color);
   if (p.onToggle === undefined || p.onMenu === undefined) {
     const onChange = p.onToggle;
     return (
       <SettingLine
         label={p.calendar.name}
-        lead={<CalendarSquare tone={tone} hollow={!p.calendar.shown} />}
+        lead={<CalendarSquare tone={p.tone} hollow={!p.calendar.shown} />}
         tag={p.viewOnlyLabel}
         toggle={onChange ? { on: p.calendar.shown, onChange } : undefined}
       />
@@ -35,7 +35,7 @@ export function CalendarLine(p: CalendarLineProps) {
   return (
     <CalendarRow
       name={p.calendar.name}
-      tone={tone}
+      tone={p.tone}
       shown={p.calendar.shown}
       switchLabel={p.switchLabel}
       onToggle={p.onToggle}

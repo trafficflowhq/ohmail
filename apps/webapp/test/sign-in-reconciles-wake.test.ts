@@ -97,6 +97,7 @@ function installUnsubscribedBrowser(): void {
    ON path decodes it before it may subscribe. */
 vi.mock("../app/api-client", () => ({
   apiConfigured: () => true,
+  boundApiFamily: () => "family-old",
   push: {
     vapidKey: () => Promise.resolve({ publicKey: "BFAKEa-b_c0123456789" }),
     subscribe: (endpoint: string) => {
@@ -127,7 +128,7 @@ function installStillSubscribedBrowser(): void {
   });
 }
 
-const CHANNELS_KEY = "ohmail.notifications.channels";
+const CHANNELS_KEY = "ohmail.notifications.channels.account-current";
 const ID_KEY = "ohmail.notifications.subscriptionId";
 
 /** Every switch a returning reader left ON, exactly as sign-out preserved them. */
@@ -138,6 +139,8 @@ const ALL_ON = JSON.stringify({
 
 describe("reconcileWakeRegistration", () => {
   beforeEach(() => {
+    document.cookie = "tf_family=family-old; Path=/";
+    document.cookie = "tf_owner=account-current; Path=/";
     cachePuts.length = 0;
     subscribed.length = 0;
     unsubscribed.length = 0;
@@ -152,6 +155,8 @@ describe("reconcileWakeRegistration", () => {
     });
   });
   afterEach(() => {
+    document.cookie = "tf_family=; Path=/; Max-Age=0";
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
     Reflect.deleteProperty(navigator, "locks");
     vi.resetModules();
   });
@@ -162,7 +167,7 @@ describe("reconcileWakeRegistration", () => {
      * still ON, permission still granted, no local subscription, no stored id — and a worker
      * that was last told `enabled: false`.
      */
-    const { reconcileWakeRegistration, NOTIFY_STATE_URL } =
+    const { reconcileWakeRegistration, NOTIFY_STATE_URL, wakeProofHolds } =
       await import("../app/shell/notification-settings");
     installUnsubscribedBrowser();
     window.localStorage.setItem(CHANNELS_KEY, ALL_ON);
@@ -180,6 +185,13 @@ describe("reconcileWakeRegistration", () => {
     const state = cachePuts.find((p) => p.url === NOTIFY_STATE_URL);
     expect(state, "the worker was left under its sign-out orders").toBeTruthy();
     expect(JSON.parse(state!.body).enabled).toBe(true);
+
+    const { proof } = JSON.parse(cachePuts.at(-1)!.body).registration;
+    await expect(wakeProofHolds(proof, "account-current", "family-old")).resolves.toBe(true);
+    await expect(wakeProofHolds("another-proof", "account-current", "family-old")).resolves.toBe(false);
+    await expect(wakeProofHolds(proof, "account-current", undefined)).resolves.toBe(false);
+    document.cookie = "tf_family=family-replaced; Path=/";
+    await expect(wakeProofHolds(proof, "account-current", "family-replaced")).resolves.toBe(false);
   });
 
   it("reconciles to what the switches SAY — a reader who turned it off stays off", async () => {

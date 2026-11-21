@@ -85,6 +85,7 @@
     "placed": "Erste Nachricht ausgewählt. Noch einmal drücken: {label}"
   },
   "viewError": {
+    "loading": "Diese Ansicht wird geladen…",
     "updated": "ohmail wurde aktualisiert. Neu laden, um weiterzumachen.",
     "loadFailed": "Dieser Teil von ohmail konnte nicht geladen werden. Prüfe die Verbindung und versuche es erneut.",
     "tryAgain": "Erneut versuchen",
@@ -127,6 +128,8 @@
     "blocked_read_limited": "ohmail hat gelesen, was möglich war; der Server dieses Postfachs hat mehr geschickt, als ein Durchgang aufnehmen kann. Es versucht es wieder.",
     "blocked_clock_off": "Wird nicht synchronisiert — die Uhr dieses Rechners weicht zu stark von der des Mailservers ab, als dass ohmail dieses Postfach sicher organisieren könnte. Stell die Uhr richtig; ohmail macht dann von selbst weiter.",
     "blocked_account_closed": "Wird nicht synchronisiert: Das Abo dieses Accounts ist beendet. Das Postfach bleibt unangetastet; die Synchronisierung startet wieder, sobald der Account aktiv ist.",
+    "notice_provider_unavailable": "Der Mailserver hat ohmail gebeten zu warten.",
+    "notice_mailbox_full": "Das Postfach ist voll.",
     "blocked_provider_unavailable": "Wird gerade nicht synchronisiert — der Mailserver hat ohmail gebeten zu warten. Es versucht es von selbst wieder.",
     "blocked_meta_folder_full": "Wird nicht synchronisiert — der Ordner ohmail/_meta auf diesem Server enthält mehr Nachrichten, als ohmail lesen kann. Verschiebe dort abgelegte Mails in einen anderen Ordner und lass die Nachrichten von ohmail stehen (ihr Betreff beginnt mit „ohmail“). ohmail macht dann von selbst weiter.",
     "blocked_meta_undeletable": "Wird nicht synchronisiert — der Mailserver lässt ohmail seine eigenen Nachrichten in ohmail/_meta nicht entfernen. Gib diesem Ordner die Berechtigung zum Löschen oder frag deinen Anbieter. ohmail macht dann von selbst weiter.",
@@ -393,6 +396,10 @@
         "since": "Offline seit {time, date, ::HHmm}",
         "sinceDay": "Offline seit {time, date, ::MMMd}"
       },
+      "mailboxFailed": {
+        "title": "Ein Postfach konnte nicht synchronisiert werden",
+        "named": "{address} konnte nicht synchronisiert werden"
+      },
       "mailServerDown": {
         "title": "Mailserver nicht erreicht",
         "named": "{address} nicht erreicht"
@@ -417,8 +424,8 @@
       },
       "firstSync": {
         "title": "Erste Synchronisierung",
-        "count": "Erste Synchronisierung, {count, number} bisher",
-        "of": "Erste Synchronisierung, {count, number} von {total, number}"
+        "count": "{count, number} bisher",
+        "of": "{count, number} von {total, number}"
       },
       "filing": {
         "title": "Wird auf deinem Mailserver einsortiert",

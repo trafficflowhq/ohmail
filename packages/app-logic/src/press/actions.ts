@@ -4,6 +4,9 @@
  */
 import type { OhmailView } from "@ohmail/wire";
 
+/** The message or conversation a Move is asked to file. */
+export type MoveSubject = "letter" | "conversation";
+
 /**
  * MOVE CARRIES ITS DESTINATION.
  *

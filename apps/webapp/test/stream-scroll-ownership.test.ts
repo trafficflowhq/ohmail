@@ -74,7 +74,12 @@ describe("one scroll owner per reading stream (the source census)", () => {
   it("the reading stream is the only thing anchoring the reading stream", () => {
     expect(read(column)).toMatch(/<Sheet\b[\s\S]+?manualScrollAnchor=\{shown\.length > 0\}/);
     expect(read(sheet)).toMatch(/data-manual-anchor=\{props\.manualScrollAnchor \?/);
-    expect(read(sheetCss)).toMatch(/\.oh-sheet-scroll\[data-manual-anchor\] \{\s*overflow-anchor: none;\s*\}/);
+    const anchor = rules(read(sheetCss)).filter(
+      ({ selector }) => selector === ".oh-sheet-scroll[data-manual-anchor]",
+    );
+    expect(anchor).toHaveLength(1);
+    const declarations = anchor[0]!.declarations.split(";").map((value) => value.trim());
+    expect(declarations.filter((decl) => /^overflow-anchor\s*:/.test(decl))).toEqual(["overflow-anchor: none"]);
   });
 
   it("the derived class set is the card's own, and it is not empty", () => {

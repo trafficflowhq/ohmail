@@ -115,6 +115,8 @@ describe("HTTP-only onboarding: register → enrollment session → passkey → 
     expect(registered.expiresIn).toBe(FIVE_MIN / 1000);
     const regCookies = setCookieMap(e.res);
     expect(regCookies.tf_session).toBe(e.token);
+    expect(regCookies.tf_family).toBeTruthy();
+    expect(registered.familyId).toBe(regCookies.tf_family);
     expect(regCookies.tf_csrf).toBeTruthy();
     expect(regCookies.tf_refresh).toBe("");
     expect(cookieMaxAge(e.res, "tf_refresh")).toBe(0);
@@ -129,7 +131,12 @@ describe("HTTP-only onboarding: register → enrollment session → passkey → 
 
     // 3 ── the passkey ceremony, cookie-authenticated with CSRF, no seeded session.
     const { authenticator, res: verify } = await enrollPasskey(deps, {
-      cookie: e.cookie, headers: { "x-csrf-token": e.csrf },
+      cookie: e.cookie,
+      headers: {
+        "x-csrf-token": e.csrf,
+        "x-ohmail-expected-account": e.accountId,
+        "x-ohmail-expected-family": regCookies.tf_family!,
+      },
     });
     expect(verify.status).toBe(200);
     const enrolled = await verify.json();
@@ -141,6 +148,8 @@ describe("HTTP-only onboarding: register → enrollment session → passkey → 
     expect(enrolled.session.status).toBe("authenticated");
     expect(enrolled.session.tokens).toBeUndefined();
     const full = setCookieMap(verify);
+    expect(enrolled.session.familyId).toBe(full.tf_family);
+    expect(full.tf_family).not.toBe(regCookies.tf_family);
     expect(full.tf_session).toBeTruthy();
     expect(full.tf_session).not.toBe(e.token);   // new session id ⇒ no session fixation
     expect(full.tf_refresh).toBeTruthy();        // a full session CAN be refreshed
@@ -219,7 +228,12 @@ describe("HTTP-only onboarding: register → enrollment session → passkey → 
   it("TOTP variant: enroll + activate exchanges the session, then a full TOTP login", async () => {
     const { deps, clock } = await makeDeps();
     const e = await register(deps, "totp@x.example");
-    const headers = { "x-csrf-token": e.csrf };
+    const family = setCookieMap(e.res).tf_family!;
+    const headers = {
+      "x-csrf-token": e.csrf,
+      "x-ohmail-expected-account": e.accountId,
+      "x-ohmail-expected-family": family,
+    };
 
     const enroll = await H(req("POST", "/auth/2fa/totp/enroll", { cookie: e.cookie, headers }), deps);
     expect(enroll.status).toBe(200);
@@ -237,6 +251,8 @@ describe("HTTP-only onboarding: register → enrollment session → passkey → 
     expect(activated.twofaEnrolled.totp).toBe(true);
     expect(activated.session.status).toBe("authenticated");
     const full = setCookieMap(activate);
+    expect(activated.session.familyId).toBe(full.tf_family);
+    expect(full.tf_family).not.toBe(family);
     expect(full.tf_session).not.toBe(e.token);
     expect(full.tf_refresh).toBeTruthy();
 
@@ -552,6 +568,41 @@ describe("a password-only session can never be replayed as a full credential", (
     expect((await H(req("GET", "/auth/session", { bearer: e1.token }), deps)).status).toBe(401);
     expect((await H(req("GET", "/auth/session", { bearer: e2.enrollmentToken }), deps)).status).toBe(200);
   });
+
+  it.each(["/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify"])(
+    "compares the activation expectations with the resolved session on %s",
+    async (path) => {
+      const { deps } = await makeDeps();
+      const first = await register(deps, "family-activation@x.example");
+      const olderFamily = setCookieMap(first.res).tf_family!;
+      const login = await H(req("POST", "/auth/login", {
+        body: JSON.stringify({ email: "family-activation@x.example", password: PW }),
+      }), deps);
+      const fresh = setCookieMap(login);
+      expect(fresh.tf_family).toBeTruthy();
+      const current = { cookie: `tf_session=${fresh.tf_session}; tf_csrf=${fresh.tf_csrf}`, csrf: fresh.tf_csrf! };
+      const activate = (jar: typeof current, account: string, family: string) =>
+        H(req("POST", path, {
+          cookie: jar.cookie,
+          headers: {
+            "x-csrf-token": jar.csrf,
+            "x-ohmail-expected-account": account,
+            "x-ohmail-expected-family": family,
+          },
+          body: JSON.stringify({ code: "000000", credential: {}, label: "Fixture" }),
+        }), deps);
+
+      const otherAccount = await activate(current, randomUUID(), fresh.tf_family!);
+      const unrelatedFamily = await activate(current, first.accountId, randomUUID());
+      const older = await activate(current, first.accountId, olderFamily);
+      for (const res of [otherAccount, unrelatedFamily, older]) {
+        expect(res.status).toBe(409);
+        expect(await res.json()).toMatchObject({ error: { code: "session_mismatch" } });
+      }
+      const revoked = await activate(first, first.accountId, olderFamily);
+      expect(revoked.status).toBe(401);
+    },
+  );
 
   it("a sibling token cannot enroll a factor after onboarding completes on another one", async () => {
     const { deps } = await makeDeps();

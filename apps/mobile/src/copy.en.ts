@@ -1533,7 +1533,7 @@ const TABLE = {
    */
   face: "Look",
   faceHint: "ohmarchy — a tiling, keyboard-first look inspired by Omarchy.",
-  facePaper: "paper",
+  facePaper: "oh",
   faceOhmarchy: "ohmarchy",
   faceScopeAll: "Applies on all your devices.",
   faceScopeDevice: "Applies on this device only.",

@@ -1,10 +1,11 @@
 import type { CalendarEventFace } from "./faces.js";
-import { addDays, dayOfIso, eventTimeOf, hueOf, type CalendarRecord } from "@ohmail/app-logic/calendar";
+import { addDays, dayOfIso, eventTimeOf, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import type { CalendarEventFields, CalendarTime } from "@ohmail/wire";
 
 export interface EventDraft {
   readonly title: string;
   readonly day: string;
+  readonly endDay: string | null;
   readonly from: string;
   readonly to: string;
   readonly allDay: boolean;
@@ -21,6 +22,7 @@ export function startDraft(anchor: string, minute: number): EventDraft {
   return {
     title: "",
     day: next === 24 ? addDays(anchor, 1) : anchor,
+    endDay: null,
     from: hour(next),
     to: hour(next + 1),
     allDay: false,
@@ -37,6 +39,13 @@ function clock(value: string): string | null {
   return parts[1]!.padStart(2, "0") + parts[2];
 }
 
+export function endDayOf(draft: EventDraft): string {
+  if (draft.endDay !== null) return draft.endDay;
+  const from = clock(draft.from);
+  const to = clock(draft.to);
+  return !draft.allDay && from !== null && to !== null && to < from ? addDays(draft.day, 1) : draft.day;
+}
+
 export function fieldsOfDraft(
   draft: EventDraft,
   calendar: CalendarRecord,
@@ -44,17 +53,19 @@ export function fieldsOfDraft(
 ): CalendarEventFields | null {
   const title = draft.title.trim();
   if (!title || !dayOfIso(draft.day)) return null;
+  const last = endDayOf(draft);
+  if (!dayOfIso(last) || last < draft.day) return null;
   const stamp = (day: string) => day.replaceAll("-", "");
   let start: CalendarTime;
   let end: CalendarTime;
   if (draft.allDay) {
     start = { kind: "date", value: stamp(draft.day) };
-    end = { kind: "date", value: stamp(addDays(draft.day, 1)) };
+    end = { kind: "date", value: stamp(addDays(last, 1)) };
   } else {
     const from = clock(draft.from),
       to = clock(draft.to);
     if (from === null || to === null || from === to) return null;
-    const last = to < from ? addDays(draft.day, 1) : draft.day;
+    if (last === draft.day && to < from) return null;
     start = { kind: "zoned", value: stamp(draft.day) + "T" + from + "00", zone };
     end = { kind: "zoned", value: stamp(last) + "T" + to + "00", zone };
   }
@@ -80,6 +91,7 @@ export function previewOfDraft(
   calendar: CalendarRecord,
   zone: string,
   untitled: string,
+  tone: CalendarEventFace["tone"],
 ): CalendarEventFace | null {
   const fields = fieldsOfDraft({ ...draft, title: draft.title.trim() || untitled }, calendar, zone);
   if (!fields) return null;
@@ -95,10 +107,10 @@ export function previewOfDraft(
     start,
     end,
     ref: { event: DRAFT_EVENT, day: draft.day, occurrence: null },
-    tone: hueOf(calendar.color),
+    tone,
     state: "draft",
     repeats: null,
-    viewOnly: true,
+    viewOnly: false,
     waits: false,
     status: null,
     second: fields.place,

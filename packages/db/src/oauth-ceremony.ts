@@ -8,6 +8,7 @@
  * state, and the two need different sentences; the row is still consumed when expired.
  * No-such-state and already-spent are the SAME answer, or the callback becomes an oracle.
  */
+import { createHash } from "node:crypto";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { mailboxOauthCeremonies, mailboxOauthDeviceCeremonies } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
@@ -169,10 +170,27 @@ export interface DeviceCeremonyRow {
   consumedAt: Date | null;
 }
 
-export interface CreateDeviceCeremonyInput {
-  /** 256-bit random, base64url. Minted by the caller — this module does not own the RNG. */
+export interface DeviceCeremonyScope {
+  /** The random handle issued to the browser. */
   state: string;
   accountId: string;
+  sessionId: string;
+}
+
+/** The stored key binds the browser handle to one account and one session. */
+export function deviceCeremonyKey({ state, accountId, sessionId }: DeviceCeremonyScope): string {
+  return createHash("sha256").update(JSON.stringify([accountId, sessionId, state])).digest("base64url");
+}
+
+function unusedDeviceCeremony(scope: DeviceCeremonyScope) {
+  return and(
+    eq(mailboxOauthDeviceCeremonies.accountId, scope.accountId),
+    eq(mailboxOauthDeviceCeremonies.state, deviceCeremonyKey(scope)),
+    isNull(mailboxOauthDeviceCeremonies.consumedAt),
+  );
+}
+
+export interface CreateDeviceCeremonyInput extends DeviceCeremonyScope {
   provider: string;
   /** The KEK envelope of the `device_code`, sealed by the caller's own key provider. */
   deviceCodeEnc: string;
@@ -187,7 +205,7 @@ export interface CreateDeviceCeremonyInput {
 /** Record a device ceremony in flight. The `state` PK makes a collision a 23505 rather than an overwrite. */
 export async function createDeviceCeremony(tx: Tx, input: CreateDeviceCeremonyInput): Promise<void> {
   await tx.insert(mailboxOauthDeviceCeremonies).values({
-    state: input.state,
+    state: deviceCeremonyKey(input),
     accountId: input.accountId,
     provider: input.provider,
     deviceCodeEnc: input.deviceCodeEnc,
@@ -221,8 +239,7 @@ const toDeviceRow = (row: typeof mailboxOauthDeviceCeremonies.$inferSelect): Dev
  * `"expired"` carries the row because the caller has to CLAIM it — expiry is a terminal verdict, and
  * a terminal verdict spends the ceremony so an aged-out state is dead for good rather than dead
  * until a clock is nudged. `"unknown"` carries nothing: a state that never existed and one already
- * claimed are the SAME answer, for the redirect flow's reason verbatim — telling them apart is an
- * oracle for whether a given 256-bit value was ever issued.
+ * claimed or belonging to another account or session are indistinguishable.
  */
 export type ReadDeviceCeremonyOutcome =
   | { outcome: "ok"; row: DeviceCeremonyRow }
@@ -240,17 +257,14 @@ export type ReadDeviceCeremonyOutcome =
  * real.
  */
 export async function readDeviceCeremony(
-  tx: Tx, input: { state: string; now: Date },
+  tx: Tx, input: DeviceCeremonyScope & { now: Date },
 ): Promise<ReadDeviceCeremonyOutcome> {
   // An empty state must never be a predicate that could match a row — the same defence
   // `consumeOAuthCeremony` states, and for the same reason: a falsy value reaching a
   // `WHERE state = ''` is one typo away from being a poll route's happy path.
   if (!input.state) return { outcome: "unknown" };
   const [row] = await tx.select().from(mailboxOauthDeviceCeremonies)
-    .where(and(
-      eq(mailboxOauthDeviceCeremonies.state, input.state),
-      isNull(mailboxOauthDeviceCeremonies.consumedAt),
-    ))
+    .where(unusedDeviceCeremony(input))
     .limit(1);
   if (!row) return { outcome: "unknown" };
   const out = toDeviceRow(row);
@@ -272,14 +286,13 @@ export async function readDeviceCeremony(
  * `consumed_at` is {@link claimDeviceCeremony}.
  */
 export async function leaseDeviceCeremonyPoll(
-  tx: Tx, input: { state: string; now: Date },
+  tx: Tx, input: DeviceCeremonyScope & { now: Date },
 ): Promise<{ outcome: "ok" | "denied" }> {
   if (!input.state) return { outcome: "denied" };
   const [row] = await tx.update(mailboxOauthDeviceCeremonies)
     .set({ lastPolledAt: input.now })
     .where(and(
-      eq(mailboxOauthDeviceCeremonies.state, input.state),
-      isNull(mailboxOauthDeviceCeremonies.consumedAt),
+      unusedDeviceCeremony(input),
       or(
         isNull(mailboxOauthDeviceCeremonies.lastPolledAt),
         // Interval arithmetic in SQL, inside the same statement as the write, so the fence is
@@ -309,17 +322,14 @@ export async function leaseDeviceCeremonyPoll(
  * `poll_interval_ms` only — a `slow_down` is not a terminal verdict.
  */
 export async function noteDeviceCeremonySlowDown(
-  tx: Tx, input: { state: string; stepMs: number; ceilingMs: number },
+  tx: Tx, input: DeviceCeremonyScope & { stepMs: number; ceilingMs: number },
 ): Promise<{ pollIntervalMs: number } | null> {
   if (!input.state) return null;
   const [row] = await tx.update(mailboxOauthDeviceCeremonies)
     .set({
       pollIntervalMs: sql`LEAST(${mailboxOauthDeviceCeremonies.pollIntervalMs} + ${input.stepMs}, ${input.ceilingMs})`,
     })
-    .where(and(
-      eq(mailboxOauthDeviceCeremonies.state, input.state),
-      isNull(mailboxOauthDeviceCeremonies.consumedAt),
-    ))
+    .where(unusedDeviceCeremony(input))
     .returning();
   return row ? { pollIntervalMs: row.pollIntervalMs } : null;
 }
@@ -335,15 +345,12 @@ export async function noteDeviceCeremonySlowDown(
  * followed by a failed exchange leaves a burnt ceremony and a Microsoft screen that said yes.
  */
 export async function claimDeviceCeremony(
-  tx: Tx, input: { state: string; now: Date },
+  tx: Tx, input: DeviceCeremonyScope & { now: Date },
 ): Promise<{ outcome: "ok"; row: DeviceCeremonyRow } | { outcome: "unknown" }> {
   if (!input.state) return { outcome: "unknown" };
   const [row] = await tx.update(mailboxOauthDeviceCeremonies)
     .set({ consumedAt: input.now })
-    .where(and(
-      eq(mailboxOauthDeviceCeremonies.state, input.state),
-      isNull(mailboxOauthDeviceCeremonies.consumedAt),
-    ))
+    .where(unusedDeviceCeremony(input))
     .returning();
   if (!row) return { outcome: "unknown" };
   return { outcome: "ok", row: toDeviceRow(row) };

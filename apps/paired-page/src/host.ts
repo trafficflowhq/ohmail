@@ -4,9 +4,17 @@
  * through it yet; the old shell is still handed its inputs one by one (`HostGate.tsx`), and this
  * is the same decisions, said once, in the record the next shell takes.
  */
-import { createElement } from "react";
-import { PairedScreenerSettings } from "@ohmail/app/settings/browser";
+import { createElement, type ReactNode } from "react";
+import {
+  BrowserNotificationsPane,
+  BrowserRulesPane,
+  BrowserSettingsAbove,
+  BrowserSignaturesPane,
+  BrowserTagsPane,
+  PairedScreenerSettings,
+} from "@ohmail/app/settings/browser";
 import { NO_PANE_PARTS, type MailPaneParts } from "@ohmail/app/mail";
+import { readChannels, subscriptionWanted, writeChannels } from "@ohmail/app-logic/notices/browser-channels";
 import {
   CANNOT,
   NONE,
@@ -86,8 +94,18 @@ export function pairedPaneParts(
     ...NO_PANE_PARTS,
     account: { useDoor, password: NONE },
     general,
+    notifications: BrowserNotificationsPane,
+    rules: BrowserRulesPane,
     screener,
+    signatures: BrowserSignaturesPane,
+    tags: BrowserTagsPane,
   } as const;
+}
+
+const notificationPreferences = { readChannels, subscriptionWanted, writeChannels };
+
+export function PairedSettingsAbove({ children }: { children: ReactNode }) {
+  return createElement(BrowserSettingsAbove, { children, preferences: notificationPreferences });
 }
 
 export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSupplies): HostContract {

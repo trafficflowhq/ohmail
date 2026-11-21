@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { renderHook, within } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { usePileNote } from "@ohmail/app-logic/lists/pile-note";
 import messages from "../messages/en.json";
@@ -50,6 +50,8 @@ async function mount(place: "reads" | "receipts", reply: () => Response) {
   window.location.hash = `#/${place}`;
   const frame = within(await mountCloudShell());
   await tick(3000);
+  const path = `/api/screener/unscreened?pile=${place === "reads" ? "news" : "receipts"}`;
+  await vi.waitFor(() => expect(calls).toContainEqual({ method: "GET", path }));
   const note = () => frame.queryAllByRole("note").find(
     (item) => item.textContent?.includes("senders you never let in")
       || item.textContent?.includes("a sender you never let in"),

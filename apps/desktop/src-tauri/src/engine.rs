@@ -6115,7 +6115,7 @@ fn show_alert<R: tauri::Runtime>(
         }
     }
     #[cfg(not(target_os = "macos"))]
-    if let Some(result) = show_openable_notice(app, &mut notification, live, document, serde_json::json!({ "event": alert.event_id })) {
+    if let Some(result) = show_openable_notice(app, &mut notification, live, document, serde_json::json!({ "event": alert.event_id, "startMs": alert.start_ms })) {
         if result.is_err() { log_line(format_args!("a calendar alert could not be shown")); }
         return;
     }

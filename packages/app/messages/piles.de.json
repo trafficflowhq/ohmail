@@ -29,10 +29,12 @@
     "runExit": "verlassen",
     "pileResurfaces": "taucht {when} wieder auf",
     "list": {
-      "menu": "Liste"
+      "menu": "Liste",
+      "unread": "{count, plural, one {1 ungelesen} other {# ungelesen}}"
     }
   },
   "later": {
+    "summary": "{count, number} zu beantworten",
     "title": "Später antworten",
     "empty": "Nichts zum späteren Antworten",
     "switch": {
@@ -61,10 +63,12 @@
     }
   },
   "parked": {
+    "summary": "{count, number} geparkt",
     "title": "Geparkt",
     "empty": "Nichts geparkt"
   },
   "resurface": {
+    "summary": "{count, plural, one {# kommt zurück} other {# kommen zurück}}",
     "title": "Wieder auftauchen",
     "empty": "Nichts, was wieder auftauchen soll"
   }

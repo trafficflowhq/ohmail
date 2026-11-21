@@ -6,9 +6,9 @@ export interface NowLineProps {
 }
 
 /**
- * The line of now, across today's column. It moves by its `top` alone and nothing in it animates.
+ * The line of now, across today's column. Its dot can echo the date badge when Today is pressed.
  * A time grid draws it, and the time beside it in the gutter, from the minutes it is handed.
  */
 export function NowLine({ top }: NowLineProps) {
-  return <i className="oh-now" aria-hidden style={{ top }} />;
+  return <i className="oh-now" data-today-pulse-target="now" aria-hidden style={{ top }} />;
 }

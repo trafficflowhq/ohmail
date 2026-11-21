@@ -154,13 +154,13 @@ const verb = (name: string): HTMLButtonElement => within(verbs()).getByRole("but
 
 /** A person writes the letter: To, the subject, the words (the To line offers people: a combobox). */
 async function typeLetter(to: string, subject: string, body: string): Promise<void> {
-  const typed = screen.getByRole("combobox", { name: en.write.to });
+  const typed = await screen.findByRole("combobox", { name: en.write.to });
   await act(async () => { fireEvent.change(typed, { target: { value: to } }); });
   await act(async () => { fireEvent.keyDown(typed, { key: "Enter" }); });
   await act(async () => {
     fireEvent.change(screen.getByRole("textbox", { name: en.write.subject }), { target: { value: subject } });
   });
-  const box = screen.getByRole("textbox", { name: en.write.text }) as HTMLElement & {
+  const box = await screen.findByRole("textbox", { name: en.write.text }) as HTMLElement & {
     editor?: { chain(): { selectAll(): { insertContent(w: string): { run(): boolean } } } };
   };
   await act(async () => { box.editor!.chain().selectAll().insertContent(body).run(); });

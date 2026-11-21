@@ -693,9 +693,11 @@ describe("a compose's ending is written in one place", () => {
     const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
     /* The positive half finds the shared Discard action and the call that detaches its editor. */
-    expect(sliceOfDeclaration(shell, "discardDraftRow")).toMatch(
-      /const row = engine\.read\(\)\.get<EngineDraft>\("draft", draftId\);[\s\S]+const clearEditors = discardEditorsOf\(draftId, heldRow, row\);\s*if \(!shown\) clearEditors\(\);/,
+    const discard = sliceOfDeclaration(shell, "discardDraftRow");
+    expect(discard).toMatch(
+      /const row = engine\.read\(\)\.get<EngineDraft>\("draft", draftId\);[\s\S]+const heldRow = readComposeRow\(scope\);\s*const session = heldRow === draftId \? composeSessionId\(scope\) : null;\s*const \{ clearAll, clearCompose \} = discardEditorsOf\(draftId, heldRow, row\);/,
     );
+    expect(discard).toMatch(/if \(!shown\) clearAll\(\);\s*ownDraftDiscard\(draftId, true\);/);
   });
 });
 

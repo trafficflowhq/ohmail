@@ -111,5 +111,5 @@ export function TrashReading({ keysHere }: PaneProps) {
     );
   }
   if (model.gone) return <BlankColumn>{tr("goneShort")}</BlankColumn>;
-  return <BlankColumn>{t(model.deletedEmpty ? "emptyTitle" : "title")}</BlankColumn>;
+  return <BlankColumn>{tr("blank.none")}</BlankColumn>;
 }

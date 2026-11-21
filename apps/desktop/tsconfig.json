@@ -100,6 +100,8 @@
       "@ohmail/letter-body/cache": ["../../packages/letter-body/src/mail-doc-cache.ts"],
       "@ohmail/letter-body/words": ["../../packages/letter-body/src/words.ts"],
       "@ohmail/letter-body": ["../../packages/letter-body/src/index.ts"],
+      "@ohmail/app/calendar": ["../../packages/app/src/calendar/index.ts"],
+      "@ohmail/app/account/way-out": ["../../packages/app/src/account/way-out/index.ts"],
       "@ohmail/app/host/browser": ["../../packages/app/src/host/browser/index.ts"],
       "@ohmail/app/host": ["../../packages/app/src/host/index.ts"],
       "@ohmail/app/keys/sheet": ["../../packages/app/src/keys/sheet/index.ts"],

@@ -12,6 +12,9 @@ import { eq } from "drizzle-orm";
 import { expect } from "vitest";
 import { chromium } from "@playwright/test";
 import { apiRoutes, createApp, csrfTokenFor, matchRoute, normalizePathname, type ApiDeps } from "@trafficflow/api";
+import { calendarRoutes } from "@trafficflow/api/calendar";
+import { calSettings } from "@trafficflow/db/mail";
+import { calendarFeed } from "@trafficflow/services/calendar";
 import { refreshTokens, sessions, users } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
 import { makeDeps, seedSession, seedSessionFor } from "../../../packages/api/test/helpers.js";
@@ -183,27 +186,41 @@ async function builtUnderLock(want: "managed" | "selfhost" | null): Promise<Buil
   return made;
 }
 
+interface HeldRequest { asked: string; go: () => void }
+
 interface Api {
   db: Db;
   deps: ApiDeps;
   now: () => Date;
   heard: Heard[];
   faults: DoorFault[];
-  held: Array<{ asked: string; go: () => void }>;
+  held: Set<HeldRequest>;
   serve: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 }
 
-async function makeApi(f: "managed" | "selfhost", origin: () => string, features: { pairing: boolean; remoteImages: boolean }): Promise<Api> {
+interface ApiFeatures {
+  pairing?: boolean;
+  remoteImages?: boolean;
+  calendar?: boolean;
+}
+
+async function makeApi(f: "managed" | "selfhost", origin: () => string, features: ApiFeatures): Promise<Api> {
   const made = await makeDeps(new Date(), { origin: [origin()] });
   made.deps.hello = {
     flavor: f, needsSetup: false,
     auth: { password: true, totp: true, webauthn: true, publicSignup: f === "managed" },
-    features: { sse: false, staging: false, ai: false, pairing: features.pairing, remoteImages: features.remoteImages, scheduleFiles: false },
+    features: {
+      sse: false, staging: false, ai: false,
+      pairing: features.pairing ?? true, remoteImages: features.remoteImages ?? true, scheduleFiles: false,
+      ...(features.calendar ? { calendar: true } : {}),
+    },
   };
-  const app = createApp(apiRoutes);
+  if (features.calendar) made.deps.services = { ...made.deps.services, calendar: calendarFeed };
+  const routes = features.calendar ? [...apiRoutes, ...calendarRoutes] : apiRoutes;
+  const app = createApp(routes);
   const heard: Heard[] = [];
   const faults: DoorFault[] = [];
-  const held: Api["held"] = [];
+  const held = new Set<HeldRequest>();
   const serve = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const chunks: Buffer[] = [];
     for await (const part of req) chunks.push(part as Buffer);
@@ -215,31 +232,39 @@ async function makeApi(f: "managed" | "selfhost", origin: () => string, features
       if (Array.isArray(v)) for (const x of v) headers.append(k, x);
       else if (v !== undefined) headers.set(k, v);
     }
-    const m = matchRoute(apiRoutes, method === "HEAD" ? "GET" : method, url.pathname);
+    const m = matchRoute(routes, method === "HEAD" ? "GET" : method, url.pathname);
     const pattern = m.matched ? m.route.pattern : `(no route) ${url.pathname}`;
     const door = faults.map((fault) => fault(method, pattern));
-    if (door.includes("hold")) {
-      // A request its browser gave up on while it was held never reached the route.
-      let gone = false;
-      res.on("close", () => { gone = true; });
-      await new Promise<void>((go) => { held.push({ asked: `${method} ${pattern}`, go }); });
-      if (gone) return;
-    } else if (door.includes("refuse")) {
-      heard.push({ method, pattern, status: 503 });
-      res.statusCode = 503;
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ error: { code: "unavailable", message: "refused at the wire" } }));
-      return;
+    let request: HeldRequest | undefined;
+    try {
+      if (door.includes("hold")) {
+        // A request its browser gave up on while it was held never reached the route.
+        let gone = false;
+        res.on("close", () => { gone = true; });
+        await new Promise<void>((go) => {
+          request = { asked: `${method} ${pattern}`, go };
+          held.add(request);
+        });
+        if (gone) return;
+      } else if (door.includes("refuse")) {
+        heard.push({ method, pattern, status: 503 });
+        res.statusCode = 503;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ error: { code: "unavailable", message: "refused at the wire" } }));
+        return;
+      }
+      const body = method === "GET" || method === "HEAD" || chunks.length === 0 ? undefined : Buffer.concat(chunks);
+      const answer = await app.handle(new Request(url, { method, headers, body }), { ...made.deps, session: null, idempotency: null });
+      heard.push({ method, pattern, status: answer.status });
+      res.statusCode = answer.status;
+      answer.headers.forEach((v, k) => { if (k !== "set-cookie") res.setHeader(k, v); });
+      const cookies = answer.headers.getSetCookie();
+      if (cookies.length > 0) res.setHeader("set-cookie", cookies);
+      if (answer.body) Readable.fromWeb(answer.body as never).pipe(res);
+      else res.end();
+    } finally {
+      if (request) held.delete(request);
     }
-    const body = method === "GET" || method === "HEAD" || chunks.length === 0 ? undefined : Buffer.concat(chunks);
-    const answer = await app.handle(new Request(url, { method, headers, body }), { ...made.deps, session: null, idempotency: null });
-    heard.push({ method, pattern, status: answer.status });
-    res.statusCode = answer.status;
-    answer.headers.forEach((v, k) => { if (k !== "set-cookie") res.setHeader(k, v); });
-    const cookies = answer.headers.getSetCookie();
-    if (cookies.length > 0) res.setHeader("set-cookie", cookies);
-    if (answer.body) Readable.fromWeb(answer.body as never).pipe(res);
-    else res.end();
   };
   return { db: made.db, deps: made.deps, now: () => made.clock.now(), heard, faults, held, serve };
 }
@@ -257,7 +282,7 @@ async function waitFor(url: string, log: () => string): Promise<void> {
   }
 }
 
-export async function startBench(f: Flavour, recordAs = "bench", features = { pairing: true, remoteImages: true }, size: Size = "expanded"): Promise<Bench> {
+export async function startBench(f: Flavour, recordAs = "bench", features: ApiFeatures = {}, size: Size = "expanded"): Promise<Bench> {
   const built = await ensureBuilt(f === "demo" ? null : f);
   const withApi = f !== "demo";
   const apiFlavour = built.flavour;
@@ -324,15 +349,16 @@ export async function startBench(f: Flavour, recordAs = "bench", features = { pa
     heard: api?.heard ?? [], faults: api?.faults ?? [],
     fixtures: f === "demo" ? fixturesPlanter() : null,
     has: () => false,
-    held: () => (api?.held ?? []).map((h) => h.asked),
+    held: () => Array.from(api?.held ?? [], (h) => h.asked),
     release() {
       if (!api) return;
       api.faults.length = 0;
-      for (const h of api.held.splice(0)) h.go();
+      for (const h of api.held) h.go();
     },
     async account() {
       if (!api) throw new Error("the demo has no account");
       const s = await seedSession(api.db, { now: api.now(), lastTwofaAt: api.now() });
+      if (features.calendar) await api.db.insert(calSettings).values({ accountId: s.accountId, enabledAt: api.now() });
       const [row] = await api.db.select({ familyId: sessions.familyId }).from(sessions).where(eq(sessions.id, s.sessionId));
       const refresh = generateToken();
       await api.db.insert(refreshTokens).values({

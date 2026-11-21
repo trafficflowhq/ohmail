@@ -175,7 +175,9 @@ describe.each(ZOOMS)("at a text size of %s", (zoom) => {
       await square.hover();
       const tip = page.locator(".oh-square-tip");
       expect(await tip.textContent()).toBe("First message");
-      expect(await tip.evaluate((element) => element.parentElement === document.body)).toBe(true);
+      expect(
+        await tip.evaluate((element) => element.parentElement === document.querySelector(".oh-root")),
+      ).toBe(true);
       const card = await tip.evaluate((element) => {
         const style = getComputedStyle(element);
         return { background: style.backgroundColor, shadow: style.boxShadow };

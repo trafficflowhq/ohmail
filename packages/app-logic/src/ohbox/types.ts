@@ -13,7 +13,7 @@ import type { ActedMarker, AfterVerbChoice } from "../press/after-verb.js";
 import type { NotOrganizingYet } from "../mail-state/mail-state.js";
 import type { UndoLink } from "../press/shell-dispatch.js";
 import type { ListWindow } from "../lists/list-window.js";
-import type { BulkAction, MessageAction, MoveTarget } from "../press/actions.js";
+import type { BulkAction, MessageAction, MoveSubject, MoveTarget } from "../press/actions.js";
 import type { DragSource, RailDropTarget } from "../lists/drag-source.js";
 import type { ScreeningDest } from "../press/sender-screening.js";
 import type { KeyBinding } from "../keys/index.js";
@@ -114,7 +114,7 @@ export interface OhboxListInput {
   settled: boolean;
   owed: boolean;
   onDoorbell: () => void;
-  onAction: (action: MessageAction, message: EngineMessage) => void;
+  onAction: (action: MessageAction, message: EngineMessage, moveSubject?: MoveSubject) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
   onDropTag?: (ids: string[], tagId: string) => void;
   bulk: BulkVerbs;
@@ -250,7 +250,7 @@ export interface OhboxListModel {
   /** What the list hands the reading column for the open letter; null while nothing is open. */
   visit: ListVisit | null;
   /** A verb of the row's own menu, on the letter the row opens on: the shell's, as a press on that letter. */
-  actOn: (row: OhboxRowGroup, action: MessageAction) => void;
+  actOn: (row: OhboxRowGroup, action: MessageAction, moveSubject?: MoveSubject) => void;
   /** The tag picker for the row's letter, at the element it was asked from. */
   tagRow: (row: OhboxRowGroup, anchor: HTMLElement | null) => void;
   /** The tag picker for the picked letters, at the element it was asked from. */

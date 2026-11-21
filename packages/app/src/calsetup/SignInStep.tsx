@@ -6,13 +6,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Blank, Button, Dot, Page, Sentence } from "@ohmail/ui/base";
 import {
-  connectFaultKeyOf,
   type CalendarSetupPort,
   type ConnectAnswer,
   type ConnectAsk,
   type SteppedWay,
 } from "@ohmail/app-logic/calendar/setup";
 import { useText } from "../text/index.js";
+import { setupFaultKeyOf } from "./setup-fault.js";
 
 /** The blanks each way asks for, in the order the sentence says them. */
 const BLANKS = {
@@ -99,7 +99,7 @@ export function SignInStep({ way, again, port, back, trail, taken }: SignInStepP
     asking.current = false;
     setBusy(false);
     if (answer === null) setSaid({ key: "signin.notSent" });
-    else if (answer.kind === "refused") setSaid({ key: connectFaultKeyOf(answer.fault) });
+    else if (answer.kind === "refused") setSaid({ key: setupFaultKeyOf(answer.fault, way) });
     else taken(connectionId);
   };
 

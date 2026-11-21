@@ -25,7 +25,7 @@ describe("the answer Search shows", () => {
           return {
             state: "ready", items: opts?.parts === "page" ? [match] : [],
             total: 936, totalEstimate: null, totalExact: true,
-            tier: "exact", ms: 109, nextCursor: null, bounded: false, indexed: null, facets: null,
+            tier: "exact", ms: 13, nextCursor: null, bounded: false, indexed: null, facets: null,
           };
         };
       },
@@ -34,10 +34,12 @@ describe("the answer Search shows", () => {
     const search = await screen.findByRole("textbox", { name: "Search" });
     now.mockReturnValue(0);
     await act(async () => { fireEvent.change(search, { target: { value: "kiln" } }); });
-    const count = await screen.findByText("936 matched · 109 ms", { exact: true });
+    const count = await screen.findByRole("heading", { name: "Results 936" });
     expect(asked).toEqual(["kiln"]);
-    expect(count.parentElement?.textContent).toBe("Searched your whole mailbox — 936 matched · 109 ms");
+    expect(count.textContent).toBe("Results936");
     const wait = await within(search.parentElement!).findByText("109 ms", { exact: true });
     expect(wait.closest("[hidden], [aria-hidden=true]")).toBeNull();
+    const answer = within(search.closest<HTMLElement>("[data-filter-list]")!).getByRole("status");
+    expect(answer.textContent).toBe("Searched your whole mailbox — 936 matched · 109 ms");
   });
 });

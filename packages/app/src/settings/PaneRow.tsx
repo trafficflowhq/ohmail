@@ -45,11 +45,10 @@ function useMenuSummary(id: SettingsPaneId): PaneSummary | null {
           ? "themeDark"
           : "themeLight";
     return {
-      value: [face, mode]
+      value: [face, mode, `languageName.${locale}`]
         .filter((key) => t.has(key))
         .map((key) => t(key))
         .join(" · "),
-      detail: t.has(`languageName.${locale}`) ? t(`languageName.${locale}`) : undefined,
     };
   }
   if (id === "help") {

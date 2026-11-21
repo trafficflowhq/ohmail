@@ -731,6 +731,7 @@
     },
     "list": {
       "menu": "Ohbox actions",
+      "checked": "Checked {when}",
       "pull": "Pull new mail"
     },
     "end": {
@@ -776,8 +777,6 @@
     "title": "News",
     "waterline": "Seen up to here",
     "waterlineMeta": "last visit · {stamp}",
-    "tail": "An item turns read once it rests on screen in the stream. A quick scroll past leaves it unread.",
-    "streamTail": "No older unread items.",
     "aiApprove": "Approve",
     "aiCorrect": "Correct",
     "streamAria": "News stream",
@@ -1318,7 +1317,8 @@
     "runExit": "exit",
     "pileResurfaces": "resurfaces {when}",
     "list": {
-      "menu": "List"
+      "menu": "List",
+      "unread": "{count, plural, one {1 unread} other {# unread}}"
     }
   },
   "seed": {
@@ -1381,7 +1381,8 @@
     }
   },
   "trash": {
-    "emptyTitle": "Nothing deleted in ohmail.",
+    "listMenu": "List",
+    "emptyTitle": "Nothing deleted",
     "empty": "What you delete in ohmail lands here and can be put back.",
     "foot": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
     "footLive": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.",
@@ -1397,7 +1398,8 @@
     "noErase": "ohmail never erases mail \u2014 to remove it for good, use your own mail client.",
     "restoring": "Restoring\u2026",
     "unavailable": "Trash is not available here.",
-    "liveHead": "In your mail server's Trash",
+    "liveHead": "On your mail server",
+    "liveReadOnlyTag": "Read-only",
     "liveOrigin": "on the server",
     "liveReadOnly": "Read-only. ohmail can’t put this back — nothing here records where it came from.",
     "liveLoading": "Reading your mail server’s Trash…",
@@ -1870,7 +1872,7 @@
     "face": "Look",
     "faceHint": "ohmarchy — a tiling, keyboard-first look inspired by Omarchy.",
     "faceAria": "Look",
-    "facePaper": "paper",
+    "facePaper": "oh",
     "faceOhmarchy": "ohmarchy",
     "faceScopeAll": "Applies on all your devices.",
     "faceScopeDevice": "Applies on this device only.",
@@ -2049,6 +2051,7 @@
     "tagNewPlaceholder": "Name a new tag…",
     "tagAdd": "Add",
     "tagTaken": "You already have a tag called “{name}”.",
+    "tagsNone": "None",
     "tagsEmpty": "No tags yet — make one below, or press t on a message.",
     "tagDeleteAsk": "Delete “{name}”?",
     "tagDeleteWhat": "{count, plural, =0 {Nothing carries it. } one {It's on 1 of your messages. } other {It's on # of your messages. }}The messages stay where they are.",
@@ -2411,6 +2414,7 @@
     "invitationOwaOpenSetting": "Open the setting in Outlook on the web"
   },
   "message": {
+    "contactAllMail": "All mail",
     "toLabel": "To",
     "ccLabel": "Cc",
     "details": "details",
@@ -2525,14 +2529,14 @@
   },
   "face": {
     "label": "Pick the site's look",
-    "paper": "paper",
+    "paper": "oh",
     "ohmarchy": "ohmarchy",
-    "wink": "You're on Linux, so ohmail opened in its ohmarchy face. This one's for you — paper is one click away.",
-    "splitCaption": "One product, two faces. paper is the quiet default; ohmarchy is the tiling, keyboard-first look — drag the line between them.",
-    "splitAltPaper": "The ohmail app in its paper face",
+    "wink": "You're on Linux, so ohmail opened in its ohmarchy face. This one's for you — oh is one click away.",
+    "splitCaption": "One product, two faces. oh is the quiet default; ohmarchy is the tiling, keyboard-first look — drag the line between them.",
+    "splitAltPaper": "The ohmail app in its oh face",
     "splitAltOhmarchy": "The same ohmail screen in its ohmarchy face",
-    "splitHandle": "Move the divider between the paper and ohmarchy faces",
-    "splitValue": "{paper}% paper, {ohmarchy}% ohmarchy",
+    "splitHandle": "Move the divider between the oh and ohmarchy faces",
+    "splitValue": "{paper}% oh, {ohmarchy}% ohmarchy",
     "explorerLead": "Try the demo in every Omarchy theme",
     "explorerDefault": "ohmail default"
   },
@@ -4008,6 +4012,7 @@
     "placed": "First message selected. Press again: {label}"
   },
   "viewError": {
+    "loading": "Loading this view…",
     "updated": "ohmail was updated. Reload to continue.",
     "loadFailed": "This part of ohmail couldn't load. Check the connection and try again.",
     "tryAgain": "Try again",
@@ -4050,6 +4055,8 @@
     "blocked_read_limited": "ohmail read what it could; this mailbox's server sent more than one pass can take. It will try again.",
     "blocked_clock_off": "Not syncing — this computer's clock is too far from the mail server's for ohmail to organize this mailbox safely. Set the clock; ohmail starts again on its own.",
     "blocked_account_closed": "Not syncing — this account's subscription has ended. Your mailbox is untouched, and syncing starts again once the account is active.",
+    "notice_provider_unavailable": "The mail server asked ohmail to wait.",
+    "notice_mailbox_full": "The mailbox is full.",
     "blocked_provider_unavailable": "Not syncing for now — the mail server asked ohmail to wait. It tries again on its own.",
     "blocked_meta_folder_full": "Not syncing — the ohmail/_meta folder on that server holds more messages than ohmail can read. Move mail that was filed into it to another folder and leave the messages ohmail wrote (their subject starts with \"ohmail\"). ohmail starts again on its own.",
     "blocked_meta_undeletable": "Not syncing — the mail server will not let ohmail remove its own messages from ohmail/_meta. Give that folder delete permission, or ask your provider. ohmail starts again on its own.",
@@ -4166,6 +4173,14 @@
     "waitingUnreachableUntil": "Your mail server could not be reached to save the copy in your Sent folder. The message went out; ohmail tries again until {time}."
   },
   "screening": {
+    "cardSeeAll": "See all",
+    "cardNowIn": "Now in {place}",
+    "cardNowSpread": "Now in {count, plural, one {1 place} other {# places}}",
+    "cardGoesTo": "Goes to",
+    "cardScreenOut": "Screen out",
+    "cardFuture": "Rule for future mail",
+    "cardExisting": "Move mail already here",
+    "cardSubject": "Rule on a subject",
     "scopeShared": "{domain} is a shared provider. Decisions here are per address.",
     "action": "Screening",
     "openFor": "Screening for {sender}",
@@ -6157,6 +6172,10 @@
         "since": "Offline since {time, date, ::HHmm}",
         "sinceDay": "Offline since {time, date, ::MMMd}"
       },
+      "mailboxFailed": {
+        "title": "A mailbox failed to sync",
+        "named": "{address} failed to sync"
+      },
       "mailServerDown": {
         "title": "Mail server not reached",
         "named": "{address} not reached"
@@ -6181,8 +6200,8 @@
       },
       "firstSync": {
         "title": "First sync",
-        "count": "First sync, {count, number} so far",
-        "of": "First sync, {count, number} of {total, number}"
+        "count": "{count, number} so far",
+        "of": "{count, number} of {total, number}"
       },
       "filing": {
         "title": "Filing on your mail server",
@@ -6231,6 +6250,7 @@
     }
   },
   "later": {
+    "summary": "{count, number} to answer",
     "title": "Answer Later",
     "empty": "Nothing to answer later",
     "switch": {
@@ -6259,10 +6279,12 @@
     }
   },
   "parked": {
+    "summary": "{count, number} parked",
     "title": "Parked",
     "empty": "Nothing parked"
   },
   "resurface": {
+    "summary": "{count, number} set to come back",
     "title": "Resurface",
     "empty": "Nothing set to come back"
   },
@@ -6612,6 +6634,8 @@
     },
     "fault": {
       "signInRefused": "That sign-in was not accepted. iCloud takes an app-specific password, made at Apple, not the account’s own.",
+      "signInRefusedCaldav": "The server did not accept the username and password. Check them and the server address.",
+      "signInRefusedIcs": "The feed asked for a sign-in.",
       "signInAgain": "The sign-in is no longer accepted. Sign in again.",
       "forbidden": "This account may not read the server’s calendars.",
       "notFound": "No calendar was found at that address.",
@@ -6699,6 +6723,16 @@
     }
   },
   "calmail": {
+    "inviteGuest": "Invite {name}",
+    "confirmGuest": "Send an invitation to {name}?",
+    "cancelGuest": "Cancel",
+    "sendGuest": "Send invitation",
+    "removeGuest": "Remove guest",
+    "comingHeading": "Coming up",
+    "allEvents": "All events",
+    "newEvent": "New event",
+    "fromMail": "From mail",
+    "guest": "Guest: {name}",
     "today": "Today",
     "now": "now",
     "allDay": "all day",
@@ -6710,6 +6744,9 @@
   "calendar": {
     "connect": "Connect a calendar",
     "actions": {
+      "resizeStart": "Change first day",
+      "resizePreview": "{first} – {last} · {title}",
+      "resizeEnd": "Change last day",
       "delete": "Delete",
       "moveTo": "Move to",
       "whichMove": "Which events will move?",
@@ -6732,7 +6769,12 @@
         "yearlyWeekday": "Every year on the {ordinal} {weekday} of {month}"
       }
     },
+    "draft": {
+      "discarded": "Discarded",
+      "undo": "Undo"
+    },
     "edit": {
+      "save": "Save",
       "whichEvents": "Which events will change?",
       "thisEvent": "This event",
       "following": "This and following",
@@ -6749,6 +6791,8 @@
       "discard": "Discard changes"
     },
     "create": {
+      "endDate": "End date",
+      "nextDay": "next day",
       "title": "New event",
       "name": "Event title",
       "date": "Event date",
@@ -6887,13 +6931,19 @@
     "subjectReplySample": "Re: Glaze order #2291",
     "picture": {
       "title": "Ohbox",
-      "first": "Giulia Ferrari",
+      "first": "Anna Berger",
       "firstTime": "09:12",
-      "second": "Petra Wyss",
+      "second": "Tom Keller",
       "secondTime": "08:47"
     }
   },
   "settingsNotifications": {
+    "on": "On",
+    "off": "Off",
+    "ohbox": "Ohbox",
+    "screener": "Screener",
+    "scheduled": "Scheduled",
+    "devices": "Devices",
     "about": "Notify about",
     "blocked": "Blocked",
     "calendar": "Calendar",

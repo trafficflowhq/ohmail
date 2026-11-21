@@ -1,5 +1,6 @@
 /* The calendar's body: the head over the view, and the Agenda's panel beside it. Placement only. */
 .cal-body {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -57,4 +58,20 @@
   align-items: center;
   gap: var(--s2);
   padding-block-end: var(--s2);
+}
+
+.cal-day-range-preview {
+  --cal-range-z: 4;
+  position: absolute;
+  z-index: var(--cal-range-z);
+  display: grid;
+  pointer-events: none;
+}
+
+.cal-event-backdrop {
+  --cal-event-backdrop-z: 8;
+  position: absolute;
+  inset: 0;
+  z-index: var(--cal-event-backdrop-z);
+  background: var(--scrim);
 }

@@ -16,7 +16,7 @@
     "dismiss": "Ausblenden"
   },
   "gate": {
-    "settingsHandoffSignIn": "Melde dich mit dem Konto an, das du auf deinem Desktop geöffnet hast.",
+    "settingsHandoffSignIn": "Melde dich mit dem Account an, das du auf deinem Desktop geöffnet hast.",
     "settingsHandoffInvalid": "Dieser Link zu den Einstellungen ist nicht verfügbar. Öffne die Einstellungen erneut auf deinem Desktop.",
     "lede": "An diesen Build ist kein Server angeschlossen.",
     "body": "Er zeigt die ganze Oberfläche mit Demo-Mails, ganz ohne Netzwerk.",
@@ -731,6 +731,7 @@
     },
     "list": {
       "menu": "Aktionen der Ohbox",
+      "checked": "Geprüft {when}",
       "pull": "Neue Mails abrufen"
     },
     "end": {
@@ -776,8 +777,6 @@
     "title": "News",
     "waterline": "Bis hierher gesehen",
     "waterlineMeta": "letzter Besuch · {stamp}",
-    "tail": "Ein Beitrag gilt als gelesen, sobald er im Strom auf dem Bildschirm stehen bleibt. Schnelles Vorbeiscrollen lässt ihn ungelesen.",
-    "streamTail": "Keine älteren ungelesenen Beiträge.",
     "aiApprove": "Passt",
     "aiCorrect": "Korrigieren",
     "streamAria": "News-Strom",
@@ -1318,7 +1317,8 @@
     "runExit": "verlassen",
     "pileResurfaces": "taucht {when} wieder auf",
     "list": {
-      "menu": "Liste"
+      "menu": "Liste",
+      "unread": "{count, plural, one {1 ungelesen} other {# ungelesen}}"
     }
   },
   "seed": {
@@ -1381,7 +1381,8 @@
     }
   },
   "trash": {
-    "emptyTitle": "Nichts in ohmail gelöscht.",
+    "listMenu": "Liste",
+    "emptyTitle": "Nichts gelöscht",
     "empty": "Was du in ohmail löschst, landet hier und lässt sich zurücklegen.",
     "foot": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
     "footLive": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. Darunter, was im Papierkorb deines Mailservers liegt: nur lesbar, denn hier ist nicht festgehalten, wo diese Mails herkamen. Dein Mailserver entscheidet, wie lange er sie behält.",
@@ -1397,7 +1398,8 @@
     "noErase": "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
     "restoring": "Wird wiederhergestellt…",
     "unavailable": "Der Papierkorb ist hier nicht verfügbar.",
-    "liveHead": "Im Papierkorb deines Mailservers",
+    "liveHead": "Auf deinem Mailserver",
+    "liveReadOnlyTag": "Nur lesbar",
     "liveOrigin": "auf dem Server",
     "liveReadOnly": "Nur lesbar. ohmail kann diese Mail nicht zurücklegen — hier ist nicht festgehalten, wo sie herkam.",
     "liveLoading": "Der Papierkorb deines Mailservers wird gelesen…",
@@ -1870,7 +1872,7 @@
     "face": "Stil",
     "faceHint": "ohmarchy — ein Kachel-Stil, tastaturzentriert, inspiriert von Omarchy.",
     "faceAria": "Stil",
-    "facePaper": "paper",
+    "facePaper": "oh",
     "faceOhmarchy": "ohmarchy",
     "faceScopeAll": "Gilt auf allen deinen Geräten.",
     "faceScopeDevice": "Gilt nur auf diesem Gerät.",
@@ -2049,6 +2051,7 @@
     "tagNewPlaceholder": "Neuen Tag benennen …",
     "tagAdd": "Hinzufügen",
     "tagTaken": "Du hast schon einen Tag namens „{name}“.",
+    "tagsNone": "Keine",
     "tagsEmpty": "Noch keine Tags — leg unten einen an oder drück t auf einer Nachricht.",
     "tagDeleteAsk": "„{name}“ löschen?",
     "tagDeleteWhat": "{count, plural, =0 {Nichts trägt ihn. } one {Er hängt an 1 deiner Nachrichten. } other {Er hängt an # deiner Nachrichten. }}Die Nachrichten bleiben, wo sie sind.",
@@ -2159,7 +2162,7 @@
     "storageMailSub": "Eine Mail bei 90 % und eine, wenn der Speicher voll ist.",
     "storageMailFailed": "Das ließ sich nicht speichern. Versuch es noch einmal.",
     "webAccountNote": "Beim Löschen verschwindet dein Account von unseren Servern. Deine Mails liegen in deinem eigenen Postfach und werden nicht angerührt, und die Kopie auf diesem Computer bleibt, wo sie ist.",
-    "webAccountNoteServer": "Wenn du dein Konto löschst, wird es von deinem Server entfernt. Deine E-Mails bleiben in deinem Postfach, und die Kopie auf diesem Computer bleibt erhalten.",
+    "webAccountNoteServer": "Wenn du deinen Account löschst, wird es von deinem Server entfernt. Deine E-Mails bleiben in deinem Postfach, und die Kopie auf diesem Computer bleibt erhalten.",
     "webDevicesTitle": "Geräte, die bei deinem Account angemeldet sind",
     "webDevicesWhy": "Ein Gerät hinzufügen und eines abmelden verlangen beide einen zweiten Faktor aus den letzten Minuten, den diese App nicht geben kann. Die Liste und beide Aktionen öffnen sich in deinem Browser, wo du schon angemeldet bist.",
     "webDevicesNote": "Diese App ist eines dieser Geräte. Wenn du sie dort abmeldest, empfängt sie keine neue Mail mehr; die Kopie auf diesem Computer bleibt, wo sie ist.",
@@ -2411,6 +2414,7 @@
     "invitationOwaOpenSetting": "Einstellung in Outlook im Web öffnen"
   },
   "message": {
+    "contactAllMail": "Alle Nachrichten",
     "toLabel": "An",
     "ccLabel": "Cc",
     "details": "Details",
@@ -2525,14 +2529,14 @@
   },
   "face": {
     "label": "Stil der Seite wählen",
-    "paper": "paper",
+    "paper": "oh",
     "ohmarchy": "ohmarchy",
-    "wink": "Du bist auf Linux, also öffnet ohmail im ohmarchy-Stil. Der ist für dich — paper ist einen Klick entfernt.",
-    "splitCaption": "Ein Produkt, zwei Gesichter. paper ist der ruhige Standard; ohmarchy der Kachel-Stil, tastaturzentriert — zieh an der Linie dazwischen.",
-    "splitAltPaper": "Die ohmail-App im paper-Stil",
+    "wink": "Du bist auf Linux, also öffnet ohmail im ohmarchy-Stil. Der ist für dich — oh ist einen Klick entfernt.",
+    "splitCaption": "Ein Produkt, zwei Gesichter. oh ist der ruhige Standard; ohmarchy der Kachel-Stil, tastaturzentriert — zieh an der Linie dazwischen.",
+    "splitAltPaper": "Die ohmail-App im oh-Stil",
     "splitAltOhmarchy": "Derselbe ohmail-Bildschirm im ohmarchy-Stil",
-    "splitHandle": "Trennlinie zwischen paper und ohmarchy verschieben",
-    "splitValue": "{paper} % paper, {ohmarchy} % ohmarchy",
+    "splitHandle": "Trennlinie zwischen oh und ohmarchy verschieben",
+    "splitValue": "{paper} % oh, {ohmarchy} % ohmarchy",
     "explorerLead": "Die Demo in jedem Omarchy-Theme",
     "explorerDefault": "ohmail-Standard"
   },
@@ -4008,6 +4012,7 @@
     "placed": "Erste Nachricht ausgewählt. Noch einmal drücken: {label}"
   },
   "viewError": {
+    "loading": "Diese Ansicht wird geladen…",
     "updated": "ohmail wurde aktualisiert. Neu laden, um weiterzumachen.",
     "loadFailed": "Dieser Teil von ohmail konnte nicht geladen werden. Prüfe die Verbindung und versuche es erneut.",
     "tryAgain": "Erneut versuchen",
@@ -4050,6 +4055,8 @@
     "blocked_read_limited": "ohmail hat gelesen, was möglich war; der Server dieses Postfachs hat mehr geschickt, als ein Durchgang aufnehmen kann. Es versucht es wieder.",
     "blocked_clock_off": "Wird nicht synchronisiert — die Uhr dieses Rechners weicht zu stark von der des Mailservers ab, als dass ohmail dieses Postfach sicher organisieren könnte. Stell die Uhr richtig; ohmail macht dann von selbst weiter.",
     "blocked_account_closed": "Wird nicht synchronisiert: Das Abo dieses Accounts ist beendet. Das Postfach bleibt unangetastet; die Synchronisierung startet wieder, sobald der Account aktiv ist.",
+    "notice_provider_unavailable": "Der Mailserver hat ohmail gebeten zu warten.",
+    "notice_mailbox_full": "Das Postfach ist voll.",
     "blocked_provider_unavailable": "Wird gerade nicht synchronisiert — der Mailserver hat ohmail gebeten zu warten. Es versucht es von selbst wieder.",
     "blocked_meta_folder_full": "Wird nicht synchronisiert — der Ordner ohmail/_meta auf diesem Server enthält mehr Nachrichten, als ohmail lesen kann. Verschiebe dort abgelegte Mails in einen anderen Ordner und lass die Nachrichten von ohmail stehen (ihr Betreff beginnt mit „ohmail“). ohmail macht dann von selbst weiter.",
     "blocked_meta_undeletable": "Wird nicht synchronisiert — der Mailserver lässt ohmail seine eigenen Nachrichten in ohmail/_meta nicht entfernen. Gib diesem Ordner die Berechtigung zum Löschen oder frag deinen Anbieter. ohmail macht dann von selbst weiter.",
@@ -4166,6 +4173,14 @@
     "waitingUnreachableUntil": "Dein Mailserver war nicht erreichbar, deshalb liegt noch keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; ohmail versucht es bis {time} erneut."
   },
   "screening": {
+    "cardSeeAll": "Alle ansehen",
+    "cardNowIn": "Jetzt in {place}",
+    "cardNowSpread": "Jetzt an {count, plural, one {einem Ort} other {# Orten}}",
+    "cardGoesTo": "Geht nach",
+    "cardScreenOut": "Aussortieren",
+    "cardFuture": "Regel für künftige Nachrichten",
+    "cardExisting": "Vorhandene Nachrichten verschieben",
+    "cardSubject": "Regel für einen Betreff",
     "scopeShared": "{domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.",
     "action": "Einordnen",
     "openFor": "{sender} einordnen",
@@ -6157,6 +6172,10 @@
         "since": "Offline seit {time, date, ::HHmm}",
         "sinceDay": "Offline seit {time, date, ::MMMd}"
       },
+      "mailboxFailed": {
+        "title": "Ein Postfach konnte nicht synchronisiert werden",
+        "named": "{address} konnte nicht synchronisiert werden"
+      },
       "mailServerDown": {
         "title": "Mailserver nicht erreicht",
         "named": "{address} nicht erreicht"
@@ -6181,8 +6200,8 @@
       },
       "firstSync": {
         "title": "Erste Synchronisierung",
-        "count": "Erste Synchronisierung, {count, number} bisher",
-        "of": "Erste Synchronisierung, {count, number} von {total, number}"
+        "count": "{count, number} bisher",
+        "of": "{count, number} von {total, number}"
       },
       "filing": {
         "title": "Wird auf deinem Mailserver einsortiert",
@@ -6231,6 +6250,7 @@
     }
   },
   "later": {
+    "summary": "{count, number} zu beantworten",
     "title": "Später antworten",
     "empty": "Nichts zum späteren Antworten",
     "switch": {
@@ -6259,10 +6279,12 @@
     }
   },
   "parked": {
+    "summary": "{count, number} geparkt",
     "title": "Geparkt",
     "empty": "Nichts geparkt"
   },
   "resurface": {
+    "summary": "{count, plural, one {# kommt zurück} other {# kommen zurück}}",
     "title": "Wieder auftauchen",
     "empty": "Nichts, was wieder auftauchen soll"
   },
@@ -6612,6 +6634,8 @@
     },
     "fault": {
       "signInRefused": "Diese Anmeldung wurde nicht angenommen. iCloud braucht ein App-spezifisches Passwort, erstellt bei Apple, nicht das Passwort des Accounts.",
+      "signInRefusedCaldav": "Der Server hat den Benutzernamen und das Passwort nicht angenommen. Prüfe beides und die Serveradresse.",
+      "signInRefusedIcs": "Der Feed verlangt eine Anmeldung.",
       "signInAgain": "Die Anmeldung gilt nicht mehr. Melde dich neu an.",
       "forbidden": "Dieser Account darf die Kalender des Servers nicht lesen.",
       "notFound": "Unter dieser Adresse wurde kein Kalender gefunden.",
@@ -6699,6 +6723,16 @@
     }
   },
   "calmail": {
+    "inviteGuest": "{name} einladen",
+    "confirmGuest": "Eine Einladung an {name} senden?",
+    "cancelGuest": "Abbrechen",
+    "sendGuest": "Einladung senden",
+    "removeGuest": "Gast entfernen",
+    "comingHeading": "Demnächst",
+    "allEvents": "Alle Termine",
+    "newEvent": "Neuer Termin",
+    "fromMail": "Aus E-Mails",
+    "guest": "Gast: {name}",
     "today": "Heute",
     "now": "jetzt",
     "allDay": "ganztägig",
@@ -6710,6 +6744,9 @@
   "calendar": {
     "connect": "Einen Kalender verbinden",
     "actions": {
+      "resizeStart": "Ersten Tag ändern",
+      "resizePreview": "{first} – {last} · {title}",
+      "resizeEnd": "Letzten Tag ändern",
       "delete": "Löschen",
       "moveTo": "Verschieben nach",
       "whichMove": "Welche Termine sollen verschoben werden?",
@@ -6732,7 +6769,12 @@
         "yearlyWeekday": "Jedes Jahr am {ordinal} {weekday} im {month}"
       }
     },
+    "draft": {
+      "discarded": "Verworfen",
+      "undo": "Rückgängig"
+    },
     "edit": {
+      "save": "Speichern",
       "whichEvents": "Welche Termine ändern sich?",
       "thisEvent": "Dieser Termin",
       "following": "Dieser und folgende",
@@ -6749,6 +6791,8 @@
       "discard": "Änderungen verwerfen"
     },
     "create": {
+      "endDate": "Enddatum",
+      "nextDay": "nächster Tag",
       "title": "Neuer Termin",
       "name": "Termintitel",
       "date": "Datum",
@@ -6887,13 +6931,19 @@
     "subjectReplySample": "Re: Glasurbestellung Nr. 2291",
     "picture": {
       "title": "Ohbox",
-      "first": "Giulia Ferrari",
+      "first": "Anna Berger",
       "firstTime": "09:12",
-      "second": "Petra Wyss",
+      "second": "Tom Keller",
       "secondTime": "08:47"
     }
   },
   "settingsNotifications": {
+    "on": "An",
+    "off": "Aus",
+    "ohbox": "Ohbox",
+    "screener": "Screener",
+    "scheduled": "Geplant",
+    "devices": "Geräte",
     "about": "Benachrichtigen bei",
     "blocked": "Blockiert",
     "calendar": "Kalender",

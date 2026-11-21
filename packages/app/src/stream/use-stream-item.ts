@@ -28,6 +28,31 @@ export function useStreamItem(
       return () => flight?.cancel();
     }
   }, [whole]);
+  useLayoutEffect(() => {
+    const body = card.current?.querySelector<HTMLElement>(".oh-message-clip");
+    if (!whole || !body || typeof ResizeObserver !== "function") return;
+    let height = body.clientHeight;
+    let contentHeight = body.scrollHeight;
+    let flight: Animation | null = null;
+    const observer = new ResizeObserver(() => {
+      const nextContent = body.scrollHeight;
+      if (nextContent === contentHeight) return;
+      contentHeight = nextContent;
+      const nextHeight = nextContent;
+      if (Math.abs(nextHeight - height) > motionPx(body, "--stream-clip-motion-threshold")) {
+        flight = animate(body, "in", {
+          ease: "--e-move",
+          keyframes: [{ maxHeight: `${height}px` }, { maxHeight: `${nextHeight}px` }],
+        });
+      }
+      height = nextHeight;
+    });
+    observer.observe(body);
+    return () => {
+      observer.disconnect();
+      flight?.cancel();
+    };
+  }, [whole]);
   const fold = (): void => {
     const body = card.current?.querySelector<HTMLElement>(".oh-message-clip");
     clipFrom.current = body && !motionReduced(body) ? body.clientHeight : null;

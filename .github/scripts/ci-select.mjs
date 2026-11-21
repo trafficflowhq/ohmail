@@ -4,11 +4,11 @@
  * bot's pull request, a pull request into any branch but main and next, and any diff that touches the harness
  * (into next, only what decides which files run: THE JUDGE below). Verbs:
  *
- *   scope    whole or selected, from the event and the diff (git diff HEAD^1 HEAD on the merge commit).
+ *   scope    whole, selected or build-only, from the event and the diff (git diff HEAD^1 HEAD on the merge commit).
  *            Node built-ins only: no module of the tree it judges is loaded before it decides.
  *   select   the selected files and their jobs (vitest's module graph, the readers' named paths, the
  *            measured costs in test/support/ci-costs.json), written to --out. Any failure leaves it whole.
- *   outputs  the plan job's outputs; whole unless a valid selected plan is handed to it.
+ *   outputs  the plan job's outputs; whole unless the scope is build-only or a valid selected plan is handed to it.
  *   floor    the floor of a pull request into next, one file per line, from the readers alone (vitest is
  *            not loaded); --local leaves out the bundle readers and the files that run alone.
  *
@@ -790,13 +790,17 @@ export function pathTriggers(root, changes, { direct = false, base = null, head 
 const capReason = (capped) => `${capped[0].p}: ${capped[0].what}${capped.length > 1 ? ` (and ${capped.length - 1} more)` : ""}`;
 
 /**
- * Whole or selected, and why. `changes` overrides the diff (a test hook), `base` and `head` the two sides the
+ * The run's scope and why. `changes` overrides the diff (a test hook), `base` and `head` the two sides the
  * harness admission reads for a direct base: by default the merge commit's first parent and the checkout,
  * and no base at all beside an overridden diff, which then admits nothing.
  */
 export function decideScope({ root = ROOT, ctx, changes = null, base = null, head = null }) {
   const ev = eventWhole(ctx);
   if (ev) return { scope: "whole", why: ev };
+  const pr = ctx.event.pull_request;
+  if (pr.base.ref === "next" && String(pr.head.ref).startsWith("pr/round-")) {
+    return { scope: "build-only", why: "The round lands on the batch build. The whole suite runs after landing." };
+  }
   let list = changes;
   if (!list) {
     try { list = readDiff(root, ctx); } catch { return { scope: "whole", why: "the diff cannot be read" }; }
@@ -1353,7 +1357,7 @@ const RULES = ["changed", "graph", "root", "named", "tree", "area", "always", "s
  */
 export async function select({ root = ROOT, ctx, changes = null, graph = vitestGraph, costs = null, base = null, head = null } = {}) {
   const scope = decideScope({ root, ctx, changes, base, head });
-  if (scope.scope !== "selected") return { scope: "whole", why: scope.why };
+  if (scope.scope !== "selected") return scope;
   const harness = scope.harness ?? [];
   const cs = await import(new URL("../../test/support/ci-shards.mjs", import.meta.url).href);
   const { relativeImports } = await import(new URL("../../test/support/service-needs.mjs", import.meta.url).href);
@@ -1517,12 +1521,13 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
 
 /* ── OUTPUTS ───────────────────────────────────────────────────────────────────────────────────── */
 
-/** The plan job's outputs: the selected plan when it is handed and sound, else the whole run. */
+/** The plan job's outputs: build-only, a sound selected plan, or the whole run. */
 export function composeOutputs({ indexes, sqliteIndexes, alone, scope = "", scopeWhy = "", selectOutcome = "", plan = null }) {
   const whole = (why) => ({
     scope: "whole", why,
     shards: indexes.map((shard) => ({ shard })), alone, sqlite: sqliteIndexes.map((shard) => ({ shard })), summary: null,
   });
+  if (scope === "build-only") return { scope, why: scopeWhy, shards: [], alone: [], sqlite: [], summary: null };
   if (scope !== "selected") return whole(scopeWhy || "the scope step said nothing");
   if (selectOutcome !== "success") return whole(`the selector did not finish (${selectOutcome || "skipped"})`);
   if (!plan) return whole("the selector wrote no plan");

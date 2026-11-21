@@ -191,7 +191,7 @@ describe("the sender sheet's count is the same reading", () => {
 
     await withMountedSender(async ({ sheet, writes, id }) => {
       await clickMounted(sheet.getByRole("radio", { name: /^Everyone at sender\.example/ }));
-      await clickMounted(sheet.getByRole("option", { name: /^News/ }));
+      await clickMounted(sheet.getByRole("radio", { name: /^News/ }));
       await tickWeb(500);
       expect(writes.filter(({ path }) => path.endsWith("/move")).map(({ path }) => path)).toEqual([
         `/api/messages/${id}/move`,
@@ -205,7 +205,7 @@ describe("the sender sheet's count is the same reading", () => {
 
     for (const refused of [true, false]) {
       await withMountedSender(async ({ sheet, writes, id }) => {
-        await clickMounted(sheet.getByRole("option", { name: /^News/ }));
+        await clickMounted(sheet.getByRole("radio", { name: /^News/ }));
         await tickWeb(UNDO_MS + 500);
         expect(writes.filter(({ path }) => path.endsWith("/move")).map(({ path }) => path)).toEqual([
           `/api/messages/${id}/move`,

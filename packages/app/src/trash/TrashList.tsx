@@ -7,13 +7,14 @@ import { trashLiveKeyOf, useTrashModel, type TrashModel } from "@ohmail/app-logi
 import { Button, Empty, RefusalLine } from "@ohmail/ui/base";
 import { GroupHeading, ListHead, ListLine, Row, Rows } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
-import { ListColumn } from "../place-list/index.js";
+import { ListColumn, ListMenu } from "../place-list/index.js";
 import { useCursorWindow } from "../place-list/cursor-window.js";
 import { useText, type Text } from "../text/index.js";
 
 import { SelectionFoot } from "../place-list/SelectionFoot.js";
 import { useRowContact, type RowContact } from "../place-list/use-row-contact.js";
 import { useRowSelection } from "../place-list/use-row-selection.js";
+import "./trash.css";
 
 export function TrashList({ plan }: PaneProps) {
   const model = useTrashModel();
@@ -40,7 +41,7 @@ export function TrashList({ plan }: PaneProps) {
   );
   const selected = page.items.findIndex((row) => row.id === model.cursor);
   const { scroller, window } = useCursorWindow(page.items.length, selected, model.cursor);
-  const head = <ListHead title={t("title")} />;
+  const head = <ListHead title={t("title")} aside={<ListMenu label={t("listMenu")} mail />} />;
   return (
     <ListColumn foot={foot} head={head} plan={plan} cursor={model.cursor} scrollerRef={scroller}>
       {!page.available ? <Empty label={t("unavailable")} /> : null}
@@ -97,7 +98,7 @@ export function TrashList({ plan }: PaneProps) {
       {model.deletedEmpty ? (
         <>
           <Empty label={t("emptyTitle")} />
-          <ListLine fine>{t("empty")}</ListLine>
+          <p className="trash-detail">{t("empty")}</p>
         </>
       ) : null}
       {page.available && page.loading && page.items.length === 0 ? (
@@ -109,7 +110,7 @@ export function TrashList({ plan }: PaneProps) {
         </Button>
       ) : null}
       {page.available && !page.loading && page.error === null ? (
-        <ListLine fine>{t(model.live.shown ? "footLive" : "foot")}</ListLine>
+        <p className="trash-detail">{t(model.live.shown ? "footLive" : "foot")}</p>
       ) : null}
       {model.live.shown ? <LiveSection model={model} t={t} contact={contact} /> : null}
       {contact.card}
@@ -130,9 +131,12 @@ function LiveSection({ model, t, contact }: { model: TrashModel; t: Text; contac
   };
   const state = live.state.state;
   return (
-    <section aria-label={t("liveHead")}>
+    <section className="trash-provider" aria-label={t("liveHead")}>
       {/* A count only once the last page is read: with older rows to read, the heading says no number. */}
-      <GroupHeading count={live.count === undefined ? undefined : String(live.count)}>
+      <GroupHeading
+        count={live.count === undefined ? undefined : String(live.count)}
+        tag={t("liveReadOnlyTag")}
+      >
         {t("liveHead")}
       </GroupHeading>
       {state === "rows" ? (

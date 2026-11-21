@@ -42,7 +42,7 @@ export function useTagSummary(): PaneSummary | null {
     [engine, version],
   );
   if (!tags) return null;
-  if (tags.length === 0) return { detail: t("tagsEmpty") };
+  if (tags.length === 0) return { detail: t("tagsNone") };
   return {
     count: new Intl.NumberFormat(locale).format(tags.length),
     detail: tags.map((tag) => tag.name).join(" · "),

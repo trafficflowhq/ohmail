@@ -572,7 +572,8 @@ describe("SURFACE 4 — the restore card names the phone that saved the settings
         </NextIntlClientProvider>
       ));
       await tick(2500);
-      check(within(host).getByRole("region", { name: messages.profileImport.title }));
+      const offer = await vi.waitFor(() => within(host).getByRole("region", { name: messages.profileImport.title }));
+      check(offer);
     } finally {
       await teardownConfirmEnv();
       window.history.replaceState(null, "", "/");

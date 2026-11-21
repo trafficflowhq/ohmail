@@ -7,7 +7,7 @@ import { queryByRole, within } from "@testing-library/react";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
-import { openSubject as subjectOpen } from "./ohbox/_finders.js";
+import { ohboxRows, openSubject as subjectOpen } from "./ohbox/_finders.js";
 
 /**
  * AN OPEN IS TIMED FROM ITS OWN PRESS, THROUGH THE WHOLE SHELL. The pane ends the mark in a
@@ -81,7 +81,7 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
 }
 
 beforeEach(() => {

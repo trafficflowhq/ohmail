@@ -28,6 +28,7 @@ const chunks = vi.hoisted(() => ({ settingsFails: 0, settingsLoads: 0, settingsT
 
 const settingsChunk = vi.hoisted(() => async () => {
   chunks.settingsLoads += 1;
+  await pendingSettings;
   if (chunks.settingsFails > 0) {
     chunks.settingsFails -= 1;
     throw new Error("Loading chunk settings failed");
@@ -71,6 +72,7 @@ const LOAD_FAILED = messages.viewError.loadFailed;
 const CRASH_TITLE = messages.viewError.title;
 
 let roots: Root[] = [];
+let pendingSettings: Promise<void> | undefined;
 
 beforeEach(() => {
   window.location.hash = "";
@@ -113,6 +115,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
+  pendingSettings = undefined;
 });
 
 /** Bounded by the clock, not by ticks: a fresh module graph imports the editor for real. */
@@ -171,8 +174,8 @@ describe("Settings, whose chunk failed once", { timeout: 30_000 }, () => {
 
   it("the next open of Settings asks for the chunk again and shows Settings", async () => {
     await shellOnDocument();
-    expect(chunks.editorLoads, "the writing editor is still waiting on a network import").toBe(1);
-    expect(chunks.letterLoads, "the writing view is still waiting on a network import").toBe(1);
+    expect(chunks.editorLoads, "the editor is ready with the Ohbox").toBe(1);
+    expect(chunks.letterLoads, "the writing view is ready with the Ohbox").toBe(1);
     chunks.settingsFails = 1;
     await goTo("settings");
     await waitFor(() => chunks.settingsLoads >= 1 && (alertText() !== "" || crashCard()), "the failed open painted nothing");
@@ -186,8 +189,15 @@ describe("Settings, whose chunk failed once", { timeout: 30_000 }, () => {
 
   it("a failed open says so, offers Try again, and the press shows Settings", async () => {
     await shellOnDocument();
+    let finish!: () => void;
+    pendingSettings = new Promise<void>((resolve) => { finish = resolve; });
     chunks.settingsFails = 1;
     await goTo("settings");
+    try {
+      expect(Array.from(document.querySelectorAll('[role="status"]'), (status) => status.textContent)).toContain(messages.viewError.loading);
+    } finally {
+      await act(async () => { finish(); pendingSettings = undefined; });
+    }
     await waitFor(() => alertText() !== "" || crashCard(), "the failed open painted nothing");
     expect(crashCard(), "a chunk that did not load crashed the view").toBe(false);
     expect(alertText()).toContain(LOAD_FAILED);

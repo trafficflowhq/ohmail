@@ -21,7 +21,7 @@ journeysOf("settings-away", () => {
     const { person } = await openPane(b, "settings-away", "away-switch");
     await person.act("type", "away-message", { value: "Back on Monday." });
     await person.act("press", "away-switch");
-    await person.reads("away.unsavedStillOff");
+    await person.reads(["settings.notSaved", "away.unsavedStillOff"]);
   });
   journey(GUARDS[PANE.length + 1]!, async (b) => {
     const { person } = await openPane(b, "settings-away", "away-switch");

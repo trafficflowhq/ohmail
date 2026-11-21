@@ -40,17 +40,19 @@ export function useWakeAtBoot(): void {
   const body = t.has(WORDS) ? t(WORDS) : "";
   const worded = body !== "";
   const notifications = host.device.notifications;
+  const scope = host.session.scope;
+  const account = host.session.account;
   /* What an effect reads when it runs: the doors and the words as they stand then. Neither is a reason to run. */
   const now = useRef({ notifications, body });
   now.current = { notifications, body };
   useEffect(() => {
     if (demo || !worded) return;
     const doors = now.current.notifications;
-    if (doors !== NONE) void doors.reconcile?.(now.current.body);
-  }, [demo, worded]);
+    if (doors !== NONE) void doors.reconcile?.(now.current.body, scope);
+  }, [demo, worded, scope, account]);
   useEffect(() => {
     if (demo || !worded) return;
     const doors = now.current.notifications;
-    if (doors !== NONE) void doors.relabel?.(TITLE, body);
-  }, [demo, worded, body]);
+    if (doors !== NONE) void doors.relabel?.(TITLE, body, scope);
+  }, [demo, worded, body, scope, account]);
 }

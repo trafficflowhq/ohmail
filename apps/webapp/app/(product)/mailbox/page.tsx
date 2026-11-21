@@ -4,7 +4,7 @@ import { DEFAULT_LOCALE } from "../../shell/locale";
 import { NoPageRoute } from "../NoPageRoute";
 import { SETTINGS_HANDOFF, settingsReference } from "../../settings-handoff";
 import { SettingsHandoffGate } from "./SettingsHandoffGate";
-import { CloudShell } from "./CloudShell";
+import { CloudShell, WakeMailboxEntry } from "./CloudShell";
 import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-mode";
 
 /**
@@ -26,6 +26,7 @@ export default async function Page(props: { searchParams?: Promise<SearchParamsL
   if (searchParams && Object.hasOwn(searchParams, SETTINGS_HANDOFF)) {
     return <SettingsHandoffGate key={String(searchParams[SETTINGS_HANDOFF])} reference={settingsReference(searchParams[SETTINGS_HANDOFF]) ?? ""} />;
   }
+  const wakeEntry = searchParams !== undefined && Object.hasOwn(searchParams, "wake");
   const serverDemo = isDemoBuild(process.env) || isDemoRequested(searchParams);
   const apiConfigured = Boolean(process.env.NEXT_PUBLIC_API_BASE);
 
@@ -35,6 +36,7 @@ export default async function Page(props: { searchParams?: Promise<SearchParamsL
   // The edge's word for the first frame. Only the exact word `now` draws a remembered mailbox before the browser's own
   // session check; absent, forged or unknown is `wait` (`middleware.ts` deletes any the client sent).
   const drawMail = (await headers()).get("x-ohmail-first-page") === "now" ? "now" : "wait";
+  if (wakeEntry && apiConfigured) return <WakeMailboxEntry />;
   if (serverDemo || apiConfigured) return <CloudShell demo={serverDemo} drawMail={drawMail} />;
 
   /* English explicitly — the request config resolves `requestLocale` since the bilingual

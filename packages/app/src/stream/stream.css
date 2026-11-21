@@ -52,12 +52,6 @@
   container: stream-card / inline-size;
 }
 
-.st-read-rule {
-  margin: 0;
-  padding: var(--s2) var(--s3) var(--s3) var(--flush);
-  color: var(--ink2);
-}
-
 .st-receipt-amount {
   float: inline-end;
   margin-inline-start: var(--s4);

@@ -61,6 +61,7 @@ export {
   type ProdSetupReport, type JournalStatus, type JournalMismatch, type AppliedRows,
   type AppliedWhens, type ProdSetupOptions,
 } from "./setup-prod.js";
+export { printSetupReport, setupTargetOf, storeKindOf } from "./setup-prod-command.js";
 /**
  * THE LOCK'S STEP AND ITS CENSUS: what the setup runs where the runtime logins exist, and the
  * read-only comparison of the catalog with the list. Provisioning only: no request runs them.

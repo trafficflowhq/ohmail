@@ -249,6 +249,7 @@ export function senderScreening(
   placeOf?: ReadonlyMap<string, Folder | null>,
   /** The rules a press plans over (`pressRules`); absent, the local rows. */
   over?: readonly RuleDTO[],
+  options?: { readonly mailbox: "seed" },
 ): SenderScreening | null {
   const seed = reader.get<EngineMessage>("message", messageId);
   if (!seed) return null;
@@ -261,6 +262,7 @@ export function senderScreening(
   const mine: EngineMessage[] = [];
   const theirs: EngineMessage[] = [];
   for (const m of reader.list<EngineMessage>("message")) {
+    if (options && (m.mailboxId !== seed.mailboxId || m.accountId !== seed.accountId)) continue;
     const k = senderKey(m.from.address);
     if (k === key) mine.push(m);
     // `domain !== ""` guards the malformed-address case: without it every address with no `@`

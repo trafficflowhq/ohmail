@@ -173,7 +173,7 @@ export interface ProdSetupReport {
    * an answer that proves nothing (an unreachable endpoint, a rate limit, a key the gateway
    * rejected before any table was consulted). See `classifyDataApiResponse`.
    */
-  supabaseDataApi: {
+  dataApi: {
     /** The base URL probed. */
     endpoint: string;
     /** `true` when this run PATCHed the endpoint's exposed schemas; `false` when it only probed. */
@@ -729,7 +729,7 @@ export async function setupProdDatabase(
     // exists by now and its grants are already revoked, so a 2xx is a live exposure, not a race
     // with our own migration.
     const dataApiProblemLines: string[] = [];
-    let supabaseDataApi: ProdSetupReport["supabaseDataApi"] = null;
+    let dataApi: ProdSetupReport["dataApi"] = null;
     if (hostRoles.length > 0) {
       const policy = opts.dataApi;
       if (!policy) {
@@ -792,7 +792,7 @@ export async function setupProdDatabase(
             const live = await publicRelationNames(client);
             const tables = [...new Set([...live, ...SENSITIVE_PROBE_TABLES])].sort();
             const probe = await probeDataApi(policy.target, tables, deps);
-            supabaseDataApi = {
+            dataApi = {
               endpoint: probe.endpoint,
               endpointClosed,
               probed: probe.probed.length,
@@ -916,7 +916,7 @@ export async function setupProdDatabase(
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
       fuzzy,
       supabaseLockdown,
-      supabaseDataApi,
+      dataApi,
       roleDefaults,
       ...(lock.report ? { lock: lock.report } : {}),
     };

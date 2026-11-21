@@ -864,7 +864,6 @@ export function ReadsView({
             row(m, seenBase + seenFrom + k, { size: partition.seen.length, position: seenFrom + k + 1 }))}
         </ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
-        <div className="tail-row">{t("tail")}</div>
       </ListPane>
 
       <StreamShell
@@ -918,12 +917,6 @@ export function ReadsView({
             {stream.padBottomPx > 0 ? (
               <div aria-hidden data-stream-tail style={{ height: stream.padBottomPx }} />
             ) : null}
-            {/* The end-of-pile line is a CLAIM ("that's everything"), so it is only made while the
-                pile's last card is actually mounted above it. */}
-            {/* "That's everything" is the same claim in the tail's voice — withheld on the same
-                reading, or a mirror mid-import ends its stream at nothing and says so. */}
-            {stream.end >= all.length && countWhen({ settled, count: all.length, pending: owed }, true)
-              ? <div className="tail-row">{t("streamTail")}</div> : null}
           </>
         ) : null}
       </StreamShell>

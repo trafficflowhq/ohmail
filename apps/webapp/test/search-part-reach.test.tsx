@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/react";
-import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
+import { enterSearchRoute, RegisteredSearch, findSearchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -87,6 +87,7 @@ async function reach(query: string, parts: Parts, locale: "en" | "de" = "en"): P
   await act(async () => {
     root.render(<RegisteredSearch engine={engine} now={NOW} locale={locale} catalogue={catalogue} />);
   });
+  await findSearchField(host);
   await act(async () => { typeSearch(host, query); });
   await act(async () => { await new Promise((r) => setTimeout(r, 320)); });
   return within(host).queryAllByText(catalogue.search.saidPart).map((e) => e.textContent!.trim());

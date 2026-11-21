@@ -112,7 +112,9 @@ function Heads({
           onClick={onDayPress ? () => onDayPress(d.id) : undefined}
         >
           <span className="oh-tg-wd">{d.weekday}</span>
-          <span className="oh-tg-dn">{d.date}</span>
+          <span className="oh-tg-dn" data-today-pulse-target={d.today ? "badge" : undefined}>
+            {d.date}
+          </span>
         </button>
       ))}
     </div>
@@ -238,7 +240,13 @@ export function TimeGrid(props: TimeGridProps) {
     >
       {heads ? <Heads days={days} crease={crease} onDayPress={props.onDayPress} /> : null}
       {allDay}
-      <div className="oh-tg-scroll" ref={scrollRef} onScroll={onScroll} {...scrollGestures}>
+      <div
+        className="oh-tg-scroll"
+        data-today-scroll=""
+        ref={scrollRef}
+        onScroll={onScroll}
+        {...scrollGestures}
+      >
         <Edge side="above" days={days} crease={crease} />
         <div className="oh-tg-grid">
           <div className="oh-tg-axis">

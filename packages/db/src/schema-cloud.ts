@@ -781,14 +781,7 @@ export const mailboxOauthCeremonies = pgTable("mailbox_oauth_ceremonies", {
  * protect the SHARED client id. No `mailbox_id`.
  */
 export const mailboxOauthDeviceCeremonies = pgTable("mailbox_oauth_device_ceremonies", {
-  /**
-   * 256-bit random, base64url — MINTED BY US, and never the `device_code`.
-   *
-   * This is the handle the operator's browser polls with, so it travels in request bodies and sits
-   * in a client's memory. The `device_code` is the credential and stays sealed in this row: a
-   * design that used it as the poll handle would put a bearer credential in every poll body and in
-   * whatever logs the operator's reverse proxy keeps.
-   */
+  /** Digest of the browser handle, account and session. The provider code stays sealed separately. */
   state: text("state").primaryKey(),
   accountId: uuid("account_id").notNull().references(() => accounts.id),
   /** Today only `"microsoft"`. Stored so a second provider needs no column. */

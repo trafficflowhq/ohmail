@@ -93,7 +93,8 @@ describe("the week", () => {
     });
     const pill = block(/Makersfest, all day/);
     expect(pill.style.gridColumn).toBe("5 / 8");
-    expect(screen.getByText("all day")).toBeTruthy();
+    expect(screen.queryByText("all day")).toBeNull();
+    expect(screen.getByRole("group", { name: "all day" }).contains(pill)).toBe(true);
   });
 
   it("the open event is drawn open, and an event of a view-only calendar has no handles", () => {
@@ -180,7 +181,8 @@ describe("the week", () => {
       },
       "de",
     );
-    expect(screen.getByText("ganztags")).toBeTruthy();
+    expect(screen.queryByText("ganztags")).toBeNull();
+    expect(screen.getByRole("group", { name: "ganztags" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Zahnarzt, 09:00 bis 10:00" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Donnerstag, 19. November 2026" })).toBeTruthy();
   });

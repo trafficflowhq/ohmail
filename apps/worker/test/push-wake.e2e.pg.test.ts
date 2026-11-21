@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -601,7 +601,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     }
   }, 60_000);
 
-  it("BROWSER ARM — a `webpush` registration is DIALLED, and its wake decrypts to the constant", async () => {
+  it("BROWSER ARM — a `webpush` registration is DIALLED, and its wake decrypts to the session binding", async () => {
     /**
      * THE ROWS THAT WERE STORED AND NEVER DIALLED.
      *
@@ -615,7 +615,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * This is the guard for the predicate. It is deliberately an END-TO-END assertion rather than
      * a unit test of the WHERE clause: what matters is not that the query mentions a string, but
      * that a real registration made the way a browser makes it results in a real POST carrying the
-     * real constant. A test that asserted the predicate's text would pass on a sender that dialled
+     * real browser binding. A test that asserted the predicate's text would pass on a sender that dialled
      * nothing.
      *
      * The keys are not optional here the way they are for a connector: a browser subscription
@@ -624,6 +624,12 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      */
     const l = await listener();
     const accountId = await anAccount();
+    const familyId = randomUUID();
+    const [user] = await db.insert(users).values({ accountId, email: `wake-${randomUUID()}@example.invalid` }).returning();
+    const [session] = await db.insert(sessions).values({
+      accountId, userId: user!.id, familyId,
+      accessExpiresAt: new Date(Date.now() + 3_600_000), refreshExpiresAt: new Date(Date.now() + 3_600_000),
+    }).returning({ id: sessions.id });
     const endpoint = `${l.origin}/wp/${randomUUID()}`;
     const sub = makeSubscriber();
 
@@ -631,7 +637,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const push = makePushService({ endpointGuard: guard });
 
     // Registration exactly as a browser makes it: the three values `PushSubscription` yields.
-    const reg = await push.subscribe(ctxFor(accountId), {
+    const reg = await push.subscribe(ctxFor(accountId, session!.id), {
       transport: "webpush", endpoint, p256dh: sub.p256dh, auth: sub.auth,
     });
     expect(reg.transport).toBe("webpush");
@@ -667,15 +673,22 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
       ).toBeGreaterThanOrEqual(1);
 
       const c = l.captured[0]!;
-      // Sealed to THIS browser, and it opens to the same fifteen bytes as every other arm.
+      // Sealed to this browser, with the exact binding for the family that registered it.
       expect(c.headers["content-encoding"]).toBe("aes128gcm");
-      expect(openAes128Gcm(c.raw, sub).toString("utf8")).toBe(WAKE_BODY);
+      const plaintext = openAes128Gcm(c.raw, sub).toString("utf8");
+      expect(JSON.parse(plaintext)).toEqual({
+        type: "wake",
+        binding: createHash("sha256").update(JSON.stringify([accountId, familyId])).digest("hex"),
+      });
       expect(() => openAes128Gcm(c.raw, makeSubscriber())).toThrow();
 
       // Still content-free: widening WHICH rows are dialled must not widen WHAT is sent.
       expect(c.url).toBe(new URL(endpoint).pathname);
       const whole = `${c.url}\n${JSON.stringify(c.headers)}\n${c.raw.toString("binary")}`;
-      expect(whole).not.toContain(accountId);
+      for (const identity of [accountId, familyId]) {
+        expect(whole).not.toContain(identity);
+        expect(plaintext).not.toContain(identity);
+      }
       expect(whole).not.toContain(sub.auth);
 
       await waitFor(() => wake.sent() >= 1);

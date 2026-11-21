@@ -54,6 +54,7 @@ export interface ReaderEntry {
   /** The cached markup of a folded card, with remote pictures and reader actions unavailable. */
   readonly PreviewBody?: ComponentType<{ message: EngineMessage; children: ReactNode }>;
   readonly Screening?: ComponentType<ContactScreeningProps>;
+  readonly copy?: (text: string) => Promise<boolean>;
   /** The whole letter, with its pictures and files, inside a stream card the person opened. */
   readonly OpenCard?: ComponentType<{
     message: EngineMessage;

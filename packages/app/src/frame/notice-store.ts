@@ -93,6 +93,7 @@ export function createNoticeStore(): NoticeStore {
     id: noticeId(notice),
     rank: NOTICE_RANK[notice.kind],
     title: notice.title,
+    progress: notice.kind === "firstSync",
     hot: notice.hot,
     line: notice.line,
     acts: answers(feed, notice, at),

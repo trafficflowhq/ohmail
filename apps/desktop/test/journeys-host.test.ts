@@ -104,6 +104,15 @@ describe.skipIf(!ENABLED)("journeys · the paired page · H", () => {
     await person.arrive("settings");
     await person.see("menu-settings-general");
     const menu = await person.listed("settings-menu", "button");
+    expect([...menu].sort()).toEqual(HOST_PANES.map((id) => say(PLACES[`settings-${id}`].landmark.key)).sort());
+    await person.act("press", "menu-settings-notifications");
+    await person.see("notify-master");
+    await person.act("press", "menu-settings-rules");
+    await person.reads("rules.empty");
+    await person.act("press", "menu-settings-tags");
+    await person.see("tag-new");
+    await person.act("press", "menu-settings-signatures");
+    await person.see("signature-save");
     const record = process.env.TF_JOURNEYS_RECORD;
     if (record) {
       mkdirSync(join(record, "H"), { recursive: true });
@@ -120,7 +129,6 @@ describe.skipIf(!ENABLED)("journeys · the paired page · H", () => {
       }, null, 1));
       writeFileSync(join(record, "H", "settings.calls.json"), JSON.stringify([...new Set(asked)].sort(), null, 1));
     }
-    expect([...menu].sort()).toEqual(HOST_PANES.map((id) => say(PLACES[`settings-${id}`].landmark.key)).sort());
     expect(person.problems([/status of 40[14]/])).toEqual([]);
     await person.context.close();
   });

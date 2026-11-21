@@ -4,7 +4,6 @@ import { Dock, RailEntry, RailFoot, type DockPlace } from "@ohmail/ui/mail";
 import { accountsOf, newEventsCalendarOf, writableOf } from "@ohmail/app-logic/calendar/setup";
 import {
   dayOfIso,
-  hueOf,
   isoOfDay,
   nowIn,
   readerZones,
@@ -254,7 +253,7 @@ function useRailCalendars() {
       id: item.id,
       name: item.name,
       shown: item.shown,
-      tone: hueOf(item.color),
+      tone: mirror?.tones.get(item.id) ?? "neutral",
       switchLabel: ts("accounts.show", { name: item.name }),
       onToggle: setCalendar && ((shown) => saveCalendar(item.id, { shown })),
       defaultLabel: item.id === preferred?.id ? ts("accounts.newEventsHere") : undefined,

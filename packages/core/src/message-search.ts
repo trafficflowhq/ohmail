@@ -360,18 +360,27 @@ const BACKFILL = "search_index_backfill" as const;
  * `shard` is the caller's predicate over `accounts.id`.
  */
 export async function searchIndexOwedAccounts(
-  db: Tx, opts: { limit: number; shard?: SQL },
+  db: Tx, opts: { limit: number; shard?: SQL; forAccount?: (accountId: string) => Tx },
 ): Promise<string[]> {
-  const rows = await db.select({ id: accounts.id }).from(accounts)
+  if (opts.limit === 0) return [];
+  const query = db.select({ id: accounts.id }).from(accounts)
     .leftJoin(passProgress, onPass(BACKFILL, accounts.id))
     .where(and(
       markerOwed(db),
-      sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)`,
+      opts.forAccount === undefined ? sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)` : undefined,
       opts.shard,
     ))
-    .orderBy(accounts.id)
-    .limit(opts.limit);
-  return rows.map((r) => r.id);
+    .orderBy(accounts.id);
+  if (opts.forAccount === undefined) return (await query.limit(opts.limit)).map((row) => row.id);
+
+  const owed: string[] = [];
+  for (const { id } of await query) {
+    const [letter] = await opts.forAccount(id).select({ id: messages.id }).from(messages)
+      .where(and(eq(messages.accountId, id), isNull(messages.deletedAt))).limit(1);
+    if (letter) owed.push(id);
+    if (owed.length === opts.limit) break;
+  }
+  return owed;
 }
 
 /** Has this account's backfill finished? `false` for no mark or a failed read. */

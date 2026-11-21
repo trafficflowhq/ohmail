@@ -41,7 +41,7 @@ interface CalendarFrameHeadProps {
   settings: CalendarViewSettings;
   port: CalendarPort;
   monthRun: MonthRun | null;
-  onToday: () => void;
+  onToday: (top: number | undefined) => void;
 }
 
 export function CalendarFrameHead(props: CalendarFrameHeadProps) {
@@ -152,7 +152,9 @@ function headingOf(
     settings.weekNumbers && !phone && (place === "day" || place === "week")
       ? weekOf(dayNumberOf(anchor)!, settings.weekStart).week
       : null;
-  return { one, phone, hot, dated, single, title, shortTitle, weekNumber, visibleMonth };
+  const todayNumber =
+    single && !phone && hot ? new Intl.NumberFormat(locale).format(Number(today.slice(-2))) : undefined;
+  return { one, phone, hot, dated, single, title, shortTitle, todayNumber, weekNumber, visibleMonth };
 }
 
 function useCalendarHead({
@@ -171,15 +173,8 @@ function useCalendarHead({
   const t = useText("calendar");
   const locale = useLocale();
   const { place, anchor, today } = where;
-  const { one, phone, hot, dated, single, title, shortTitle, weekNumber, visibleMonth } = headingOf(
-    where,
-    plan,
-    panelOn,
-    settings,
-    monthRun,
-    locale,
-    t,
-  );
+  const heading = headingOf(where, plan, panelOn, settings, monthRun, locale, t);
+  const { one, phone, dated, single, visibleMonth } = heading;
   const [menu, setMenu] = useState<HeadMenu | null>(null);
   const openDate = () => setMenu("date");
   const dateAnchor = useRef<HTMLButtonElement>(null);
@@ -192,8 +187,9 @@ function useCalendarHead({
   };
   const step = (n: number) => jump(shifted(place, monthRun ? firstOfMonth(visibleMonth) : anchor, n, one));
   const todayNow = () => {
-    jump(null);
-    onToday();
+    const top = monthRun?.jump(today, "reveal-day");
+    toDate(null);
+    onToday(top);
   };
   const select = (view: CalendarPlaceId) => {
     if (view === place) return;
@@ -245,16 +241,11 @@ function useCalendarHead({
   const swipe = useCalendarSwipe((n) => toDate(addDays(anchor, 7 * n)));
 
   return {
+    ...heading,
     t,
     place,
     anchor,
     today,
-    dated,
-    phone,
-    hot,
-    title,
-    shortTitle,
-    weekNumber,
     menu,
     anchors: { date: dateAnchor, more: moreAnchor, views: viewsAnchor },
     openDate,
@@ -288,6 +279,7 @@ function calendarHeadBar(
     hot,
     title,
     shortTitle,
+    todayNumber,
     weekNumber,
     menu,
     anchors,
@@ -307,6 +299,7 @@ function calendarHeadBar(
     <CalendarHead
       title={title}
       shortTitle={shortTitle}
+      todayNumber={todayNumber}
       hot={dated && hot}
       away={!hot}
       switcher={plan.rail === "dock" ? <ProductSwitch kind="round" /> : undefined}
@@ -319,7 +312,12 @@ function calendarHeadBar(
             },
             before: { label: t("before"), onPress: () => step(-1) },
             after: { label: t("after"), onPress: () => step(1) },
-            today: { label: t("today"), keyHint: "t", onPress: todayNow },
+            today: {
+              label: t("today"),
+              keyHint: "t",
+              onPress: todayNow,
+              alwaysOnPhone: route.place === "day" || route.place === "week" || route.place === "month",
+            },
           }
         : {})}
       week={

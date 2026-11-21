@@ -13,7 +13,7 @@ import { heldRuleKey } from "../rule-twins.js";
 import { rulesList } from "../selectors.js";
 import { replaceRecordedSentFolders } from "../sent-folders.js";
 import {
-  encodeSeqCursor, MAILBOX_TYPE, MutationRejectedError,
+  encodeSeqCursor, MAILBOX_TYPE, MutationRejectedError, SyncAbortedError,
   type SyncChange,
 } from "../types.js";
 import { wireKindOf } from "./ceilings.js";
@@ -552,6 +552,7 @@ export abstract class EngineHydration extends EnginePastEnd {
           ...(cursor !== undefined ? { cursor } : {}), ...(this.types ? { types: this.types } : {}),
         }));
       } catch (err) {
+        if (err instanceof SyncAbortedError) throw err;
         if (applied) throw err; // unsound to fall back — see the note above
         // A TIMEOUT SAYS NOTHING ABOUT THE ROUTE: latched, a dead connection would put this tab on
         // the `since=0` replay for its life. The drive fails as a drain, and the next one asks again.

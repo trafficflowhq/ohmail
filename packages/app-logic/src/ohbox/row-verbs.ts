@@ -101,7 +101,8 @@ export function ohboxRowVerbs(
           },
           step: { up: stepUp, down: stepDown },
         };
-  const actOn = (g: OhboxRowGroup, action: MessageAction): void => onAction(action, g.openTarget);
+  const actOn: OhboxListModel["actOn"] = (g, action, ...moveSubject) =>
+    onAction(action, g.openTarget, ...moveSubject);
   const tagRow = (g: OhboxRowGroup, anchor: HTMLElement | null): void => onAddTag(g.openTarget.id, anchor);
   const tagPicked = (anchor: HTMLElement | null): void =>
     bulk.tag(pickedIds, anchor ?? input.anchors.pickTag());

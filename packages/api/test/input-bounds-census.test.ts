@@ -1405,6 +1405,12 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // `approveAuthorize`/`peekAuthorizeRequest` before `hashToken` runs over it, then matched by
   // equality against a stored hash — it reaches no `LIKE`, no ordering and no allocation.
   "routes/oauth.ts#request": "identifier",
+  // routes/settings-handoff.ts: mint calls isPane before encrypting. PANES contains only
+  // account, security, devices, storage and mailboxes.
+  "routes/settings-handoff.ts#settingsPane": "closed-set",
+  // routes/settings-handoff.ts: check matches 1–10 digits, an underscore and 40–700
+  // base64url characters, at most 711 characters altogether, before decrypting.
+  "routes/settings-handoff.ts#settingsHandoff": "identifier",
   "routes/snippets.ts#cursor": "identifier",
   "routes/snippets.ts#limit": "clamped",
   "routes/sync.ts#cursor": "length-capped",
@@ -1506,6 +1512,24 @@ describe("SECTION 2 — every query parameter this API reads has a stated bound"
       .sort();
     expect(drift, "the number of reads moved without the census moving").toEqual([]);
     expect(total).toBeGreaterThan(55);
+
+    // These reads share the session route. Pin the actual guard, including its placement before
+    // the key provider, so a census entry alone cannot pass over an unbounded reader.
+    const handoff = readFileSync(resolve(API_SRC, "routes/settings-handoff.ts"), "utf8");
+    expect(handoff, "the Settings pane vocabulary").toContain(
+      'const PANES = ["account", "security", "devices", "storage", "mailboxes"] as const;',
+    );
+    expect(handoff, "the Settings pane membership check").toContain(
+      'const isPane = (value: unknown): value is Pane => PANES.some((pane) => pane === value);',
+    );
+    expect(handoff, "the pane is refused before minting").toMatch(
+      /if \(!isPane\(pane\)\) return answer\(400, \{\}\);\s*const account = session\.accountId;\s*const \{ ciphertext, keyVersion \} = await deps\.keyProvider\.encrypt\(/,
+    );
+    expect(handoff, "the handoff reference is bounded before decrypting").toContain(String.raw`const match = /^(\d{1,10})_([A-Za-z0-9_-]{40,700})$/.exec(reference);
+  if (!match) return answer(410, {});`);
+    expect(handoff, "only validated reference captures reach the key provider").toContain(
+      'deps.keyProvider.decrypt(match[2]!, Number(match[1]))',
+    );
   });
 
   it("every `?limit=` in the table is CLAMPED, because that is the one this class started with", () => {
@@ -1731,6 +1755,11 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // the swept sessions of the at most REUSE_SWEEPS_MAX it keeps.
   "auth/auth-service.ts :: ackDevices": { origin: { bounded: "one per sweep row the listing read, `limit`ed by REUSE_SWEEPS_SCAN" }, count: 1 },
   "auth/auth-service.ts :: sweptSessions": { origin: { bounded: "the swept sessions of the at most REUSE_SWEEPS_MAX sweeps the listing keeps" }, count: 1 },
+  // The sign-out's unused mailbox grants (`pruneDeviceGrants`): the ended families in 500-family
+  // chunks, the accounts of one chunk's ended sessions, and the matched grants in 500-row slices.
+  "auth/auth-service.ts :: chunk": { origin: { bounded: "GRANT_PRUNE_BATCH (500) of the families a sign-out ended, sliced before the chunk's session read" }, count: 1 },
+  "auth/auth-service.ts :: [...new Set(accountsBySession.values())]": { origin: { bounded: "the accounts of one chunk's ended sessions; a family keeps the account it was minted in, so at most GRANT_PRUNE_BATCH (500)" }, count: 1 },
+  "auth/auth-service.ts :: toDelete.slice(j, j + GRANT_PRUNE_BATCH)": { origin: { bounded: "one GRANT_PRUNE_BATCH (500) slice of the matched unused mailbox grants" }, count: 1 },
   "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 2 },
   "auth/session-lifecycle.ts :: live.map((r) => r.familyId)": { origin: { bounded: "the live families of ONE session's chain, which the refresh ladder bounds" }, count: 1 },
   // The handoff's lineage (`revokeHandedOff`): each step's devices and the families it ended, in 500-row slices.

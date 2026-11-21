@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from "react";
 import { type LinkedDraft } from "../host/index.js";
-import { NO_CONNECTION, type ConnectionFeed, type EnteredTarget } from "./commands.js";
+import { NO_CONNECTION, type CalendarGuest, type ConnectionFeed, type EnteredTarget } from "./commands.js";
 import { type FrameHost, type RailFootModel, type RailModel } from "./contract.js";
 import { createFeed } from "./feeds.js";
 import { createNoticeStore } from "./notice-store.js";
@@ -24,6 +24,7 @@ export function useFrameStores(address: FrameHost["device"]["address"]) {
     foot: createFeed<RailFootModel | null>(null),
     connection: createFeed<ConnectionFeed>(NO_CONNECTION, sameFeed),
     draft: { current: null as LinkedDraft | null },
+    calendarGuest: { current: null as CalendarGuest | null },
     entered: createFeed<EnteredTarget | null>(null),
     searchQuery: { current: "" },
     bars: createFeed<readonly string[]>([]),

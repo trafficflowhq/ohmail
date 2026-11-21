@@ -1,7 +1,5 @@
 "use client";
 
-import type { ListVerbs } from "../press/list-verbs.js";
-
 /**
  * THE MODEL OF THE THREE PILES (Answer Later, Parked, Resurface): one body for the three places, the pile the route
  * names, the counts the switch says, the rows, the letter open in the reader's column with its visit, the cursor's row
@@ -16,6 +14,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import { usePlaceList, type PlaceListInput } from "../place-list/place-list.js";
 import type { ListArrival, ListWalk, ListWalkSeat } from "../place-list/walk.js";
 import type { MessageAction } from "../press/actions.js";
+import type { ListVerbs } from "../press/list-verbs.js";
 import type { ListVisit } from "../reading/list-meeting.js";
 import type { ReaderMarkSeen, ThreadReadWiring } from "../reading/reader-seen.js";
 import { useReplyRun, type ReplyRun } from "./reply-run.js";

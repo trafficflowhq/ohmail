@@ -424,7 +424,7 @@ describe("the door's answer is the verdict", () => {
     const choices = { cal_alert: true, showTitles: false, summaryAt: 570 };
     writeComposeDraft({ ...EMPTY_COMPOSE, body: "An unfinished draft" }, ACCOUNT);
     expect(localStorage.getItem(draftKey)).toContain("An unfinished draft");
-    localStorage.setItem(CALENDAR_NOTICES_KEY, JSON.stringify(choices));
+    localStorage.setItem(`${CALENDAR_NOTICES_KEY}.${ACCOUNT}`, JSON.stringify(choices));
 
     expect(await signOutAnswered("ok")).toEqual(ENDED);
     expect(mockLogout).toHaveBeenCalledTimes(1);
@@ -433,7 +433,8 @@ describe("the door's answer is the verdict", () => {
     try {
       rememberOwner("another-account");
       expect(readOwner()).toBe("another-account");
-      const retained = readCalendarNotices();
+      expect(readCalendarNotices("another-account")).toBeNull();
+      const retained = readCalendarNotices(ACCOUNT);
       expect(retained).toEqual(choices);
       expect(calendarChoicesOf(retained, { ohcalPhone: false })).toMatchObject(choices);
     } finally {

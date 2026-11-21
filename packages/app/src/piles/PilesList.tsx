@@ -140,7 +140,7 @@ function PileColumn({ plan, model }: { plan: PaneProps["plan"]; model: PilesMode
                   {tl("run.start")}
                 </Button>
               ) : null}
-              <ListMenu label={triage("list.menu")} items={[]} />
+              <ListMenu label={triage("list.menu")} mail />
             </>
           }
           below={

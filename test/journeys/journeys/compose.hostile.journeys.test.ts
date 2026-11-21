@@ -20,8 +20,7 @@ export const GUARDS: Guard[] = [
   { title: "H1b: half a letter and half a reply in one tab, Sign out pressed in another: the first tab shows no mail and keeps none of A's words", rows: [], surfaces: WEB, needs: [], tolerates: TOLERATED },
   { title: "H2: a page on A while the jar turns to B: B's letter left by B's closed tab keeps B's words, and A's page writes nothing under B", rows: [], surfaces: WEB, needs: [], tolerates: TOLERATED },
   { title: "HS: a send held at the server while the jar turns to B: one send, nothing kept under B, and the letter's words still kept under A", rows: [], surfaces: WEB, needs: [], tolerates: TOLERATED },
-  // WAITS: the consent switch stands in Settings' Folders pane, which mount-settings brings.
-  { title: "H5: a consent press answered after the jar turned to B: the answer is A's alone, and the stale page's second press asks nothing of B", rows: ["settings-folders-not-mounted"], surfaces: WEB, needs: [], tolerates: TOLERATED, open: true },
+  { title: "A consent answer stays with the account that asked, and the old page cannot send another", rows: ["settings-folders-not-mounted"], surfaces: WEB, needs: [], tolerates: TOLERATED, open: true },
 ];
 
 async function two(b: Bench): Promise<{ A: Account; B: Account; namedA: string; namedB: string }> {
@@ -70,6 +69,7 @@ journeysOf("compose", () => {
     await p.later(SAVED);
     await signOut(p);
     await p.gone("rail", {}, 60_000);
+    if (b.setting === "W-s") await p.here("gate");
     expect(holdingWordsOf(await p.kept(MARK), "A"), "a key this browser keeps with A's words after A signed out").toEqual([]);
     expect(await draftsOf(b, A), "A's half letter at A's server").toContain("AWORDS-LETTER");
     await b.signedInElsewhere(p, B);
@@ -99,9 +99,18 @@ journeysOf("compose", () => {
     await signOut(other);
     await p.gone("rail", {}, 60_000);
     await other.gone("rail", {}, 60_000);
-    await p.here("gate");
-    await other.here("gate");
-    expect(holdingWordsOf(await p.kept(MARK), "A"), "a key this browser keeps with A's words after A signed out").toEqual([]);
+    if (b.setting === "W-s") {
+      await p.here("gate");
+      await other.here("gate");
+    } else {
+      await p.until(async () => !(await b.sessionLive(A)), "the managed session to end");
+    }
+    let kept: Awaited<ReturnType<Person["kept"]>> = {};
+    await p.until(async () => {
+      kept = await p.kept(MARK);
+      return true;
+    }, "browser storage to be readable after the sign-out navigation");
+    expect(holdingWordsOf(kept, "A"), "a key this browser keeps with A's words after A signed out").toEqual([]);
     expect(await draftsOf(b, A), "A's half letter at A's server").toContain("AWORDS-LETTER");
   });
 
@@ -159,18 +168,42 @@ journeysOf("compose", () => {
     const { A, B } = await two(b);
     const p = await b.person({ account: A });
     await p.arrive("settings-folders");
-    const before = await b.ask(B, "GET", "/consent/settings");
+    const read = async (account: Account) => {
+      const response = await b.ask(account, "GET", "/consent");
+      expect(response.status).toBe(200);
+      return response.body;
+    };
+    const beforeA = await read(A);
+    const beforeB = await read(B);
+    expect(beforeA).toMatchObject({ foldersEnabledAt: null });
+    expect(beforeB).toMatchObject({ foldersEnabledAt: null });
+
+    const writes = () => p.requests().filter((url) => new URL(url).pathname.endsWith("/consent/settings")).length;
+    const sentBefore = writes();
+    const answeredBefore = b.heard.length;
     b.faults.push((m, pat) => (m === "PATCH" && pat === "/consent/settings" ? "hold" : null));
     await p.act("press", "folders-switch");
     await p.until(async () => b.held().length > 0, "the consent press asked and held", 30_000);
+    expect(writes()).toBe(sentBefore + 1);
     await b.signedInElsewhere(p, B);
     b.release();
-    await p.until(async () => b.held().length === 0, "the consent answer applied");
+    await p.until(async () => b.held().length === 0, "the held consent handler to finish");
+    expect(b.heard.slice(answeredBefore).filter((h) => h.method === "PATCH" && h.pattern === "/consent/settings"))
+      .toEqual([{ method: "PATCH", pattern: "/consent/settings", status: 200 }]);
+    const afterFirst = await read(A);
+    expect(afterFirst).toMatchObject({ foldersEnabledAt: expect.any(String) });
+    expect(await read(B), "B's settings after A's answer").toEqual(beforeB);
+
     const kept = await p.kept(MARK);
     expect(Object.keys(kept).filter((k) => k.includes("consent") && k.includes(B.accountId)), "a consent answer kept under B").toEqual([]);
-    const from = b.heard.length;
+    const sentAfterFirst = writes();
+    const answeredAfterFirst = b.heard.length;
     await p.act("press", "folders-switch");
-    expect(b.heard.slice(from).filter((h) => h.pattern === "/consent/settings"), "the stale page's second press").toEqual([]);
-    expect((await b.ask(B, "GET", "/consent/settings")).body, "B's settings at B's server").toEqual(before.body);
+    await p.until(async () => !(await p.spoken("folders-switch")).disabled, "the stale press to settle");
+    await p.reads(["settings.notSaved", "settings.folders.failed"]);
+    expect(writes(), "a request issued by the stale page's second press").toBe(sentAfterFirst);
+    expect(b.heard.slice(answeredAfterFirst).filter((h) => h.pattern === "/consent/settings"), "the stale page's second press at the server").toEqual([]);
+    expect(await read(A), "A's settings after the stale press").toEqual(afterFirst);
+    expect(await read(B), "B's settings after the stale press").toEqual(beforeB);
   });
 });

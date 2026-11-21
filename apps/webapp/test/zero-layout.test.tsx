@@ -171,6 +171,7 @@ async function shell(opts: { zero?: boolean } = {}): Promise<HTMLElement> {
       }),
     );
   });
+  await within(container).findByRole("navigation", { name: messages.frame.landmark.places });
   return container;
 }
 

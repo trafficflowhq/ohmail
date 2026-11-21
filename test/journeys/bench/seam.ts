@@ -37,7 +37,7 @@ export interface Guard {
   tolerates?: RegExp[];
 }
 
-export interface Found { named?: string; args?: Record<string, string | number> }
+export interface Found { named?: string; sender?: string; args?: Record<string, string | number> }
 
 /** What a control says of itself to a screen reader. */
 export interface Spoken {
@@ -74,6 +74,10 @@ export interface Person {
   /** Go to the install's front door, as a person who types its name does. */
   front(): Promise<void>;
   reload(): Promise<void>;
+  /** Take this window offline after its current requests settle. */
+  goOffline(): Promise<void>;
+  /** Open Settings with its script response held and return to the previous place offline. */
+  goOfflineWhileOpeningSettings(): Promise<void>;
   /** Wait for the language the window declares to its screen reader. */
   hearsLanguage(lang: Language): Promise<void>;
   /** Wait for a particular tag's own route. */
@@ -99,7 +103,7 @@ export interface Person {
   /** The controls of `role` inside `id`, each with its name and what it says of itself. */
   rows(id: ControlId, role: AriaRole): Promise<Array<{ name: string; description: string }>>;
   /** Wait until the page says the catalogue's sentence for `key`. */
-  reads(key: string, args?: Record<string, string | number>, ms?: number): Promise<void>;
+  reads(key: string | readonly string[], args?: Record<string, string | number>, ms?: number): Promise<void>;
   /** Wait for a sight. Never for time: `sight` is asked until it holds. */
   until(sight: () => Promise<boolean>, what: string, ms?: number): Promise<void>;
   /** A native door: refused on a bench that has none. */
@@ -174,7 +178,7 @@ export interface Bench {
   faults: DoorFault[];
   /** The requests a door is holding now, as `METHOD pattern`. */
   held(): string[];
-  /** Let every held request through to its route, and hold and refuse no more. */
+  /** Let held requests through and stop intercepting. A held request is tracked until it finishes. */
   release(): void;
   /** The demo's read-only world; null where the world is planted per account. */
   fixtures: ReturnType<typeof fixturesPlanter> | null;

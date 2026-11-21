@@ -49,7 +49,7 @@ function readContact(input: ContactRead) {
     consent && !demo ? shellConsentOptions(consent, now, ownAddresses, firstImports) : { now, ownAddresses };
   const places = consent && !demo ? consentPartition(reader, options).placeOf : undefined;
   const rules = press.routing.planOver.current?.(reader);
-  const sender = senderScreening(reader, seedId, address, places, rules);
+  const sender = senderScreening(reader, seedId, address, places, rules, { mailbox: "seed" });
   return sender ? { reader, sender, options, rules, now, onSender } : null;
 }
 

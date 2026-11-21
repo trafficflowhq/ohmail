@@ -133,13 +133,14 @@ describe("the one list", () => {
 });
 
 describe("the verdict", () => {
-  it("the whole mailbox counted exactly: its count beside Results, and nothing more is said", async () => {
+  it("the whole mailbox counted exactly: its count beside Results and one status with the scope and wait", async () => {
     await search([GLAZE], { store: page([GLAZE]) });
     await type("glaze");
     await settle();
-    expect(screen.getByRole("heading", { name: /^Results/ }).textContent).toContain("1");
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(document.body.textContent).not.toContain("whole mailbox");
+    expect(screen.getByRole("heading", { name: "Results 1" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toMatch(
+      /^Searched your whole mailbox — 1 matched · [1-9]\d* ms$/,
+    );
   });
 
   it("more than can be counted: at least so many, beside Results and in its line", async () => {

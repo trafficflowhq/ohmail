@@ -39,7 +39,7 @@ journeysOf("reader", () => {
   journey(GUARDS[1]!, async (b) => {
     const { person, named } = await personWith(b, UNREAD);
     await person.arrive("ohbox");
-    const unread = say("message.rowUnread", {}, person.lang);
+    const unread = say("ohbox.row.unread", {}, person.lang);
     expect((await person.spoken("conversation", { named })).description).toContain(unread);
     await person.act("press", "conversation", { named });
     await person.until(async () => !(await person.spoken("conversation", { named })).description.includes(unread), "the row to stop saying it is unread");

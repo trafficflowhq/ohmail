@@ -3,6 +3,7 @@ import { vi } from "vitest";
 import { within } from "@testing-library/react";
 import type { EngineMessage, Folder, RuleEntity } from "@ohmail/wire";
 import { personalAt } from "../../../../test/support/fixture-credentials.js";
+import { settleFirstPaint } from "../_first-paint.js";
 import messages from "../../messages/en.json";
 import { ACCOUNT, ISO, act, installScreeningWeb, mountScreeningWeb, syncScreeningWeb, teardownScreeningWeb, tick } from "./screening-web.js";
 
@@ -44,6 +45,9 @@ export async function withMountedSender(check: SenderCheck, options: {
   placeDecided?: boolean;
   subjectRule?: boolean;
   organizerFilesBacklog?: boolean;
+  answer?: Parameters<typeof installScreeningWeb>[1];
+  extraSync?: readonly object[];
+  secondMailbox?: boolean;
 } = {}) {
   const writes: SenderWrite[] = [];
   const ruleOf = (ruleId: string, destination: Folder): RuleEntity => ({
@@ -56,6 +60,9 @@ export async function withMountedSender(check: SenderCheck, options: {
     ...ruleOf("subject-rule", "INBOX"), subjectContains: base.subject!,
   });
   const rows: EngineMessage[] = [{ ...base }];
+  if (options.secondMailbox) rows.push({
+    ...base, id: "other-mailbox-letter", mailboxId: "mb_2", folder: "ohmail/News", subject: "From the other mailbox",
+  });
   if (options.placeDecided === false) delete rows[0]!.placeDecided;
   if (options.extraPlaced) rows.push({ ...base, id: "already-there", folder: "ohmail/News", subject: "Already in News" });
   const backlog = options.organizerFilesBacklog
@@ -66,11 +73,17 @@ export async function withMountedSender(check: SenderCheck, options: {
   let backlogFiled = false;
   let seq = 20;
   installScreeningWeb(`#/${options.place ?? "ohbox"}/m/${id}`, (path, query, method, init) => {
-    if (path === "/api/mailboxes") return Response.json({ items: [{
-      id: base.mailboxId, address: personalAt("fixture.reader", "mailbox.example"),
-      status: "connected", organizerRole: "organizer", organizerChecked: true,
-      createdAt: ISO, lastSyncAt: ISO, organizeConsentedAt: ISO,
-    }] });
+    const supplied = options.answer?.(path, query, method, init);
+    if (supplied !== undefined) return supplied;
+    if (path === "/api/mailboxes") {
+      const primary = {
+        id: base.mailboxId, address: personalAt("fixture.reader", "mailbox.example"),
+        status: "connected", organizerRole: "organizer", organizerChecked: true,
+        createdAt: ISO, lastSyncAt: ISO, organizeConsentedAt: ISO,
+      };
+      const secondary = { ...primary, id: "mb_2", address: personalAt("fixture.other", "mailbox.example") };
+      return Response.json({ items: options.secondMailbox ? [primary, secondary] : [primary] });
+    }
     if (path === "/api/sync") {
       if (backlog && backlogFiled && query.get("types") !== "rule") {
         return Response.json({
@@ -85,7 +98,11 @@ export async function withMountedSender(check: SenderCheck, options: {
       })) : rows.map((row, index) => ({
         type: "message", op: "create", id: row.id, seq: index + rules.length + 1, updatedAt: ISO, entity: row,
       }));
-      return syncScreeningWeb(changes, rules.length + rows.length);
+      const extra = query.get("types") === "rule" ? [] : options.extraSync ?? [];
+      return syncScreeningWeb(
+        [...changes, ...extra.map((entry, index) => ({ ...entry, seq: rules.length + rows.length + index + 1 }))],
+        rules.length + rows.length + extra.length,
+      );
     }
     if (method !== "GET" && /^\/api\/(?:rules|messages|screener)(?:\/|$)/.test(path)) {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
@@ -127,10 +144,9 @@ export async function withMountedSender(check: SenderCheck, options: {
   try {
     const shell = await mountScreeningWeb();
     await tick(4000);
+    await settleFirstPaint();
     const reader = within(within(shell).getByRole("region", { name: "Reading" }));
     await clickMounted(reader.getByRole("button", { name: /^Ada / }));
-    const contact = within(document.body).getByRole("dialog", { name: "Options for Ada" });
-    await clickMounted(within(contact).getByRole("menuitem", { name: messages.screening.action }));
     const sheet = within(document.body).getByRole("dialog", { name: messages.screening.aria.replace("{sender}", sender) });
     await check({ shell, sheet: within(sheet), writes, sender, id });
   } finally {

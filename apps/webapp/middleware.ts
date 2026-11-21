@@ -301,7 +301,9 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  if (request.nextUrl.searchParams.has("settingsHandoff")) {
+  const wakeEntry = request.nextUrl.searchParams.has("wake") &&
+    cookieFromStore(request.cookies, OWNER_COOKIE) !== OWNER_SIGNED_OUT;
+  if (request.nextUrl.searchParams.has("settingsHandoff") || wakeEntry) {
     const response = strict(request, (init) =>
       NextResponse.rewrite(withPathname(request, APP_ROUTE), init), "wait");
     response.headers.set("Cache-Control", "private, no-store");
@@ -551,10 +553,10 @@ export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
     "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/account/delete", "/de", "/privacy", "/imprint",
-    "/subprocessors", "/support", "/delete-account", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
+    "/subprocessors", "/support", "/delete-account", "/ohcal", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
     "/api/waitlist",
     "/site-assets/:path*", "/landing/:path*",
-    { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Ss][Uu][Pp][Pp][Oo][Rr][Tt]|[Dd][Ee][Ll][Ee][Tt][Ee]-[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Dd][Ee]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
+    { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Ss][Uu][Pp][Pp][Oo][Rr][Tt]|[Dd][Ee][Ll][Ee][Tt][Ee]-[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Dd][Ee]|[Oo][Hh][Cc][Aa][Ll]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
     { source: "/((?:[^/]*/)*\\.\\.?(?:/.*)?)" },

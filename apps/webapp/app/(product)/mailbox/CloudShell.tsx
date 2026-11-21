@@ -9,6 +9,7 @@ import { buildToken } from "@ohmail/app-logic/doors/app-update";
 import { startBuildWatch } from "@ohmail/app-logic/doors/build-watch";
 import { mirrorOwnerOf, reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
 import { isCalendarFragment } from "@ohmail/app/frame";
+import { wakeProofHolds } from "../../shell/notification-settings";
 import { MailFrame, useBrowserMail } from "../../shell/browser-mail";
 import { EngineProvider, useEngine, useResolvedDemoMode, useResolvedDemoModeFrom } from "../../shell/engine";
 import { DemoFrame, DemoShell } from "../demo/DemoShell";
@@ -21,6 +22,7 @@ import {
   apiConfigured, apiOwnerBinding, apiOwnerHolds, bindApiOwner, boundApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
   type AccessRefusedFacts,
 } from "../../api-client";
+import { readSessionFamily } from "../../signed-out-signal";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { SELF_HOST_BUILD } from "../../hello";
@@ -85,6 +87,35 @@ function localeOwnerHolds(owner: string): boolean {
   return boundApiOwner() === owner && apiOwnerHolds("/consent/settings");
 }
 
+type WakeSession = { owner: string; family: string };
+
+/** A wake can reach the ordinary mailbox entry only after its session has been confirmed. */
+export function WakeMailboxEntry() {
+  const [session, setSession] = useState<WakeSession | null | undefined>(undefined);
+  useEffect(() => {
+    const abort = new AbortController();
+    async function confirm() {
+      const proof = /^#wake=([a-f0-9-]{36})$/.exec(window.location.hash)?.[1];
+      if (proof === undefined) return null;
+      const outcome = await resolveOwnerOutcome({ signal: abort.signal });
+      if (outcome.kind !== "owner" || !outcome.familyId) return null;
+      return await wakeProofHolds(proof, outcome.accountId, outcome.familyId)
+        ? { owner: outcome.accountId, family: outcome.familyId }
+        : null;
+    }
+    void confirm().then(
+      (confirmed) => { if (!abort.signal.aborted) setSession(confirmed); },
+      () => { if (!abort.signal.aborted) setSession(null); },
+    );
+    return () => abort.abort();
+  }, []);
+  if (session === undefined) return <WaitGate />;
+  if (session === null || readOwner() !== session.owner || readSessionFamily() !== session.family) {
+    return <AccountChangedGate />;
+  }
+  return <CloudShell demo={false} drawMail="wait" wakeSession={session} />;
+}
+
 /**
  * The Cloud client's seam. `AppShell` is shared with `apps/desktop`, whose build does not bundle this
  * app's session client, so the shell takes "ask the API who is signed in" as a function and this file
@@ -95,7 +126,7 @@ function localeOwnerHolds(owner: string): boolean {
  * an answer: `session-outcome.ts` classifies into three, `EngineProvider` retries the middle one, and
  * only an ANSWERED refusal reaches the signed-out screen (`AUTH-FLICKER-DIAGNOSIS.md`).
  */
-export function CloudShell({ demo, drawMail, settingsAccount }: {
+export function CloudShell({ demo, drawMail, settingsAccount, wakeSession }: {
   demo: boolean;
   /**
    * The page's word for the first frame: `page.tsx`, the one mount, always passes it (`now` only after the edge's probe
@@ -103,6 +134,7 @@ export function CloudShell({ demo, drawMail, settingsAccount }: {
    */
   drawMail?: "now" | "wait";
   settingsAccount?: string;
+  wakeSession?: WakeSession;
 }) {
   /**
    * WHAT THE EFFECTS BELOW ASK, as opposed to what the shell RENDERS.
@@ -130,8 +162,14 @@ export function CloudShell({ demo, drawMail, settingsAccount }: {
     // A sign-out pending on this jar: the tab is leaving, and nothing is bound for this answer.
     if (!listenFor(accountId, familyId)) return;
     bindApiOwner(accountId, familyId);
+    if (wakeSession && window.location.hash.startsWith("#wake=")) {
+      const destination = new URL(window.location.href);
+      destination.searchParams.delete("wake");
+      destination.hash = "/ohbox";
+      window.history.replaceState(window.history.state, "", destination.href);
+    }
     setAccount({ id: accountId, address: address ?? null });
-  }, [listenFor]);
+  }, [listenFor, wakeSession]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
    * running, and nothing tells open tabs about a deployment. The watch asks `/version` occasionally
@@ -240,11 +278,15 @@ export function CloudShell({ demo, drawMail, settingsAccount }: {
    */
   const resolveOwner = useCallback(async () => {
     const outcome = await resolveMailOwner();
+    if (wakeSession && outcome.kind === "owner" &&
+        (outcome.accountId !== wakeSession.owner || outcome.familyId !== wakeSession.family)) {
+      return { kind: "none" } as const;
+    }
     if (settingsAccount && outcome.kind === "owner" && outcome.accountId !== settingsAccount) {
       return { kind: "none" } as const;
     }
     return outcome;
-  }, [settingsAccount]);
+  }, [settingsAccount, wakeSession]);
 
   /**
    * A named shell is never a public surface. The account boundary's one nullable state meant both "no
@@ -315,7 +357,7 @@ export function CloudShell({ demo, drawMail, settingsAccount }: {
       demo={demo}
       resolveOwner={resolveOwner}
       onConfirmed={onConfirmed}
-      drawMail={settingsAccount ? "confirmed" : drawMail}
+      drawMail={settingsAccount || wakeSession ? "confirmed" : drawMail}
     >
       <AccountCleanupContext.Provider value={showAccountCleanup}>
         <WebFrame words={words} />

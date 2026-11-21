@@ -36,15 +36,23 @@ import { ContactDetails, type ContactOf } from "./Contact.js";
 type Extras = Pick<ComponentProps<typeof ContactCard>, "scope" | "now" | "goes" | "rules" | "switches">;
 
 export function Contact({ person, onClose }: { person: ContactOf | null; onClose: () => void }) {
-  const clipboard = useContext(PartsContext)?.copy ?? NONE;
+  const inReader = useContext(PartsContext);
   const { host } = useFrame();
   const reader = host.features.reader;
   const Screening = reader === NONE ? undefined : reader.Screening;
+  const clipboard = inReader?.copy ?? (reader === NONE ? NONE : (reader.copy ?? NONE));
   if (person && Screening) {
     return (
       <Screening key={person.slot} person={person} direct={person.direct} onClose={onClose}>
-        {(action) => (
-          <ContactDetails person={person} clipboard={clipboard} onClose={onClose} action={action} />
+        {(subjectRule, card, showAddress) => (
+          <ContactDetails
+            person={person}
+            clipboard={clipboard}
+            onClose={onClose}
+            subjectRule={subjectRule}
+            card={card}
+            showAddress={showAddress}
+          />
         )}
       </Screening>
     );

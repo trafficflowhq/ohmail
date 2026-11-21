@@ -54,7 +54,8 @@ export function ReplyRunShortcut({ children }: { children: ReactNode }) {
 }
 
 export function PilesMeeting({ model, children }: { model: PilesModel; children: ReactNode }) {
-  const t = useText(model.pile);
+  const t = useText("triage");
+  const pile = useText(model.pile);
   const tl = useText("later");
   const pending = useContext(RunOnArrival);
   const { start } = model.run;
@@ -73,8 +74,10 @@ export function PilesMeeting({ model, children }: { model: PilesModel; children:
   }, [model.pile, pending, start]);
   /* The list's own two steps, named by the drawing. */
   const { up, down } = model.walk;
-  // Parked's empty sentence belongs to the list.
-  const blankLabel = model.pile !== "parked" && model.mayState && model.rows.length === 0 ? t("empty") : null;
+  const unread = model.mayState ? model.rows.filter(({ message }) => message?.unread).length : 0;
+  const total = model.mayState ? model.counts[model.pile] : 0;
+  const blankLabel =
+    unread > 0 ? t("list.unread", { count: unread }) : total > 0 ? pile("summary", { count: total }) : null;
   const { visit } = model;
   const meeting: ListMeeting = useMemo(
     () => ({
@@ -88,9 +91,9 @@ export function PilesMeeting({ model, children }: { model: PilesModel; children:
                 down: { ...down, label: tl("step.down") },
               },
             },
-      blank: blankLabel === null ? null : { label: blankLabel, hot: false },
+      blank: blankLabel === null ? null : { label: blankLabel, hot: unread > 0 },
     }),
-    [visit, up, down, blankLabel, tl],
+    [visit, up, down, blankLabel, unread, tl],
   );
   return (
     <PilesModelContext.Provider value={model}>

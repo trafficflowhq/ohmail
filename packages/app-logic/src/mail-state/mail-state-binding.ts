@@ -22,6 +22,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { lastCheckedAt } from "@ohmail/client-engine";
 import { documentHidden } from "../session/document-hidden.js";
 import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "../engine/index.js";
 import { SYNC_FAILURE_STREAK, syncMayRead } from "../session/sync-scheduler.js";
@@ -561,4 +562,10 @@ export function useMailState(): MailStateBinding {
  */
 export function useMailboxFacts(): MailboxFacts[] | null {
   return useContext(MailStateContext)?.mailboxes ?? null;
+}
+
+/** The last verified check of the account's mailboxes. */
+export function useLastMailCheck(): string | null {
+  const binding = useContext(MailStateContext);
+  return binding === null ? null : lastCheckedAt(binding.mailboxes, binding.factsReadAt(), Date.now());
 }

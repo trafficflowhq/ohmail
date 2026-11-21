@@ -112,6 +112,7 @@
   }
 
   .oh-sheet-scroll {
+    --oh-sheet-open-tail: 0px;
     box-sizing: border-box;
     min-height: 0;
     overflow: hidden auto;
@@ -133,7 +134,7 @@
 
   .oh-sheet-scroll[data-manual-anchor] {
     overflow-anchor: none;
-    --oh-sheet-open-foot: max(var(--oh-sheet-foot-room), var(--oh-sheet-open-tail, 0px));
+    --oh-sheet-open-foot: max(var(--oh-sheet-foot-room), var(--oh-sheet-open-tail));
     padding-block-end: var(--oh-sheet-open-foot);
   }
 

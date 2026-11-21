@@ -220,7 +220,8 @@ describe("Move on our own letter", () => {
     await settle();
     expect(engine.openRowHeld(), "the premise: the answer ended the hold").toBeNull();
     expect(row(host, "g_b").dataset.id, "the premise: the answered row stands for the letter").toBe("g_b");
-    expect(focusedPanel(host)).toBe("g_b");
+    expect(window.location.hash).toBe("#/ohbox/t/g_b");
+    expect(letterShown(host, "g_b")).not.toBeNull();
     await pressMove(host, "News");
     await windowCloses();
     const w = writes();

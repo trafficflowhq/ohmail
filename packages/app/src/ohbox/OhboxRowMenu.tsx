@@ -6,6 +6,7 @@ import type { OhboxRow } from "@ohmail/client-engine";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import type { MessageAction } from "@ohmail/app-logic/press/actions";
 import { Menu, MenuItem, MenuRule } from "@ohmail/ui/base";
+import type { RowAsk } from "@ohmail/app-logic/ohbox";
 import { useText } from "../text/index.js";
 
 export function OhboxRowMenu({
@@ -13,19 +14,28 @@ export function OhboxRowMenu({
   row,
   at,
   onClose,
+  onScreen,
+  onAsk,
+  canDelete,
 }: {
   model: OhboxListModel;
   row: OhboxRow;
   at: { x: number; y: number };
   onClose: () => void;
+  onScreen?: () => void;
+  onAsk?: (ask: RowAsk) => void;
+  canDelete: boolean;
 }) {
   const t = useText("ohbox");
+  const screening = useText("screening");
   const picked = row.members.every((m) => model.picked.has(m.id));
   const run = (verb: () => void) => () => {
     onClose();
     verb();
   };
   const act = (action: MessageAction) => run(() => model.actOn(row, action));
+  const ask = (kind: RowAsk["kind"]) =>
+    run(() => onAsk?.({ kind, letter: row.openTarget, act: (action) => model.actOn(row, action, "letter") }));
   return (
     <Menu open onClose={onClose} anchor={at} kind="context" label={t("row.menu")}>
       <MenuItem icon="mail" keyHint="↵" onPress={run(() => model.open(row.openTarget))}>
@@ -52,6 +62,16 @@ export function OhboxRowMenu({
       <MenuItem icon="tags" keyHint="t" onPress={run(() => model.tagRow(row, null))}>
         {t("actionTag")}
       </MenuItem>
+      {onScreen ? (
+        <MenuItem icon="screener" keyHint="s" onPress={run(onScreen)}>
+          {screening("action")}
+        </MenuItem>
+      ) : null}
+      {onAsk ? (
+        <MenuItem icon="move" keyHint="m" onPress={ask("move")}>
+          {t("actionMove")}
+        </MenuItem>
+      ) : null}
       <MenuRule />
       {model.doneOffered(row) ? (
         <MenuItem icon="check" keyHint="⇧I" onPress={run(() => model.doneRow(row))}>
@@ -65,6 +85,14 @@ export function OhboxRowMenu({
       <MenuItem icon="pick" keyHint="x" onPress={run(() => model.togglePick(row.openTarget.id))}>
         {picked ? t("row.deselect") : t("row.select")}
       </MenuItem>
+      {onAsk && canDelete ? (
+        <>
+          <MenuRule />
+          <MenuItem icon="trash" keyHint="d" onPress={ask("delete")}>
+            {t("actionDelete")}
+          </MenuItem>
+        </>
+      ) : null}
     </Menu>
   );
 }

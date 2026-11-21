@@ -248,6 +248,15 @@ describe("the front door sends a pending sign-out to the sign-in page", () => {
       .toEqual({ status: 307, to: "/login" });
   });
 
+  it("keeps the wake entry through the mailbox rewrite even without a current access cookie", async () => {
+    const { res, asked } = await front(MANAGED, "tf_resume=1; tf_owner=acct_A", "/?wake=1");
+    const destination = new URL(res.headers.get("x-middleware-rewrite")!);
+    expect(destination.pathname).toBe("/mailbox");
+    expect(destination.searchParams.get("wake")).toBe("1");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(asked).toEqual([]);
+  });
+
   it("THE CONTROL — the same jar naming an account is the splash: a rewrite, never a redirect", async () => {
     const { res, asked } = await front(MANAGED, "tf_resume=1; tf_owner=acct_A", "/");
     expect(res.status).toBe(200);

@@ -8,10 +8,9 @@ import { PG_TEST_URL, flightsOf, keyEquals, realPgAvailable, recordPgWire } from
 import { AuthService, generateToken, hashToken, makeTestAuthDeps, resolveSession } from "@trafficflow/services";
 
 /**
- * THE TWO LOOK-UPS A REQUEST MAKES BEFORE ITS ACCOUNT IS KNOWN, ON THE WIRE. The session's look-up
- * and the erased-bearer look-up each ride one flight of their own that names no account and
- * carries the presented token's digest as its key: the one thing the request has proven it holds.
- * Read off the bytes a pool of one wrote. The token itself is written nowhere.
+ * The session door names only the presented digest for its session read, then names
+ * just the returned account for the user read in the same transaction. The erased
+ * bearer door still reads a single digest in a lone flight. The raw token is never sent.
  */
 const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
@@ -60,15 +59,19 @@ describe.skipIf(!PG_UP)("the look-ups before sign-in are keyed by the token's di
       resolveSession(pool, token, now)],
     ["the request's handle as its host minted it", () => resolveSession(bindDb(pool, { account: null }), token, now)],
   ] as const) {
-    it(`the session's look-up on ${name}: one flight of its own, no account, the digest as its key, one burst`, async () => {
+    it(`the session look-up on ${name} scopes the user read to the account it resolved`, async () => {
       const { value, flights, bytes } = await written(lookUp);
       expect(value?.accountId).toBe(accountId);
-      expect(flights).toHaveLength(1);
-      const [flight] = flights;
-      expect(flight).toMatchObject({ door: "lone", account: null, keyed: true, bursts: 1, closed: "commit" });
+      expect(flights).toHaveLength(2);
+      const [flight, userRead] = flights;
+      expect(flight).toMatchObject({ door: "read", account: null, keyed: true, closed: null });
       expect(flight!.statements).toHaveLength(1);
       expect(flight!.statements[0]).toContain('"sessions"');
+      expect(flight!.statements[0]).not.toContain('"users"');
       expect(keyEquals(flight!, hashToken(token))).toBe(true);
+      expect(userRead).toMatchObject({ door: "read", account: accountId, keyed: false, continues: true, closed: "commit" });
+      expect(userRead!.statements).toHaveLength(1);
+      expect(userRead!.statements[0]).toContain('"users"');
       // The key is the digest, never the token: the token is in no statement and no parameter.
       expect(keyEquals(flight!, token)).toBe(false);
       expect(bytes.includes(token)).toBe(false);
@@ -79,7 +82,7 @@ describe.skipIf(!PG_UP)("the look-ups before sign-in are keyed by the token's di
     const stranger = generateToken();
     const { value, flights } = await written(() => resolveSession(bindDb(pool, { account: null }), stranger, now));
     expect(value).toBeNull();
-    expect(flights.map((f) => [f.door, f.account, f.keyed])).toEqual([["lone", null, true]]);
+    expect(flights.map((f) => [f.door, f.account, f.keyed])).toEqual([["read", null, true]]);
     expect(keyEquals(flights[0]!, hashToken(stranger))).toBe(true);
     expect(keyEquals(flights[0]!, hashToken(token))).toBe(false);
   });

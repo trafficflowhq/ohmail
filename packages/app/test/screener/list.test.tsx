@@ -145,6 +145,27 @@ describe("a waiting row", () => {
 });
 
 describe("a decision", () => {
+  it("brings in the next sender after a decision", () => {
+    const style = document.createElement("style");
+    style.textContent = ".sc-next-sender { --d-out: 200ms; --x-col: translateY(6px); --e-out: linear; }";
+    document.head.append(style);
+    const original = Element.prototype.animate;
+    const animated: Element[] = [];
+    Element.prototype.animate = function () {
+      animated.push(this);
+      return { cancel() {}, addEventListener() {} } as unknown as Animation;
+    };
+    try {
+      mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 3 }));
+      fireEvent.click(within(reading()).getByRole("button", { name: /Screen out/ }));
+      expect(within(reading()).getByRole("heading", { name: /Ben Kiln goes to/ })).toBeTruthy();
+      expect(animated.some((el) => reading().contains(el))).toBe(true);
+    } finally {
+      Element.prototype.animate = original;
+      style.remove();
+    }
+  });
+
   it("from the panel leaves once and opens the next sender below", () => {
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 3 }));
     fireEvent.click(within(list()).getByRole("option", { name: /Ben Kiln/ }));

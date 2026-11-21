@@ -3,8 +3,6 @@
     "title": "News",
     "waterline": "Bis hierher gesehen",
     "waterlineMeta": "letzter Besuch · {stamp}",
-    "tail": "Ein Beitrag gilt als gelesen, sobald er im Strom auf dem Bildschirm stehen bleibt. Schnelles Vorbeiscrollen lässt ihn ungelesen.",
-    "streamTail": "Keine älteren ungelesenen Beiträge.",
     "aiApprove": "Passt",
     "aiCorrect": "Korrigieren",
     "streamAria": "News-Strom",
