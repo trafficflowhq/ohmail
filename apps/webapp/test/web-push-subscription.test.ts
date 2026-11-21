@@ -84,6 +84,7 @@ function installFakeBrowser(): void {
     configurable: true,
     value: {
       register: (u: string) => { registered.push(u); return Promise.resolve({ pushManager }); },
+      getRegistration: () => Promise.resolve(registered.length > 0 || existing !== null ? { pushManager } : undefined),
     },
   });
 }
@@ -224,6 +225,13 @@ describe("syncWebPush — creating one", () => {
 });
 
 describe("syncWebPush — removing one, which is where OFF is enforced", () => {
+  it("does not install a worker just to turn notifications off", async () => {
+    const a = api();
+    expect(await syncWebPush(false, a)).toBe("unchanged");
+    expect(registered).toEqual([]);
+    expect(a.calls).toEqual([]);
+  });
+
   it("unsubscribes the browser AND deletes the server row", async () => {
     existing = makeSub();
     window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-9");

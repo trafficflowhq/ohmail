@@ -372,7 +372,7 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
     // key fingerprint, and the ohmail app's own scanner is the only hand-over that does not
     // involve somebody re-typing it. (The old rule — no QR, because a camera opens a phone
     // BROWSER — was about the OS camera app, not about this app's scanner.)
-    expect(hostEl.querySelector("svg")).not.toBeNull();
+    expect(hostEl.querySelector(".join-qr svg")).not.toBeNull();
     await click(button(enHost.copyLink!));
     // `https`, and the fragment carries the pin the phone will hold the door to. The scheme is
     // the whole of the guarantee: an `http` link here is a link a release build of the app
@@ -396,7 +396,7 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
     expect(text()).toContain(enHost.mintNoPin!);
     // …and nothing was minted: no lead, no QR, no code burned.
     expect(text()).not.toContain(enHost.lanMintedLead!);
-    expect(hostEl.querySelector("svg")).toBeNull();
+    expect(hostEl.querySelector(".join-qr svg")).toBeNull();
   });
 
   it("REFUSES a malformed fingerprint too — the shape is checked, not merely the presence", async () => {
@@ -419,6 +419,6 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
     await click(button(enHost.addAction!));
     // The browser flow's lead and the QR stand exactly as the Devices pane first shipped them.
     expect(text()).toContain(enHost.mintedLead!);
-    expect(hostEl.querySelector("svg")).not.toBeNull();
+    expect(hostEl.querySelector(".join-qr svg")).not.toBeNull();
   });
 });

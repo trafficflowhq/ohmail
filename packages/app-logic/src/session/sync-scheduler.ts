@@ -19,6 +19,7 @@ import {
 import { readOwnerMarker, type OwnerMarker } from "../storage/owner-cookie.js";
 import { storageOwner } from "../storage/storage-owner.js";
 import { refusalIsStale } from "./access-window.js";
+import { browserOnlineNow } from "./browser-online.js";
 import { subscribeSessionRevival } from "./session-truth.js";
 import type { ResumeLane } from "./resume-lane.js";
 
@@ -1317,6 +1318,7 @@ export function startSyncScheduler(
   const online = options.online !== undefined
     ? options.online
     : (typeof window === "undefined" ? null : window);
+  const canReachNetwork = (): boolean => online === null || browserOnlineNow();
 
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1490,7 +1492,7 @@ export function startSyncScheduler(
   /** A return's hold on the lane's lead for its delta; released when that drain settles. */
   let reserved: (() => void) | null = null;
   const reserve = (): void => {
-    if (lane !== null && reserved === null && drainsOnWake()) reserved = lane.resume();
+    if (lane !== null && reserved === null && canReachNetwork() && drainsOnWake()) reserved = lane.resume();
   };
   const unreserve = (): void => {
     const release = reserved;
@@ -1543,7 +1545,7 @@ export function startSyncScheduler(
      * stream is the one thing in this loop that is not a request, so nothing else in the file was ever going to ask
      * the question for it.
      */
-    if (!identityHolds()) return;
+    if (!identityHolds() || !canReachNetwork()) return;
     try {
       const s = wakeFactory();
       stream = s;
@@ -1659,7 +1661,7 @@ export function startSyncScheduler(
 
   const arm = (ms: number): void => {
     disarm();
-    if (stopped || terminal || standingDown) return;
+    if (stopped || terminal || standingDown || !canReachNetwork()) return;
     timerDueAt = Date.now() + ms;
     timer = setTimeout(() => {
       timer = null;
@@ -1815,6 +1817,11 @@ export function startSyncScheduler(
         publish();
         return;
       }
+      if (!canReachNetwork()) {
+        disarm();
+        closeStream();
+        return;
+      }
       await engine.syncOnce();
       if (stopped) return;
       // What waits on the organizer is read on this cadence, floor-bounded; the engine owns no timer.
@@ -1854,6 +1861,11 @@ export function startSyncScheduler(
         // terminal latch landing mid-drain. Not a failure: no count, no report, no retry
         // armed; whatever cancelled it owns what happens next.
         disarm();
+        return;
+      }
+      if (err instanceof MutationRejectedError && err.code === "network" && !canReachNetwork()) {
+        disarm();
+        closeStream();
         return;
       }
       if (isAccessRefusal(err)) {

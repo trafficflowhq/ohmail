@@ -9,6 +9,10 @@ export interface OverlayProps {
   preview?: boolean;
   panelRef?: RefObject<HTMLDivElement | null>;
   onClose: () => void;
+  /** Whether a press outside closes the question. Escape always closes it. */
+  dismissOnScrim?: boolean;
+  /** Keep the document outside the overlay inert until it closes. */
+  inertBackground?: boolean;
   /** Its name, said to a screen reader: the words, or the id of the node that holds them. */
   label?: string;
   labelledBy?: string;
@@ -41,6 +45,8 @@ export function Overlay({
   preview = false,
   panelRef,
   onClose,
+  dismissOnScrim = true,
+  inertBackground = false,
   label,
   labelledBy,
   describedBy,
@@ -54,7 +60,7 @@ export function Overlay({
 }: OverlayProps) {
   const ownBox = useRef<HTMLDivElement | null>(null);
   const box = panelRef ?? ownBox;
-  useOverlayFocus(open, box, first ?? firstButton);
+  useOverlayFocus(open, box, first ?? firstButton, undefined, false, inertBackground);
   useOverlayEscape(open, box, onClose);
   if (!open && !preview) return null;
 
@@ -74,7 +80,7 @@ export function Overlay({
         data-scrim=""
         data-scrim-motion={scrimMotion}
         data-place={place}
-        onPointerDown={(e) => (e.target === e.currentTarget ? onClose() : undefined)}
+        onPointerDown={(e) => (dismissOnScrim && e.target === e.currentTarget ? onClose() : undefined)}
       >
         <div
           ref={box}

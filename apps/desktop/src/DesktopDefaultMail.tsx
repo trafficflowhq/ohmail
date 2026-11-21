@@ -15,8 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@ohmail/ui";
-import { Button as SettingButton } from "@ohmail/ui/base";
+import { Button, Notice } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 
 import { usePersistedFlag } from "@ohmail/app-logic/storage/persisted-ui";
@@ -157,9 +156,9 @@ export function DefaultMailRow() {
         value={stateValue(mail.state)}
       >
         {isDefault ? null : (
-          <SettingButton kind="quiet" size="s" onPress={() => void mail.request()} disabled={mail.busy}>
+          <Button kind="quiet" size="s" onPress={() => void mail.request()} disabled={mail.busy}>
             {mail.busy ? DOOR_COPY.mailtoAsking : DOOR_COPY.mailtoMakeDefault}
-          </SettingButton>
+          </Button>
         )}
       </SettingLine>
       {mail.problem ? <SettingNote warn>{mail.problem}</SettingNote> : null}
@@ -257,31 +256,18 @@ export function DefaultMailAsk() {
       aria-label={DOOR_COPY.mailtoLabel}
       /* Beside the mail, not over it: ⌫ and ⌦ on the open message still move it to Trash. */
       data-key-beside=""
-      className="stage-card"
     >
-      {ask.phase === "ask" ? (
-        <>
-          <p style={{ margin: 0, fontWeight: 600 }}>{DOOR_COPY.mailtoAskTitle}</p>
-          <p style={{ margin: "6px 0 12px", opacity: 0.8 }}>{DOOR_COPY.mailtoAskBody}</p>
-          <span className="set-tag-acts">
-            <Button variant="primary" onClick={ask.makeDefault}>
-              {DOOR_COPY.mailtoMakeDefault}
-            </Button>
-            <Button variant="ghost" onClick={ask.notNow}>
-              {DOOR_COPY.mailtoNotNow}
-            </Button>
-          </span>
-        </>
-      ) : (
-        <>
-          <p style={{ margin: 0, fontWeight: 600 }}>{ask.after}</p>
-          <span className="set-tag-acts" style={{ marginTop: 12, display: "inline-flex" }}>
-            <Button variant="ghost" onClick={ask.done}>
-              {DOOR_COPY.mailtoDone}
-            </Button>
-          </span>
-        </>
-      )}
+      <Notice
+        place="bar"
+        title={ask.phase === "ask" ? DOOR_COPY.mailtoAskTitle : ask.after}
+        line={ask.phase === "ask" ? DOOR_COPY.mailtoAskBody : undefined}
+        acts={ask.phase === "ask"
+          ? [
+            { label: DOOR_COPY.mailtoMakeDefault, onPress: ask.makeDefault },
+            { label: DOOR_COPY.mailtoNotNow, onPress: ask.notNow },
+          ]
+          : [{ label: DOOR_COPY.mailtoDone, onPress: ask.done }]}
+      />
     </div>
   );
 }

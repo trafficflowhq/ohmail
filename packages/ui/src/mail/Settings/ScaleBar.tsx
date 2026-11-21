@@ -1,9 +1,14 @@
 import type { CSSProperties } from "react";
+import { hueStyle } from "../../base/index.js";
 import "./scale-bar.css";
 
-/** One part of the bar, in hundredths of its length; the parts stand one after the other from the bar's start. */
+/** One part of the bar, in hundredths of its length; the parts stand one after the other unless an explicit start is supplied. */
 export interface ScaleBarPart {
   share: number;
+  /** Explicit start in hundredths of the bar, for a part measured against a separate total. */
+  from?: number;
+  /** Same hue as what this part counts in the figure table. */
+  hue?: number;
   /** `second`: a second kind of the same thing. `rest`: what is still to come, hatched. Left out: the first kind, in the ink. */
   kind?: "second" | "rest";
 }
@@ -22,14 +27,15 @@ const hundredths = (n: number) => `${Math.max(0, Math.min(100, n))}%`;
 
 /** How much of something is used, to scale: parts of one bar, limits marked on it, and its scale under it. */
 export function ScaleBar({ label, parts, marks, scale }: ScaleBarProps) {
-  /* Each part starts where the one before it ends. */
   let from = 0;
   const laid = parts.map((part) => {
+    const start = part.from ?? from;
     const style = {
-      "--oh-scalebar-from": hundredths(from),
+      ...(part.hue === undefined ? undefined : hueStyle(part.hue)),
+      "--oh-scalebar-from": hundredths(start),
       "--oh-scalebar-share": hundredths(part.share),
     } as CSSProperties;
-    from += part.share;
+    from = start + part.share;
     return { kind: part.kind, style };
   });
   return (

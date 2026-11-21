@@ -28,7 +28,7 @@ import { DesktopUpdate } from "./DesktopUpdate.js";
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
-import { useEngineOrNull } from "../../webapp/app/shell/engine";
+import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
 import { writeDesktopDiagnostics } from "./local-diagnostics.js";
 import { selfChecksThisSession } from "./local-self-check.js";
 
@@ -116,17 +116,8 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
           value="AGPL-3.0"
         />
 
-        {/* THE APP'S OWN UPDATE, directly under the version it is about. It used to live only in
-            the menu bar, which is not drawn on every desktop this app runs on
-            (`src-tauri/src/frame.rs`) — so on those it was an affordance nobody could reach.
-            `DesktopUpdate` is a subhead and one row and owns no layout: whoever restyles Settings
-            next can move the element without rewiring anything, and it renders nothing at all
-            where the shell answers nothing. Absent outright on the Mac App Store build, which the
-            store updates: there the updater plugin is not compiled in either, so the shell would
-            answer nothing anyway — the flag is the reason a reader can see, and the belt. */}
-        {selfUpdates() ? <DesktopUpdate /> : null}
-
       </SettingsSheet>
+      {selfUpdates() ? <DesktopUpdate /> : null}
       <SettingsSheet title={DOOR_COPY.aboutInstallHead} sign="desktop">
 
         <SettingLine

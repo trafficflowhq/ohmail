@@ -330,6 +330,16 @@ describe("every state the update pane can be in renders, and says the true thing
     expect(hostEl.textContent).toContain(`ohmail ${NEXT} is ready`);
     expect(button()!.textContent).toBe(copy.restart!);
     expect(button()!.disabled).toBe(false);
+    const lines = [...hostEl.querySelectorAll(".oh-settingline")];
+    expect(lines.map((line) => line.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining(VERSION),
+      expect.stringContaining("Checked"),
+    ]));
+    expect(lines.find((line) => line.textContent?.includes(VERSION))).not.toBe(
+      lines.find((line) => line.textContent?.includes("Checked")),
+    );
+    expect(button()!.closest(".oh-settingacts")).not.toBeNull();
+    expect(hostEl.querySelector(".oh-settingnote")?.textContent).toContain(`ohmail ${NEXT} is ready`);
     capture("5-ready");
   });
 

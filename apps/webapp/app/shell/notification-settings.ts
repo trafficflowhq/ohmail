@@ -472,11 +472,12 @@ async function syncWebPushNow(
     expectedFamily: opts.expectedFamily,
     ...(opts.expectedOwner === undefined ? {} : { expectedOwner: opts.expectedOwner }),
   };
-  let reg: ServiceWorkerRegistration;
+  let reg: ServiceWorkerRegistration | undefined;
   let existing: PushSubscription | null;
   try {
-    reg = await navigator.serviceWorker.register("/sw.js");
-    existing = await reg.pushManager.getSubscription();
+    // Turning notices off only has to inspect a worker that is already installed.
+    reg = wanted ? await navigator.serviceWorker.register("/sw.js") : await navigator.serviceWorker.getRegistration();
+    existing = await reg?.pushManager.getSubscription() ?? null;
   } catch {
     return "unsupported";
   }
@@ -509,7 +510,7 @@ async function syncWebPushNow(
     }
   }
 
-  if (opts?.mayRegister?.() === false) return "not_registered";
+  if (!reg || opts?.mayRegister?.() === false) return "not_registered";
   if (existing !== null) {
     /* A LOCAL SUBSCRIPTION THE SERVER NEVER RECORDED. `subscribe()` can succeed and the POST
        after it fail; before this the result was permanent, because every later call saw a

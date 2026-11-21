@@ -1,13 +1,13 @@
 import { expect } from "vitest";
 import { openPane } from "../bench/panes.js";
 import type { Bench, Person } from "../bench/seam.js";
-import { WEB, journey, journeysOf, signInPaintWhileLeaving, type DoorFault, type Guard } from "../bench/web.js";
+import { WEB, holdSignOutCookieClear, journey, journeysOf, signInPaintWhileLeaving, signOutReachedFront, type DoorFault, type Guard } from "../bench/web.js";
 
 /**
  * Where a signed-out person stands differs by setting: a self-hosted server shows its sign-in
  * page; the managed app sends them to its front page, which another deployment serves and this
- * bench does not have (it answers 404 here). So "signed out" is: the app's rail is gone, and on
- * a self-hosted server the sign-in page is there.
+ * bench does not serve. The completed exit reaches that front door with the rail gone.
+ * The pressing tab also stays in progress while revocation or browser cleanup is pending.
  */
 const TOLERATED = [/status of 401/, /status of 404/];
 
@@ -43,9 +43,27 @@ function heldOnce(): DoorFault {
 journeysOf("sign-out", () => {
   journey(GUARDS[0]!, async (b) => {
     const { person, account } = await openPane(b, "settings-account", "sign-out");
-    await person.act("press", "sign-out");
+    const clearCookies = await holdSignOutCookieClear(person);
+    b.faults.push(held);
+    try {
+      await person.act("press", "sign-out");
+      await person.until(async () => b.held().length > 0, "the sign-out request to reach the server");
+      await person.gone("rail");
+      await person.reads("account.signOutBusy");
+      expect(await b.sessionLive(account!), "the held request has yet to revoke the session").toBe(true);
+      b.release();
+      await person.until(async () => clearCookies.asked(), "the pressing tab to finish revoking and sweeping");
+      expect(await b.sessionLive(account!)).toBe(false);
+      expect((await b.ask(account!, "GET", "/auth/session")).status).toBe(401);
+      await person.reads("account.signOutBusy");
+    } finally {
+      clearCookies.release();
+      b.release();
+    }
+    await signOutReachedFront(person);
     await out(b, person);
     expect(await b.sessionLive(account!)).toBe(false);
+    expect((await b.ask(account!, "GET", "/auth/session")).status).toBe(401);
   });
   journey(GUARDS[1]!, async (b) => {
     const { person } = await openPane(b, "settings-account", "sign-out");

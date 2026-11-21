@@ -153,7 +153,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
   /** A Microsoft sign-in started in `/join` finishes here behind the gate, then goes back there. */
   const joinWait = useSyncExternalStore(subscribeOAuthOutcome, oauthLandsInJoin, noJoinLanding);
   /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
-  const { gone: signedOutHere, accountChanged, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
+  const { gone: signedOutHere, signingOut, accountChanged, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
   /** This tab's session was revoked from another device: the mail goes, no scrim, and the copy with it. */
   const revokedHere = useRevokedHere(resolvedDemo, tabAccount);
   const [accountCleanup, showAccountCleanup] = useState<AccountCleanup | null>(null);
@@ -321,6 +321,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
   // After every hook: the tab is leaving, and nothing of the mailbox may paint again.
   if (accountChanged) return <AccountChangedGate />;
   if (signedOutHere && accountCleanup) return <AccountCleanupGate cleanup={accountCleanup} />;
+  if (signingOut) return <SigningOutGate />;
   if (signedOutHere || revokedHere) return <div className="gate" aria-busy="true" />;
   if (joinWait) return <WaitGate />;
 
@@ -405,6 +406,11 @@ function SignedInFrame({ words }: { words: WebWords }) {
 }
 
 const noSubscription = () => () => {};
+
+function SigningOutGate() {
+  const t = useTranslations("account");
+  return <div className="gate" role="status">{t("signOutBusy")}</div>;
+}
 
 function AccountChangedGate() {
   const t = useTranslations("frame.connection.signedOut");

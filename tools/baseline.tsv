@@ -7,7 +7,6 @@ apps/api-vercel/test/wake-e2e.pg.test.ts	ohmail/declared-dependency	4	removals
 apps/api-vercel/test/wake-hub.pg.test.ts	ohmail/declared-dependency	2	removals
 apps/desktop/src/AiProviderForm.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/AiProviderForm.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
-apps/desktop/src/DesktopAbout.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/DesktopAccessLock.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/DesktopAccessLock.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/DesktopAiSettings.tsx	ohmail/declared-dependency	1	desktop-layer
