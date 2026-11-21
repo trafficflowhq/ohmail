@@ -268,7 +268,9 @@ function weekPills(
         size="pill"
         {...chip}
         dayEdges={
-          props.onDrag && (props.openId === null || props.openId === p.item.id) && !p.item.viewOnly
+          props.onDrag &&
+          (props.openId === null || props.openId === p.item.id || p.item.state === "draft") &&
+          !p.item.viewOnly
             ? {
                 start: p.before ? undefined : calendar("actions.resizeStart"),
                 end: p.after ? undefined : calendar("actions.resizeEnd"),

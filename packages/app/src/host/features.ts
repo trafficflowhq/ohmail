@@ -7,6 +7,7 @@ import type { CalendarEntry, FrameNotice, FrameOvers, FramePlaces, FrameStages, 
 import type { HeldParts } from "../screener/ports.js";
 import type { PanelRoom } from "../reader/actions/panel-verbs.js";
 import type { ContactScreeningProps } from "../reader/contact/Contact.js";
+import type { PaneSheet } from "../settings/contract.js";
 import type { None } from "./contract.js";
 
 /**
@@ -26,7 +27,7 @@ export type FeatureName = (typeof FEATURE_NAMES)[number];
  */
 export interface FeatureEntry {
   readonly name: FeatureName;
-  readonly render: () => ReactNode;
+  readonly render: (sheet?: PaneSheet) => ReactNode;
   /**
    * What it has to say in the notice slot now; empty when nothing. The frame calls it once per render of a part it
    * mounts for this entry, so it may use hooks; a view never calls it.

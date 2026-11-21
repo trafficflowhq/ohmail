@@ -1,5 +1,6 @@
 {
   "event": {
+    "movePending": "Termin wird verschoben",
     "undoDelete": "Rückgängig",
     "deleteUndone": "Termin wiederhergestellt",
     "undoLate": "Zu spät zum Rückgängigmachen",
@@ -9,6 +10,9 @@
     },
     "notSaved": "Nicht gespeichert",
     "fault": {
+      "moveCopyLeft": "Der Termin ist noch in beiden Kalendern",
+      "moveUnresolved": "Das Verschieben konnte nicht bestätigt werden. Prüfe beide Kalender",
+      "moveDestinationUnavailable": "Der andere Kalender ist nicht mehr verfügbar",
       "signIn": "Die Anmeldung beim Kalender muss erneuert werden.",
       "notAllowed": "Der Kalender lässt diese Änderung nicht zu.",
       "gone": "Der Termin ist nicht mehr in diesem Kalender.",

@@ -6,4 +6,4 @@ Mail still held in Screener for senders you already decided about is filed autom
 
 Screener keeps its section counts and tools on a compact header. On touch screens, suggestions are available in the list menu beside Apply.
 
-Each section now has its own list title and menu. The Spam button uses the shorter label, and detected Spam shows its source when available. Sender details and rule sheets use the shorter Studio wording.
+Each section now has its own list title and menu. The Spam button uses the shorter label, and detected Spam shows its source when available. Sender details and rule sheets use the new design's shorter wording.

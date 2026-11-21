@@ -97,15 +97,15 @@ async function setupMailboxStep(servers: { imap: string; smtp: string } = { imap
   /* The step is the one connect form: its fields by their labels, its tiles by their names, a consent by its switch. */
   const probes = mailboxProbes(host, en, act);
   const { type } = probes;
-  await probes.choose(en.providerPicker.otherLabel);
+  await probes.choose(en.providerPicker.otherShort);
   await type("join-mb-address", "pat@family.example");
   await type("join-imap", servers.imap);
   await type("join-smtp", servers.smtp);
   await type("join-mb-pass", "app-password-fixture");
 
   const press = async () => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === en.join.connectMailbox);
-    expect(button, "no Connect mailbox button").toBeTruthy();
+    const button = probes.button(en.join.manualConnect);
+    expect(button, "no Connect button").toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
   };

@@ -18,7 +18,7 @@ import { useFrame, useSelectionBar } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { ReceiptEvents } from "./ReceiptEvents.js";
-import { useStreamText } from "./words.js";
+import { receiptAmount, useStreamText } from "./words.js";
 
 import { useHoldForReply, useStreamClips, useStreamViewport } from "./use-stream-column.js";
 
@@ -69,7 +69,7 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
   // On a phone the opening slice can paint early if it is where the visit starts.
   const drawCards = armed || (phone && !restores);
   const shown = drawCards ? model.items.slice(start, end) : [];
-  const panel = streamPanel(state, phone, showActions);
+  const panel = streamPanel(state, phone, state.panelVisible);
   return (
     <Sheet
       kind="reading"
@@ -95,6 +95,7 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
           const pick = selection?.rowProps(m.id);
           const folded = clip.linked !== m.id && !clip.whole.has(m.id) && conversation === undefined;
           const text = model.textOf(m.id);
+          const amount = model.place === "receipts" ? receiptAmount(m, text) : undefined;
           const estimate = estimateCardHeight({
             width,
             subject: m.subject || "",
@@ -116,7 +117,7 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
                 <GroupHeading count={lineStamp}>{t("waterline.label")}</GroupHeading>
               ) : null}
               <StreamItem
-                m={m}
+                m={amount && amount !== m.amount ? { ...m, amount } : m}
                 selection={
                   pick?.selection ? { control: pick.selection, picked: pick.picked ?? false } : undefined
                 }
@@ -264,16 +265,17 @@ function useStreamColumnModel({
       : null;
   const addressedPanelId = actionId ?? fallback;
   const panelId = actionId ?? fallback ?? model.standingId;
+  const panelVisible = showActions && (!phone || inline);
   const canAnswerFromPanel =
     addressedPanelId !== null &&
     collapsedAction !== addressedPanelId &&
     (model.actionVisit || whole.has(addressedPanelId) || replyHost === addressedPanelId);
   useEffect(() => {
-    toolbar.current = showActions && reader !== NONE ? panelId : null;
+    toolbar.current = panelVisible && reader !== NONE ? panelId : null;
     return () => {
       toolbar.current = null;
     };
-  }, [toolbar, panelId, reader, showActions]);
+  }, [toolbar, panelId, reader, panelVisible]);
 
   return {
     model,
@@ -291,6 +293,7 @@ function useStreamColumnModel({
     panelKeys,
     actionId,
     panelId,
+    panelVisible,
     canAnswerFromPanel,
     keyboardOpened,
     whole,

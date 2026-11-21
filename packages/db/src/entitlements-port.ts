@@ -167,6 +167,7 @@ export type AccessVerdict =
     trialStorage?: TrialStorageCarry; storageOffer?: StorageOffer; storageTold?: StorageTold;
     /** Current permission to use already admitted AI work, independent of remaining balance. */
     dispatchAiEnabled?: boolean;
+    aiCredits?: { remaining: number; total?: number };
   }
   | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle; trial?: AccessTrial };
 

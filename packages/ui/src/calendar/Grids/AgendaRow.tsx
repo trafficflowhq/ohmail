@@ -40,6 +40,8 @@ export interface AgendaRowProps {
   draft?: boolean;
   /** Controls of the row's own under its lines: the answers, Add. */
   tail?: ReactNode;
+  /** Place the controls beside both lines where the window has room. */
+  tailAtEnd?: boolean;
   /** The accessible name, where the words drawn do not say enough. */
   label?: string;
   onOpen?: () => void;
@@ -104,7 +106,7 @@ export function AgendaRow(p: AgendaRowProps) {
       data-tinted={p.tinted && p.mark.kind === "calendar" && tone !== null ? "" : undefined}
       data-cursor={p.cursor ? "" : undefined}
       data-draft={p.draft ? "" : undefined}
-      data-tail={p.tail ? "" : undefined}
+      data-tail={p.tail ? (p.tailAtEnd ? "end" : "") : undefined}
       {...press}
     >
       <span className="oh-erow-mark">{gutter(p.mark)}</span>

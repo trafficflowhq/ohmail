@@ -2589,11 +2589,14 @@ export type AccountAccess =
        * AI-off sentence in front of an account whose AI is on.
        */
       aiEnabled?: boolean;
+      aiCredits?: unknown;
       /**
        * WHERE THE ACCOUNT STANDS, for the banner above the app. Absent from a server that
        * predates the wall, and absent draws nothing — the banner has no state to name.
        */
       lifecycle?: AccountLifecycle;
+      /** A running trial's day and length, measured by the service. */
+      trialProgress?: { day: number; total: number };
       /**
        * THE VERDICT ITSELF, from the one the gate reads. Absent from an older API, and absent is
        * neither: a wall lifts on `"open"` and on nothing else.
@@ -2614,6 +2617,14 @@ export type AccountAccess =
        */
       storage?: unknown;
     };
+
+export function accessAiCredits(a: AccountAccess | null | undefined): { remaining: number; total?: number } | null {
+  if (!a?.metered || a.access !== "open" || !a.aiCredits || typeof a.aiCredits !== "object") return null;
+  const { remaining, total } = a.aiCredits as { remaining?: unknown; total?: unknown };
+  if (typeof remaining !== "number" || !Number.isSafeInteger(remaining) || remaining < 0) return null;
+  return typeof total === "number" && Number.isSafeInteger(total) && total > 0
+    ? { remaining, total } : { remaining };
+}
 
 /** The answer's storage block, narrowed (`shell/storage-state.ts`), or `null` where there is none. */
 export function accessStorage(a: AccountAccess | null | undefined): StorageFacts | null {
@@ -2847,6 +2858,7 @@ export interface ConsentStateWire {
    * place — the product's 09:00, which is the hour every horizon minted before this existed.
    */
   resurfaceTime?: string | null;
+  draftReplies?: boolean;
   /**
    * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished or cancelled — or `null` for "never" (mail 0083). The last of
    * the onboarding truth-conditions, and the only one about the flow itself rather than about the mailbox. Optional,
@@ -3136,6 +3148,8 @@ export const consent = {
       method: "PATCH",
       body: { resurfaceTime },
     }).then((r) => r.resurfaceTime),
+  setDraftReplies: (draftReplies: boolean, expectedOwner?: string) =>
+    api<{ draftReplies: boolean }>("/consent/settings", { expectedOwner, method: "PATCH", body: { draftReplies } }),
   /** The review list. Reads, and writes nothing — the list is an offer. */
   seedReview: (expectedOwner?: string) => api<SeedReviewWire>("/consent/seed", { expectedOwner }),
   /**
@@ -3224,7 +3238,10 @@ function accessRead(fresh: boolean): Promise<AccountAccess> {
   const entry = { owner, answer, settled: false, at: Date.now(), writes: writesSent };
   accessHeld = entry;
   void answer.then(
-    (a) => { entry.settled = true; noteVerdict(owner, a); },
+    (a) => {
+      entry.settled = true;
+      if (accessHeld === entry && readOwner() === owner) noteVerdict(owner, a);
+    },
     () => { entry.settled = true; if (accessHeld === entry) accessHeld = null; },
   );
   return answer;
@@ -3440,7 +3457,7 @@ export const account = {
       return null;
     }
   },
-  manageLink: async (opts?: { lang?: "de" | "en" } & PlanHint): Promise<{ url: string } | null> => {
+  manageLink: async (opts?: { lang?: "de" | "en" } & PlanHint, expectedOwner?: string): Promise<{ url: string } | null> => {
     try {
       // `lang` is the page's language on the far side; absent, that page reads the browser's. The plan
       // and interval a signup carried from the site pick that page's preselection; members only.
@@ -3449,7 +3466,7 @@ export const account = {
         ...(opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {}),
         ...(plan ? { plan } : {}), ...(interval ? { interval } : {}),
       };
-      return await api<{ url: string }>("/account/manage-link", { method: "POST", body });
+      return await api<{ url: string }>("/account/manage-link", { method: "POST", body, expectedOwner });
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) return null;
       throw err;

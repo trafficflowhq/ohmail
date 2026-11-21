@@ -180,7 +180,7 @@ export function RowFirst(
           ))}
         </span>
       ) : null}
-      {props.squares}
+      {props.squaresBelow ? null : props.squares}
       {props.where ? <Where>{props.where}</Where> : null}
       {props.tag}
       {props.file ? (

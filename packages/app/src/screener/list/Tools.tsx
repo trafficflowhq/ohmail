@@ -263,10 +263,12 @@ export function Tools({
   view,
   touch,
   junkCount,
+  extra,
 }: {
   view: ScreenerView;
   touch?: boolean;
   junkCount?: number | null;
+  extra?: ListMenuItem;
 }) {
   const t = useText("screener");
   const model = useScreener();
@@ -292,7 +294,7 @@ export function Tools({
   };
   const first = control !== null && control.available > 0;
   const reask = control !== null && control.resuggestable > 0;
-  const items: ListMenuItem[] = [];
+  const items: ListMenuItem[] = extra ? [extra] : [];
   if (control && (first || reask)) {
     const label = t(first ? "suggest.open" : "suggest.again");
     items.push({
@@ -314,15 +316,7 @@ export function Tools({
     });
   const apply = waiting && may && model.suggestedCount > 0 && applying === null;
   const hasFilter = waiting && view.filter.choices.length > 0;
-  const heading = t(
-    waiting
-      ? "filterAll"
-      : view.segment === "screened"
-        ? "segScreened"
-        : junkCount !== undefined
-          ? "segJunk"
-          : "segSpam",
-  );
+  const heading = t(waiting ? "filterAll" : view.segment === "screened" ? "segScreened" : "segSpam");
   return (
     <div
       className="sc-tools"

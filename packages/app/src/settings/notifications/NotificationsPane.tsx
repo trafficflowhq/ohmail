@@ -1,4 +1,8 @@
-import type { CalendarNoticeKind, NoticeChoices } from "@ohmail/client-engine";
+import { useRef, useState } from "react";
+import type { CalendarNoticeChoices } from "@ohmail/client-engine";
+import type { CalendarChoiceSetter } from "@ohmail/app-logic/notices/browser-channels";
+import { Menu, MenuItem, Slot } from "@ohmail/ui/base";
+import { useLocale } from "../../text/index.js";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { DELIVERY_SENTENCE, NOTIFY_ROWS, type NotificationsModel } from "./model.js";
@@ -14,8 +18,8 @@ const CALENDAR_ROWS = [
 export interface NotificationsPaneProps {
   readonly model: NotificationsModel;
   readonly calendar?: {
-    readonly choices: NoticeChoices;
-    set(key: CalendarNoticeKind | "showTitles", value: boolean): void;
+    readonly choices: CalendarNoticeChoices;
+    readonly set: CalendarChoiceSetter;
   };
 }
 
@@ -31,7 +35,7 @@ export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
   const rows = NOTIFY_ROWS.filter((row) => carries.includes(row.key));
   const calendarRows = CALENDAR_ROWS.filter(([kind]) => carries.includes(kind));
   const blocked = permission === "denied";
-  const showCalendar = live && calendar && calendarRows.length > 0;
+  const showCalendar = live && calendar && (calendarRows.length > 0 || carries.includes("cal_summary"));
   const unsupported = permission === "unsupported";
   const deliveryWord =
     delivery === "no_server_key"
@@ -60,6 +64,7 @@ export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
         />
         {permission === "default" && !osHolds ? <SettingNote>{t("notifyAskFirst")}</SettingNote> : null}
         {osHolds ? <SettingNote>{t("notifyOsHeld")}</SettingNote> : null}
+        <SettingNote>{n("badgeRule")}</SettingNote>
         {delivery && (delivery === "row_remains" || (delivery === "unsupported" && !unsupported)) ? (
           <SettingNote warn>{t(DELIVERY_SENTENCE[delivery])}</SettingNote>
         ) : null}
@@ -78,6 +83,17 @@ export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
           ))}
         </SettingsSheet>
       ) : null}
+      {live && model.showsMailDetails && carries.includes("ohbox") ? (
+        <SettingsSheet>
+          <SettingLine
+            label={n("showMailDetails")}
+            toggle={{
+              on: channels.showMailDetails === true,
+              onChange: (on) => model.set({ ...channels, showMailDetails: on }),
+            }}
+          />
+        </SettingsSheet>
+      ) : null}
       {showCalendar && (
         <>
           <SettingsSheet title={n("calendar")}>
@@ -88,6 +104,9 @@ export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
                 toggle={{ on: calendar.choices[kind], onChange: (on) => calendar.set(kind, on) }}
               />
             ))}
+            {carries.includes("cal_summary") ? (
+              <SummaryLine choices={calendar.choices} set={calendar.set} />
+            ) : null}
           </SettingsSheet>
           <SettingsSheet title={n("titles")}>
             <SettingLine
@@ -98,5 +117,55 @@ export function NotificationsPane({ model, calendar }: NotificationsPaneProps) {
         </>
       )}
     </>
+  );
+}
+
+const SUMMARY_TIMES = [360, 420, 480, 540];
+
+function SummaryLine({ choices, set }: { choices: CalendarNoticeChoices; set: CalendarChoiceSetter }) {
+  const t = useText("settingsNotifications");
+  const locale = useLocale();
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const clock = new Intl.DateTimeFormat(locale, {
+    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const time = (minute: number) => clock.format(new Date(minute * 60_000));
+  return (
+    <SettingLine
+      label={t("dailySummary")}
+      toggle={{
+        on: choices.cal_summary,
+        onChange: (on) => {
+          setOpen(false);
+          set("cal_summary", on);
+        },
+      }}
+    >
+      {choices.cal_summary ? (
+        <>
+          <Slot ref={anchor} label={t("summaryTime")} expanded={open} onPress={() => setOpen(true)}>
+            {time(choices.summaryAt)}
+          </Slot>
+          <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} label={t("summaryTime")}>
+            {SUMMARY_TIMES.map((minute) => (
+              <MenuItem
+                key={minute}
+                checked={choices.summaryAt === minute}
+                onPress={() => {
+                  setOpen(false);
+                  set("summaryAt", minute);
+                }}
+              >
+                {time(minute)}
+              </MenuItem>
+            ))}
+          </Menu>
+        </>
+      ) : null}
+    </SettingLine>
   );
 }

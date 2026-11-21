@@ -13,8 +13,8 @@ paired with phones. The notice says that a device joined or left and never a dev
 signs itself out is not announced.
 
 On Android, the phone is registered for being woken while closed only while notifications and new mail are
-both switched on for it; with either off the registration is removed from your server and from the
-distributor, and it comes back when both are on.
+both switched on for it; with either off the wake registration is removed from your server and from the
+wake service, and it comes back when both are on.
 
 The notice that stays up while an Android phone organizes its own mailbox no longer shows the mailbox's
 address. The iPhone shows no mail notice. (phone, web, desktop, Cloud, your own server)

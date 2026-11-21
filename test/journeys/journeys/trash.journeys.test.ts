@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { EVERY_WEB, journey, journeysOf, personWith, signedIn, type Guard } from "../bench/web.js";
-import { say } from "../vocabulary/catalogue.js";
+import { wordsWithDot } from "../vocabulary/catalogue.js";
 import { PEOPLE } from "../vocabulary/world.js";
 
 export const GUARDS: Guard[] = [
@@ -26,6 +26,6 @@ journeysOf("trash", () => {
   journey(GUARDS[1]!, async (b) => {
     const { person } = await signedIn(b);
     await person.arrive("trash");
-    expect(await person.text("trash-region")).toContain(say("trash.unavailable", {}, person.lang));
+    expect(await person.text("trash-region")).toContain(wordsWithDot("trash.unavailable", person.lang));
   });
 });

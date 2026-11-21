@@ -84,7 +84,7 @@ export function useConsentRow({
        window, which `GET /consent` answers in `screeningByMailbox`; the row is the doorbell, never read. */
     const profiles = read.entries("mailbox_profile").map((e) => `${e.id}:${e.seq}`).sort().join(",");
     if (rows.length === 0 && profiles === "") return null;
-    return `${String(rows[0]?.entity?.updatedAt ?? "")}|${profiles}`;
+    return `${String(rows[0]?.seq ?? rows[0]?.entity?.updatedAt ?? "")}|${profiles}`;
     // `derived` is the subscription; the reader object is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, derived]);

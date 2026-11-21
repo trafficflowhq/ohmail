@@ -108,10 +108,11 @@ describe.skipIf(!ENABLED)("journeys · the paired page · H", () => {
     await person.act("press", "menu-settings-notifications");
     await person.see("notify-master");
     await person.act("press", "menu-settings-rules");
-    await person.reads("rules.empty");
+    await person.readsWithDot("rules.empty");
     await person.act("press", "menu-settings-tags");
     await person.see("tag-new");
     await person.act("press", "menu-settings-signatures");
+    await person.page.getByRole("textbox", { name: /^Signature: / }).click();
     await person.see("signature-save");
     const record = process.env.TF_JOURNEYS_RECORD;
     if (record) {

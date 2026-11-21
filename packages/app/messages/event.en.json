@@ -1,5 +1,6 @@
 {
   "event": {
+    "movePending": "Moving event",
     "undoDelete": "Undo",
     "deleteUndone": "Event restored",
     "undoLate": "Too late to undo",
@@ -9,6 +10,9 @@
     },
     "notSaved": "Not saved",
     "fault": {
+      "moveCopyLeft": "The event is still in both calendars",
+      "moveUnresolved": "The move could not be confirmed. Check both calendars",
+      "moveDestinationUnavailable": "The other calendar is no longer available",
       "signIn": "The calendar's sign-in needs renewing.",
       "notAllowed": "The calendar does not let this change be written.",
       "gone": "The event is no longer in that calendar.",

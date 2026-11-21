@@ -1,14 +1,18 @@
-import { useMemo, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "@ohmail/ui/base";
-import { useConnectForm } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
+import {
+  useConnectForm,
+  type ConnectForm as ConnectModel,
+} from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 import { NONE } from "../../host/contract.js";
 import { useDraftLeave } from "../../host/use-draft-leave.js";
 import { useTextLookup } from "../../text/index.js";
 import type { ConnectFormProps, ConnectSubject } from "./contract.js";
 import type { Drawn } from "./drawn.js";
 import { DeviceSignIn } from "./DeviceSignIn.js";
-import { Credentials, Head } from "./Fields.js";
+import { Credentials, Head, ManualSignIn } from "./Fields.js";
 import { Acts, Outcome, WaysOut } from "./Lines.js";
+import { ProviderChoice } from "./ProviderChoice.js";
 import { FORM_WORDS } from "./words.js";
 import "./placement.css";
 
@@ -30,6 +34,7 @@ function Opened({
   ask,
   door,
   factor,
+  page,
   subject,
 }: ConnectFormProps & { subject: ConnectSubject | null }): ReactNode {
   const text = useTextLookup();
@@ -45,6 +50,8 @@ function Opened({
     onDone: ask.onDone,
     ...(ask.onCodeStarted ? { onCodeStarted: ask.onCodeStarted } : {}),
   });
+  const step = useConnectStep(form, kind, page !== undefined);
+  const { manual, hasManualStep, title, formNode } = step;
   const { typed } = form.state;
   const { imapHost, imapPort, smtpHost, smtpPort, user } = typed;
   const { filled, revision: passwordRevision } = form.passwordInput;
@@ -71,12 +78,15 @@ function Opened({
   if (subject !== null && form.way === null && (door.edit === NONE || subject.signsIn === "provider"))
     return null;
 
+  if (page && step.choosing)
+    return <ProviderChoice drawn={d} page={page} onPick={step.pick} returning={step.returning} />;
   if (form.code?.kind === "shown" || form.code?.kind === "checking") {
-    return <DeviceSignIn result={form.code} stop={form.stopCode} />;
+    const code = <DeviceSignIn result={form.code} stop={form.stopCode} />;
+    return page ? page(code, form.stopCode) : code;
   }
   const asking = form.asking;
-  return (
-    <div className="mbx-connect-part">
+  const material = (
+    <div className="mbx-connect-part" data-page-filling-form={manual ? "" : undefined}>
       {leave.leaving ? (
         <Dialog
           open
@@ -99,16 +109,27 @@ function Opened({
       {/* No address to post to and no named field: a press before the page's script sends nothing typed. */}
       <form
         className="mbx-connect-form"
+        ref={formNode}
         onSubmit={(event) => {
           event.preventDefault();
-          form.submit();
+          if (!hasManualStep || !form.preset?.manual || manual) form.submit();
         }}
       >
-        <Head d={d} />
-        <Credentials d={d} />
+        {manual ? (
+          <ManualSignIn d={d} back={step.back} heading={title} />
+        ) : (
+          <>
+            <Head
+              d={d}
+              hideProviders={page !== undefined}
+              onManual={hasManualStep ? step.openManual : undefined}
+            />
+            {hasManualStep && form.preset?.manual ? null : <Credentials d={d} />}
+          </>
+        )}
         <Outcome d={d} />
         {form.code?.kind === "ended" ? <DeviceSignIn result={form.code} stop={form.stopCode} /> : null}
-        <Acts d={d} />
+        {hasManualStep && form.preset?.manual && !manual ? null : <Acts d={d} manual={manual} />}
       </form>
       {/* The second factor, asked beside the form it unblocks and outside it: the dialog is a form of its own. */}
       {asking !== null && factor !== NONE
@@ -119,7 +140,53 @@ function Opened({
             onDiscarded: asking.onDiscarded,
           })
         : null}
-      <WaysOut d={d} />
+      {manual ? null : <WaysOut d={d} />}
     </div>
   );
+  return page ? page(material, step.back) : material;
+}
+
+function useConnectStep(
+  form: ConnectModel,
+  kind: ConnectFormProps["ask"]["purpose"]["kind"],
+  paged: boolean,
+) {
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [manualOpen, setManualOpen] = useState(() => form.state.typed.byHand);
+  const hasManualStep = kind === "join" || kind === "firstRun";
+  const manual = manualOpen && form.preset?.manual === true;
+  const choosing = !showCredentials || (manualOpen && !manual);
+  const title = useRef<HTMLHeadingElement>(null);
+  const returning = useRef(false);
+  const formNode = useRef<HTMLFormElement>(null);
+  useLayoutEffect(() => {
+    if (paged && choosing) return;
+    if (manual) title.current?.focus();
+    else if (returning.current) {
+      returning.current = false;
+      formNode.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus();
+    } else if (paged) formNode.current?.querySelector("input")?.focus();
+  }, [choosing, manual, paged]);
+  const back = () => {
+    if (paged && (form.busy || form.state.leaving || form.asking)) return;
+    form.password.current?.clear();
+    form.passwordChanged(false);
+    returning.current = true;
+    setManualOpen(false);
+    setShowCredentials(false);
+  };
+  return {
+    manual,
+    hasManualStep,
+    title,
+    formNode,
+    back,
+    choosing,
+    returning,
+    openManual: () => setManualOpen(true),
+    pick: (isManual: boolean) => {
+      setManualOpen(hasManualStep && isManual);
+      setShowCredentials(true);
+    },
+  };
 }

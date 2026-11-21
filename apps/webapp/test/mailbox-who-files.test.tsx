@@ -113,26 +113,27 @@ describe.each([
   it("the organizing row names it", async () => {
     const el = await mount("en", organizing());
     expect(orgText(el), "the row says the browser files the mailbox").not.toMatch(/this computer/i);
-    expect(orgText(el)).toContain(copy[`stateOrganizing${arm}`]!);
+    expect(orgText(el)).toContain(copy.organizedBy!);
+    expect(orgText(el)).toContain(copy[`organizerName${arm}`]!);
   });
 
   it("the stop's explanation names it", async () => {
     const el = await mount("en", organizing());
-    await press(buttonExactly(el, copy.stopOrganizingHandBack!), copy.stopOrganizingHandBack!);
+    await press(buttonExactly(el, copy.handBack!), copy.handBack!);
     expect(orgText(el), "the stop says this computer stops filing").not.toMatch(/this computer/i);
     expect(orgText(el)).toContain(copy[`stopOrganizingWhat${arm}`]!);
   });
 
   it("the stop's answer names it, requested or not organizing", async () => {
     let el = await mount("en", organizing());
-    await press(buttonExactly(el, copy.stopOrganizingHandBack!), copy.stopOrganizingHandBack!);
+    await press(buttonExactly(el, copy.handBack!), copy.handBack!);
     await press(buttonExactly(el, copy.stopOrganizingConfirm!), copy.stopOrganizingConfirm!);
     expect(el.textContent ?? "").toContain(copy[`stopOrganizingQueued${arm}`]!);
     expect(el.textContent ?? "").not.toContain(copy.stopOrganizingQueued!);
 
     releaseOutcome = "not_organizing";
     el = await mount("en", organizing());
-    await press(buttonExactly(el, copy.stopOrganizingHandBack!), copy.stopOrganizingHandBack!);
+    await press(buttonExactly(el, copy.handBack!), copy.handBack!);
     await press(buttonExactly(el, copy.stopOrganizingConfirm!), copy.stopOrganizingConfirm!);
     expect(el.textContent ?? "").toContain(copy[`stopOrganizingNot${arm}`]!);
     expect(el.textContent ?? "").not.toContain(copy.stopOrganizingNot!);
@@ -148,7 +149,8 @@ describe.each([
 
   it("…in German too, with no raw key on screen", async () => {
     const el = await mount("de", organizing());
-    expect(orgText(el)).toContain(copyDe[`stateOrganizing${arm}`]!);
+    expect(orgText(el)).toContain(copyDe.organizedBy!);
+    expect(orgText(el)).toContain(copyDe[`organizerName${arm}`]!);
     expect(orgText(el)).not.toContain(copyDe.stateOrganizingHere!);
     expect(orgText(el)).not.toContain(`stateOrganizing${arm}`);
   });
@@ -180,16 +182,21 @@ describe.each([
   const stamp = (locale: "en" | "de" = "en"): string => appointmentStamp(new Date(SINCE), new Date(), "UTC", locale);
   const late = (over: Partial<MailboxDTO> = {}): MailboxDTO =>
     organizing({ lastSyncAt: SINCE, fetching: { behind: true, since: SINCE }, ...over } as Partial<MailboxDTO>);
-  /** "Synced " — the healthy line's own words, whatever time follows them. */
+  const summary = (pane: HTMLElement): string => within(pane).getByRole("button", { expanded: true }).textContent ?? "";
+  /** The healthy summary’s own words, whatever time follows them. */
   const synced = (locale: "en" | "de"): string => said[locale]("syncedAgo", { when: "" }).trim();
 
   beforeEach(() => { build.selfHost = selfHost; });
 
-  it("the row leads with not checked and since when, and no longer says synced", async () => {
+  it("the summary leads with not checked while the opened row keeps the last sync time", async () => {
     const el = await mount("en", late());
-    const text = el.textContent ?? "";
-    expect(text).toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
-    expect(text, "the row still reads as healthy").not.toContain(synced("en"));
+    const waiting = said.en("notChecked", { hasSince: "yes", since: stamp() });
+    expect(summary(el)).toContain(waiting);
+    expect(summary(el), "the summary still reads as healthy").not.toContain(synced("en"));
+    const lastSync = within(el).getByRole("group", { name: copy.lineSynced });
+    expect(within(lastSync).getByText(stamp(), { exact: true })).toBeTruthy();
+    expect(lastSync.textContent).not.toContain(waiting);
+    expect(el.textContent).not.toContain(said.en("syncedAgo", { when: stamp() }));
   });
 
   it("its note is the notice's sentence for that mailbox, naming who is not checking", async () => {
@@ -203,9 +210,9 @@ describe.each([
   it("with no time on record both say so without one", async () => {
     const el = await mount("en", late({ fetching: { behind: true, since: null } } as Partial<MailboxDTO>));
     const text = el.textContent ?? "";
-    expect(text).toContain(said.en("notChecked", { hasSince: "no", since: "" }));
+    expect(summary(el)).toContain(said.en("notChecked", { hasSince: "no", since: "" }));
     expect(text).toContain(said.en(`notCheckedNote${arm}`, { hasSince: "no", since: "" }));
-    expect(text).not.toContain(synced("en"));
+    expect(summary(el)).not.toContain(synced("en"));
   });
 
   it("it is calm and has no press of its own: the row's controls are the ones it had", async () => {
@@ -226,7 +233,9 @@ describe.each([
     const el = await mount("en", late({ status: "error", errorCode: "auth" } as Partial<MailboxDTO>));
     const text = el.textContent ?? "";
     expect(text).toContain(copy.err_auth!);
-    expect(text).not.toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    const waiting = said.en("notChecked", { hasSince: "yes", since: stamp() });
+    expect(summary(el)).not.toContain(waiting);
+    expect(text).not.toContain(waiting);
     expect(text).not.toContain(said.en(`notCheckedNote${arm}`, { hasSince: "yes", since: stamp() }));
     expect(buttonExactly(el, copy.syncNow!), "the row lost its press").not.toBeNull();
   });
@@ -237,7 +246,9 @@ describe.each([
     } as Partial<MailboxDTO>));
     const text = el.textContent ?? "";
     expect(text).toContain((en.sync as unknown as Record<string, string>).blocked_at_capacity!);
-    expect(text).not.toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    const waiting = said.en("notChecked", { hasSince: "yes", since: stamp() });
+    expect(summary(el)).not.toContain(waiting);
+    expect(text).not.toContain(waiting);
     expect(text).not.toContain(said.en(`notCheckedNote${arm}`, { hasSince: "yes", since: stamp() }));
   });
 
@@ -250,17 +261,25 @@ describe.each([
       lastSyncAt: SINCE, ...(fetching === undefined ? {} : { fetching }),
     } as Partial<MailboxDTO>));
     const text = el.textContent ?? "";
-    expect(text).toContain(synced("en"));
-    expect(text).not.toContain(said.en("notChecked", { hasSince: "no", since: "" }));
+    expect(summary(el)).toContain(synced("en"));
+    const waiting = said.en("notChecked", { hasSince: "no", since: "" });
+    expect(summary(el)).not.toContain(waiting);
+    expect(text).not.toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    expect(text).not.toContain(said.en(`notCheckedNote${arm}`, { hasSince: "no", since: "" }));
+    expect(text).not.toContain(said.en(`notCheckedNote${arm}`, { hasSince: "yes", since: stamp() }));
+    // The separate mail-server check can still say it has never been run.
+    const serverCheck = within(el).queryByRole("group", { name: copy.mailServerCheck });
+    expect(within(el).queryAllByText(waiting, { exact: true }).filter((line) => !serverCheck?.contains(line)))
+      .toHaveLength(0);
   });
 
   it("…in German too", async () => {
     const el = await mount("de", late());
     const text = el.textContent ?? "";
     const when = stamp("de");
-    expect(text).toContain(said.de("notChecked", { hasSince: "yes", since: when }));
+    expect(summary(el)).toContain(said.de("notChecked", { hasSince: "yes", since: when }));
     expect(text).toContain(said.de(`notCheckedNote${arm}`, { hasSince: "yes", since: when }));
-    expect(text).not.toContain(synced("de"));
+    expect(summary(el)).not.toContain(synced("de"));
     if (selfHost) expect(text).not.toMatch(/Cloud/);
   });
 });

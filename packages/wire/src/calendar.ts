@@ -5,6 +5,7 @@
  * the feed, the list a request may name, the desktop copy's storing case and the device's bound:
  * the compiler refuses the lists, and the walk test refuses a builder or a storing case left out.
  */
+import type { InvitationProposalTimes } from "./invitations.js";
 import type { ISODateTime } from "./base.js";
 
 // ── times ────────────────────────────────────────────────────────────────────
@@ -137,6 +138,7 @@ export interface CalendarRecord {
   timeZone: string | null;
   /** The days the last reading covered (`to` inclusive), or `null` when the reading has no window. */
   window: { from: CalendarDay; to: CalendarDay } | null;
+  nativeMove?: true;
   /** The reminders a new event of this calendar starts with. */
   defaultAlarms: CalendarAlarm[];
   lastSyncedAt: ISODateTime | null;
@@ -197,6 +199,8 @@ export interface CalendarEventRecord {
   organizer: { address: string; name: string | null } | null;
   /** The account's own answer, where it is invited. */
   myAnswer: CalendarAnswer | null;
+  /** Cancelled or declined occurrences removed from this account’s calendar. The empty key covers the record or series. */
+  removedOccurrences?: readonly string[];
   /** An invitation not yet shown on the calendar. */
   heldBack: boolean;
   invitees: CalendarInvitee[];
@@ -206,6 +210,8 @@ export interface CalendarEventRecord {
    * invitees are empty. The full event stays at the provider and on the server.
    */
   cut: boolean;
+  /** Stored content fits the fields a portable move preserves. */
+  portableCopy?: true;
   /**
    * The person's writes to this event that the provider has not taken yet, or refused: oldest
    * first. The record itself is the provider's copy; what waits rides here, beside it.
@@ -385,7 +391,10 @@ export type CalendarWriteFault =
   /** The recorded act is no shape this version writes. */
   | "content_refused"
   /** Too old, or tried too often, to be sent late. */
-  | "expired";
+  | "expired"
+  | "move_copy_left"
+  | "move_unresolved"
+  | "move_destination_unavailable";
 
 /** One invitee of an event as a person writes it. */
 export interface CalendarWriteInvitee {
@@ -441,7 +450,13 @@ export interface CalendarEventBase {
  * server adopts); no act names a provider's id, an address or a version.
  */
 export type CalendarEventAct =
-  | { kind: "calendar_event_create"; eventId: string; calendarId: string; event: CalendarEventFields }
+  | {
+      kind: "calendar_event_create";
+      eventId: string;
+      calendarId: string;
+      event: CalendarEventFields;
+      invitationMessageId?: string;
+    }
   | (CalendarEventBase & {
       kind: "calendar_event_update";
       scope: CalendarChangeScope;
@@ -453,16 +468,36 @@ export type CalendarEventAct =
     })
   | (CalendarEventBase & {
       kind: "calendar_event_delete";
+      /** Remove a cancelled or declined event from this account’s calendar without writing to the provider. */
+      localOnly?: true;
+      /** A cancellation letter to verify when the provider still shows an active event. */
+      cancelledBy?: string;
       scope: CalendarRemoveScope;
+      cancellationMessage?: string;
       /** Audience confirmed against the stored object for this scope. */
       audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
     })
-  | (CalendarEventBase & { kind: "calendar_event_move"; toCalendarId: string })
+  | (CalendarEventBase & {
+      kind: "calendar_event_move";
+      toCalendarId: string;
+      copyThenRemove?: true;
+      /** Guests confirmed before moving the event to another calendar. */
+      audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
+    })
   | (CalendarEventBase & {
       kind: "calendar_event_answer";
       scope: { kind: "record" } | { kind: "occurrence"; at: string };
       answer: "accepted" | "tentative" | "declined";
     });
+
+export type CalendarProposalAct = {
+  recordId: string;
+  base: ISODateTime;
+  occurrence: string;
+} & (
+  | ({ kind: "calendar_event_propose" } & InvitationProposalTimes)
+  | { kind: "calendar_proposal_keep"; messageId: string }
+);
 
 /**
  * What a person can do to the calendar from a client, as the queue carries it: an act on an

@@ -92,7 +92,9 @@ export async function resolveOwnerOutcome(
       healOwner(accountId);
       const family = familyId === undefined ? {} : { familyId };
       return includeAddress && user.emailVerified === true && typeof user.email === "string" && user.email.trim()
-        ? { kind: "owner", accountId, address: user.email, ...family }
+        ? { kind: "owner", accountId, address: user.email, ...family,
+            ...(typeof user.displayName === "string" && user.displayName.trim()
+              ? { displayName: user.displayName.trim() } : {}) }
         : { kind: "owner", accountId, ...family };
     }
     /*

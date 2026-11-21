@@ -91,6 +91,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   // A question, not a write: it changes nothing anywhere, and its answer goes back at once.
   "POST /calendar/places/suggest": none,
   // The calendar's writes: until the window's engine carries the calendar's acts, the echo-await alone covers them.
+  "POST /calendar/proposals": { rows: "sync+mailboxes", verbs: [] },
   "POST /calendar/writes": direct,
   "POST /calendar/writes/:id/retry": direct,
   "POST /consent/reset": direct,

@@ -5,6 +5,7 @@
  * text is cleaned once more here whatever made the notice.
  */
 import { cleanNoticeText } from "./label.js";
+import type { CalendarSummaryDetails } from "./emitter.js";
 import type { EventLabel, Notice } from "./kinds.js";
 
 type WithoutLabel<N> = N extends unknown ? Omit<N, "label"> : never;
@@ -20,6 +21,7 @@ export interface NoticeWording {
   body(facts: NoticeFacts): string;
   /** The app's word for an event whose title is not shown. */
   label(as: "busy" | "event"): string;
+  summary?(details: CalendarSummaryDetails, count: number): NoticeFields;
 }
 
 /** The two fields a platform draws. */

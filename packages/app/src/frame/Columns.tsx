@@ -15,7 +15,17 @@ import { useColumnWidths } from "./column-widths.js";
 
 const focusReading = (reading: HTMLElement): HTMLElement => reading;
 
-export function Columns({ plan, rail, list, listKeys, reading, wide, above, labels }: ColumnsProps) {
+export function Columns({
+  plan,
+  rail,
+  list,
+  listKeys,
+  reading,
+  readingBackdrop,
+  wide,
+  above,
+  labels,
+}: ColumnsProps) {
   const drawn = useRef<HTMLDivElement>(null);
   const listColumn = useRef<HTMLElement>(null);
   const widths = useColumnWidths(drawn);
@@ -63,6 +73,7 @@ export function Columns({ plan, rail, list, listKeys, reading, wide, above, labe
           className="fr-reading"
           aria-label={labels.reading}
           data-over={over ? "" : undefined}
+          data-backdrop={over && readingBackdrop ? "" : undefined}
           /* Over the list on one column the letter covers it: a modal dialog, so a screen reader's walk stays in it, as
              today's narrow sheet claimed; beside the list it is the region it is. */
           role={modal ? "dialog" : undefined}

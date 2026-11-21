@@ -12,6 +12,8 @@
  */
 import { useMemo } from "react";
 import { useDoors } from "@ohmail/app-logic/reader/doors";
+import type { EngineMessage } from "@ohmail/wire";
+import type { AttachmentsChrome } from "@ohmail/app-logic/reader/doors";
 import type { ReaderEntry } from "../host/index.js";
 import { readerEntryFrom, type ReaderBody, type ReaderParts } from "../reader/index.js";
 import { WRITE } from "../write/rich-entry.js";
@@ -24,6 +26,7 @@ export interface MailReaderHost {
   /** `none`: a press on a file saves it. */
   readonly look: ReaderParts["look"];
   readonly invitation?: ReaderParts["invitation"];
+  readonly invitationFile?: (message: EngineMessage, files: AttachmentsChrome) => string | undefined;
   /** The host's clipboard (a browser's own); left out: none, and a copy is not offered. */
   readonly copy?: ReaderParts["copy"];
 }
@@ -34,6 +37,7 @@ export function useMailReaderParts(host: MailReaderHost): ReaderParts {
   const { body, look } = host;
   const copy = host.copy ?? "none";
   const invitation = host.invitation ?? "none";
+  const { invitationFile } = host;
   return useMemo(
     () => ({
       body,
@@ -43,9 +47,11 @@ export function useMailReaderParts(host: MailReaderHost): ReaderParts {
       sentCopy: "none",
       reply: WRITE.reply,
       invitation,
+      invitationFile:
+        invitationFile && files ? (message: EngineMessage) => invitationFile(message, files) : undefined,
       copy,
     }),
-    [body, look, copy, files, pictures, invitation],
+    [body, look, copy, files, pictures, invitation, invitationFile],
   );
 }
 

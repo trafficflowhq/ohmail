@@ -1,5 +1,6 @@
 {
   "settingsNotifications": {
+    "badgeRule": "The numbers mean the same thing on every device: the app icon and the Ohbox count unread mail in your Ohbox, the Screener counts first-time senders waiting, and News and Receipts count what arrived since you last looked.",
     "on": "On",
     "off": "Off",
     "ohbox": "Ohbox",
@@ -26,6 +27,9 @@
     "mail": "Mail",
     "onlyWhileOpen": "Only while ohmail is open",
     "notRegistered": "Not registered",
-    "noCentre": "No notification centre"
+    "noCentre": "No notification centre",
+    "showMailDetails": "Show who it is from and the subject",
+    "dailySummary": "The daily summary",
+    "summaryTime": "Daily summary time"
   }
 }

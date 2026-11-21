@@ -8,9 +8,9 @@
  * Pure and bounded by count, never by the clock: the input is a stranger's text, read on a server.
  * It never throws, and it reads nothing but the text (no URL, attachment or zone file it names).
  */
-import type { InvitationAnswer, InvitationMethod } from "@ohmail/wire";
+import type { CalendarTime, InvitationAnswer, InvitationMethod, InvitationProposalTimes } from "@ohmail/wire";
 import {
-  calendarPartRank, canonicalRecurrenceId, parseContentLine, parseIcsDate, unescapeText, unfoldIcs,
+  calendarPartRank, canonicalRecurrenceId, parseContentLine, parseIcsDate, parseIcsDuration, unescapeText, unfoldIcs,
   type CalendarPartText, type ContentLine,
 } from "./ics.js";
 
@@ -39,6 +39,7 @@ export interface LetterInvitation {
   stampedAt: Date | null;
   /** On a REPLY: the answer its attendee gives, and its DTSTAMP. Null on any other method. */
   reply: { answer: InvitationAnswer; at: Date | null } | null;
+  proposal?: InvitationProposalTimes;
 }
 
 /**
@@ -70,10 +71,11 @@ export const INVITATION_ATTENDEES_MAX = 2_000;
 export const INVITATION_ADDRESS_MAX_CHARS = 254;
 const SEQUENCE_MAX = 2 ** 31 - 1;
 
-const ROW_METHODS: ReadonlySet<string> = new Set<InvitationMethod>(["REQUEST", "REPLY", "CANCEL", "COUNTER"]);
+const ROW_METHODS: ReadonlySet<string> = new Set<InvitationMethod>(["REQUEST", "REPLY", "CANCEL", "COUNTER", "DECLINECOUNTER"]);
 const ANSWERS: ReadonlyMap<string, InvitationAnswer> = new Map([["ACCEPTED", "accepted"], ["TENTATIVE", "tentative"], ["DECLINED", "declined"]]);
 /** DTSTART as written: a date, a clock time, a clock time in UTC. */
 const START_SHAPE = /^\d{8}(?:T\d{6}Z?)?$/;
+const UTC_START_VALUE = /^\d{8}T\d{6}Z$/;
 
 const isDigit = (c: number): boolean => c >= 48 && c <= 57;
 const isLetterOrDigit = (c: number): boolean => isDigit(c) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
@@ -159,6 +161,8 @@ interface EventLines {
   recurrenceId?: ContentLine;
   sequence?: ContentLine;
   start?: ContentLine;
+  end?: ContentLine;
+  duration?: ContentLine;
   stamp?: ContentLine;
   organizer?: ContentLine;
   cancelled: boolean;
@@ -212,6 +216,8 @@ function walk(lines: readonly string[]): { method: string | null; event: EventLi
       case "RECURRENCE-ID": event.recurrenceId ??= line; break;
       case "SEQUENCE": event.sequence ??= line; break;
       case "DTSTART": event.start ??= line; break;
+      case "DTEND": event.end ??= line; break;
+      case "DURATION": event.duration ??= line; break;
       case "DTSTAMP": event.stamp ??= line; break;
       case "ORGANIZER": event.organizer ??= line; break;
       case "STATUS": if (line.value.trim().toUpperCase() === "CANCELLED") event.cancelled = true; break;
@@ -268,6 +274,42 @@ function instantOf(ms: number | null, more = 0): Date | null {
   return ms === null ? null : new Date(ms + more);
 }
 
+function proposedTime(line: ContentLine | undefined): CalendarTime | null {
+  if (!line) return null;
+  const raw = line.value.trim();
+  if (!START_SHAPE.test(raw)) return null;
+  const time = parseIcsDate(raw, line.params.get("TZID") ?? null, line.params.get("VALUE") ?? null);
+  if (!time) return null;
+  if (time.allDay) return raw.length === 8 ? { kind: "date", value: raw } : null;
+  const seconds = Number(raw.slice(13, 15));
+  if (seconds >= 60) return null;
+  if (time.epochMs === null) return time.tzid === null ? { kind: "floating", value: raw } : null;
+  const value = icalInstant(time.epochMs + seconds * 1000);
+  return { kind: "instant", value };
+}
+
+const icalInstant = (value: number) => new Date(value).toISOString().replace(/[-:]/g, "").replace(".000", "");
+
+function proposedEnd(start: CalendarTime, duration: ContentLine | undefined): CalendarTime | null {
+  const length = duration && parseIcsDuration(duration.value);
+  if (!length || length < 0 || !Number.isFinite(length)) return null;
+  if (start.kind === "date" && length % 86400000 !== 0) return null;
+  const raw = start.kind === "floating" ? `${start.value}Z` : start.value;
+  const at = parseIcsDate(raw, null, null)?.epochMs;
+  if (at == null) return null;
+  const end = at + Number(raw.slice(13, 15)) * 1000 + length;
+  if (!Number.isFinite(new Date(end).getTime())) return null;
+  const value = icalInstant(end);
+  if (!UTC_START_VALUE.test(value)) return null;
+  return { kind: start.kind, value: start.kind === "date" ? value.slice(0, 8) : start.kind === "floating" ? value.slice(0, -1) : value };
+}
+
+function proposedInterval(event: EventLines): InvitationProposalTimes | null {
+  const start = proposedTime(event.start);
+  const end = event.end ? proposedTime(event.end) : start && proposedEnd(start, event.duration);
+  return start && end && start.kind === end.kind && start.value < end.value ? { start, end } : null;
+}
+
 /** One calendar text's invitation, or undefined. */
 function readPart(text: string): LetterInvitation | undefined {
   const unfolded = unfoldIcs(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
@@ -286,13 +328,18 @@ function readPart(text: string): LetterInvitation | undefined {
     : event.attendees.map((a) => plainMailto(a.value));
   const answer = method === "REPLY" && first !== undefined ? ANSWERS.get((first.params.get("PARTSTAT") ?? "").toUpperCase()) : undefined;
   const stampedAt = stampOf(event.stamp);
+  const proposal = method === "COUNTER" || method === "DECLINECOUNTER" ? proposedInterval(event) : null;
+  const organizer = event.organizer === undefined ? null : plainMailto(event.organizer.value);
+  if (method === "DECLINECOUNTER" && (event.attendeeLines !== 1 || !addresses[0] || !organizer || !stampedAt))
+    return undefined;
   return {
     method, uid, recurrenceId, sequence,
     ...startOf(event.start),
-    organizer: event.organizer === undefined ? null : plainMailto(event.organizer.value),
+    organizer,
     attendees: addresses.filter((a): a is string => a !== null),
     stampedAt,
     reply: answer === undefined ? null : { answer, at: stampedAt },
+    ...(proposal ? { proposal } : {}),
   };
 }
 
@@ -301,7 +348,7 @@ function readPart(text: string): LetterInvitation | undefined {
  * {@link INVITATION_PARTS_MAX} under {@link INVITATION_PART_MAX_BYTES}, in {@link calendarPartRank}
  * order) and folded as the card folds them — the first part's event, and of the parts naming the
  * same event (UID and occurrence) the higher SEQUENCE, then the lower rank. Undefined when no part
- * keeps a row: no METHOD of the four, no UID, an occurrence or a SEQUENCE that cannot be read, a
+ * keeps a row: no invitation METHOD, no UID, an occurrence or a SEQUENCE that cannot be read, a
  * control character in what would be kept. Never throws.
  */
 export function readLetterInvitation(parts: readonly CalendarPartText[]): LetterInvitation | undefined {

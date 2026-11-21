@@ -45,18 +45,12 @@ export function OhboxSheet({ ohbox }: { readonly ohbox: ScreenerOhbox }) {
         toggle={{ on: ohbox.relevant, onChange: (next) => apply({ relevant: next }) }}
         off={pending}
       />
-      <SettingNote>{ohbox.relevant ? t("screening.postureOn") : t("screening.postureOff")}</SettingNote>
       {ohbox.impersonation !== null ? (
-        <>
-          <SettingLine
-            label={t("screening.impersonationTitle")}
-            toggle={{ on: ohbox.impersonation, onChange: (next) => apply({ impersonation: next }) }}
-            off={pending}
-          />
-          <SettingNote>
-            {ohbox.impersonation ? t("screening.impersonationOn") : t("screening.impersonationOff")}
-          </SettingNote>
-        </>
+        <SettingLine
+          label={t("screening.impersonationTitle")}
+          toggle={{ on: ohbox.impersonation, onChange: (next) => apply({ impersonation: next }) }}
+          off={pending}
+        />
       ) : null}
       {said === "saved" ? <SettingNote>{t("screening.saved")}</SettingNote> : null}
       {said === "failed" ? <SettingNote warn>{t("screening.failed")}</SettingNote> : null}
@@ -143,19 +137,20 @@ function OhboxWords({ ohbox, busy }: { readonly ohbox: ScreenerOhbox; readonly b
         value={draft}
         placeholder={shownDefault}
         onChange={held ? undefined : setDraft}
-        lines={4}
+        lines={3}
         refusal={said === "failed" ? t("screening.failed") : undefined}
         name="ohbox-bar"
       />
-      <Button kind="ink" size="s" disabled={held || !changed} onPress={() => save(toStore(draft))}>
-        {t("screening.save")}
-      </Button>
+      {changed || pending ? (
+        <Button kind="ink" size="s" disabled={held} onPress={() => save(toStore(draft))}>
+          {t("screening.save")}
+        </Button>
+      ) : null}
       {stored !== null ? (
         <Button kind="quiet" size="s" disabled={held} onPress={() => save(null)}>
           {t("screening.reset")}
         </Button>
       ) : null}
-      <SettingNote>{t("screening.microcopy")}</SettingNote>
       {said === "saved" ? <SettingNote>{t("screening.saved")}</SettingNote> : null}
     </>
   );

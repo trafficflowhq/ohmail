@@ -166,22 +166,20 @@ async function mount(o: {
 describe("a re-run of setup, driven through the rendered stage", () => {
   it("opens on the consent statement — the behaviour the loop was hiding behind", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    expect(s.heading()).toBe(t.mapTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 
   it("AGREE MOVES ON. It returned to the consent statement, every press, for ever", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    await s.press(t.continue);
     expect(s.heading(), "the window screen").toContain(t.organizeLast.split("<window>")[0]!.trim());
 
     await s.press(t.agree);
-    expect(s.heading(), "the press walked back to the screen it came from").not.toBe(t.mapTitle);
+    expect(s.heading(), "the press walked back to the screen it came from").not.toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
 
   it("…and the window it carried is the one that was chosen, not the default", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    await s.press(t.continue);
     // "All time" — the answer somebody opens setup again to give.
     const rung = RUNGS.find((r) => r.value === "all")!;
     const all = t[rung.label.slice("onboarding.".length) as keyof typeof t] as string;
@@ -193,11 +191,10 @@ describe("a re-run of setup, driven through the rendered stage", () => {
 
   it("and the AI answer ends the re-run rather than returning to consent", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    await s.press(t.continue);
     await s.press(t.agree);
     expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     await s.press(t.continue);
-    expect(s.heading(), "the second write looped as well").not.toBe(t.mapTitle);
+    expect(s.heading(), "the second write looped as well").not.toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.heading()).toBe(t.noOneWaits.replace(/\.$/, ""));
   });
 
@@ -205,7 +202,6 @@ describe("a re-run of setup, driven through the rendered stage", () => {
     // Every reply to this call is a 200, the ones that write nothing included. Advancing on one
     // is a control reporting that it acted when it did not.
     const s = await mount({ facts: finished(), rerun: true, outcome: "gone" });
-    await s.press(t.continue);
     await s.press(t.agree);
     expect(s.heading(), "it walked on as though the window had been stored").toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).toContain(t.windowGone);
@@ -219,13 +215,12 @@ describe("a FIRST run whose read has not caught up yet", () => {
     // return "consent"`) puts the person back in front of the question they just answered, and
     // there is nothing in the loop to end it.
     const s = await mount({ facts: fresh(), refresh: false });
-    expect(s.heading()).toBe(t.mapTitle);
-    await s.press(t.continue);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 
     await s.press(t.agree);
     expect(s.heading(), "the stale read sent the run back to the consent statement")
-      .not.toBe(t.mapTitle);
+      .not.toContain(t.organizeLast.split("<window>")[0]!.trim());
     // Row 5: the AI question is the first thing left unanswered once consent is recorded.
     expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
@@ -233,7 +228,6 @@ describe("a FIRST run whose read has not caught up yet", () => {
   it("CONTROL: with the read caught up it lands on the same screen", async () => {
     // Which is what says the case above is about the LAG and not about the cursor.
     const s = await mount({ facts: fresh() });
-    await s.press(t.continue);
     await s.press(t.agree);
     expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });

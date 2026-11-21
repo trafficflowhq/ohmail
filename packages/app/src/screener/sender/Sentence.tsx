@@ -51,6 +51,7 @@ export function Sentence({
   unsubscribed: boolean;
 }) {
   const t = useText("screener");
+  const screening = useText("screening");
   const words = suggestionWords(sender, useNoAdvice());
   const model = useScreener();
   const waiting = view.segment === "waiting";
@@ -134,6 +135,9 @@ export function Sentence({
           </span>
         ) : null}
       </p>
+      {choosing && scope === "sender" && sender.checked?.claimsOnly ? (
+        <p className="oh-text">{screening("footListClaim", { brand: sender.checked.brand })}</p>
+      ) : null}
       <ScopeMenu view={view} sender={sender} scope={scope} anchor={scopeAt} />
     </div>
   );

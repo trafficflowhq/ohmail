@@ -318,8 +318,7 @@ describe("the window's sync strip says when its server is not fetching new mail"
   it("the managed door: it arrives with the server's time, and leaves when fetching runs again", async () => {
     served = [door.behind];
     const win = await strip(MANAGED);
-    expect(win.said()).toContain(tEn("behindTitle"));
-    expect(win.said()).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
+    expect(win.said()).toBe(`New mail is late ${tEn("behindLineCloud", { hasSince: "yes", since: "11:10" })}`);
     served = [door.runs];
     await win.nextPoll();
     expect(win.said(), "the frame's connection notice").toBe("");

@@ -235,7 +235,6 @@ function moveVerb(
     rank: 7,
     behind: compact,
     ...hint,
-    keyHint: hint.keyHint ?? "M",
     onPress,
   };
 }

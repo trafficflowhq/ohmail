@@ -1,0 +1,14 @@
+.fr-main:has(.cal-found-card) {
+  position: relative;
+}
+
+.cal-found-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cal-found-ways {
+  margin-block: auto var(--s4);
+}

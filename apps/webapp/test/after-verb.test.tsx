@@ -570,7 +570,7 @@ describe("the keyboard ring stays on the row the verbs act on", () => {
     expect(holder()?.closest("[role=dialog]"), "the places took the keyboard").not.toBeNull();
     await press("ArrowDown");
     await enter();
-    expect(document.querySelector("[role=dialog]")?.getAttribute("aria-label"), "Screening's ask stands").toBe("Screening");
+    expect(document.querySelector("[role=dialog]")?.getAttribute("aria-label"), "Screening's ask names its sender count and destination").toBe("1 sender · News.");
     expect(holder(), "the ask holds the keyboard on its first control").toBe(named("menuitem", "Cancel"));
     await press("ArrowDown");
     await enter();

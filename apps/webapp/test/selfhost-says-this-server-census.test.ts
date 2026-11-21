@@ -70,7 +70,7 @@ const DYNAMIC: Record<string, { reaches: string[]; why: string }> = {
   "desktop: refusedKey": {
     reaches: ["desktopStateSignInRefused"], why: "the refused sign-in: a local server's, a Google mailbox's, or the plain one",
   },
-  "desktop: holderSentence({ who: whoOf(m)!, verb: \"reclaim\", managed }).key": {
+  "desktop: refusalRemedy.key": {
     reaches: ["readerSince", "readerStopped", "readerReadsOnly", "readerHolderPhone"],
     why: "holderSentence, the reader row's holder table",
   },

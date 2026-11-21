@@ -429,7 +429,7 @@ describe("a message cannot freeze the tab it is opened in", () => {
     expect(out.html).toBe("");
     expect(out.blocked).toEqual([]);
     // The reason is a sentence a reader can act on, not a blank frame.
-    expect(COPY.oversize).toMatch(/plain-text/i);
+    expect(COPY.oversize).toBe("This message's design is too large to draw safely, so you are reading its plain text.");
     // And an ordinary message is an ordinary message.
     const ok = await clean(`<p>${"x".repeat(64 * 1024)}</p>`);
     expect(ok.oversize).toBeUndefined();

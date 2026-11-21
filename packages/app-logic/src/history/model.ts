@@ -5,13 +5,14 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { createContext, useContext, useMemo, type RefObject } from "react";
-import { countWhen, listSurface, saysEmpty, zonedFields } from "@ohmail/client-engine";
+import { countWhen, listSurface, saysEmpty, zonedFields, type ThreadMark } from "@ohmail/client-engine";
 import { newestFirst, usePlaceList, type PlaceList, type PlaceListInput } from "../place-list/place-list.js";
 import type { ListWindow } from "../lists/list-window.js";
 import { readerZone } from "../reader/head-model.js";
 
 export interface HistoryInput extends Omit<PlaceListInput, "rows"> {
   readonly messages: readonly EngineMessage[];
+  readonly conversationMarks?: ReadonlyMap<string, readonly ThreadMark[]>;
   readonly timelineCount?: number;
   readonly timelineMonths?: readonly HistoryMonth[];
   readonly windowed?: HistoryWindow;
@@ -37,13 +38,14 @@ export interface HistoryWindow {
   readonly scroller: RefObject<HTMLDivElement | null>;
   readonly window: ListWindow;
   readonly total: number;
-  readonly slots: readonly (EngineMessage | "gone" | null)[];
+  readonly slots: readonly (EngineMessage | "gone" | "folded" | null)[];
   readonly jump: (slot: number) => void;
 }
 
 export interface HistoryModel {
   readonly windowed?: HistoryWindow;
   readonly list: PlaceList;
+  readonly conversationMarks?: HistoryInput["conversationMarks"];
   /** The list's months, newest first: what the month rail lays out for the room it has. */
   readonly months: readonly HistoryMonth[];
   readonly count: number | undefined;
@@ -69,6 +71,7 @@ export function useHistoryList(input: HistoryInput): HistoryModel {
   const surface = listSurface(facts);
   return {
     list,
+    conversationMarks: input.conversationMarks,
     months,
     windowed: input.windowed,
     count: countWhen(facts, facts.count),

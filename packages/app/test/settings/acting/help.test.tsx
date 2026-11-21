@@ -1,7 +1,13 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HELP_STATES, HelpPane, helpWayOf, type HelpModel } from "../../../src/settings/help/index.js";
+import {
+  HELP_STATES,
+  HelpContactPane,
+  HelpPane,
+  helpWayOf,
+  type HelpModel,
+} from "../../../src/settings/help/index.js";
 import { drawn, said } from "./words.js";
 
 afterEach(cleanup);
@@ -22,6 +28,27 @@ describe("which way Write to us goes", () => {
 });
 
 describe("the Help pane", () => {
+  it("copies diagnostics and the contact alongside the mail app link", async () => {
+    const copyText = vi.fn(async (_text: string) => true);
+    drawn(
+      <HelpContactPane
+        host={{ surface: "web", version: "2.0.0", commit: null, mailtoLeaves: true }}
+        mailboxes={[]}
+        onWrite={null}
+        os={null}
+        copyText={copyText}
+      />,
+    );
+    expect(screen.getByRole("link", { name: said("en", "help", "write") })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: said("en", "help", "copyDiag") }));
+    expect(copyText.mock.calls[0]?.[0]).toContain("2.0.0");
+    fireEvent.click(screen.getByRole("button", { name: said("en", "help", "copyAddress") }));
+    expect(copyText).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: said("en", "help", "copied") })).toBeTruthy(),
+    );
+  });
+
   it("opens the composer with one press, and says it is the person's own mailbox", () => {
     const write = vi.fn();
     drawn(<HelpPane model={{ ...build, write: { kind: "compose", write } }} />);

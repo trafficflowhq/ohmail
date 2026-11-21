@@ -495,11 +495,26 @@ async function materializeRows(
    * "include"`) carries them too, so `MessageService.delete`'s echo cannot disagree with the row
    * the client already holds. One store answers a boolean and the other 0/1, normalised below.
    */
+  const earlierInvitation = (column: "start_raw" | "starts_at") => sql`
+    case when ${messageInvitations.method} = 'REQUEST' and ${messageInvitations.sequence} > 0 then (
+      select earlier.${sql.identifier(column)} from ${messageInvitations} earlier
+      join ${messages} letter on letter.id = earlier.message_id and letter.account_id = earlier.account_id
+      where earlier.account_id = ${messageInvitations.accountId}
+        and earlier.mailbox_id = ${messageInvitations.mailboxId}
+        and earlier.uid = ${messageInvitations.uid} and earlier.recurrence_id = ${messageInvitations.recurrenceId}
+        and lower(earlier.organizer) = lower(${messageInvitations.organizer})
+        and earlier.method = 'REQUEST' and earlier.sequence < ${messageInvitations.sequence}
+        and letter.deleted_at is null
+      order by earlier.sequence desc, earlier.stamped_at desc, earlier.message_id
+      limit 1
+    ) end`;
   const fields = {
     m: messages,
     fs: prefixed(folderState, "fs"),
     st: prefixed(messageStates, "st"),
     inv: prefixed(messageInvitations, "inv"),
+    previousStart: earlierInvitation("start_raw").as("inv_previous_start"),
+    previousAt: earlierInvitation("starts_at").mapWith(messageInvitations.startsAt).as("inv_previous_at"),
     tagId: sql<string | null>`${messageTags.tagId}`.as("mt_tag_id"),
     awaySentAt: sql`${awayReplies.sentAt}`.mapWith(awayReplies.sentAt).as("ar_sent_at"),
     autoReply: sql<unknown>`case when ${autoReplyByUsWhere(d, {
@@ -520,6 +535,7 @@ async function materializeRows(
   type Row = {
     m: typeof messages.$inferSelect; fs: typeof folderState.$inferSelect;
     st: typeof messageStates.$inferSelect; inv: typeof messageInvitations.$inferSelect; tagId: string | null;
+    previousStart: string | null; previousAt: Date | null;
     awaySentAt: Date | null; autoReply: unknown; invitation: unknown; itipReply: unknown; listAddress: unknown;
   } & Record<string, unknown>;
   // Dynamic: the page join is present only for a joined page. Every join is 1:1 but the tags.
@@ -559,6 +575,9 @@ async function materializeRows(
   }
   const out: MaterializedRow[] = [];
   for (const { row: r, tags: labels } of byId.values()) {
+    const invitation = r.inv?.messageId == null ? undefined : invitationFieldOf(r.inv);
+    if (invitation && (r.previousStart != null || r.previousAt != null))
+      invitation.previous = { start: r.previousStart, startsAt: iso(r.previousAt) };
     out.push({
       dto: messageRowToDTO(
         // A side row the left join did not find comes back as columns that are all null.
@@ -569,7 +588,7 @@ async function materializeRows(
         isYes(r.invitation),
         isYes(r.itipReply),
         isYes(r.listAddress),
-        r.inv?.messageId == null ? undefined : invitationFieldOf(r.inv),
+        invitation,
       ),
       keys: (source?.keys ?? []).map((_, i) => r[`k${i}`]),
     });
@@ -1071,6 +1090,7 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     foldersEnabledAt: iso(row?.foldersEnabledAt),
     folderMailboxesOff: off,
     locale: row?.locale ?? null,
+    draftReplies: row?.draftReplies ?? true,
     // The subject's place, present only while stated: an account that stated nothing sends the record
     // it sent before the key.
     ...(subjectHeading === null ? {} : { subjectHeading }),

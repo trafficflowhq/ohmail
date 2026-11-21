@@ -15,6 +15,7 @@
     "accounts": {
       "useCalendar": "ohcal verwenden",
       "add": "Kalender-Account hinzufügen",
+      "addAccount": "Account hinzufügen",
       "none": "Kein Kalender-Account",
       "noneShort": "Keiner",
       "signInAgain": "Neu anmelden",

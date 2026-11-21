@@ -7,7 +7,7 @@
  * The viewport drives paging. The timeline answers the count and the rail independently of loaded rows.
  */
 import { useEffect, useMemo, type RefObject } from "react";
-import { physicalFolderOf } from "@ohmail/client-engine";
+import { physicalFolderOf, placedThreadMembers, threadMarkOf } from "@ohmail/client-engine";
 import type { EngineMessage, FolderEntity } from "@ohmail/wire";
 import { atStamp, useDerivedVersion, useEngine } from "../engine/context.js";
 import { useListWindow } from "../lists/list-window.js";
@@ -17,6 +17,7 @@ import { useStableCallback } from "../press/stable-callback.js";
 import { newestFirst } from "../place-list/place-list.js";
 import { useDayClock } from "../session/day-clock.js";
 import { useStoreTimeline } from "../session/store-timeline.js";
+import { usePresented } from "../reading/presented-mirror.js";
 import { stampOver } from "../text/format.js";
 import { monthsOf, useHistoryList, type HistoryModel } from "./model.js";
 
@@ -46,16 +47,43 @@ export function useHistoryLive(args: PlaceLiveArgs, own: HistoryLiveOwn): Histor
     [want, window.visibleStart, window.visibleEnd],
   );
   const { held } = args.press.deleting;
+  const presented = usePresented();
+  const conversations = useMemo(() => {
+    const folded = new Map<string, string>();
+    const marks = new Map<string, ReturnType<typeof threadMarkOf>[]>();
+    const raw = engine.read();
+    const fromPresented = atStamp(derived, placedThreadMembers(presented));
+    const fromRaw = placedThreadMembers(raw);
+    const collect = (groups: typeof fromPresented, present: boolean): void => {
+      for (const messages of groups.values()) {
+        const members = messages.filter(
+          (message) =>
+            !message.local &&
+            !held.has(message.id) &&
+            (present || presented.get<EngineMessage>("message", message.id) === undefined),
+        );
+        const latest = members.at(-1);
+        if (!latest || members.length < 2) continue;
+        for (const member of members.slice(0, -1)) folded.set(member.id, latest.id);
+        marks.set(latest.id, members.map(threadMarkOf));
+      }
+    };
+    collect(fromPresented, true);
+    collect(fromRaw, false);
+    return { folded, marks };
+  }, [engine, presented, derived, held]);
   const slots = useMemo(() => {
-    const out: (EngineMessage | "gone" | null)[] = [];
+    const out: (EngineMessage | "gone" | "folded" | null)[] = [];
     for (let i = window.start; i < window.end; i++) {
       const row = tl.rowAt(i);
-      out.push(row !== null && row !== "gone" && held.has(row.id) ? "gone" : row);
+      if (row === null || row === "gone") out.push(row);
+      else if (held.has(row.id)) out.push("gone");
+      else out.push(conversations.folded.has(row.id) ? "folded" : row);
     }
     return out;
-  }, [tl, held, window.start, window.end]);
+  }, [tl, held, conversations, window.start, window.end]);
   const messages = useMemo(
-    () => slots.filter((row): row is EngineMessage => row !== null && row !== "gone"),
+    () => slots.filter((row): row is EngineMessage => row !== null && row !== "gone" && row !== "folded"),
     [slots],
   );
   const feed = usePlaceListFeed(args, own, messages);
@@ -79,6 +107,12 @@ export function useHistoryLive(args: PlaceLiveArgs, own: HistoryLiveOwn): Histor
     ...feed.list,
     arrival: "first",
     messages,
+    conversationMarks: conversations.marks,
+    openMessage:
+      args.route.open && conversations.folded.has(args.route.open)
+        ? engine.read().get<EngineMessage>("message", args.route.open)
+        : undefined,
+    openRowId: args.route.open ? conversations.folded.get(args.route.open) : undefined,
     windowed: { scroller: own.scroller, window, total: tl.length, slots, jump: tl.jump },
     timelineCount: tl.state === "ready" || mirrorOnly ? (tl.total ?? tl.length) : undefined,
     timelineMonths: months,

@@ -25,6 +25,7 @@ import { invitationsRoute } from "./CalendarKeys.js";
 import { CalendarMiniMonth } from "./CalendarMiniMonth.js";
 import { useNewEvent } from "./use-new-event.js";
 import { isView, useNow } from "./where.js";
+import { CalendarSwatches } from "./CalendarSwatches.js";
 
 const PHONE_VIEWS = ["agenda", "day", "week", "month"] as const;
 type RailCalendar = KitRailProps["calendars"]["accounts"][number]["calendars"][number];
@@ -50,6 +51,8 @@ function CountedNavigation({ port, ...props }: CalendarRailProps & { readonly po
 function Navigation(props: CalendarRailProps & { readonly waiting?: string; readonly found?: string }) {
   const { form, route, commands, switcher, plan } = props;
   const t = useText("calendar");
+  const ts = useText("calsettings");
+  const check = useCalendarCheck();
   const open = useNewEvent(undefined, true);
   const create = open
     ? { label: t("create.title"), icon: "plus" as const, onPress: () => open(), keyHint: "C" }
@@ -99,25 +102,47 @@ function Navigation(props: CalendarRailProps & { readonly waiting?: string; read
   }));
 
   if (form !== "words") {
+    const folded = form === "icons" && plan.device === "fold";
+    const foot: DockPlace[] = [places[2]!];
+    if (folded && check) {
+      foot.unshift({
+        id: "check",
+        icon: "pull",
+        label: ts("accounts.checkNow"),
+        onPress: check.run,
+        disabled: check.busy,
+      });
+    }
     return (
       <Dock
         label={t("landmark")}
-        places={form === "dock" ? tabs : places}
+        places={form === "dock" ? tabs : folded ? places.slice(0, 2) : places}
         write={create}
         floor={form === "dock" ? tabs.length : 0}
         upright={form === "icons"}
+        afterPlaces={folded ? <FoldCalendarSwatches short={plan.short} /> : null}
+        foot={folded ? foot : undefined}
         switcher={switcher}
-        more={{
-          label: t("more"),
-          drawer: true,
-          count: form === "dock" ? props.waiting : undefined,
-          countHot: true,
-          onPress: () => commands.rail(true),
-        }}
+        more={
+          folded
+            ? undefined
+            : {
+                label: t("more"),
+                drawer: true,
+                count: form === "dock" ? props.waiting : undefined,
+                countHot: true,
+                onPress: () => commands.rail(true),
+              }
+        }
       />
     );
   }
   return <CalendarRailContents {...props} places={places} create={create} pick={pick} />;
+}
+
+function FoldCalendarSwatches({ short }: { readonly short: boolean }) {
+  const { rows } = useRailCalendars();
+  return <CalendarSwatches short={short} rows={rows} />;
 }
 
 function CalendarRailContents({

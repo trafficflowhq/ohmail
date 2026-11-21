@@ -28,7 +28,15 @@ function emptyWaitingStatus(t: Text, unorganized: NotOrganizingYet | null): stri
   return t(status[sharedNotOrganizedWhy(unorganized)]);
 }
 
-export function Head({ view, go }: { view: ScreenerView; go: (segment: ScreenerSegment) => void }) {
+export function Head({
+  view,
+  go,
+  spamCount,
+}: {
+  view: ScreenerView;
+  go: (segment: ScreenerSegment) => void;
+  spamCount?: number;
+}) {
   const t = useText("screener");
   const model = useScreener();
   const { facts, junk } = useScreenerBeside();
@@ -60,10 +68,11 @@ export function Head({ view, go }: { view: ScreenerView; go: (segment: ScreenerS
       label: t("segScreened"),
       count: copied ? model.screenedOut.length : undefined,
     },
-    /* Junk is read live, a page at a time: a number would say "loaded so far", so it says none. */
-    junk === NONE
-      ? { value: "spam" as const, label: t("segSpam"), count: copied ? model.spam.length : undefined }
-      : { value: "spam" as const, label: t("segJunk"), count: undefined },
+    {
+      value: "spam" as const,
+      label: t("segSpam"),
+      count: junk === NONE ? (copied ? model.spam.length : undefined) : spamCount,
+    },
   ].map((option) => (option.count ? { ...option, ariaLabel: `${option.label} ${option.count}` } : option));
   return (
     <ListHead

@@ -151,6 +151,23 @@ describe("face resolution order", () => {
     expect(document.documentElement.dataset.face).toBeUndefined();
   });
 
+  it("keeps an explicit device choice across a reload with an account face", () => {
+    const renderFace = () => render(
+      <ThemeProvider faces preferAccountFace storage={jarDoor()}>
+        <Probe />
+      </ThemeProvider>,
+    );
+    window.localStorage.setItem("ohmail.face.account", "ohmarchy");
+    const first = renderFace();
+    expect(seen?.face).toBe("ohmarchy");
+    act(() => controls!.setFace("paper", true));
+    expect(seen?.face).toBe("paper");
+    first.unmount();
+    renderFace();
+    expect(seen?.face).toBe("paper");
+    expect(controls?.deviceFaceExplicit).toBe(true);
+  });
+
   it("adoptAccountFace mirrors for the next boot; null clears the mirror", () => {
     stubPlatform("MacIntel", MAC_UA);
     mount();

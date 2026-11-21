@@ -184,6 +184,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             key={m.id}
             message={m}
             showSubject={eachSubject || (threaded && separateSubject(m, subject, phone && index === latest))}
+            compactSubject={eachSubject}
             offMirrorBody={offMirrorRow?.body ?? storeBody?.body}
             retryBody={offMirrorRow?.retry ?? storeBody?.retry}
             opened={m.id === openId}

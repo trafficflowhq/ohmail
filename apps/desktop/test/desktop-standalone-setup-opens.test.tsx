@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { createTranslator } from "use-intl";
 import { DOORS, plantShell, type Pipe } from "./_doors-harness.js";
 import { createRoot, type Root } from "react-dom/client";
@@ -527,7 +527,7 @@ describe("the setup after a retried first door", () => {
     expect(el.textContent, "control: the first attempt was refused").toContain("refused that password");
     await type(el, "door-address", "box2@home.arpa");
     await press(el, "Open this mailbox");
-    await press(el, "Continue");
+    expect(screen.getByRole("button", { name: en.onboarding.windowYear })).toBeTruthy();
     await press(el, "Agree and start organizing");
     expect(shell.organized, "the consent went to another mailbox").toEqual(["mbx-mila"]);
     expect(window.location.hash).toBe("#/first-run?mailbox=mbx-mila");
@@ -598,8 +598,16 @@ describe("connecting a mailbox in desktop setup", () => {
       return Response.json({ items: [], changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "MA", hasMore: false, serverTime: "2026-01-01T00:00:00Z" });
     }, "fixture");
     await render();
-    if (mode === "seed") await press(copy.welcomeStart);
-    await waitFor(() => expect(screen.queryByRole("heading", { name: copy.mailboxTitle }) !== null).toBe(true));
+    if (mode === "seed") {
+      const heading = screen.getByRole("heading", { name: copy.welcomeTitle.replace(/\.$/, "") });
+      expect(heading.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
+      const welcome = heading.closest("form")!;
+      await act(async () => {
+        fireEvent.click(within(welcome).getByRole("button", { name: (name) => name.startsWith(copy.welcomeStart) }));
+      });
+    }
+    const providerTitle = mode === "add" ? copy.providerAnother : copy.providerFirst;
+    await waitFor(() => expect(screen.getByRole("heading", { name: providerTitle })).toBeTruthy());
     const field = (name: string, value: string) => {
       const input = screen.queryByLabelText(name);
       if (!input) throw new Error(`Setup did not draw the ${name} field`);
@@ -607,7 +615,10 @@ describe("connecting a mailbox in desktop setup", () => {
     };
     async function fill() {
       field(copy.address, address);
-      await press(en.providerPicker.otherLabel);
+      await press(en.providerPicker.otherShort);
+      const title = mode === "seed" ? en.join.manualTitle : copy.mailboxTitle;
+      await waitFor(() => expect(screen.getByRole("heading", { name: title })).toBeTruthy());
+      if (mode === "seed") fireEvent.click(screen.getByText(en.join.manualPorts));
       field(copy.imapHost, incoming + ":993");
       field(copy.smtpHost, outgoing + ":465");
       field(copy.password, login);
@@ -617,7 +628,8 @@ describe("connecting a mailbox in desktop setup", () => {
   }
 
   async function press(label: string) {
-    const button = () => screen.queryByRole("button", { name: (name) => name.startsWith(label) });
+    const button = () => screen.queryByRole("button", { name: label }) ??
+      screen.queryByRole("button", { name: (name) => name.startsWith(label) });
     await waitFor(() => expect(button() !== null).toBe(true));
     await act(async () => { fireEvent.click(button()!); });
   }
@@ -641,7 +653,7 @@ describe("connecting a mailbox in desktop setup", () => {
 
   it("SEED reconfigures the install", async () => {
     const { commands, asked } = await open("seed");
-    await press(copy.connect);
+    await press(en.join.manualConnect);
     expect(commands).toContain("engine_configure");
     expect(asked).not.toContain("POST /local/mailboxes");
   });
@@ -688,7 +700,7 @@ describe("connecting a mailbox in desktop setup", () => {
       expect(writes.map(({ path }) => path)).toEqual(["/local/mailboxes/probe"]);
       expect("smtp" in writes[0]!.body).toBe(false);
       expect(screen.queryByText(copy.sendingNotSet) !== null).toBe(true);
-      await press(copy.connect);
+      await press(mode === "seed" ? en.join.manualConnect : copy.connect);
       if (mode === "seed") expect(commands).toContain("engine_configure");
       else {
         expect(writes[1]!.path).toBe("/local/mailboxes");

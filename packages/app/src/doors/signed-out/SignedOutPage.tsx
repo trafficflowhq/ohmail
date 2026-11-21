@@ -1,8 +1,7 @@
 /**
  * SIGNED OUT, AND COMING BACK. The page that stands where a session cannot be used: while the sign-in is renewed,
  * when the server cannot be reached, when the sign-in cannot be renewed and why, and the two cold cards (nothing was
- * loaded; the check did not finish). It asks nothing itself; every way on is the door's. No key hint stands on its
- * buttons: the page has no field, so Enter presses only the button that has the focus.
+ * loaded; the check did not finish). Every way on is the door’s.
  */
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button, Page } from "@ohmail/ui/base";
@@ -23,10 +22,14 @@ export function SignedOutPage({
   const session = useText("session");
   const gate = useText("gate");
   const retry = useRef<HTMLButtonElement>(null);
+  const signInButton = useRef<HTMLButtonElement>(null);
+  const signInLink = useRef<HTMLAnchorElement>(null);
+  const expired = door !== NONE && door.state.at === "signedOut" && door.state.reason === "expired";
   const focusRetry = links !== undefined && door !== NONE && door.state.at === "unchecked";
   useEffect(() => {
+    if (expired) (signInLink.current ?? signInButton.current)?.focus();
     if (focusRetry) retry.current?.focus();
-  }, [focusRetry]);
+  }, [expired, focusRetry]);
   /* No server behind this build: there is no sign-in to renew, and nothing to press. */
   if (door === NONE)
     return (
@@ -35,13 +38,14 @@ export function SignedOutPage({
       </Page>
     );
   const { state } = door;
+  const keyHint = expired ? "↵" : undefined;
   const signIn = (words: string, kind?: "two") =>
     links === undefined ? (
-      <Button size="l" kind={kind} onPress={door.signIn}>
+      <Button size="l" kind={kind} ref={signInButton} keyHint={keyHint} onPress={door.signIn}>
         {words}
       </Button>
     ) : (
-      <Button size="l" kind={kind} href={links.signIn}>
+      <Button size="l" kind={kind} ref={signInLink} keyHint={keyHint} href={links.signIn}>
         {words}
       </Button>
     );
@@ -70,13 +74,15 @@ export function SignedOutPage({
         </Page>
       );
     case "signedOut":
-      /* A sign-in used twice is a refusal to read, not a line: it says what may have happened and what to do. */
-      return state.reason === "reused" ? (
-        <Page back={<ColdMark />} refusal={[resume(REASON_SAID.reused)]} acts={signIn(resume("signIn"))}>
-          <Said text={resume("failedTitle")} />
-        </Page>
-      ) : (
-        <Page back={<ColdMark />} line={resume(REASON_SAID[state.reason])} acts={signIn(resume("signIn"))}>
+      return (
+        <Page
+          back={expired ? null : <ColdMark />}
+          foldInset={expired}
+          {...(state.reason === "reused"
+            ? { refusal: [resume(REASON_SAID.reused)] as const }
+            : { line: resume(REASON_SAID[state.reason]) })}
+          acts={signIn(resume("signIn"))}
+        >
           <Said text={resume("failedTitle")} />
         </Page>
       );

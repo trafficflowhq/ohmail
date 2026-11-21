@@ -375,13 +375,9 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    // Move stands behind More on the new panel (the reader's design): More, then Move, then News, each a press.
-    const more = barVerb(document, "More");
-    await press(more, "the bar's More");
-    await click(more, "the bar's More");
-    const move = menuItem("Move");
-    await press(move, "More's Move");
-    await click(move, "More's Move");
+    const move = barVerb(document, "Move");
+    await press(move, "the bar's Move");
+    await click(move, "the bar's Move");
     await dwell();
     const news = menuItem("News");
     await press(news, "→ News");

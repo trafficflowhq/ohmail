@@ -66,6 +66,8 @@ export interface SuggestionsOptions<R extends SuggestionRow = SuggestionRow> {
    * row and the first (a place). False: the first row is on (a recipient).
    */
   free: boolean;
+  /** At most this many rows across all groups. */
+  limit?: number;
   /** A row was taken: by a press, by Enter or by Tab. The field's text is the caller's to set. */
   onTake: (row: R, via: SuggestionVia) => void;
   /** How many characters before `ask`; how long the typing must rest; when the wait is shown; when it is given up. */
@@ -248,9 +250,15 @@ export function useSuggestions<R extends SuggestionRow = SuggestionRow>(
     typing.current = false;
   });
 
+  let remaining = options.limit ?? Infinity;
   const groups = shut
     ? NONE
-    : [...(own && (typed || unasked) ? own(text) : NONE), ...answers].filter((group) => group.rows.length);
+    : [...(own && (typed || unasked) ? own(text) : NONE), ...answers].flatMap((group) => {
+        if (!group.rows.length || remaining <= 0) return [];
+        const rows = group.rows.length > remaining ? group.rows.slice(0, remaining) : group.rows;
+        remaining -= rows.length;
+        return [{ ...group, rows }];
+      });
   const rows = groups.flatMap((group) => group.rows);
   const found = at === null ? -1 : rows.findIndex((row) => row.id === at.id);
   /* The first row is on by itself only while the keys were put on none: never in the place of a row that left. */

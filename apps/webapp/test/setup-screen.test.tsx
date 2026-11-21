@@ -151,7 +151,7 @@ async function fillAndSubmit(container: HTMLElement): Promise<void> {
 describe("the gate — the form exists exactly while /hello says needsSetup:true", () => {
   it("a fresh server renders the ceremony: token, email, name, password", async () => {
     const c = await mountSetup();
-    expect(c.textContent).toContain("Set up your ohmail server");
+    expect(c.textContent).toContain("This server’s setup token is");
     expect(blank(c, W.tokenLabel), "the token field is the ceremony").not.toBeNull();
     // WHERE the token comes from, said plainly on the page — the operator's one real question.
     expect(c.textContent).toContain("docker compose logs api");

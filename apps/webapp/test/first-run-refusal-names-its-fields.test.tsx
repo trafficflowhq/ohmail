@@ -6,6 +6,8 @@ import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import type { Answered, Refusal, RefusalDetails } from "@ohmail/app-logic/mailboxes/connect/types";
 import messagesEn from "../../../packages/app/messages/mailboxes.en.json";
 import messagesDe from "../../../packages/app/messages/mailboxes.de.json";
+import doorsEn from "../../../packages/app/messages/doors.en.json";
+import doorsDe from "../../../packages/app/messages/doors.de.json";
 import { fakeDoor } from "../../../packages/app/test/mailboxes/connect/support.js";
 import { mountStage } from "./_first-run-stage.js";
 
@@ -86,13 +88,18 @@ async function mount(reason: string, opts: {
   };
   await press(said.onboarding.welcomeStart);
   if (opts.generic) {
-    await press(said.providerPicker.otherLabel);
+    await press(said.providerPicker.otherShort);
+    const join = (opts.locale === "de" ? doorsDe : doorsEn).join;
+    await act(async () => { within(el).getByText(join.manualPorts).click(); });
     await type(said.onboarding.address, "someone@example.test");
     await type(said.onboarding.password, "app-password-fixture");
     await type(said.onboarding.imapHost, "imap.example.test");
     await type(said.onboarding.smtpHost, "smtp.example.test");
   } else {
     await type(said.onboarding.address, "do-not-reply@gmail.com");
+    const tiles = within(el).getByRole("group", { name: said.providerPicker.label });
+    expect(within(tiles).getByRole("button", { name: "Gmail" }).getAttribute("aria-pressed")).toBe("true");
+    await press("Gmail");
     await type(said.onboarding.password, "app-password-fixture");
   }
   return { el, press };
@@ -151,7 +158,7 @@ describe("the first-run refusal names the outgoing server", () => {
       for (const [locale, said] of [["en", messages], ["de", de]] as const) {
         const { el, press } = await mount(reason, { locale, probe: "ok", connect: answered(wire), generic: true });
         await press(said.onboarding.test);
-        await press(said.onboarding.connect);
+        await press((locale === "de" ? doorsDe : doorsEn).join.manualConnect);
         const t = createTranslator({ locale, messages: said, namespace: "mailboxes" });
         expect(verdict(el), `${reason}, ${locale}`).toContain(t(`probe_${reason}_noport`, { field: "smtp" }));
         expect(verdict(el), `${reason}, ${locale}`).toMatch(/SMTP/);
@@ -174,10 +181,9 @@ describe("the first-run test verdict", () => {
   for (const reason of ["connect", "timeout", "tls"]) {
     it(`behind a named provider, ${reason} names no host and no port`, async () => {
       const { el, press } = await mount(reason);
-      const tiles = within(el).getByRole("group", { name: messages.providerPicker.label });
-      const gmail = [...tiles.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith("Gmail"));
-      expect(gmail?.getAttribute("aria-pressed") === "true" || gmail?.getAttribute("aria-checked") === "true", "the stage opens on a named provider").toBeTruthy();
-      await press("Test connection");
+      expect(within(el).queryByLabelText(messages.onboarding.imapHost)).toBeNull();
+      expect(within(el).queryByLabelText(messages.onboarding.smtpHost)).toBeNull();
+      await press(messages.onboarding.test);
       expect(verdict(el)).not.toBe("");
       expect(verdict(el)).not.toMatch(/\bport\b|\bhost\b|server name/i);
     });

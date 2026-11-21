@@ -58,6 +58,40 @@
     font-weight: var(--w-bold);
   }
 
+  .oh-railentry-name[data-wordmark] {
+    font-family: var(--f-display);
+    font-weight: var(--w-bold);
+  }
+
+  :is(
+    .oh-railentry-name[data-wordmark],
+    .oh-rail[data-drawer] .oh-railentry[data-kind="place"][aria-current="page"] .oh-railentry-name
+  )::after {
+    content: "";
+    display: inline-block;
+    inline-size: var(--oh-railentry-dot-side);
+    block-size: var(--oh-railentry-dot-side);
+    border-radius: var(--dot-r);
+    background: var(--oh-railentry-stop, currentColor);
+  }
+
+  .oh-rail[data-drawer] .oh-railentry[data-kind="place"][aria-current="page"] {
+    --oh-railentry-cursor: var(--key-focus-ring);
+    background: transparent;
+    color: var(--ink);
+  }
+
+  :root[data-face="paper"]
+    .oh-rail[data-drawer]
+    .oh-railentry[data-kind="place"][aria-current="page"]
+    .oh-railentry-name::after {
+    margin-inline-start: var(--s1);
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail[data-drawer] .oh-railentry-name:not([data-wordmark])::after {
+    display: none;
+  }
+
   .oh-railentry-sign,
   .oh-railentry-chevron {
     flex: none;

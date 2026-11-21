@@ -204,6 +204,8 @@ export interface ColumnsProps {
   /** The list has the keys: the face that rings the column with the keyboard rings the list's sheet. */
   readonly listKeys: boolean;
   readonly reading: ReactNode;
+  /** An open sheet leaves the list visible under a scrim. */
+  readonly readingBackdrop?: boolean;
   /** A wide pane on screen. */
   readonly wide: ReactNode | null;
   /** What the place on screen stands above both of its columns, with the body it is mounted for; null where none. */

@@ -148,7 +148,7 @@ describe("a release from Screened out", () => {
     expect(s.moves()).toEqual([move("m1", "INBOX", true)]);
     expect(s.rules(), "the rule was written at the press").toEqual([]);
     expect(s.undoButton()).toBeTruthy();
-    expect(s.reportText()).toBe("Ohbox — 1 held from out@one.test released. Their rule now files future mail here too.");
+    expect(s.reportText()).toBe("Ohbox — 1 held from out@one.test released. Their rule now files future mail here too");
     expect(s.row(), "the released sender is still on the shelf").toBeNull();
     await windowCloses();
     expect(s.rules()).toEqual([{ method: "PATCH", path: "/api/rules/r1", body: { destination: "INBOX" } }]);
@@ -159,7 +159,7 @@ describe("a release from Screened out", () => {
     await s.press(copy.pileOhbox);
     expect(s.moves()).toEqual([move("m1", "INBOX", true)]);
     await s.undo();
-    expect(s.reportText()).toBe(messages.screening.toastRoutingUndoneRules);
+    expect(s.reportText()).toBe(messages.screening.toastRoutingUndoneRules.replace(/\.$/, ""));
     await windowCloses();
     expect(s.moves()).toEqual([move("m1", "INBOX", true), move("m1", SCREENED, true)]);
     expect(s.rules(), "Undo left the rule change to be written").toEqual([]);
@@ -186,7 +186,7 @@ describe("Not spam, back to Waiting", () => {
     await s.press(copy.place.toWaiting);
     expect(s.moves()).toEqual([move("m2", "ohmail/Screener")]);
     expect(s.rules(), "the rule was removed at the press").toEqual([]);
-    expect(s.reportText()).toBe("Not spam — spam@two.test is back in Waiting.");
+    expect(s.reportText()).toBe("Not spam — spam@two.test is back in Waiting");
     expect(s.undoButton()).toBeTruthy();
     await windowCloses();
     expect(s.rules()).toEqual([{ method: "DELETE", path: "/api/rules/r2", body: undefined }]);

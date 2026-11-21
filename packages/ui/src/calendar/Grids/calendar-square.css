@@ -11,6 +11,10 @@
     border-radius: var(--oh-csq-r);
     background: var(--oh-csq-fill);
   }
+  .oh-csq[data-size="10"] {
+    width: var(--cal-rail-swatch);
+    height: var(--cal-rail-swatch);
+  }
   .oh-csq[data-size="12"] {
     --oh-csq-r: calc(var(--r-sq) * 1.5);
     width: 12px;

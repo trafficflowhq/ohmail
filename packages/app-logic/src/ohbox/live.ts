@@ -23,7 +23,7 @@ import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useState, type RefObject } from "react";
 import { useDemoMode, useEngine } from "../engine/context.js";
 import { CURSOR_HINT_MS, cursorPlacementText, useCursorPlacer, useKeyBindings } from "../keys/index.js";
-import { useZoneNav } from "../keys/zone-nav.js";
+import { useZoneIs, useZoneNav } from "../keys/zone-nav.js";
 import type { PlaceLiveArgs } from "../lists/place-live.js";
 import { nothingOrganizesOf, type NotOrganizingYet } from "../mail-state/mail-state.js";
 import { useMailState } from "../mail-state/mail-state-binding.js";
@@ -118,12 +118,13 @@ function useOhboxKeys(
 ): void {
   const engine = useEngine();
   const cursorRow = args.plan.columns === 1 && args.route.open === null;
+  const readerFocused = useZoneIs("reader");
   const selected = model.selected;
   useKeyBindings(
     replacing
       ? []
       : [
-          ...model.keys,
+          ...model.keys.filter((binding) => !readerFocused || binding.chord !== "t"),
           ...(cursorRow
             ? cursorRowKeys({
                 t: own.shortcuts,
@@ -139,7 +140,11 @@ function useOhboxKeys(
   );
   useZoneNav(own.shortcuts, {
     list: model.zone.list,
-    reader: { selector: own.at.reading, ...model.zone.reader },
+    reader: {
+      selector: own.at.reading,
+      focusSelector: `${own.at.reading}, [data-read-stop]`,
+      ...model.zone.reader,
+    },
     listFocusSelector: own.at.openRow,
   });
 }

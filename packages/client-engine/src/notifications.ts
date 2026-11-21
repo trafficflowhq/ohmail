@@ -2,8 +2,8 @@
  * THE NOTIFICATION GATE: one decision, shared by every surface that draws a notice. It owns no
  * platform and writes no sentence: it answers closed words and whole numbers, and each surface
  * draws them in its own words. There is no event to read: a push wake is a closed constant, so the
- * device syncs and two samples are compared. A sample holds counts and ids, so nothing of a letter
- * can reach a notice from here: no sender, no subject, no body, under any stored choice.
+ * device syncs and two samples are compared. A sample holds counts and ids. For one identified arrival a surface can read opt-in
+ * preview text from its own copy after the gate decides that a notice may be drawn.
  */
 
 import type { NoticeChoices } from "./notices/choices.js";
@@ -13,12 +13,7 @@ import { answeredNotice, cancelledNotice, foundNotice, invitationNotice, movedNo
 
 export type { NoticePermission };
 
-/**
- * Mail's stored record, as this device has always kept it. The operating system's permission is
- * not in it: that is a fact about one device. A member an older install stored beside these (the
- * switch that once showed a sender and a subject) stays in the stored record and is read by
- * nothing: no notice has a place for either.
- */
+/** The mail choices held on this device. The operating system owns permission. */
 export interface NotificationChannels {
   /** The master. Off ⇒ nothing is drawn, whatever the four below say. */
   master: boolean;
@@ -26,6 +21,8 @@ export interface NotificationChannels {
   screener: boolean;
   scheduled: boolean;
   pairing: boolean;
+  /** Show the sender and subject for a single identified arrival. Unset reads as off. */
+  showMailDetails?: boolean;
 }
 
 /**

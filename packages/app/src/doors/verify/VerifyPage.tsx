@@ -3,14 +3,12 @@
  * account, so a click alone confirms nothing and the page asks for the password, a blank in its sentence as the design
  * draws it (where the link brought no code, the code is the first sentence's blank). It says why the password is
  * asked, or it would read as a phishing page. Every dead link is one sentence, the shell's. Everything the ceremony
- * does is the door's; the link's code never reaches the page. It is opened cold, from a mail, so it carries the small
- * mark where a way back would stand. Its words are the `verify` namespace's.
+ * does is the door's; the link's code never reaches the page. Its words are the `verify` namespace's.
  */
 import { useRef, useState, type ReactNode } from "react";
 import { Button, Page } from "@ohmail/ui/base";
 import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
-import { ColdMark } from "../stage/ColdMark.js";
 import { DoorForm } from "../stage/DoorForm.js";
 import { refusalOf, SignOutAgain } from "../stage/pending.js";
 import { Said, SaidWith } from "../stage/Said.js";
@@ -23,14 +21,13 @@ export function VerifyPage({ door }: { door: VerifyDoor | None }): ReactNode {
   switch (state.at) {
     case "unavailable":
       return (
-        <Page back={<ColdMark />} line={[{ note: verify("unavailableBody") }]} acts={null}>
+        <Page line={[{ note: verify("unavailableBody") }]} acts={null}>
           <Said text={verify("unavailableTitle")} dot="ink" />
         </Page>
       );
     case "done":
       return (
         <Page
-          back={<ColdMark />}
           line={verify("doneBody")}
           acts={
             <Button size="l" onPress={(door as VerifyDoor).signIn}>
@@ -44,7 +41,7 @@ export function VerifyPage({ door }: { door: VerifyDoor | None }): ReactNode {
     case "handed":
       /* No control here: the setup goes on in the other tab, and a second one would start a second wizard. */
       return (
-        <Page back={<ColdMark />} line={verify("handedOff")} note={verify("handedNote")} acts={null}>
+        <Page line={verify("handedOff")} note={verify("handedNote")} acts={null}>
           <Said text={verify("doneTitle")} dot="ink" />
           {/* Said as it appears, as the shipped page announced it. */}
           <p className="way-unseen" role="status">
@@ -98,7 +95,6 @@ function VerifyForm(p: {
   return (
     <DoorForm onSubmit={press}>
       <Page
-        back={<ColdMark />}
         refusal={refusalOf(pending, state.refusal)}
         line={verify("line")}
         acts={

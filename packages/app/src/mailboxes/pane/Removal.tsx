@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Dialog, Field, RadioLines } from "@ohmail/ui/base";
+import { SettingNote } from "@ohmail/ui/mail";
 import type { RowProps } from "./Row.js";
 import { useSay } from "./say.js";
 
@@ -37,7 +38,6 @@ export function Removal(props: Pick<RowProps, "model" | "verbs">): ReactNode {
       open
       onClose={model.removal.close}
       title={say({ key: "removeTitle", values: { address } })}
-      line={say({ key: "removeServerMail" })}
       keysOn="cancel"
       confirm={{
         label: say({ key: erase ? "removeEraseConfirm" : "removeConfirm" }),
@@ -47,6 +47,11 @@ export function Removal(props: Pick<RowProps, "model" | "verbs">): ReactNode {
       cancel={{ label: say({ key: "removeCancel" }) }}
       {...(said !== null ? { said: { line: said, refused: true } } : {})}
     >
+      <SettingNote>{say({ key: "removeStops" })}</SettingNote>
+      <SettingNote>{say({ key: "removeMailSafe" })}</SettingNote>
+      <SettingNote>{say({ key: "removeCredential" })}</SettingNote>
+      <SettingNote>{say({ key: "removeScheduled" })}</SettingNote>
+      <SettingNote>{say({ key: erase ? "removeCopyErased" : "removeCopyStays" })}</SettingNote>
       {verbs.erase ? (
         <>
           <RadioLines
@@ -58,6 +63,7 @@ export function Removal(props: Pick<RowProps, "model" | "verbs">): ReactNode {
             ]}
             onChange={(v) => model.removal.choose(v === "erase")}
           />
+          <SettingNote>{say({ key: "removeEraseWhat" })}</SettingNote>
           {erase ? (
             <Field
               label={say({ key: "removeEraseTypeLabel" })}
@@ -68,6 +74,7 @@ export function Removal(props: Pick<RowProps, "model" | "verbs">): ReactNode {
           ) : null}
         </>
       ) : null}
+      <SettingNote>{say({ key: "removeReconnect" })}</SettingNote>
     </Dialog>
   );
 }

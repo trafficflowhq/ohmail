@@ -65,40 +65,21 @@ describe("SET-H1/M4 — the confirm is the one place a rule is read in full", ()
  *
  * ── THE DEFECT, MEASURED ────────────────────────────────────────────────────────────────
  *
- * `.set-field-row` is a field with its verb beside it — the AI key and its "Save key and test".
- * It was `display:flex` with `flex:1 1 auto` on the field and `flex:none` on the button, which
- * gives the field no floor at all: at the narrow width the row is 290px and the German label
- * ("Gespeicherten Schlüssel testen") is 255px of it, so the key input rendered about 40px wide
- * — a password field too narrow to show that anything had been pasted into it. Measured in
- * Chromium at 390/760/1440 × en/de against the real pane.
- *
- * The fix is a FLEX BASIS, not a media query: 200px is the floor at which the field would
- * rather wrap the button than shrink further. Re-measured with it applied — 390: field 290px
- * with the button on its own line, both languages; 760 and 1440: both on one line, field
- * 259-479px. No width is special-cased, so a third language is handled by the same rule.
- *
- * MUTATION WATCH: restore `flex: 1 1 auto` (or drop `flex-wrap`) and this goes red.
+ * The AI key uses the shared field stack. The action has a row of its own, so a long
+ * translated action label cannot narrow the password input.
  */
 describe("SET-H1/M5 — the key field keeps a floor at every width", () => {
-  it("settings.css gives .set-field-row's field a basis and lets the row wrap", () => {
+  it("the field stack keeps the key input wide and puts the action on its own row", () => {
     const form = bare("apps/desktop/src/AiProviderForm.tsx");
-    expect(form).toMatch(/<div className="set-field-row">\s*<input\s+id="ai-key"/);
-    const css = bare("packages/ui/src/composites/settings.css");
-    const row = blockOf(css, ".set-field-row{");
-    expect(row, "no `.set-field-row` rule — a field with a verb beside it has no layout").toBeTruthy();
-    expect(
-      row!.replace(/\s/g, ""),
-      "the row cannot wrap, so the verb can only take its width out of the field",
-    ).toContain("flex-wrap:wrap");
-
-    const field = blockOf(css, ".set-field-row > :first-child");
-    expect(field, "no rule sizing the field inside .set-field-row").toBeTruthy();
-    const flex = /flex:\s*1\s+1\s+(\d+)px/.exec(field!);
-    expect(
-      flex,
-      "the field has no flex BASIS, so a long button label shrinks it without limit — " +
-        `got \`${field!.trim()}\``,
-    ).toBeTruthy();
-    expect(Number(flex![1]), "the field's floor is too small to read a pasted key in").toBeGreaterThanOrEqual(200);
+    expect(form).toMatch(/<FieldStack>\s*<Field\s+id="ai-key"[\s\S]+?\/>\s*<SettingActs>\s*<Button[^>]+type="submit"/);
+    const base = "packages/ui/src/base/Primitives";
+    const stack = blockOf(bare(`${base}/field-stack.css`), ".oh-fieldstack") ?? "";
+    expect(stack).toMatch(/display:\s*grid/);
+    expect(stack).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;/);
+    expect(stack).toMatch(/max-width:\s*var\(--oh-fieldstack-max\)/);
+    const max = /--oh-fieldstack-max:\s*(\d+)px/.exec(stack);
+    expect(Number(max?.[1]), "the field stack is too narrow to read a pasted key in").toBeGreaterThanOrEqual(200);
+    const field = blockOf(bare(`${base}/field.css`), ".oh-field-input") ?? "";
+    expect(field).toMatch(/width:\s*100%/);
   });
 });

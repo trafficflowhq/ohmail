@@ -26,7 +26,7 @@ export interface NotificationPreferences {
   ) => Promise<PushSyncOutcome | null>;
 }
 
-const CHANNEL_KEYS = Object.keys(DEFAULT_CHANNELS) as (keyof NotificationChannels)[];
+const CHANNEL_KEYS = [...Object.keys(DEFAULT_CHANNELS), "showMailDetails"] as (keyof NotificationChannels)[];
 
 function deliveryNote(outcome: PushSyncOutcome | null): NotificationsModel["delivery"] {
   if (
@@ -139,6 +139,7 @@ export function useNotificationSettings(
     channels,
     permission,
     live: channelsAreLive(channels, permission),
+    showsMailDetails: door !== NONE && door.emitter !== NONE && door.emitter.showsMailDetails === true,
     carries: door === NONE || door.emitter === NONE ? [] : door.emitter.carries,
     osHolds: door !== NONE && door.osHoldsPermission === true,
     delivery,
@@ -149,7 +150,7 @@ export function useNotificationSettings(
           // The pane hands back its rendered choices with one edit. Apply just that edit to the current record.
           const updated = { ...current };
           for (const key of CHANNEL_KEYS) {
-            if (key !== "master" && next[key] !== channels[key]) updated[key] = next[key];
+            if (key !== "master" && next[key] !== channels[key]) updated[key] = next[key] === true;
           }
           return updated;
         },

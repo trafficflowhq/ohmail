@@ -63,10 +63,13 @@ export interface MailPaneParts {
   readonly about: SettingsPane["Body"] | None;
   readonly mailboxes: MailboxesParts | None;
   readonly desktop: SettingsPane["Body"] | None;
+  readonly useDesktopSummary?: NonNullable<SettingsPane["useSummary"]>;
   readonly devices: DevicesPaneParts | SettingsPane["Body"] | None;
   readonly invites: InvitesPaneParts | None;
   readonly security: SecurityPaneParts | None;
   readonly billing: SettingsPane["Body"] | None;
+  readonly billingHasFoot?: boolean;
+  readonly useAiSummary?: NonNullable<SettingsPane["useSummary"]>;
   readonly useBillingSummary?: NonNullable<SettingsPane["useSummary"]>;
   readonly storage: StoragePaneParts | SettingsPane["Body"] | None;
   readonly away: SettingsPane["Body"] | None;
@@ -113,7 +116,7 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
         ? NONE
         : paneOf("mailboxes", mailboxesPane({ ...parts.mailboxes, mailState: useMailState })),
     screener: parts.screener === NONE ? NONE : paneOf("screener", { Body: parts.screener }),
-    ai: parts.ai === NONE ? NONE : paneOf("ai", { Body: parts.ai }),
+    ai: parts.ai === NONE ? NONE : paneOf("ai", { Body: parts.ai, useSummary: parts.useAiSummary }),
     away: parts.away === NONE ? NONE : paneOf("away", { Body: parts.away, useSummary: useAwaySummary }),
     rules:
       parts.rules === NONE
@@ -131,7 +134,10 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
       parts.signatures === NONE
         ? NONE
         : paneOf("signatures", { Body: parts.signatures, useSummary: useSignaturesSummary }),
-    desktop: parts.desktop === NONE ? NONE : paneOf("desktop", { Body: parts.desktop }),
+    desktop:
+      parts.desktop === NONE
+        ? NONE
+        : paneOf("desktop", { Body: parts.desktop, useSummary: parts.useDesktopSummary }),
     devices:
       parts.devices === NONE
         ? NONE
@@ -141,7 +147,10 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
     billing:
       parts.billing === NONE
         ? NONE
-        : paneOf("billing", { Body: parts.billing, useSummary: parts.useBillingSummary }),
+        : {
+            ...paneOf("billing", { Body: parts.billing, useSummary: parts.useBillingSummary }),
+            hasFoot: parts.billingHasFoot,
+          },
     storage:
       parts.storage === NONE
         ? NONE

@@ -730,7 +730,8 @@ export function useMessageAttachments(
   );
 
   const eventsOf = useCallback(
-    (id: string): readonly DistinctCalendarEvent[] => calendarEventsOf(engine, id),
+    (id: string, opts?: { attachmentTiles?: boolean }): readonly DistinctCalendarEvent[] =>
+      calendarEventsOf(engine, id, opts?.attachmentTiles),
     [engine],
   );
 
@@ -754,7 +755,7 @@ export function useMessageAttachments(
    * of anchor clicks in a browser, one awaited shell call per file on the desktop.
    */
   const downloadAll = useCallback(
-    (id: string, opts: { includeInlineParts?: boolean } = {}): void => {
+    (id: string, opts: { includeInlineParts?: boolean; omit?: string } = {}): void => {
       void (async () => {
         setDownloadingAll((prev) => {
           const next = new Set(prev);
@@ -763,7 +764,9 @@ export function useMessageAttachments(
         });
         try {
           const held = engine.attachmentsOf(id, opts);
-          const listed = held.state === "ready" ? withoutCalendarBodies(engine, id, held.items) : [];
+          const listed = held.state === "ready"
+            ? withoutCalendarBodies(engine, id, held.items).filter((item) => item.id !== opts.omit)
+            : [];
           if (held.state !== "ready" || listed.length === 0) {
             // No metadata means nothing to enumerate. The strip is already saying why — the
             // list carries its own failure state — so this is the one case the toast would only

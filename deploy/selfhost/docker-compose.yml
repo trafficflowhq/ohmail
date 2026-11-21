@@ -202,6 +202,8 @@ services:
       TF_PROBE_ALLOW_PRIVATE: ${TF_PROBE_ALLOW_PRIVATE:-}
       OHMAIL_CALENDAR: ${OHMAIL_CALENDAR:-1}
       OHCAL_ALLOW_PRIVATE: ${OHCAL_ALLOW_PRIVATE:-}
+      PLACES_SUGGEST_URL: ${PLACES_SUGGEST_URL:-}
+      PLACES_SUGGEST_TOKEN: ${PLACES_SUGGEST_TOKEN:-}
       # A UnifiedPush distributor on your own LAN (an `ntfy` beside this server). Empty means
       # the endpoint a phone registers must be https and must resolve to a public address —
       # the organizer POSTs a content-free wake to it unattended, so the default refuses
@@ -239,10 +241,6 @@ services:
       OHMAIL_EXTERNAL_TLS: ${OHMAIL_EXTERNAL_TLS:-}
       OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-}
       TF_TRUSTED_PROXIES: ${TF_TRUSTED_PROXIES:-proxy}
-      # The calendar's place suggestions: a geocoder of your own and its bearer, on this service
-      # alone (the organizer never asks one). Empty: the place field is a plain field.
-      PLACES_SUGGEST_URL: ${PLACES_SUGGEST_URL:-}
-      PLACES_SUGGEST_TOKEN: ${PLACES_SUGGEST_TOKEN:-}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}

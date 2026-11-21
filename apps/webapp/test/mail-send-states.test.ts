@@ -8,7 +8,7 @@ import messages from "../messages/en.json";
 import { screen, within } from "@testing-library/react";
 import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./_write-1-writing.js";
 import { GROUND_CATALOGUE } from "./_write-1-send-text.js";
-import { SENT_BEAT_MS } from "@ohmail/app-logic/writing/mail-send";
+import { SENDING_LONG_MS, SENT_BEAT_MS } from "@ohmail/app-logic/writing/mail-send";
 import type { SendState } from "@ohmail/app-logic/writing/mail-send";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
@@ -158,7 +158,7 @@ describe("the reply editor's send states", () => {
   });
 
   it("sending — locked, busy, and the text is not editable out from under the request", async () => {
-    await mount({ phase: "sending" });
+    await mount({ phase: "sending", since: Date.now() - SENDING_LONG_MS });
     expect(sendBtn().disabled).toBe(true);
     // `readOnly` is a textarea's word for it; a `contenteditable` says `contenteditable="false"`,
     // which is what `RichEditor`'s `editable` prop sets. The claim is unchanged: mid-send the
@@ -169,8 +169,7 @@ describe("the reply editor's send states", () => {
     expect(marks().length, "the reply draws no formatting control to check").toBeGreaterThan(0);
     expect(marks().every((b) => b.disabled))
       .toBe(true);
-    // The sentence follows Write's catalogue (`write.status.sending`, the studio's words): today's said "Sending your reply".
-    expect(status()!.textContent).toContain("Sending your message");
+    expect(status()!.textContent).toBe("Still sending.");
   });
 
   // While a send is pending, the send action reports its busy state to a screen reader.
@@ -239,7 +238,7 @@ describe("the reply editor's send states", () => {
 
   it("every non-delivered phase is announced, and none of them claims delivery", async () => {
     for (const phase of ["sending", "queued", "unverified", "failed"] as const) {
-      await mount({ phase });
+      await mount(phase === "sending" ? { phase, since: Date.now() - SENDING_LONG_MS } : { phase });
       const line = status()!;
       // Out-of-band outcomes: a retry can resolve minutes after focus moved on.
       expect(line.getAttribute("role")).toBe("status");

@@ -13,6 +13,11 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
   }
+  @container (min-width: 340px) {
+    .oh-choicetiles-grid[data-compact] {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
   .oh-choicetiles-tile {
     display: grid;
     min-width: 0;

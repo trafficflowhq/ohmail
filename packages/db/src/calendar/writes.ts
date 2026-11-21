@@ -20,7 +20,7 @@ export const CALENDAR_WRITE_FAULTS = [
   ...CALENDAR_SYNC_FAULTS,
   "version_stale", "version_unknown", "event_gone", "read_only", "left_out",
   "invitees_unsupported", "repeat_unsupported", "field_unwritable",
-  "earlier_refused", "content_refused", "expired",
+  "earlier_refused", "content_refused", "expired", "move_copy_left", "move_unresolved", "move_destination_unavailable",
 ] as const satisfies readonly CalendarWriteFault[];
 type _WriteFaults = Assert<Complete<CalendarWriteFault, typeof CALENDAR_WRITE_FAULTS>>;
 

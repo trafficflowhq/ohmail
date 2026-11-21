@@ -30,6 +30,7 @@ export interface SignatureEditorProps {
   readonly editable: boolean;
   /** A preview: drawn as a message carries it, no tools. */
   readonly preview: boolean;
+  readonly tools?: boolean;
   readonly onChange: (value: RichValue) => void;
 }
 

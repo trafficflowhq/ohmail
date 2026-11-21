@@ -334,6 +334,7 @@ export function FrameParts({
           ]}
           listKeys={!staged && route.open === null && !holds}
           reading={reading}
+          readingBackdrop={plan.device === "phone" && route.place === "frommail"}
           wide={wide !== null ? [columnNotice(plan.rail, slotNotice, false), wide] : null}
           above={above}
           labels={{

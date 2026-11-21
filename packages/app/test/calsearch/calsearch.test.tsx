@@ -4,7 +4,7 @@ import { renderToString } from "react-dom/server";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SearchView } from "../../src/calsearch/index.js";
-import { actLog, rangeInput, Words, type ActLog } from "../support/range-world.js";
+import { actLog, ev, rangeInput, Words, type ActLog } from "../support/range-world.js";
 
 afterEach(cleanup);
 
@@ -13,16 +13,18 @@ function Held({
   log,
   first = "",
   lang = "en" as "en" | "de",
+  input = rangeInput(),
 }: {
   log: ActLog;
   first?: string;
   lang?: "en" | "de";
+  input?: ReturnType<typeof rangeInput>;
 }) {
   const [q, setQ] = useState(first);
   return (
     <Words lang={lang}>
       <SearchView
-        input={rangeInput()}
+        input={input}
         acts={log.acts}
         query={q}
         onQuery={setQ}
@@ -58,6 +60,36 @@ describe("Search", () => {
     fireEvent.keyDown(field, { key: "ArrowUp" });
     fireEvent.keyDown(field, { key: "Enter" });
     expect(log.said).toEqual(["reveal old", "reveal tech"]);
+  });
+  it("lists the events on a typed date and opens that day from the first row", () => {
+    const log = actLog();
+    render(<Held log={log} first="20 nov" />);
+    expect(screen.getByText("2 events")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Makersfest/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Tech check/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Go to a date/ })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Enter" });
+    expect(log.said).toEqual(["view day 2026-11-20"]);
+  });
+  it("lists text matches below the weekday shortcut", () => {
+    const input = rangeInput();
+    const time = input.events[0]!.start;
+    render(
+      <Held
+        log={actLog()}
+        first="wed"
+        input={{ ...input, events: [...input.events, ev("wedding", "Wedding", time, time)] }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Wed 18 Nov.*Go to a date/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Poster review/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Wedding/ })).toBeTruthy();
+  });
+  it("opens the current Sunday for a bare Sunday query", () => {
+    const log = actLog();
+    render(<Held log={log} first="sun" input={rangeInput({ today: "2026-11-22" })} />);
+    fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Enter" });
+    expect(log.said).toEqual(["view day 2026-11-22"]);
   });
   it("a press on a hit takes the person there", () => {
     const log = actLog();

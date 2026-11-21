@@ -41,7 +41,12 @@ async function greenAcross(page: Page, y: number): Promise<number> {
 }
 
 /** The reader may still be landing its first selection while the browser lays out the tall test article. */
-async function measureScrolledPaint(page: Page, column: ReturnType<Page["locator"]>, title: ReturnType<Page["locator"]>) {
+async function measureScrolledPaint(
+  page: Page,
+  column: ReturnType<Page["locator"]>,
+  title: ReturnType<Page["locator"]>,
+  subjectCover = false,
+) {
   await vi.waitFor(async () => {
     const top = await title.evaluate((node) => node.getBoundingClientRect().top);
     const scrolled = await column.locator("[data-reading-scroll]").evaluate(async (node) => {
@@ -50,7 +55,15 @@ async function measureScrolledPaint(page: Page, column: ReturnType<Page["locator
       return node.scrollTop;
     });
     expect(scrolled, "the reading column did not scroll").toBe(300);
-    expect(await greenAcross(page, Math.max(0, top - 8))).toBeGreaterThan(400);
+    if (subjectCover) {
+      const boundary = await column.locator(".oh-readinghead").evaluate((head) => head.getBoundingClientRect().bottom);
+      expect(boundary).toBeGreaterThan(8);
+      expect(await greenAcross(page, Math.max(0, top - 8)), "the letter painted above its sticky heading").toBe(0);
+      expect(await greenAcross(page, boundary - 4), "the letter painted inside its sticky heading").toBe(0);
+      expect(await greenAcross(page, boundary + 4), "the letter is visible just below the heading").toBeGreaterThan(400);
+    } else {
+      expect(await greenAcross(page, Math.max(0, top - 8))).toBeGreaterThan(400);
+    }
   }, { timeout: 6000 });
 }
 
@@ -74,7 +87,7 @@ describe("the scrolled reader stays under its tile's top line", () => {
       const reader = page.getByRole("region", { name: "Open message" });
       await reader.getByRole("article").first().waitFor({ timeout: 6000 });
       await page.addStyleTag({ content: "[data-conv-id] .oh-message { min-height: 600px; background: #0f0 !important; }" });
-      await measureScrolledPaint(page, reader, reader);
+      await measureScrolledPaint(page, reader, reader, true);
 
       await show(page, streamHtml ??= readerStatesPage("apps/webapp/test/stream-edge-page.tsx"), "?face=paper");
       const list = page.getByRole("region", { name: "News", exact: true });
@@ -118,6 +131,13 @@ async function streamRead(viewport: number, theme: "light" | "dark", panels: num
       }
     }
     if (extra) await page.addStyleTag({ content: extra });
+    if (phone && placed) {
+      // Take over the reply's automatic scrolling before measuring the reader's top layout.
+      await reader.locator("[data-reading-scroll]").evaluate((scroller) => {
+        scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1 }));
+        scroller.scrollTop = 0;
+      });
+    }
     const measured = await reader.evaluate((pane, phoneReader) => {
       const box = (el: Element | null): Box | null => {
         if (!el) return null;

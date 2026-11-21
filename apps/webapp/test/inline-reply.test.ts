@@ -461,7 +461,7 @@ describe("sending the reply", () => {
     await type("Donnerstag passt.");
     expect(sendButton().disabled).toBe(false);
     expect(sendButton().getAttribute("aria-disabled")).toBeNull();
-    expect(sendButton().getAttribute("title")).toBe(sendButton().getAttribute("aria-label"));
+    expect(sendButton().getAttribute("title")).toBe("Send · Ctrl ↵");
     expect(host!.textContent, "the sentence outlived the words").not.toContain("Write something or attach a file.");
   });
 
@@ -483,7 +483,7 @@ describe("sending the reply", () => {
     await settleClosed();
 
     expect(editorsInMessage()).toHaveLength(0);
-    expect(host!.textContent).toContain("Reply sent.");
+    expect(host!.querySelector(".oh-report-said")?.textContent).toBe("Sent");
   });
 
   it("⌘↩ with an empty editor sends nothing — the guard is not the button's", async () => {
@@ -505,7 +505,7 @@ describe("sending the reply", () => {
 
     // Still open, nothing claimed.
     expect(editorsInMessage().length).toBeGreaterThan(0);
-    expect(host!.textContent).not.toContain("Reply sent.");
+    expect(host!.querySelector(".oh-report-said")?.textContent).not.toBe("Sent");
   });
 
   it("a send that lands closes the editor, says so, and drops the local draft", async () => {
@@ -519,7 +519,7 @@ describe("sending the reply", () => {
     await settleClosed();
 
     expect(editorsInMessage()).toHaveLength(0);
-    expect(host!.textContent).toContain("Reply sent.");
+    expect(host!.querySelector(".oh-report-said")?.textContent).toBe("Sent");
     // The scratch buffer goes with it — reopening must not resurrect a reply already sent.
     expect(replyBuffer(messageId)).toBeNull();
     // …and the copy that said sending was not connected is gone from the product.
@@ -606,7 +606,7 @@ describe("the outgoing reply is exactly what was typed", () => {
     await type(TYPED);
     await act(async () => { sendButton().click(); });
     await settle();
-    expect(host!.textContent).toContain("Reply sent.");
+    expect(host!.querySelector(".oh-report-said")?.textContent).toBe("Sent");
 
     const sends = seen.filter((m) => m.kind === "mail_send");
     expect(sends, "the send never reached the adapter").toHaveLength(1);

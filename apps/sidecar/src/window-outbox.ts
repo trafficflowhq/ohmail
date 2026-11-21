@@ -66,6 +66,7 @@ export function adoptLegacyWindowOutbox(dataDir: string, ownerKey: string | null
 
 /** The client engine's `OUTBOX_TYPE` and `OUTBOX_ABANDONED_TYPE`, spelled here: this process does not link it. */
 export const WINDOW_OUTBOX_TYPES: readonly string[] = ["outbox_entry", "outbox_abandoned"];
+const CALENDAR_OUTBOX_TYPE = "calendar_outbox";
 
 /** Under the shell's 64 MiB frame, so one send that crossed the bridge fits in one write. */
 const WINDOW_OUTBOX_MAX_BODY_BYTES = 63 * 1024 * 1024;
@@ -84,15 +85,16 @@ const json = (status: number, body: unknown): Response =>
 
 const keyOf = (type: string, id: string): string => JSON.stringify([type, id]);
 
-function isKey(v: unknown): v is { type: string; id: string } {
+function isKey(v: unknown, calendar: boolean): v is { type: string; id: string } {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const r = v as Record<string, unknown>;
-  return typeof r.type === "string" && WINDOW_OUTBOX_TYPES.includes(r.type)
+  return typeof r.type === "string" &&
+    (WINDOW_OUTBOX_TYPES.includes(r.type) || (calendar && r.type === CALENDAR_OUTBOX_TYPE))
     && typeof r.id === "string" && ID.test(r.id);
 }
 
-function isRow(v: unknown): v is Row {
-  if (!isKey(v)) return false;
+function isRow(v: unknown, calendar: boolean): v is Row {
+  if (!isKey(v, calendar)) return false;
   const e = (v as { entity?: unknown }).entity;
   return typeof e === "object" && e !== null && !Array.isArray(e);
 }
@@ -101,6 +103,8 @@ export interface WindowOutboxDeps {
   dataDir: string;
   /** Whose changes this door keeps — REQUIRED: a default owner would name one file for every account. */
   owner: WindowOutboxOwner;
+  /** A hosted account's calendar changes can wait in the same owner-scoped outbox. */
+  calendar?: boolean;
   /** Does this request carry the install's live launch bearer — the answer every local door gives. */
   authorized: (req: Request) => Promise<boolean>;
   /**
@@ -124,6 +128,7 @@ interface WindowOutbox {
 }
 
 export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
+  const calendar = deps.calendar === true;
   // AT FIRST USE, never at construction: a door that is built and never read reaches no `path`.
   let files_: readonly string[] | null = null;
   const files = (): readonly string[] => (files_ ??= windowOutboxFilesOf(windowOutboxOwnerKey(deps.owner)));
@@ -169,7 +174,7 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
         deps.log("window_outbox_read_failed", { reason: "the saved outbox could not be read, so it was set aside and the window starts with none" });
       } else {
         for (const r of rows) {
-          if (isRow(r)) next.set(keyOf(r.type, r.id), { row: r, bytes: JSON.stringify(r).length });
+          if (isRow(r, calendar)) next.set(keyOf(r.type, r.id), { row: r, bytes: JSON.stringify(r).length });
         }
       }
     }
@@ -212,8 +217,8 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
     try { body = JSON.parse(text) as typeof body; } catch { return refuse(400, "not JSON"); }
     const puts = Array.isArray(body.puts) ? body.puts : [];
     const deletes = Array.isArray(body.deletes) ? body.deletes : [];
-    if (!puts.every(isRow)) return refuse(400, "a put that is not an outbox row");
-    if (!deletes.every(isKey)) return refuse(400, "a delete that is not an outbox key");
+    if (!puts.every((row) => isRow(row, calendar))) return refuse(400, "a put that is not an outbox row");
+    if (!deletes.every((key) => isKey(key, calendar))) return refuse(400, "a delete that is not an outbox key");
     const set = await load();
     const next = new Map(set);
     // PUTS, THEN DELETES — the order the engine's own store applies one commit in.
@@ -244,7 +249,7 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
     count: (applied) => serial(async () => {
       let n = 0;
       for (const h of (await load()).values()) {
-        if (h.row.type !== "outbox_entry") continue;
+        if (h.row.type !== "outbox_entry" && h.row.type !== CALENDAR_OUTBOX_TYPE) continue;
         const key = (h.row.entity as { key?: unknown }).key;
         if (applied !== undefined && typeof key === "string" && applied(key)) continue;
         n += 1;

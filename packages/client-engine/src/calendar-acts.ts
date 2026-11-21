@@ -108,7 +108,11 @@ export function applyCalendarActs(records: readonly CalendarEventRecord[], acts:
         byId.set(r.id, withFields(r, act.change));
       continue;
     }
-    if ("scope" in act && act.scope.kind !== "record") continue;
+    if ("scope" in act && act.scope.kind !== "record") {
+      if (act.kind === "calendar_event_answer" && act.scope.at === r.recurrenceId)
+        byId.set(r.id, { ...r, myAnswer: act.answer });
+      continue;
+    }
     switch (act.kind) {
       case "calendar_event_update": byId.set(r.id, withFields(r, act.change)); break;
       case "calendar_event_delete":
@@ -119,7 +123,7 @@ export function applyCalendarActs(records: readonly CalendarEventRecord[], acts:
           }
         }
         break;
-      case "calendar_event_move": byId.set(r.id, { ...r, calendarId: act.toCalendarId }); break;
+      case "calendar_event_move": if (!act.copyThenRemove) byId.set(r.id, { ...r, calendarId: act.toCalendarId }); break;
       case "calendar_event_answer": byId.set(r.id, { ...r, myAnswer: act.answer }); break;
     }
   }
@@ -158,7 +162,7 @@ export function eventsWithWrites(
     if (!r.repeat) continue;
     for (const mark of r.writes) {
       const act = mark.act;
-      const child = act?.kind === "calendar_event_update" ? original.get(act.eventId) : undefined;
+      const child = act?.kind === "calendar_event_update" || act?.kind === "calendar_event_answer" ? original.get(act.eventId) : undefined;
       if (!child?.recurrenceId || child.uid !== r.uid || child.calendarId !== r.calendarId) continue;
       const previous = exceptionMarks.get(child.id);
       if (previous) previous.push(mark);

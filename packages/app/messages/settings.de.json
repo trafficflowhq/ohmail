@@ -60,7 +60,7 @@
       "original": "Original"
     },
     "screening": {
-      "title": "Was in deine Ohbox kommt",
+      "title": "Ohbox",
       "postureTitle": "Meine Ohbox für das freihalten, was zählt",
       "postureOn": "Echte Menschen und die Service-Mails, mit denen du etwas tust, bleiben in der Ohbox. Newsletter und Werbung gehen nach News, Quittungen und Rechnungen in die Belege.",
       "postureOff": "Alles von einem Absender, dem du geschrieben hast, kommt in deine Ohbox — Werbung eingeschlossen.",
@@ -122,10 +122,10 @@
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."
     },
     "dormancy": {
-      "title": "Wenn ein Absender still wird",
+      "title": "Fragt nach Absendern der letzten",
       "description": "Wie weit vor dem Beginn deines Screenings der Screener nach Absendern fragt, über die du nie entschieden hast. Wer zuletzt davor geschrieben hat, wartet in der Historie.",
       "dayLabel": "{days}",
-      "dayLabelDefault": "{days} (Standard)",
+      "dayLabelDefault": "{days} Tage",
       "allTime": "Gesamter Zeitraum",
       "ariaLabel": "Tage, bis ein Absender als still gilt",
       "microcopy": "Das ändert nur, nach wem der Screener dich fragt. Keine Mail wird verschoben: Mails von Absendern, nach denen er nicht fragt, stehen in der Historie – gelesen oder ungelesen.",
@@ -381,6 +381,7 @@
     "writeWhyCopy": "support@ohmail.app",
     "copyAddress": "Adresse kopieren",
     "copyDiag": "Diagnose kopieren",
+    "copyShort": "Kopieren",
     "copied": "Kopiert",
     "versionLabel": "Version",
     "subject": "Hilfe zu ohmail",
@@ -591,8 +592,6 @@
     "noticePileReceipts": "in Belegen",
     "noticePileScreener": "im Screener",
     "noticeNone": "Die Abwesenheitsantwort ist an, aber kein Stapel bekommt eine Antwort — es wird nichts gesendet.",
-    "noticeSettings": "Abwesenheit einstellen",
-    "noticeTitle": "Abwesenheitsantwort ist an",
-    "noticeDismiss": "Nicht jetzt"
+    "noticeSettings": "Abwesenheit einstellen"
   }
 }

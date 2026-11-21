@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider, createTranslator } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { findByRole, getByRole, queryByRole, within } from "@testing-library/react";
+import { findByRole, queryByRole, within } from "@testing-library/react";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { DesktopFrame } from "../src/DesktopFrame.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -133,7 +133,10 @@ async function render(
     ));
   });
   pane = await findByRole(mountPoint, "region", { name: catalogue.settings.mailboxes }, { timeout: 5000 });
-  return pane.querySelector(".mbx-org")?.textContent ?? "";
+  const organizer = queryByRole(pane, "group", { name: copy.readerAlongWho });
+  const chip = organizer?.querySelector("button[aria-describedby]");
+  const description = chip?.getAttribute("aria-describedby");
+  return (description ? document.getElementById(description)?.textContent : null) ?? "";
 }
 
 beforeEach(() => {
@@ -226,7 +229,7 @@ describe("the desktop pane names who files the mailbox", () => {
 describe("the desktop pane's heading names the door, never ohmail Cloud for a server or a computer", () => {
   /* The heading said "Cloud mailboxes" on every hosted door, a self-hosted server's and a paired
      computer's included. The local and managed doors are the controls and keep their words. */
-  const heading = (): string => getByRole(pane!, "heading", { level: 2 }).textContent ?? "";
+  const heading = (): string => within(pane!).getAllByRole("heading", { level: 2 })[0]!.textContent ?? "";
   /* Text node by node: `textContent` fuses a label and the sentence after it into one word. */
   const said = (): string => {
     const walker = document.createTreeWalker(pane!, NodeFilter.SHOW_TEXT);

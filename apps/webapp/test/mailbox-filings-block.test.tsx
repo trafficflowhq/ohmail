@@ -120,7 +120,7 @@ async function render(locale: "en" | "de" = "en"): Promise<HTMLElement> {
 const button = (name: string): HTMLElement => within(el).getByRole("button", { name });
 const filingButtons = (): HTMLElement[] =>
   within(el).queryAllByRole("button", { name: /^(Try again now|Leave them where they are)$/ });
-const status = (): string | null => within(el).getByRole("status").textContent;
+const status = (): Array<string | null> => within(el).getAllByRole("status").map((line) => line.textContent);
 
 async function press(label: string): Promise<void> {
   await act(async () => { button(label).click(); });
@@ -170,7 +170,7 @@ describe("the waiting filings block", () => {
     expect(api.retry).toHaveBeenCalledWith("mbx1", "ohmail/Receipts");
     expect(rosterReads).toBeGreaterThan(before);
     expect(api.read).toHaveBeenCalledTimes(2);
-    expect(status()).toBe("6 messages will be tried again on the next pass.");
+    expect(status()).toContain("6 messages will be tried again on the next pass.");
   });
 
   it("Leave them where they are names the read's bound and refreshes", async () => {
@@ -180,7 +180,7 @@ describe("the waiting filings block", () => {
     await press("Leave them where they are");
     expect(api.leave).toHaveBeenCalledWith("mbx1", "ohmail/Receipts", ago(300 * MIN));
     expect(rosterReads).toBeGreaterThan(before);
-    expect(status()).toBe("6 messages stay where they are.");
+    expect(status()).toContain("6 messages stay where they are.");
   });
 
   it("a waiting delete offers no Leave and sends nobody to Restore, which cannot bring it back; a mixed group keeps Leave", async () => {
@@ -202,10 +202,10 @@ describe("the waiting filings block", () => {
     await render();
     api.retry.mockRejectedValueOnce(new Error("offline"));
     await press("Try again now");
-    expect(status()).toBe("That did not go through. Nothing was changed.");
+    expect(status()).toContain("That did not go through. Nothing was changed.");
     api.leave.mockRejectedValueOnce(new Error("organized_elsewhere"));
     await press("Leave them where they are");
-    expect(status()).toBe("Another install organizes this mailbox now. Nothing was changed.");
+    expect(status()).toContain("Another install organizes this mailbox now. Nothing was changed.");
   });
 
   it("an unreadable list keeps the count from the facts and offers no press", async () => {

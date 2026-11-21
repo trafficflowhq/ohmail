@@ -390,8 +390,10 @@ export interface ZoneNavConfig {
   list?: { up: ZoneListStep; down: ZoneListStep; followId?: string | null };
   /** The open-message zone. Absent in the stream views, which have no third column. */
   reader?: {
-    /** Geography, focus target and default scroller of the open message. */
+    /** Focus target and default scroller of the open message. */
     selector: string;
+    /** Focus can also lie in controls placed beside the open message's scroller. */
+    focusSelector?: string;
     /** Where ↑/↓ scroll, when that is not `selector` itself (Settings: the view scroller). */
     scrollSelector?: string;
     /** Nothing is open — → into the pane is declared inert, and the sheet says so. */
@@ -417,7 +419,7 @@ export interface ZoneNavConfig {
 export function useZoneNav(t: Translator, cfg: ZoneNavConfig = {}): void {
 
   /* The mounted view owns the reader geography for as long as it is mounted. */
-  const readerSelector = cfg.reader?.selector ?? null;
+  const readerSelector = cfg.reader?.focusSelector ?? cfg.reader?.selector ?? null;
   const listSelector = cfg.listFocusSelector ?? ".view .row.sel";
   useEffect(() => {
     listGeography = listSelector;

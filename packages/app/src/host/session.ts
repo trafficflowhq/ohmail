@@ -36,6 +36,8 @@ export interface HostSession {
   readonly account: string | null;
   /** Present when the same confirmed session also supplied its address. */
   readonly accountAddress: string | null;
+  /** The confirmed session’s profile name, where supplied. */
+  readonly accountDisplayName: string | null;
   /**
    * The way back to a live session: sign in again, or reload the window. `none` withholds the control, and the frame
    * says in words to start ohmail again.

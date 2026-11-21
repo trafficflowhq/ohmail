@@ -502,18 +502,18 @@ describe("each promise is rendered on the step that makes it", () => {
   const stepBody = (file: string): string => screen(file);
 
   it("`consentBody` and `consentHistory` are on the CONSENT screen", () => {
-    const body = stepBody("Consent.tsx");
+    const body = stepBody("Window.tsx");
     expect(body).not.toContain("onboarding.consentBody");
     expect(body).not.toContain("onboarding.consentHistory");
     expect(body).toMatch(/<FolderMap say=\{say\}/);
-    // And the promise that nothing has happened yet, which is true only because the consent
-    // screen writes nothing at all — the write is one screen later.
+    // Combining the two screens keeps the single explicit Agree press.
+    expect(body).toContain("submit={run.acts.agree}");
     expect(body).not.toContain("onboarding.consentNothingYet");
     expect(body, "the consent screen writes something").not.toMatch(/\.organize\(|writes\.run\(/);
   });
 
   it("`windowLater` is on the WINDOW screen, beside the choice it qualifies", () => {
-    expect(stepBody("Window.tsx")).not.toContain("onboarding.windowLater");
+    expect(stepBody("Window.tsx")).toContain('<SettingNote>{say("onboarding.windowLater")}</SettingNote>');
     expect(stepBody("Window.tsx")).toMatch(/say\("onboarding\.nothingMoves"\)/);
   });
 
@@ -531,7 +531,7 @@ describe("each promise is rendered on the step that makes it", () => {
 
   it("`elsewhereChoiceHereWhy` is on the ELSEWHERE screen, naming the holder", () => {
     const body = stepBody("Elsewhere.tsx");
-    expect(body).not.toContain("onboarding.elsewhereChoiceHereWhy");
+    expect(body).toContain('note: stopped ? undefined : say("onboarding.elsewhereChoiceHereWhy", { name })');
     expect(body).toMatch(/"onboarding\.elsewhereSay", \{ name \}/);
     expect(body).not.toContain("onboarding.elsewhereQueued");
   });
@@ -559,7 +559,7 @@ describe("each promise is rendered on the step that makes it", () => {
     const body = read(`${CONNECT}/Lines.tsx`);
     const acts = body.slice(body.indexOf("export function Acts"));
     expect(acts).toContain("const off = !form.ready || busy !== null || form.asking !== null");
-    expect(acts).toMatch(/type="submit" size="l" disabled=\{off\}/);
+    expect(acts).toMatch(/type="submit"\s+size="l"\s+disabled=\{off\}/);
     expect(acts).toMatch(/disabled=\{off\} onPress=\{form.test\}/);
   });
 });

@@ -123,11 +123,14 @@ const tEn = createTranslator({ locale: "en", messages: en as never, namespace: "
 const tDe = createTranslator({ locale: "de", messages: de as never, namespace: "sync" as never }) as unknown as
   (key: string, values?: Record<string, string | number>) => string;
 
+const endWords = (sentence: string): string => sentence.replace(/\.$/u, "");
+
 describe("the strip says new mail is late, for as long as the server says so", () => {
   it("arrives within one read of the mailboxes and leaves when fetching runs again", async () => {
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount();
-    expect(said(el)).toContain(tEn("behindTitle"));
+    expect(said(el)).toContain(endWords(tEn("behindTitle")));
+    expect(notice(el)?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     expect(said(el)).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
 
     served = [row({ behind: false, since: ago(1 * MIN) })];
@@ -137,7 +140,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
 
     served = [row({ behind: true, since: ago(51 * MIN) })];
     await nextPoll();
-    expect(said(el)).toContain(tEn("behindTitle"));
+    expect(said(el)).toContain(endWords(tEn("behindTitle")));
   });
 
   it.each([
@@ -169,7 +172,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
   it("with no time on record it says so without one", async () => {
     served = [row({ behind: true, since: null })];
     const el = await mount();
-    expect(said(el)).toContain(tEn("behindTitle"));
+    expect(said(el)).toContain(endWords(tEn("behindTitle")));
     expect(said(el)).toContain(tEn("behindLineCloud", { hasSince: "no", since: "" }));
     expect(said(el)).not.toMatch(/since/);
   });
@@ -177,26 +180,26 @@ describe("the strip says new mail is late, for as long as the server says so", (
   it("after a day it says so plainly, and that it is on us", async () => {
     served = [row({ behind: true, since: ago(26 * HOUR) })];
     const el = await mount();
-    expect(said(el)).toContain(tEn("behindTitleDays", { days: 1 }));
+    expect(said(el)).toContain(endWords(tEn("behindTitleDays", { days: 1 })));
     expect(said(el)).toContain(tEn("behindLineCloudDay", { since: "Thu 10:00" }));
-    expect(said(el)).not.toContain(tEn("behindTitle"));
+    expect(said(el)).not.toContain(endWords(tEn("behindTitle")));
   });
 
   it("23 hours is not yet a day, and 49 hours are two", async () => {
     served = [row({ behind: true, since: ago(23 * HOUR) })];
-    expect(said(await mount())).toContain(tEn("behindTitle"));
+    expect(said(await mount())).toContain(endWords(tEn("behindTitle")));
     await act(async () => { root!.unmount(); });
     served = [row({ behind: true, since: ago(49 * HOUR) })];
-    expect(said(await mount())).toContain(tEn("behindTitleDays", { days: 2 }));
+    expect(said(await mount())).toContain(endWords(tEn("behindTitleDays", { days: 2 })));
   });
 
   it("the sentence turns to its day form by the clock alone, with the tab left open", async () => {
     served = [row({ behind: true, since: ago(23 * HOUR + 59 * MIN) })];
     const el = await mount();
-    expect(said(el)).toContain(tEn("behindTitle"));
+    expect(said(el)).toContain(endWords(tEn("behindTitle")));
     await act(async () => { await vi.advanceTimersByTimeAsync(2 * MIN); });
     await settle();
-    expect(said(el)).toContain(tEn("behindTitleDays", { days: 1 }));
+    expect(said(el)).toContain(endWords(tEn("behindTitleDays", { days: 1 })));
   });
 
   it("offline, the nearer fact is said instead", async () => {
@@ -204,7 +207,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount();
     expect(said(el)).toContain(en.frame.connection.offline.title); // the frame's offline sentence
-    expect(said(el)).not.toContain(tEn("behindTitle"));
+    expect(said(el)).not.toContain(endWords(tEn("behindTitle")));
   });
 
   it("a mailbox's own trouble does not hide it: the rows say theirs, the strip says this", async () => {
@@ -212,7 +215,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
       row({ behind: true, since: ago(50 * MIN) }),
       row(null, { id: "mb_2", address: "second@example.invalid", status: "error", errorCode: "auth" }),
     ];
-    expect(said(await mount())).toContain(tEn("behindTitle"));
+    expect(said(await mount())).toContain(endWords(tEn("behindTitle")));
   });
 
   /* Which mailboxes the server speaks for is the server's rule: every mailbox it is on duty to
@@ -222,20 +225,20 @@ describe("the strip says new mail is late, for as long as the server says so", (
     const reader = { organizerRole: "reader" as const };
     served = [row({ behind: true, since: ago(50 * MIN) }, reader)];
     const el = await mount();
-    expect(said(el)).toContain(tEn("behindTitle"));
+    expect(said(el)).toContain(endWords(tEn("behindTitle")));
     expect(said(el)).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
     // Past the server's capacity it is off the roster, and the server takes its word off the row.
     served = [row(null, { ...reader, syncBlockedReason: "at_capacity", syncBlockedSince: ago(MIN) })];
     await nextPoll();
-    expect(el.textContent ?? "").not.toContain(tEn("behindTitle"));
+    expect(el.textContent ?? "").not.toContain(endWords(tEn("behindTitle")));
   });
 
   it("is German in German", async () => {
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount({ locale: "de" });
-    expect(said(el)).toContain(tDe("behindTitle"));
+    expect(said(el)).toContain(endWords(tDe("behindTitle")));
     expect(said(el)).toContain(tDe("behindLineCloud", { hasSince: "yes", since: "11:10" }));
-    expect(tDe("behindTitle")).not.toBe(tEn("behindTitle"));
+    expect(endWords(tDe("behindTitle"))).not.toBe(endWords(tEn("behindTitle")));
   });
 });
 
@@ -261,6 +264,6 @@ describe("a self-hosted server is never called ohmail Cloud", () => {
 
   it("the day still shows in the title", async () => {
     served = [row({ behind: true, since: ago(26 * HOUR) })];
-    expect(said(await mount({ managed: false }))).toContain(tEn("behindTitleDays", { days: 1 }));
+    expect(said(await mount({ managed: false }))).toContain(endWords(tEn("behindTitleDays", { days: 1 })));
   });
 });

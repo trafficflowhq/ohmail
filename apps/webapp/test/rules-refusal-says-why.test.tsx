@@ -145,7 +145,7 @@ describe("a refused revoke renders its reason at the press, and it stays", () =>
   it("409 no_organizer: the lead, the reason and the way out, still there after a toast would have gone", async () => {
     const el = await rulesPane(organizer(), "refuse");
     await press(el, R.revoke);
-    await press(within(document.body).getByRole("dialog", { name: R.revokeConfirm }), R.revokeConfirm);
+    await press(within(document.body).getByRole("dialog", { name: "Revoke 1 rule" }), R.revoke);
     await tick(3_000);
     const alert = within(el).queryAllByRole("alert").find((line) => line.textContent?.includes(R.toastRevokeFailed));
     expect(alert?.textContent ?? "", "the refusal said nothing that stayed").toContain(R.toastRevokeFailed);
@@ -156,7 +156,7 @@ describe("a refused revoke renders its reason at the press, and it stays", () =>
   it("control — the organizer's revoke: the rule is gone, no refusal on the pane", async () => {
     const el = await rulesPane(organizer(), "revoke");
     await press(el, R.revoke);
-    await press(within(document.body).getByRole("dialog", { name: R.revokeConfirm }), R.revokeConfirm);
+    await press(within(document.body).getByRole("dialog", { name: "Revoke 1 rule" }), R.revoke);
     await tick(100);
     expect(textOf(document.body)).toContain(R.toastRevoked);
     expect(within(el).queryAllByRole("alert").find((line) => line.textContent?.includes(R.toastRevokeFailed)) ?? null).toBeNull();

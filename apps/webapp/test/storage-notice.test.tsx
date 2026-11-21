@@ -281,19 +281,27 @@ describe("Settings → Storage", () => {
     expect(text()).toContain(en.settings.storageInfoPurpose);
     expect(text()).toContain(en.settings.storageInfoOriginals);
     expect(text()).toContain(`Plus${en.settings.storageTagFits}`);
-    expect(text()).not.toMatch(/\$|€/);
+    const translate = createTranslator({ locale: "en", messages: en, namespace: "settings" });
+    const monthlyPrice = (amount: number, currency: string) =>
+      translate("storagePriceMonth", { price: formatStoragePrice(amount, currency, "en") });
+    const plus = OFFER.plans.find(({ plan }) => plan === "plus")!;
+    expect(getByRole(host, "group", {
+      name: translate("storagePlanName", { plan: "plus" }),
+      description: monthlyPrice(plus.amount, OFFER.currency),
+    })).toBeTruthy();
+    expect(getByRole(host, "group", {
+      name: translate("storageAddonName"),
+      description: monthlyPrice(OFFER.addon.amount, OFFER.currency),
+    })).toBeTruthy();
 
     const { account, accessStorage } = await import("../app/api-client");
     const { storageFiguresOf } = await import("../app/(product)/mailbox/storage-door");
     const facts = accessStorage(await account.access({ fresh: true }));
     expect(facts).not.toBeNull();
-    const translate = createTranslator({ locale: "en", messages: en, namespace: "settings" });
     const fitted = storageFiguresOf(facts!, {
       locale: "en",
       roster: mailboxFacts,
-      price: (amount, offer) => translate("storagePriceMonth", {
-        price: formatStoragePrice(amount, offer.currency, "en"),
-      }),
+      price: (amount, offer) => monthlyPrice(amount, offer.currency),
     }).plans?.lines.find((plan) => plan.tag === "keepsAll");
     expect(fitted).toMatchObject({ plan: "plus", fit: { extra: "+10 GB", room: "15 GB", price: "$25/month" } });
     expect(buttons()).toEqual(expect.arrayContaining(["Change plan", "Add storage"]));

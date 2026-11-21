@@ -39,6 +39,14 @@ export function longDateStamp(instant: Date, zone: string, locale = "en"): strin
   return named(locale, { dateStyle: "long" }, instant, zone);
 }
 
+/** A date-only value, written without shifting it into the reader's time zone. */
+export function shortCivilDateStamp(day: string, locale = "en"): string {
+  const date = new Date(day);
+  const month = named(locale, { month: "short" }, date, "UTC");
+  const number = date.getUTCDate();
+  return locale.startsWith("de") ? `${number}. ${month}` : `${number} ${month}`;
+}
+
 /**
  * Midnights apart IN THE READER'S ZONE. Positive = in the past; negative = dated in the future.
  *

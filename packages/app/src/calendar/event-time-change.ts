@@ -1,8 +1,10 @@
 import { addDays, isoOfDay, reschedule, resizeTime, type ZoneSource } from "@ohmail/app-logic/calendar";
+import type { InvitationProposalTimes } from "@ohmail/wire";
 import type { CalendarEventFace } from "./faces.js";
 import type { DayEdge } from "./view.js";
 
 export type EventChange =
+  | ({ kind: "accept-time" } & InvitationProposalTimes)
   | { kind: "delete" }
   | { kind: "calendar"; target: string }
   | { kind: "time"; days: number; minutes: number }
@@ -40,6 +42,7 @@ export function canStartTimeChange(
 }
 
 export function changedTimes(change: EventChange, face: CalendarEventFace, zone: string, zones: ZoneSource) {
+  if (change.kind === "accept-time") return { start: change.start, end: change.end };
   if (change.kind === "time")
     return reschedule(face.start, face.end, change.days, change.minutes, zone, zones);
   if (change.kind === "resize-time") return resizeTime(face, change.edge, change.minutes, zone, zones);

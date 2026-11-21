@@ -210,7 +210,7 @@ function mount(
   engine: OhmailEngine,
   port: CalendarPort | typeof NONE,
   at = "#/cal/agenda/2026-11-16",
-  room: "desktop" | "phone" = "desktop",
+  room: "desktop" | "fold" | "phone" = "desktop",
   withSharedSettings = false,
   mailWaiting = false,
 ) {
@@ -688,6 +688,29 @@ describe("the calendar frame", () => {
     await act(async () => fireEvent.click(toggle));
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("button", { name: /Kiln check/ })).toBeTruthy();
+  });
+
+  it("toggles calendars in place from the unfolded rail", async () => {
+    const { engine, port, put } = mirror();
+    put("calendar_connection", connection.id, connection);
+    put("calendar", studio.id, studio);
+    put("calendar_event", "ev-1", event("ev-1", "Kiln check", "20261116"));
+    const { host } = mount(engine, port, "#/cal/week/2026-11-16", "fold");
+
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Calendar" })).getByRole("button", {
+        name: "Calendars",
+      }),
+    );
+    const menu = screen.getByRole("menu", { name: "Calendars" });
+    const toggle = within(menu).getByRole("menuitemcheckbox", { name: "Show Studio", checked: true });
+    expect(screen.getByRole("button", { name: /Kiln check/ })).toBeTruthy();
+    await act(async () => fireEvent.click(toggle));
+    expect(within(menu).getByRole("menuitemcheckbox", { name: "Show Studio", checked: false })).toBe(toggle);
+    expect(screen.queryByRole("button", { name: /Kiln check/ })).toBeNull();
+    await act(async () => fireEvent.click(toggle));
+    expect(screen.getByRole("button", { name: /Kiln check/ })).toBeTruthy();
+    expect(host.device.address.read()).toBe("#/cal/week/2026-11-16");
   });
 
   it("opens Calendar accounts and saves Calendar preferences from the rail", async () => {
@@ -1169,6 +1192,19 @@ describe("the calendar frame", () => {
     expect(within(within(dock).getByRole("button", { name: "More, 1" })).getByText("1")).toBeTruthy();
     act(() => put("calendar_event", "invited", null));
     expect(within(dock).getByRole("button", { name: "More" })).toBeTruthy();
+  });
+
+  it("checks the calendar accounts directly from the unfolded rail", async () => {
+    const { engine, port, put, check } = mirror();
+    put("calendar_connection", connection.id, connection);
+    const { host } = mount(engine, port, "#/cal/week/2026-11-16", "fold");
+    const rail = within(screen.getByRole("navigation", { name: "Calendar" }));
+
+    fireEvent.click(rail.getByRole("button", { name: "Check now" }));
+    await act(async () => {});
+    expect(check.mock.calls).toEqual([[connection.id]]);
+    expect(rail.queryByRole("button", { name: "More" })).toBeNull();
+    expect(host.device.address.read()).toBe("#/cal/week/2026-11-16");
   });
 
   it("checks the calendar accounts from the phone head and the p shortcut", async () => {

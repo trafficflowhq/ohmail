@@ -148,6 +148,181 @@ function graph(respond: (method: string, path: string) => object | number | "tim
 }
 
 describe("Microsoft recurring event edits", () => {
+  it("answers only the selected occurrence of a meeting", async () => {
+    const meeting = { ...master, isOrganizer: false };
+    const day = { ...occurrence, isOrganizer: false };
+    const fixture = graph((method, path) => {
+      if (method === "POST") return 202;
+      if (path.endsWith("/instances")) return { value: [day] };
+      return path.endsWith("/master") ? meeting : day;
+    });
+    const result = await fixture.writer.answer(
+      connection,
+      cal,
+      target,
+      { as: audience.guests[0]!, reply: "TENTATIVE" },
+      signal,
+    );
+    expect(result.ok).toBe(true);
+    expect(fixture.writes()).toMatchObject([
+      { method: "POST", path: "/me/events/some-day/tentativelyAccept", body: { sendResponse: true } },
+    ]);
+  });
+
+  it("recovers an occurrence answer after Microsoft applied it but the reply was lost", async () => {
+    const meeting = { ...master, isOrganizer: false };
+    let day: Record<string, unknown> = { ...occurrence, isOrganizer: false };
+    const fixture = graph((method, path) => {
+      if (method === "POST") {
+        day = {
+          ...day,
+          type: "exception",
+          "@odata.etag": 'W/"changed-answer"',
+          responseStatus: { response: "tentativelyAccepted" },
+        };
+        return "timeout";
+      }
+      if (path.endsWith("/instances")) return { value: [day] };
+      return path.endsWith("/master") ? meeting : day;
+    });
+    const write = (retry?: true) =>
+      fixture.writer.answer(
+        connection,
+        cal,
+        target,
+        { as: audience.guests[0]!, reply: "TENTATIVE", retry },
+        signal,
+      );
+    expect(await write()).toMatchObject({ ok: false, reason: "timeout" });
+    expect(await write(true)).toMatchObject({ ok: true });
+    expect(fixture.writes()).toHaveLength(1);
+  });
+
+  it("refuses to use a Microsoft event with attachments for a portable move", async () => {
+    const personal = {
+      type: "singleInstance",
+      "@odata.etag": 'W/"one"',
+      iCalUId: "personal",
+      isOrganizer: true,
+      organizer,
+      attendees: [],
+      subject: "Studio",
+      start: master.start,
+      end: master.end,
+    };
+    const fixture = graph((_method, path) =>
+      path.endsWith("/attached")
+        ? { ...personal, id: "attached", hasAttachments: true, attachments: [{ id: "document" }] }
+        : { ...personal, id: "plain", hasAttachments: false },
+    );
+    await expect(fixture.writer.readForMove!(connection, cal, "plain", signal)).resolves.toMatchObject({
+      ok: true,
+      items: [{ kind: "upsert", portableCopy: true }],
+    });
+    const read = await fixture.writer.readForMove!(connection, cal, "attached", signal);
+    expect(read).toMatchObject({ ok: true, items: [{ kind: "upsert" }] });
+    expect(read.ok && read.items[0]).not.toHaveProperty("portableCopy");
+    expect(fixture.writes()).toEqual([]);
+  });
+
+  it("answers a previously changed meeting instance under its recorded key", async () => {
+    const meeting = { ...master, isOrganizer: false };
+    const day = { ...occurrence, isOrganizer: false, type: "exception" };
+    const fixture = graph((method, path) => {
+      if (method === "POST") return 202;
+      if (path.endsWith("/instances")) return { value: [day] };
+      return path.endsWith("/master") ? meeting : day;
+    });
+    const reply = { as: audience.guests[0]!, reply: "DECLINED" as const };
+    const write = (version: string) =>
+      fixture.writer.answer(
+        connection,
+        cal,
+        { ...target, exception: { id: day.id, version, occurrence: cut } },
+        reply,
+        signal,
+      );
+    expect((await write('W/"stale"')).ok).toBe(false);
+    expect(fixture.writes()).toHaveLength(0);
+    expect((await write(day["@odata.etag"])).ok).toBe(true);
+    expect(fixture.writes()).toMatchObject([{ method: "POST", path: "/me/events/some-day/decline" }]);
+  });
+
+  it("sends one series cancellation with the message after verifying all changed days", async () => {
+    const extra = "extra" + "@example.test";
+    const day = {
+      ...occurrence,
+      type: "exception",
+      attendees: [{ emailAddress: { address: extra }, type: "required" }],
+    };
+    let cancelStatus = 412;
+    const fixture = graph((method, path) =>
+      method === "POST"
+        ? cancelStatus
+        : path.endsWith("/some-day")
+          ? day
+          : { ...master, exceptionOccurrences: [day] },
+    );
+    const remove = (version: string) =>
+      fixture.writer.remove(
+        connection,
+        cal,
+        {
+          ...target,
+          occurrence: null,
+          audience: { ...audience, guests: [...audience.guests, extra] },
+          seriesCancellation: {
+            overrides: [{ id: day.id, version }],
+            message: "The event has been cancelled",
+          },
+        },
+        signal,
+      );
+    expect((await remove('"stale"')).ok).toBe(false);
+    expect(fixture.writes()).toHaveLength(0);
+    expect(await remove(day["@odata.etag"])).toMatchObject({ ok: false, reason: "version_stale" });
+    cancelStatus = 202;
+    expect((await remove(day["@odata.etag"])).ok).toBe(true);
+    expect(fixture.writes()).toMatchObject(
+      Array.from({ length: 2 }, () => ({
+        method: "POST",
+        path: "/me/events/master/cancel",
+        tag: master["@odata.etag"],
+        body: { comment: "The event has been cancelled" },
+      })),
+    );
+  });
+
+  it("cancels the whole reviewed series with its confirmed guests", async () => {
+    let exceptions: object[] = [occurrence];
+    const fixture = graph((method) =>
+      method === "DELETE" ? 204 : { ...master, exceptionOccurrences: exceptions },
+    );
+    const remove = () => fixture.writer.remove(connection, cal, { ...target, occurrence: null }, signal);
+    expect((await remove()).ok).toBe(false);
+    expect(fixture.writes()).toHaveLength(0);
+    exceptions = [];
+    expect((await remove()).ok).toBe(true);
+    expect(fixture.writes()).toMatchObject([
+      { method: "DELETE", path: "/me/events/master", tag: master["@odata.etag"] },
+    ]);
+  });
+
+  it("cancels one verified occurrence instead of the series", async () => {
+    const fixture = graph((method, path) => {
+      if (method === "DELETE") return 204;
+      return path.endsWith("/instances") ? { value: [occurrence] } : master;
+    });
+    const answer = await fixture.writer.remove(connection, cal, target, signal);
+    expect(answer).toMatchObject({
+      ok: true,
+      items: [{ kind: "cancelled_occurrence", uid: master.iCalUId }],
+    });
+    expect(fixture.writes()).toMatchObject([
+      { method: "DELETE", path: "/me/events/some-day", tag: occurrence["@odata.etag"] },
+    ]);
+  });
+
   it("updates the exact occurrence using its own version and returns the changed day under the series", async () => {
     const fixture = graph((method, path) => {
       if (method === "PATCH") return { ...occurrence, subject: "Today only", type: "exception" };

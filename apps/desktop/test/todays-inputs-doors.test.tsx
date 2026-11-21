@@ -115,6 +115,7 @@ describe("the desktop's host, read door by door at the contract", () => {
       liveNoticeScope,
       emitter: {
         carries: ["ohbox", "screener", "pairing", "cal_alert"],
+        showsMailDetails: true,
         acts: [],
         ahead: expect.any(Function),
         post: expect.any(Function),

@@ -58,6 +58,7 @@ export interface WebFacts {
   /** The account the server confirmed, or null until it has. */
   readonly account: string | null;
   readonly accountAddress?: string | null;
+  readonly accountDisplayName?: string;
   readonly build: { readonly version: string | null; readonly commit: string | null };
 }
 
@@ -110,6 +111,7 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       mirrorAccount: facts.scope,
       account: facts.account,
       accountAddress: facts.account && facts.account === facts.scope ? facts.accountAddress ?? null : null,
+      accountDisplayName: facts.account && facts.account === facts.scope ? facts.accountDisplayName ?? null : null,
       signOut: has.session.signOut,
       recover: has.frame.recover,
       today: NONE,

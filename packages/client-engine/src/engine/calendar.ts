@@ -56,6 +56,7 @@ export abstract class EngineCalendar extends EngineLifecycle {
       writeCalendar: adapter.writeCalendar.bind(adapter),
       retryCalendarWrite: adapter.retryCalendarWrite.bind(adapter),
       dismissCalendarWrite: adapter.dismissCalendarWrite.bind(adapter),
+      ...(adapter.mailProposal ? { mailProposal: adapter.mailProposal.bind(adapter) } : {}),
       ...(adapter.setSuggestionDismissed ? {
         setSuggestionDismissed: async (id: string, dismissed: boolean) => {
           await adapter.setSuggestionDismissed!(id, dismissed);
@@ -81,8 +82,7 @@ export abstract class EngineCalendar extends EngineLifecycle {
   /**
    * PLACE SUGGESTIONS for an event's place field (`place-suggest.ts`): one question to the account's
    * server, given up through `signal`, never asked offline, never queued, never kept. Never rejects;
-   * every state but `ok` is no suggestions. A server that does not offer them is never asked: its
-   * `/hello` says so, and the field reads that first.
+   * every state but `ok` is no suggestions. A server that offers no suggestions answers `off`.
    */
   suggestPlaces(question: PlaceSuggestBody, opts: { signal?: AbortSignal } = {}): Promise<PlaceSuggestOutcome> {
     const transport = this.adapter as Partial<PlaceSuggestTransport>;

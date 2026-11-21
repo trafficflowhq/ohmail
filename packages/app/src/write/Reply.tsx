@@ -12,7 +12,7 @@ import { inlineForwardKey, SEND_IN_FLIGHT_PHASES } from "@ohmail/app-logic/writi
 import { letterCap } from "@ohmail/app-logic/write/files";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { pageModal } from "@ohmail/app-logic/session/modal-gate";
-import { scrollIntoViewProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
+import { useLandInView } from "./reply-landing.js";
 import { useText, type Text } from "../text/index.js";
 import { useWriteBeside, useWriting } from "./above.js";
 import { People } from "./head/People.js";
@@ -246,19 +246,6 @@ function useForwardAsksWhom(
     if (!forward) return;
     fieldIn(sheet.current, toWord)?.focus({ preventScroll: true });
   }, [forward, messageId, sheet, toWord]);
-}
-
-/**
- * THE REPLY COMES TO THE PERSON when it opens: the conversation above it can be taller than the column, and the text's
- * focus does not scroll (`scrollIntoView: false`), so a reply opened under a long letter would stand below the fold.
- * Its sheet (the composer's own, handed by its ref) is brought into view by its bottom edge, where its last line and
- * the foot are; the app's own scroll, stamped, so the reader never takes it for the person reading. Once per open: the
- * sheet is mounted again for another letter or mode.
- */
-function useLandInView(sheet: RefObject<HTMLElement | null>): void {
-  useEffect(() => {
-    if (sheet.current) scrollIntoViewProgrammatically(sheet.current, { block: "end" });
-  }, [sheet]);
 }
 
 /**

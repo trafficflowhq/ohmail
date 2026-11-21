@@ -82,7 +82,7 @@ export interface AttachmentsChrome {
    * counts it — so a press that enumerated a different list than the one on screen would save a
    * different number of files than the sentence beside the button just claimed.
    */
-  downloadAll(messageId: string, opts?: { includeInlineParts?: boolean }): void;
+  downloadAll(messageId: string, opts?: { includeInlineParts?: boolean; omit?: string }): void;
   downloadingAll(messageId: string): boolean;
   /**
    * THE EMBEDDED IMAGES ALREADY IN HAND for one message — `contentId → the part's object URL`, straight off
@@ -104,7 +104,7 @@ export interface AttachmentsChrome {
    * loads the list asks; budgets and single-flight live in the engine, `loadCalendarTexts`);
    * empty until then.
    */
-  eventsOf(messageId: string): readonly DistinctCalendarEvent[];
+  eventsOf(messageId: string, opts?: { attachmentTiles?: boolean }): readonly DistinctCalendarEvent[];
   /**
    * HOLD one message's list while a pane shows it; the return releases the hold. A list nobody
    * asked for reads as the silent first-ask state for ever, so every pane that renders a strip

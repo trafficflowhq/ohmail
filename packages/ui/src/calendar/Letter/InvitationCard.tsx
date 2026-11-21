@@ -42,10 +42,12 @@ export function InvitationCard({
     <div className="oh-invcard">
       <p className="oh-text oh-invcard-kind">{kind}</p>
       <h3 className="oh-text oh-display oh-invcard-title">{title}</h3>
-      <p className="oh-text oh-invcard-when">
-        {was ? <s className="oh-invcard-was">{was}</s> : null}
-        {when}
-      </p>
+      {when || was ? (
+        <p className="oh-text oh-invcard-when">
+          {was ? <s className="oh-invcard-was">{was}</s> : null}
+          {when}
+        </p>
+      ) : null}
       {lines?.map((line, i) => (
         <p key={i} className="oh-text oh-invcard-line">
           {line}

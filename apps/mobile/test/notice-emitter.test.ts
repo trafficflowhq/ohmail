@@ -59,6 +59,19 @@ describe("the page's emitter over the bridge", () => {
     ]);
   });
 
+  it("hands local details to the phone only for an identified single arrival", async () => {
+    const { bridge, asked } = recordingBridge();
+    const emitter = phoneNoticeEmitter(bridge, ["ohbox"]);
+    if (emitter === "none") throw new Error("no emitter");
+    const details = { sender: "Fixture Person", subject: "Meeting" };
+    await emitter.post({ kind: "ohbox", count: 1 }, () => true, "arrived", details);
+    await emitter.post({ kind: "ohbox", count: 2 }, () => true, undefined, details);
+    expect(asked).toEqual([
+      { kind: "act", ask: { act: "notices.post", notice: { kind: "ohbox", count: 1 }, details } },
+      { kind: "act", ask: { act: "notices.post", notice: { kind: "ohbox", count: 2 } } },
+    ]);
+  });
+
   it("asks for no kind it does not carry", () => {
     const { bridge, asked } = recordingBridge();
     const emitter = phoneNoticeEmitter(bridge, ["ohbox"]);

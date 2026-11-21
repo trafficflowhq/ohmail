@@ -17,7 +17,7 @@
  * process already posted: a notice already listed stays where the system put it (a declared limit);
  * the shell's sign-out takes the badge off.
  */
-import { readAheadSet, type AheadSet, type MailNotice, type Notice, type NoticeKind, type NoticeTaken } from "@ohmail/client-engine";
+import { readAheadSet, type AheadSet, type CalendarSummaryDetails, type MailNotice, type MailNoticeDetails, type Notice, type NoticeKind, type NoticeTaken } from "@ohmail/client-engine";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import { postOsNotice, setOsAlerts, type NoticeWriter } from "./native.js";
 
@@ -26,9 +26,10 @@ export interface NoticeShell {
   /** This window is the one being looked at. */
   focused(): boolean;
   /** Hand the shell one notice to word and show. A refusal rejects. */
-  post(notice: MailNotice, letter?: string): Promise<void>;
+  post(notice: MailNotice, letter?: string, details?: MailNoticeDetails): Promise<void>;
   /** Hand the shell the account's alerts, whole: they replace the ones before, and an empty set takes all back. */
   alerts(set: AheadSet): Promise<unknown>;
+  summary?(count: number, details: CalendarSummaryDetails): Promise<void>;
 }
 
 /**
@@ -85,8 +86,10 @@ export function desktopNoticeEmitter(shell: NoticeShell): HostNoticeEmitter {
     revision = ++windowRevision;
     send(revision);
   };
+  const carries = shell.summary ? [...CARRIES, "cal_summary" as const] : CARRIES;
   return {
-    carries: CARRIES,
+    carries,
+    showsMailDetails: true,
     acts: [],
     ahead(set: AheadSet): void {
       try {
@@ -99,14 +102,19 @@ export function desktopNoticeEmitter(shell: NoticeShell): HostNoticeEmitter {
         /* A set that could not be handed over takes nothing down. */
       }
     },
-    post(notice: Notice, current?: () => boolean, letter?: string): NoticeTaken {
+    post(notice: Notice, current?: () => boolean, letter?: string, details?: MailNoticeDetails, summary?: CalendarSummaryDetails): NoticeTaken {
       try {
-        if (!CARRIES.includes(notice.kind)) return false;
+        if (!carries.includes(notice.kind)) return false;
+        if (notice.kind === "cal_summary") {
+          if (!summary || !shell.summary || current?.() === false) return false;
+          return shell.summary(notice.events, summary).then(() => true, () => false);
+        }
         if (shell.focused() || current?.() === false) return false;
         const handed = crossing(notice);
         if (handed === null) return false;
         /* A refusal: notifications are off for ohmail, or this platform has none. Not a reason to fail. */
-        return shell.post(handed, notice.kind === "ohbox" && notice.count === 1 ? letter : undefined).then(() => true, () => false);
+        const target = notice.kind === "ohbox" && notice.count === 1 ? letter : undefined;
+        return shell.post(handed, target, target ? details : undefined).then(() => true, () => false);
       } catch {
         /* A notice that could not be handed over takes nothing down. */
         return false;
@@ -129,10 +137,17 @@ export function desktopNoticeEmitter(shell: NoticeShell): HostNoticeEmitter {
 export function desktopEmitterFor(writer: NoticeWriter | null): HostNoticeEmitter {
   return desktopNoticeEmitter({
     focused: () => typeof document !== "undefined" && document.hasFocus(),
-    post: (notice, letter) => postOsNotice(
-      notice, notice.kind === "ohbox" && writer !== null ? { ...writer, letter } : undefined,
+    post: (notice, letter, details) => postOsNotice(
+      notice, notice.kind === "ohbox" && writer !== null ? { ...writer, letter, ...(details ? { details } : {}) } : undefined,
     ),
     alerts: (set) => setOsAlerts(set, writer),
+    summary: writer === null ? undefined : (count, { zone, agenda }) => {
+      const clock = new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit" });
+      return postOsNotice({ kind: "cal_summary", count }, {
+        ...writer,
+        summary: agenda.map(({ startMs, allDay, label }) => ({ time: allDay ? null : clock.format(startMs), label })),
+      });
+    },
   });
 }
 

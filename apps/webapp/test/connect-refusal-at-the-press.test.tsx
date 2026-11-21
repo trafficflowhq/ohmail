@@ -132,12 +132,11 @@ async function mountOn(surface: (typeof SURFACES)[number], messages: Messages = 
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
 
   /* The step is the one connect form: its fields by their labels, its tiles by their names. */
-  const { type, choose, field, refusal } = mailboxProbes(host, messages, act);
+  const { type, choose, field, refusal, button } = mailboxProbes(host, messages, act);
   const connect = () => {
-    const label = (messages.join as unknown as Record<string, string>).connectMailbox!;
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
-    expect(button, "no Connect mailbox button").toBeTruthy();
-    return button!;
+    const press = button(messages.join.manualConnect) ?? button(messages.join.connectMailbox);
+    expect(press, "no Connect button").toBeTruthy();
+    return press!;
   };
   /** The viewport where a person pressing the button has it: the button at the bottom edge. */
   const toButton = () => { scrollY = topOf(connect()) + ROW - VIEW; };
@@ -158,8 +157,9 @@ async function mountOn(surface: (typeof SURFACES)[number], messages: Messages = 
 
 async function manualForm(surface: (typeof SURFACES)[number], messages: Messages = en) {
   const ui = await mountOn(surface, messages);
-  expect(ui.host.textContent).toContain((messages.join as unknown as Record<string, string>).step_mailbox_title);
-  await ui.choose((messages.providerPicker as unknown as Record<string, string>).otherLabel!);
+  expect(ui.host.textContent).toContain(messages.onboarding.providerFirst);
+  await ui.choose(messages.providerPicker.otherShort);
+  expect(ui.host.querySelector("[data-page-filling-form] h1")?.textContent).toBe(messages.join.manualTitle);
   await ui.type("join-mb-address", "pat@family.example");
   await ui.type("join-imap", "mail.family.example");
   await ui.type("join-smtp", "smtp.family.example");
@@ -172,7 +172,7 @@ describe.each(SURFACES)("the /join connect form on $name", (surface) => {
     const ui = await manualForm(surface);
     // The model is live: with the button in view, the top of the step is above the fold.
     ui.toButton();
-    expect(inView(ui.host.querySelector("h1")!), "the modelled page does not scroll").toBe(false);
+    expect(inView(ui.host.querySelector("[data-page-filling-form] h1")!), "the modelled page does not scroll").toBe(false);
 
     for (const attempt of [1, 2]) {
       await ui.press();

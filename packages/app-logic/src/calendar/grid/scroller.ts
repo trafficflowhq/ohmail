@@ -22,6 +22,8 @@ export interface HoursScrollerInput {
   readonly hours: { readonly from: number; readonly to: number };
   /** An hour's height before the sheet has been measured. */
   readonly hourDefault: number;
+  /** Fit the hours to the sheet including the space behind the dock. */
+  readonly fitBehindDock?: boolean;
   readonly focusMinute?: number | null;
   /** What the sheet's room depends on: measured again when it changes. */
   readonly room: unknown;
@@ -30,6 +32,8 @@ export interface HoursScrollerInput {
   /** The open event's id, and its top in px of `hourPx` where it stands in the span (asked after the render). */
   readonly openId: string | null;
   readonly openTop: () => number | null;
+  /** A letter opened its event, so keep it above the phone sheet. */
+  readonly revealOpen?: boolean;
 }
 
 /** An hour's height that fits `span` hours into `height` px. */
@@ -53,14 +57,21 @@ function gridRoom(el: HTMLDivElement) {
 }
 
 /** Where the hours stand: on the open event when it lies outside the hours in view, else at their first hour. */
-export function homeTop(o: { from: number; hourPx: number; viewPx: number; openTop: number | null }): number {
+export function homeTop(o: {
+  from: number;
+  hourPx: number;
+  viewPx: number;
+  openTop: number | null;
+  revealOpen?: boolean;
+}): number {
   const home = (o.from * o.hourPx) / 60;
-  const out = o.openTop !== null && (o.openTop < home || o.openTop > home + o.viewPx - o.hourPx);
+  const out =
+    o.openTop !== null && (o.revealOpen || o.openTop < home || o.openTop > home + o.viewPx - o.hourPx);
   return out && o.openTop !== null ? Math.max(0, o.openTop - o.hourPx) : home;
 }
 
 export function useHoursScroller(input: HoursScrollerInput): HoursScroller {
-  const { hours, room } = input;
+  const { hours, room, fitBehindDock } = input;
   const ref = useRef<HTMLDivElement | null>(null);
   const [hourPx, setHourPx] = useState(input.hourDefault);
   const [inView, setInView] = useState<{ from: number; to: number } | null>(null);
@@ -71,14 +82,15 @@ export function useHoursScroller(input: HoursScrollerInput): HoursScroller {
     if (el === null) return;
     const measure = () => {
       const { view, air, least } = gridRoom(el);
-      if (view > 0) setHourPx(fitHour(view - 2 * air, spanHours, least));
+      const height = fitBehindDock ? el.clientHeight : view;
+      if (height > 0) setHourPx(fitHour(height - 2 * air, spanHours, least));
     };
     measure();
     if (typeof ResizeObserver !== "function") return;
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [room, spanHours]);
+  }, [room, spanHours, fitBehindDock]);
 
   const placedFor = useRef<string | null>(null);
   const key = `${input.spanKey} ${hours.from} ${hourPx} ${input.openId ?? ""}`;
@@ -86,8 +98,16 @@ export function useHoursScroller(input: HoursScrollerInput): HoursScroller {
   useLayoutEffect(() => {
     const el = ref.current;
     if (el === null || placedFor.current === key) return;
+    const top = openTop();
+    if (input.revealOpen && input.openId && top === null) return;
     placedFor.current = key;
-    el.scrollTop = homeTop({ from: hours.from, hourPx, viewPx: gridRoom(el).view, openTop: openTop() });
+    el.scrollTop = homeTop({
+      from: hours.from,
+      hourPx,
+      viewPx: gridRoom(el).view,
+      openTop: top,
+      revealOpen: input.revealOpen,
+    });
   });
 
   useLayoutEffect(() => {

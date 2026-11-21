@@ -4,10 +4,11 @@
  * wall's "Start your free trial" anyway, so "Later" stands only where there is no account page to open.
  */
 import type { ReactNode } from "react";
-import { Page, Tag } from "@ohmail/ui/base";
-import { Said, SaidWith } from "../stage/Said.js";
+import { Button, Dot, Page, Sentence, Tag } from "@ohmail/ui/base";
+import { useText } from "../../text/index.js";
+import { Said, SaidTrail, SaidWith } from "../stage/Said.js";
 import { WayButton } from "../stage/way.js";
-import { refusalOf, SignOutAgain, type StepProps } from "./parts.js";
+import { Progress, refusalOf, SignOutAgain, type StepProps } from "./parts.js";
 
 export function PlanStep({ door, state, join, progress }: StepProps<"plan">): ReactNode {
   const { pending, busy } = door;
@@ -58,7 +59,7 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
         ...(plan !== null && interval !== null
           ? [{ tag: join(interval === "year" ? "planYearly" : "planMonthly") }]
           : []),
-        ...(trial ? [{ tag: join("planNoCard") }] : []),
+        ...(trial ? [{ tag: join("planTrial", { part: "payment" }) }] : []),
       ]}
       acts={
         <>
@@ -67,27 +68,60 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
         </>
       }
     >
-      {trial && plan !== null ? (
-        <SaidWith level={1} parts={join.rich("startOn", { plan: () => <Tag>{plan}</Tag> })} />
+      {trial ? (
+        <SaidWith
+          level={1}
+          parts={join.rich("planTrial", {
+            part: plan === null ? "heading" : "chosen",
+            plan: () => plan && <Tag>{plan}</Tag>,
+          })}
+        />
       ) : (
-        <Said text={join(trial ? "startTrialTitle" : "step_plan_title")} level={1} />
+        <Said text={join("step_plan_title")} level={1} />
       )}
     </Page>
   );
 }
 
 /** The mailbox: the shell's connect form, as it stands, says its own refusals and has its own ways on. */
-export function MailboxStep({ door, join, progress }: StepProps<"mailbox">): ReactNode {
-  return (
-    <Page
-      aside={progress}
-      refusal={refusalOf(door.pending, null)}
-      material={door.slots.mailbox()}
-      acts={null}
-    >
-      <Said text={join("step_mailbox_title")} level={1} />
-    </Page>
-  );
+export function MailboxStep({ door, join }: StepProps<"mailbox">): ReactNode {
+  const t = useText("onboarding");
+  return door.slots.mailbox((material, back, blank, later) => {
+    const choosing = back === null;
+    return (
+      <Page
+        aside={<Progress door={door} join={join} mailboxPart={choosing ? 1 : 2} />}
+        back={back ? <Button kind="quiet" icon="back" label={t("back")} onPress={back} /> : undefined}
+        columns={choosing ? 2 : 1}
+        trail={
+          choosing && door.fields.name ? (
+            <SaidTrail text={t("providerName", { name: door.fields.name })} />
+          ) : undefined
+        }
+        refusal={refusalOf(door.pending, null)}
+        material={material}
+        acts={
+          later ? (
+            <Button kind="quiet" onPress={later}>
+              {t("providerLater")}
+            </Button>
+          ) : null
+        }
+      >
+        {choosing ? (
+          <Sentence size="xl" level={1}>
+            {t("providerFirst")}{" "}
+            <span className="oh-nowrap">
+              {blank}
+              <Dot kind="hot" />
+            </span>
+          </Sentence>
+        ) : (
+          <Said text={join("step_mailbox_title")} level={1} />
+        )}
+      </Page>
+    );
+  });
 }
 
 /**

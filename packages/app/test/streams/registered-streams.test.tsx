@@ -2277,12 +2277,13 @@ it("moves only the selected account-authored News card on a phone and undoes tha
   expect(screen.getByRole("heading", { name: "Issue 13" })).toBeTruthy();
 });
 
-it("screens only the selected Ohbox letter when its sender has another listed letter", async () => {
+it("screens eligible Ohbox letters from the selected sender and leaves other senders alone", async () => {
   const { mail } = seat({
     at: "#/ohbox",
     letters: [
       issue("chosen", 13, { folder: "INBOX", placeDecided: true }),
-      issue("left", 12, { folder: "INBOX", placeDecided: true }),
+      issue("same-sender", 12, { folder: "INBOX", placeDecided: true }),
+      receipt("other-sender", 11, { folder: "INBOX", placeDecided: true }),
     ],
   });
   await settle();
@@ -2301,8 +2302,10 @@ it("screens only the selected Ohbox letter when its sender has another listed le
   );
   await settle();
 
-  expect(mail.mutations.filter((action) => action.kind === "move").map((action) => action.messageId)).toEqual(
-    ["chosen"],
-  );
-  expect(screen.getByRole("option", { name: /Issue 12/ })).toBeTruthy();
+  const moves = mail.mutations.filter((action) => action.kind === "move");
+  expect(moves.map(({ messageId, folder }) => [messageId, folder])).toEqual([
+    ["chosen", "ohmail/News"],
+    ["same-sender", "ohmail/News"],
+  ]);
+  expect(screen.getByRole("option", { name: /Order 11/ })).toBeTruthy();
 });

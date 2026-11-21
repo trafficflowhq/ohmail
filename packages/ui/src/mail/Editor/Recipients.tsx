@@ -25,7 +25,7 @@ export interface RecipientsProps {
     label: string;
     value: ReactNode;
     tag?: string;
-    tags?: readonly string[];
+    tags?: readonly { label: string; id: string }[];
     state?: string;
     stateId?: string;
     long?: boolean;
@@ -210,19 +210,17 @@ function FromLine({ from }: { from: NonNullable<RecipientsProps["from"]> }) {
         from.value
       )}
       {from.tag ? <Tag>{from.tag}</Tag> : null}
-      {from.tags?.map((tag) => (
-        <Tag key={tag}>{tag}</Tag>
+      {from.tags?.map(({ label, id }) => (
+        <Tag key={id} id={id}>
+          {label}
+        </Tag>
       ))}
       {from.state ? (
         <span id={from.stateId ?? own} role="status" className="oh-recipients-state">
           {from.state}
         </span>
       ) : null}
-      {from.stamp?.label ? (
-        <span className="oh-recipients-stamp" title={from.stamp.hint}>
-          {from.stamp.label}
-        </span>
-      ) : null}
+      {from.stamp?.label ? <span className="oh-recipients-stamp">{from.stamp.label}</span> : null}
       {from.stamp?.hint ? (
         <span className="oh-vh" role="status">
           {from.stamp.hint}

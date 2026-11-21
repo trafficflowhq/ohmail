@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Avatar } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import type { FoldersModel } from "./model.js";
 
@@ -48,28 +48,17 @@ export function FoldersPane({ model }: FoldersPaneProps) {
   const list = model.on ? model.mailboxes : null;
 
   return (
-    <>
-      <SettingsSheet wants={failed ? notSaved : undefined}>
-        <SettingNote>{t("folders.intro")}</SettingNote>
-        <SettingLine label={t("folders.useTitle")} off={pending} toggle={{ on: model.on, onChange: write }} />
-        <SettingNote>{model.on ? t("folders.useOn") : t("folders.useOff")}</SettingNote>
-        <SettingNote>{t("folders.microcopy")}</SettingNote>
-      </SettingsSheet>
-      {list ? (
-        <SettingsSheet title={t("folders.mailboxesTitle")} wants={mbFailed ? notSaved : undefined}>
-          <SettingNote>{t("folders.mailboxesNote")}</SettingNote>
-          {list.map((mb) => (
-            <SettingLine
-              key={mb.id}
-              label={mb.address}
-              lead={<Avatar name={mb.address} address={mb.address} size="s" />}
-              value={mb.on ? t("folders.mailboxOn") : t("folders.mailboxOff")}
-              off={mbPending !== null}
-              toggle={{ on: mb.on, onChange: (enabled) => writeMailbox(mb.id, enabled) }}
-            />
-          ))}
-        </SettingsSheet>
-      ) : null}
-    </>
+    <SettingsSheet wants={failed || mbFailed ? notSaved : undefined}>
+      <SettingLine label={t("folders.useTitle")} off={pending} toggle={{ on: model.on, onChange: write }} />
+      {list?.map((mb) => (
+        <SettingLine
+          key={mb.id}
+          label={mb.address}
+          lead={<Avatar name={mb.address} address={mb.address} size="s" />}
+          off={mbPending !== null}
+          toggle={{ on: mb.on, onChange: (enabled) => writeMailbox(mb.id, enabled) }}
+        />
+      ))}
+    </SettingsSheet>
   );
 }

@@ -104,6 +104,8 @@ export interface Person {
   rows(id: ControlId, role: AriaRole): Promise<Array<{ name: string; description: string }>>;
   /** Wait until the page says the catalogue's sentence for `key`. */
   reads(key: string | readonly string[], args?: Record<string, string | number>, ms?: number): Promise<void>;
+  /** Wait for the catalogue sentence whose closing stop is drawn as a dot. */
+  readsWithDot(key: string, ms?: number): Promise<void>;
   /** Wait for a sight. Never for time: `sight` is asked until it holds. */
   until(sight: () => Promise<boolean>, what: string, ms?: number): Promise<void>;
   /** A native door: refused on a bench that has none. */

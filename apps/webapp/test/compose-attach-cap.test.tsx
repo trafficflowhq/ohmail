@@ -166,11 +166,7 @@ describe("the copy renders the prop's number", () => {
 
   it("is translated — the German catalog carries the same parameter", async () => {
     await render(2 * MIB, "de");
-    // "Bis zu 2,1 MB insgesamt" — the number is a parameter in both catalogs, so a locale cannot
-    // carry a frozen literal the other one has stopped believing, AND the number itself reads in
-    // the reader's language: a decimal point in a German pane is a thousands separator.
-    expect(capText()).toContain("2,1 MB");
-    expect(capText()).not.toContain("2.1 MB");
-    expect(capText()).toMatch(/höchstens/);
+    // The per-message limit uses the provider value and the German decimal separator.
+    expect(capText()).toBe("Anhängen · 2,1 MB pro Nachricht");
   });
 });

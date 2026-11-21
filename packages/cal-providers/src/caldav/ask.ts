@@ -67,6 +67,12 @@ export async function leave(s: Session, url: string, req: Pick<HttpRequest, "met
   return failed === null ? send() : { arrived: false, reason: failed };
 }
 
+export async function allowsMove(session: Session, url: string): Promise<boolean> {
+  const answer = await leave(session, url, { method: "OPTIONS", headers: {}, body: null });
+  return answer.arrived && answer.status >= 200 && answer.status < 300 &&
+    (answer.header("allow") ?? "").split(",").some((method) => method.trim().toUpperCase() === "MOVE");
+}
+
 /** `url` is the address that answered, after the redirects the request port followed. `status` is `null` when no answer arrived. */
 export type Asked = { readonly ok: true; readonly answer: Multistatus; readonly url: string } | (Refused & { readonly status: number | null });
 

@@ -44,9 +44,11 @@ export function DayView(props: CalendarViewProps) {
     hours: settings.hours,
     hourDefault: plan.device === "phone" ? 56 : 60,
     room: plan,
+    fitBehindDock: plan.device === "phone",
     focusMinute: props.cursor,
     spanKey: isoOfDay(anchor),
     openId,
+    revealOpen: props.revealOpen,
     openTop: () => model.days[0]!.blocks.find((b) => b.item.id === openId)?.top ?? null,
   });
   const model = useTimeGrid({
@@ -138,6 +140,7 @@ export function DayView(props: CalendarViewProps) {
           model.now === null ? undefined : { minutes: model.now.minutes, label: clockOf(model.now.minutes) }
         }
         onDayPointerDown={props.onSlot}
+        scrollRoomForSheet={props.revealOpen && plan.device === "phone"}
         scrollRef={hours.ref}
         scrollGestures={swipe}
         onScroll={hours.onScroll}

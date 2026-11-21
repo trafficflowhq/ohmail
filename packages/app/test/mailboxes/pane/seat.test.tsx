@@ -763,7 +763,7 @@ describe("the section's notices, in the frame's slot", () => {
     {
       state: "held",
       holder: "Office",
-      unknown: "another ohmail install",
+      unknown: "another ohmail",
       total: 5,
     },
   ] as const)(
@@ -795,8 +795,8 @@ describe("the section's notices, in the frame's slot", () => {
       const notice = screen.getByRole("button", { name: M.noticeDismiss }).closest('[role="status"]')!;
       expect(notice.textContent).toContain(
         state === "stopped"
-          ? `${total} mailboxes are no longer being organized.`
-          : `${total} mailboxes are organized elsewhere now.`,
+          ? `${total} mailboxes are no longer being organized`
+          : `${total} mailboxes are organized elsewhere now`,
       );
       for (const address of addresses) expect(notice.textContent).not.toContain(address);
 

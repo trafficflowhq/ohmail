@@ -128,7 +128,7 @@ function Harness({ state, acts, o }: { state: JoinState; acts: Acts; o: Over }) 
     waitlist: WAYS.waitlist,
     demo: o.demo === false ? NONE : WAYS.demo,
     slots: {
-      mailbox: () => <form aria-label="the connect form">connect form</form>,
+      mailbox: (page) => page(<form aria-label="the connect form">connect form</form>, () => {}),
       authenticatorQr: () => <svg role="img" aria-label={J.totpQrAria} />,
     },
   };
@@ -496,9 +496,9 @@ describe("the plan, the mailbox and set up", () => {
       waiting: false,
       link: "ready",
     });
-    expect(heading()).toBe(J.startOn.replace("<plan></plan>.", "Plus"));
+    expect(heading()).toBe("Start 14 days on Plus");
     expect(document.body.textContent).toContain(J.planYearly);
-    expect(document.body.textContent).toContain(J.planNoCard);
+    expect(document.body.textContent).toContain("No card");
     expect(link(J.planStartTrial).getAttribute("href")).toBe(ACCOUNT_PAGE);
     noButton(J.planLater);
     expect(document.body.textContent).not.toContain(J.planLaterHint);
@@ -507,7 +507,7 @@ describe("the plan, the mailbox and set up", () => {
   it("the plan with no trial to offer: the account page's own words", () => {
     draw({ at: "plan", trial: false, chosen: CHOSEN, waiting: false, link: "ready" });
     expect(heading()).toBe(J.step_plan_title);
-    expect(document.body.textContent).not.toContain(J.planNoCard);
+    expect(document.body.textContent).not.toContain("No card");
     expect(link(J.planContinue).getAttribute("href")).toBe(ACCOUNT_PAGE);
   });
 

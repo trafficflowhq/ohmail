@@ -119,7 +119,11 @@ async function mount(props: Record<string, unknown> = { initialCode: "", publicS
   /** A blank, by the name its label gives it. */
   const blank = (name: string) => {
     const label = [...host.querySelectorAll("label")].find((l) => l.textContent === name);
-    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+    return label
+      ? (document.getElementById(label.htmlFor) as HTMLInputElement | null)
+      : [...host.querySelectorAll<HTMLInputElement>("input[aria-label]")].find(
+          (input) => input.getAttribute("aria-label") === name,
+        ) ?? null;
   };
   const type = async (name: string, value: string) => {
     const input = blank(name);
@@ -180,7 +184,7 @@ describe("the join's page over its ceremony", () => {
   it("the plan: one way on, a link to the account page the service mints; no Not now", async () => {
     session = () => json(200, { user: user({ totp: true, recoveryCodes: true }), scope: "full" });
     const ui = await mount();
-    expect(ui.heading()).toBe(J.startTrialTitle.replace(/\.$/, ""));
+    expect(ui.heading()).toBe("Start your 14-day trial");
     expect(ui.button(J.planLater), "Not now is offered").toBeNull();
     expect(ui.host.textContent).not.toContain(J.planLaterHint);
     const plan = [...ui.host.querySelectorAll("a")].find((a) => a.textContent === J.planStartTrial);
@@ -219,9 +223,10 @@ describe("the join's mailbox step: the one connect form under the wizard", () =>
     entitled = true;
     session = () => json(200, { user: user({ totp: true, recoveryCodes: true }), scope: "full" });
     const ui = await mount();
-    expect(ui.heading()).toBe(J.step_mailbox_title);
+    expect(ui.heading()?.trim()).toBe(en.onboarding.providerFirst);
     await ui.type(J.mailboxAddress, ADDRESS);
     await ui.press(FASTMAIL.label);
+    expect(ui.heading()).toBe(J.step_mailbox_title);
     await ui.type(J.appPasswordLabel, PASSWORD);
     return ui;
   };
@@ -259,7 +264,7 @@ describe("the join's mailbox step: the one connect form under the wizard", () =>
     entitled = false;
     await ui.press(J.connectMailbox);
     expect(posts()).toHaveLength(1);
-    expect(ui.heading()).toBe(J.startTrialTitle.replace(/\.$/, ""));
+    expect(ui.heading()).toBe("Start your 14-day trial");
     expect(ui.host.textContent).toContain(said);
   });
 
@@ -267,11 +272,14 @@ describe("the join's mailbox step: the one connect form under the wizard", () =>
     const said = "This account needs a plan before it can connect a mailbox.";
     create = () => json(402, { error: { code: "payment_required", message: said, details: { reason: "payment_required" } } });
     const ui = await typed();
-    // The account reads as entitled when the plan step opens, so the wizard comes straight back to the mailbox step.
+    // The account reads as entitled when the plan step opens, so the wizard returns to the provider chooser.
+    // The previous tile stays selected. Press it again to open the form with the typed address and an empty password.
     await ui.press(J.connectMailbox);
     expect(posts()).toHaveLength(1);
-    expect(ui.heading()).toBe(J.step_mailbox_title);
+    expect(ui.heading()?.trim()).toBe(en.onboarding.providerFirst);
     expect(ui.blank(J.mailboxAddress)!.value, "the address typed before the trip").toBe(ADDRESS);
+    expect(ui.button(FASTMAIL.label)?.getAttribute("aria-pressed"), "the tile chosen before the trip").toBe("true");
+    await ui.press(FASTMAIL.label);
     expect(ui.blank(J.appPasswordLabel), "the tile chosen before the trip").not.toBeNull();
     expect(ui.blank(J.appPasswordLabel)!.value, "a password kept across steps").toBe("");
     expect(ui.host.textContent).toContain(said);

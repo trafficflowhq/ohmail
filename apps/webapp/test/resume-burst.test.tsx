@@ -264,13 +264,20 @@ describe("a web tab's mount and its return, on the wire", () => {
     expect(beside, `went beside the first read:\n${show(rows, t0)}`).toEqual([]);
     expect(peak(rows), show(rows, t0)).toBeLessThanOrEqual(SLOTS);
     const paths = new Set(reads(rows).map((r) => r.path));
-    /* The reads of the places the mail mounts. Three of today's mount's reads belong to places not mounted yet and
-       stand in cases of their own below, each waiting for its place's mount. */
+    /* The held-mail check belongs to the Screener visit. The other mail reads start with the frame. */
+    const held = "/api/screener/held-releases";
     for (const p of ["/api/hello", "/api/account/access", "/api/account/ai", "/api/auth/session",
       "/api/consent", "/api/screener", "/api/screener/held-releases", "/api/screener/unscreened",
       "/api/mailboxes", "/api/sync"]) {
-      expect(paths.has(p), `${p} was never read:\n${show(rows, t0)}`).toBe(true);
+      expect(paths.has(p), `${p} had the wrong mount timing:\n${show(rows, t0)}`).toBe(p !== held);
     }
+    const visit = Date.now();
+    await shell.act(async () => { window.location.hash = "#/screener"; });
+    await shell.tick(6_000);
+    const afterOpen = since(visit);
+    expect(reads(afterOpen).filter((r) => r.path === held), show(afterOpen, visit)).toHaveLength(1);
+    expect(afterOpen.filter((r) => r.path === held && r.method !== "GET")).toEqual([]);
+    expect(peak(afterOpen), show(afterOpen, visit)).toBeLessThanOrEqual(SLOTS);
   });
 
   /* MOVED OUT OF THE MOUNT's CASE ABOVE, one a place: what today's shell read at the mount for a place the new shell

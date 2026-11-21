@@ -95,7 +95,9 @@ export function accountPane(parts: AccountPaneParts): SettingsPane {
   function useSummary() {
     const { host } = useFrame();
     return confirmedAccountForScope(host) !== null && host.session.accountAddress
-      ? { value: host.session.accountAddress }
+      ? host.session.accountDisplayName
+        ? { value: host.session.accountDisplayName, detail: host.session.accountAddress }
+        : { value: host.session.accountAddress }
       : null;
   }
   function Body({ sheet }: { readonly sheet?: PaneSheet } = {}): ReactNode {

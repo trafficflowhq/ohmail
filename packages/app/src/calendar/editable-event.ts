@@ -19,6 +19,26 @@ export function eventOwned(record: CalendarEventRecord, own: readonly string[] |
     : record.myAnswer === null && record.invitees.length === 0;
 }
 
+export function canProposeRecord(record: CalendarEventRecord, own: readonly string[] | null) {
+  return (
+    own !== null &&
+    record.organizer !== null &&
+    record.myAnswer !== null &&
+    record.status !== "cancelled" &&
+    !record.heldBack &&
+    !record.cut &&
+    !record.thisAndFuture &&
+    !eventOwned(record, own)
+  );
+}
+
+export function movePending(record: CalendarEventRecord) {
+  return record.writes.some(
+    ({ state, act }) =>
+      state === "pending" && act?.kind === "calendar_event_move" && act.copyThenRemove === true,
+  );
+}
+
 function writableRecord(
   record: CalendarEventRecord,
   own: readonly string[] | null,
@@ -26,6 +46,7 @@ function writableRecord(
 ) {
   const organizer = record.organizer?.address.trim().toLowerCase();
   return (
+    !movePending(record) &&
     !record.heldBack &&
     !record.cut &&
     record.status !== "cancelled" &&
@@ -176,18 +197,60 @@ function calendarRecord<T extends { id: string }>(host: HostContract, kind: stri
   );
 }
 
-/** The write service can transfer an event between calendars of its own Google connection. */
-export function moveDestinations(host: HostContract, source: NonNullable<ReturnType<typeof writableEvent>>) {
-  const connection = source.connection;
-  if (connection?.provider !== "google" || source.record.repeat) return [];
-  return host.engine.store
-    .entries<CalendarRecord | null>("calendar")
-    .flatMap(({ entity: target }) =>
-      target &&
-      target.id !== source.calendar.id &&
-      target.connectionId === connection.id &&
-      !viewOnlyOf(target, connection)
-        ? [target]
-        : [],
+export function nativeMoveTo(source: NonNullable<ReturnType<typeof writableEvent>>, target: CalendarRecord) {
+  return (
+    target.connectionId === source.connection?.id &&
+    (source.connection.provider === "google" ||
+      (source.connection.provider === "caldav" &&
+        source.calendar.nativeMove === true &&
+        target.nativeMove === true))
+  );
+}
+
+function ownedDestinations(host: HostContract, source: NonNullable<ReturnType<typeof writableEvent>>) {
+  return host.engine.store.entries<CalendarRecord | null>("calendar").flatMap(({ entity }) => {
+    if (!entity || entity.id === source.calendar.id || entity.access !== "owner") return [];
+    const connection = calendarRecord<CalendarConnectionRecord>(
+      host,
+      "calendar_connection",
+      entity.connectionId,
     );
+    return connection && !viewOnlyOf(entity, connection) ? [entity] : [];
+  });
+}
+
+export function hasGuests(record: CalendarEventRecord) {
+  const organizer = record.organizer?.address.trim().toLowerCase();
+  return (
+    record.invitees.some(({ address }) => address.trim().toLowerCase() !== organizer) ||
+    record.deleteMembers?.some(({ guests }) => guests.some(({ address }) => address !== organizer)) === true
+  );
+}
+
+export function eventMoveOptions(host: HostContract, source: ReturnType<typeof writableEvent>) {
+  if (!source) return { destinations: [], moveRestriction: null };
+  const { record } = source;
+  const guests = hasGuests(record);
+  const owned = ownedDestinations(host, source);
+  const nonNative = (target: CalendarRecord) => !nativeMoveTo(source, target);
+  const canCopy =
+    record.portableCopy === true &&
+    record.status === "confirmed" &&
+    record.end !== null &&
+    !record.cut &&
+    !guests &&
+    !record.repeat?.added.length &&
+    !record.repeat?.excluded.length &&
+    !record.deleteMembers?.some((member) => member.at !== null);
+  const destinations =
+    record.repeat && !record.deleteScopes?.includes("record")
+      ? []
+      : owned.filter((target) => canCopy || !nonNative(target));
+  const moveRestriction =
+    !canCopy && owned.some(nonNative) ? (guests ? ("guests" as const) : ("fields" as const)) : null;
+  return { destinations, moveRestriction };
+}
+
+export function moveDestinations(host: HostContract, source: NonNullable<ReturnType<typeof writableEvent>>) {
+  return eventMoveOptions(host, source).destinations;
 }

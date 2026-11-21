@@ -30,6 +30,7 @@ import { TextFromIntl } from "./LocaleContext";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { navigatorOs } from "@ohmail/app-logic/writing/support";
 import { ReaderInvitation } from "../components/ReaderInvitation";
+import { invitationPart } from "../components/ReaderInvitation";
 
 export type { GapLettersWire, OrganizerNoticeWire } from "@ohmail/app/host";
 export type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
@@ -39,7 +40,11 @@ export { NO_STAGE_PARTS, type MailHostParts, type MailPaneParts } from "@ohmail/
 
 /** A browser host's reader over the mail ground: one for the page's life. */
 export const BROWSER_READER = mailReader({
-  body: letterBody, look: { usePdf: usePdfLook }, invitation: ReaderInvitation, copy: (text) => browserCopy(text),
+  body: letterBody, look: { usePdf: usePdfLook }, invitation: ReaderInvitation,
+  invitationFile: (message, files) => message.invitation
+    ? invitationPart(message, files.eventsOf(message.id, { attachmentTiles: true }))?.partId
+    : undefined,
+  copy: (text) => browserCopy(text),
 });
 
 /**

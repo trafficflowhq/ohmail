@@ -88,7 +88,7 @@ async function engineWith(mail: EngineMessage[]): Promise<OhmailEngine> {
   });
 }
 
-async function acceptIntoOhbox(mail: EngineMessage[]): Promise<{ said: string[]; moves: number }> {
+async function acceptIntoOhbox(mail: EngineMessage[]): Promise<{ said: string[]; moves: number; dot: boolean }> {
   const engine = await engineWith(mail);
   window.location.hash = "#/screener";
   const host = await mountShell([mailbox({
@@ -104,7 +104,8 @@ async function acceptIntoOhbox(mail: EngineMessage[]): Promise<{ said: string[];
   await act(async () => { ohbox.click(); });
   await tick(COMMIT_MS + 50);
   const said = within(host).queryAllByRole("status").map((status) => status.textContent?.trim() ?? "");
-  return { said, moves: sent.filter((m) => m.kind === "move").length };
+  const dot = host.querySelector('.fr-report [role="status"] .oh-nowrap > .oh-dot') !== null;
+  return { said, moves: sent.filter((m) => m.kind === "move").length, dot };
 }
 
 beforeEach(() => {
@@ -122,16 +123,18 @@ describe("the Screener's accept says what the Ohbox gained", () => {
   it("one letter in the INBOX and one in Screened: one is there, and the Screened one stays where it is", async () => {
     // Ruled, the card files what it shows: the rule asks no past-mail answer, so the Screened letter
     // stays and the sentence says so; the count is the INBOX letter the rule placed.
-    const { said, moves } = await acceptIntoOhbox([msg("in-1", "INBOX"), msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
+    const { said, moves, dot } = await acceptIntoOhbox([msg("in-1", "INBOX"), msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
     expect(moves, "an Ohbox decision moves nothing: the letter is already in the INBOX").toBe(0);
-    expect(said, said.join(" | ")).toContain("1 is in Ohbox · 1 is still in Screened.");
+    expect(said, said.join(" | ")).toContain("1 is in Ohbox · 1 is still in Screened");
+    expect(dot).toBe(true);
   });
 
   it("twenty-six already in the INBOX and one in Screened: twenty-six, and no move", async () => {
     const inbox = Array.from({ length: 26 }, (_, i) => msg(`in-${i}`, "INBOX", `2026-09-25T0${i % 10}:${String(i).padStart(2, "0")}:00.000Z`));
-    const { said, moves } = await acceptIntoOhbox([...inbox, msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
+    const { said, moves, dot } = await acceptIntoOhbox([...inbox, msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
     expect(moves).toBe(0);
-    expect(said, said.join(" | ")).toContain("26 are in Ohbox · 1 is still in Screened.");
+    expect(said, said.join(" | ")).toContain("26 are in Ohbox · 1 is still in Screened");
+    expect(dot).toBe(true);
   });
 
   it("the sentence says a letter is there, never that it moved", () => {
@@ -141,28 +144,21 @@ describe("the Screener's accept says what the Ohbox gained", () => {
   });
 });
 
-async function checkSelectedSenderDecision(): Promise<void> {
-  const waiting = msg("picked-waiting", "ohmail/Screener");
-  const second = msg("also-picked", "ohmail/Screener", "2026-09-25T08:00:00.000Z");
-  const unpickedHeld = msg("held-unpicked", "ohmail/Screener", "2026-09-25T07:00:00.000Z");
-  const unpicked = msg("not-picked", "ohmail/Screened");
-  const other = {
-    ...msg("other-waiting", "ohmail/Screener"),
-    from: { name: null, address: "other@split.example" },
-  };
-  const placed = {
-    ...msg("picked-placed", "INBOX"),
-    from: { name: null, address: "placed@split.example" },
-  };
-  const sibling = { ...placed, id: "unpicked-placed" };
-  const engine = await engineWith([waiting, second, unpickedHeld, unpicked, other, placed, sibling]);
-  await engine.start();
-  const sentences: Array<string | null> = [];
-  const reports: Promise<number>[] = [];
-  const cx: VerbContext = {
+function bulkContext(
+  engine: OhmailEngine,
+  sentences: Array<string | null>,
+  reports: Promise<number>[],
+  roster: VerbContext["press"]["rosterRef"]["current"] = { kind: "absent" },
+): VerbContext {
+  return {
     engine,
     press: {
-      rosterRef: { current: { kind: "absent" } },
+      rosterRef: { current: roster },
+      refusalCopy: {
+        named: (name) => createTranslator({ locale: "en", messages, namespace: "screener" })("readerMoveRefused", { name }),
+        unknown: () => messages.screener.readerMoveRefusedUnknown,
+        nobody: () => messages.screener.readerMoveRefusedNobody,
+      },
       mutateSetAndReport: (writes, say) => {
         const report = Promise.all(writes.map((write) => engine.mutate(write))).then(() => {
           sentences.push(say(writes.length));
@@ -187,13 +183,37 @@ async function checkSelectedSenderDecision(): Promise<void> {
     closeLetterUp: vi.fn(),
     answer: vi.fn(),
   };
+}
+
+async function checkSelectedSenderDecision(): Promise<void> {
+  const waiting = msg("picked-waiting", "ohmail/Screener");
+  const second = msg("also-picked", "ohmail/Screener", "2026-09-25T08:00:00.000Z");
+  const unpickedHeld = msg("held-unpicked", "ohmail/Screener", "2026-09-25T07:00:00.000Z");
+  const unpicked = msg("not-picked", "ohmail/Screened");
+  const other = {
+    ...msg("other-waiting", "ohmail/Screener"),
+    from: { name: null, address: "other@split.example" },
+  };
+  const placed = {
+    ...msg("picked-placed", "INBOX"),
+    from: { name: null, address: "placed@split.example" },
+  };
+  const sibling = { ...placed, id: "unpicked-placed" };
+  const engine = await engineWith([waiting, second, unpickedHeld, unpicked, other, placed, sibling]);
+  await engine.start();
+  const sentences: Array<string | null> = [];
+  const reports: Promise<number>[] = [];
+  const cx = bulkContext(engine, sentences, reports);
   const ids = [waiting.id, second.id];
   expect(planBulkScreening(cx, ids, "reads")).toMatchObject({ senders: 1, messages: 3, rules: 1 });
   const mixed = planBulkScreening(cx, [...ids, placed.id], "reads");
-  expect(mixed).toMatchObject({ senders: 2, messages: 4, rules: 1 });
-  expect(mixed.mutations.filter((mutation) => mutation.kind === "move")).toEqual([
+  expect(mixed).toMatchObject({ senders: 2, messages: 5, rules: 1 });
+  const moves = mixed.mutations.filter((mutation) => mutation.kind === "move");
+  expect(moves).toHaveLength(2);
+  expect(moves).toEqual(expect.arrayContaining([
     { kind: "move", messageId: placed.id, folder: "ohmail/News" },
-  ]);
+    { kind: "move", messageId: sibling.id, folder: "ohmail/News" },
+  ]));
   expect(screenBulk(cx, ids, "reads")).toBe(true);
   await Promise.all(reports);
   expect(sentences).toEqual([
@@ -203,6 +223,43 @@ async function checkSelectedSenderDecision(): Promise<void> {
     kind: "screener_decide", senderId: waiting.id, scope: "sender", dest: "reads", applyRetro: true,
   })]);
 }
+
+it("refuses bulk Screening when an unpicked sibling is in a read-only mailbox", async () => {
+  const picked = msg("picked", "INBOX");
+  const sibling = { ...msg("unpicked-sibling", "INBOX"), mailboxId: "mb_2" };
+  const engine = await engineWith([picked, sibling]);
+  await engine.start();
+  const sentences: Array<string | null> = [];
+  const reports: Promise<number>[] = [];
+  const organizer = "Studio Mac";
+  const cx = bulkContext(engine, sentences, reports, {
+    kind: "known",
+    rows: [
+      { id: picked.mailboxId, status: "connected", organizerRole: "organizer" },
+      {
+        id: sibling.mailboxId,
+        status: "connected",
+        organizerRole: "reader",
+        organizerState: "held",
+        organizedBy: { kind: "desktop", name: organizer, since: NOW.toISOString() },
+      },
+    ],
+  });
+
+  const ids = [picked.id];
+  expect(planBulkScreening(cx, ids, "reads").mutations).toEqual([
+    { kind: "move", messageId: picked.id, folder: "ohmail/News" },
+    { kind: "move", messageId: sibling.id, folder: "ohmail/News" },
+  ]);
+  const accepted = screenBulk(cx, ids, "reads");
+  await Promise.all(reports);
+
+  expect(sent).toEqual([]);
+  expect(engine.verbRead().get<EngineMessage>("message", picked.id)?.folder).toBe("INBOX");
+  expect(engine.verbRead().get<EngineMessage>("message", sibling.id)?.folder).toBe("INBOX");
+  expect(accepted).toBe(false);
+  expect(sentences).toEqual([messages.screener.readerMoveRefused.replace("{name}", organizer)]);
+});
 
 /**
  * THE SHEET'S DECIDE, OVER THE SAME READINGS the shell composes (`changeScreening`'s `say`): a
@@ -266,7 +323,8 @@ describe("the sender sheet's count is the same reading", () => {
         method: "POST", path: "/api/rules",
         body: expect.objectContaining({ kind: "domain", destination: "ohmail/News" }),
       }]);
-      expect(reportSays()).toBe("News — 2 messages from sender.example are now there. Future mail from them files there too.");
+      expect(reportSays()).toBe("News — 2 messages from sender.example are now there. Future mail from them files there too");
+      expect(document.querySelector('.fr-report [role="status"] .oh-nowrap > .oh-dot')).not.toBeNull();
     }, { organizerFilesBacklog: true });
 
     for (const refused of [true, false]) {

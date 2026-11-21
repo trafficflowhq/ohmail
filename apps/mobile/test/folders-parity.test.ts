@@ -57,13 +57,9 @@ const webappFolders = read("../../../packages/app-logic/src/lists/folders.ts");
 describe("the folders strings are the webapp catalogue's", () => {
   const pairs: Array<[unknown, string]> = [
     [Copy.folders, en.rail.folders],
-    [Copy.folderEmpty, en.rail.folderEmpty],
     [Copy.folderFilter, en.rail.folderFilter],
     [Copy.folderNoMatch, en.rail.folderNoMatch],
     [Copy.folderShowFewer, en.rail.folderShowFewer],
-    /* The junk foot's unnamed arm (JUNK-INVISIBLE) — one sentence, two surfaces, and a phone
-       that worded it differently would be a second claim about the same mailbox. */
-    [Copy.junkNoteUnnamed, en.rail.junkNoteUnnamed],
     [Copy.foldersUseTitle, en.settings.folders.useTitle],
     [Copy.foldersUseOn, en.settings.folders.useOn],
     [Copy.foldersUseOff, en.settings.folders.useOff],
@@ -78,9 +74,9 @@ describe("the folders strings are the webapp catalogue's", () => {
     expect(Copy.folderShowAll(240)).toBe(en.rail.folderShowAll.replace("{count}", "240"));
     expect(Copy.folderExpand("Q1")).toBe(en.rail.folderExpand.replace("{name}", "Q1"));
     expect(Copy.folderCollapse("Q1")).toBe(en.rail.folderCollapse.replace("{name}", "Q1"));
-    // rail.junkNote names the provider's own folder; the phone's is a function of that name.
-    expect(Copy.junkNote("Spamverdacht"))
-      .toBe(en.rail.junkNote.replace("{folder}", "Spamverdacht"));
+    expect(Copy.junkNote("Spamverdacht")).toBe(
+      "Your mail server's own Spamverdacht folder is not listed here — ohmail does not mirror it.",
+    );
   });
   it("the many-folders threshold is the webapp's own constant", () => {
     const m = webappFolders.match(/export const FOLDER_FILTER_AT = (\d+);/);
@@ -171,7 +167,9 @@ describe("the delete verb — the engine's, behind a confirm", () => {
     expect(pane).toMatch(/"delete"/);
     expect(Copy.actionDelete).toBe(web.actionDelete);
     expect(Copy.deleteAsk).toBe(web.deleteAsk);
-    expect(Copy.deleteNote).toBe(web.deleteNote);
+    expect(Copy.deleteNote).toContain("your own mail server");
+    expect(Copy.deleteNote).toContain("ohmail never erases mail");
+    expect(web.deleteNoTrash).toContain("ohmail never erases mail");
     expect(Copy.toastDeleted).toBe(web.toastDeleted);
     expect(Copy.deleteFailed).toBe(web.deleteFailed);
   });

@@ -8,6 +8,7 @@
  */
 import {
   CalendarWriteQueue,
+  calendarWriteMayRetry,
   refusalWordOf,
   writeFaultOf,
   type CalendarWriteTransport,
@@ -15,6 +16,7 @@ import {
 import { MutationRejectedError, type OhmailEngine } from "@ohmail/client-engine";
 import type {
   CalendarAct,
+  CalendarProposalAct,
   CalendarSettingsWire,
   CalendarWindow,
   CalendarWriteAnswer,
@@ -88,21 +90,28 @@ export function calendarPortOf(parts: PortParts) {
     ...(parts.online ? { online: parts.online } : {}),
     ...(parts.mayRun ? { mayRun: parts.mayRun } : {}),
   });
+  const hold = async (...args: Parameters<typeof queue.hold>) => {
+    const held = await queue.hold(...args);
+    watchLateRefusal(held.key);
+    return {
+      ...held,
+      async undo() {
+        const undone = await held.undo();
+        if (undone) watched.delete(held.key);
+        return undone;
+      },
+    };
+  };
   return {
     newId: parts.clock.uuid,
     press: (act: CalendarAct) => queue.press(act),
-    async holdDelete(act, delay) {
-      const held = await queue.holdDelete(act, delay);
-      watchLateRefusal(held.key);
-      return {
-        ...held,
-        async undo() {
-          const undone = await held.undo();
-          if (undone) watched.delete(held.key);
-          return undone;
-        },
-      };
-    },
+    holdDelete: hold,
+    ...(parts.transport.mailProposal
+      ? {
+          holdProposal: (act: CalendarProposalAct, delay: number) => hold(act, delay),
+          pendingProposals: () => queue.pendingProposals(),
+        }
+      : {}),
     activate() {
       reporting = true;
       const stop = queue.activate();
@@ -175,12 +184,18 @@ function calendarWriteTransport(
       );
       return answered;
     } catch (err) {
-      if (!signal?.aborted && err instanceof MutationRejectedError && !err.retryable)
+      if (!signal?.aborted && err instanceof MutationRejectedError && !calendarWriteMayRetry(err))
         verdicts.set(key, { kind: "refused", word: refusalWordOf(err.code), details: err.details });
       throw err;
     }
   };
   return {
+    ...(transport.mailProposal
+      ? {
+          mailProposal: (act: CalendarProposalAct, key: string, signal?: AbortSignal) =>
+            keep(key, signal, () => transport.mailProposal!(act, key, signal)),
+        }
+      : {}),
     writeCalendar: (act, key, signal) => keep(key, signal, () => transport.writeCalendar(act, key, signal)),
     retryCalendarWrite: (id, key, signal) =>
       keep(key, signal, () => transport.retryCalendarWrite(id, key, signal)),

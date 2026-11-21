@@ -1,14 +1,16 @@
 /**
  * SETTINGS → MAILBOXES → THE FILINGS THAT WAIT. The strip says "6 messages have not been filed"
- * and links here; this is the block it links to: per mailbox with waiting filings, how many, since
- * when, into which folder, why, and two presses — "Try again now" (the worker picks them up on its
- * next pass) and "Leave them where they are" (the intent settles on the folder the mail is in).
- * Neither press moves mail here. Each host hands in its own transport, as `MailboxSelfCheck` does.
+ * and links here; these are the lines it links to, drawn under the other lines of the mailbox's own
+ * sheet: how many, since when, into which folder, why, and two presses — "Try again now" (the
+ * worker picks them up on its next pass) and "Leave them where they are" (the intent settles on the
+ * folder the mail is in). Neither press moves mail. Each host hands in its own transport, as
+ * `MailboxSelfCheck` does. A mailbox with nothing waiting draws nothing and asks for nothing; a
+ * press that cleared the wait keeps the lines standing to say what the press did.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui/base";
-import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
+import { SettingLine } from "@ohmail/ui/mail";
 
 import { ApiError } from "../api-client";
 import { PILE_KEY_OF_FOLDER } from "./decision-copy";
@@ -16,7 +18,7 @@ import { waterlineStamp } from "./format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { clock } from "@ohmail/client-engine";
-import { useMailState, useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { FILING_REFUSAL_REASONS, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { useHashRoute } from "./routing";
 /* The block's reader moved beside the Mailboxes pane's rules; this file draws it. */
@@ -32,19 +34,8 @@ type Say = (key: string, values?: Record<string, string | number>) => string;
 type Read = { k: "loading" } | { k: "read"; groups: Group[] } | { k: "unread" };
 type Note = { k: "retried" | "left"; count: number } | { k: "failed" | "elsewhere" } | null;
 
-export function MailboxFilings({ api }: { api: MailboxFilingsApi }) {
-  const facts = useMailboxFacts();
-  // A block pressed in this visit stays to say what the press did, after its rows have cleared.
-  const [pressed, setPressed] = useState<ReadonlySet<string>>(() => new Set());
-  const onPressed = useCallback((id: string) => setPressed((p) => (p.has(id) ? p : new Set(p).add(id))), []);
-  const rows = (facts ?? []).filter((m) => waits(m) || (pressed.has(m.id) && m.status !== "disabled"));
-  if (rows.length === 0) return null;
-  return <>{rows.map((m) => <MailboxFilingsBlock key={m.id} mailbox={m} api={api} onPressed={onPressed} />)}</>;
-}
-
-function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
-  mailbox: MailboxFacts; api: MailboxFilingsApi; onPressed: (id: string) => void;
-}) {
+/** One mailbox's waiting filings, as lines of that mailbox's own sheet. */
+export function MailboxFilings({ mailbox: m, api }: { mailbox: MailboxFacts; api: MailboxFilingsApi }) {
   const t = useTranslations("mailboxFilings") as unknown as Say;
   const ts = useTranslations("sync") as unknown as Say;
   const tp = useTranslations("screener") as unknown as Say;
@@ -53,8 +44,16 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
   const [read, setRead] = useState<Read>({ k: "loading" });
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note>(null);
+  /** A press cleared the wait: the lines stay to say what the press did, until the row leaves. */
+  const [kept, setKept] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const focusedFor = useRef<string | null>(null);
+
+  const waiting = waits(m);
+  useEffect(() => {
+    if (waiting) setKept(true);
+  }, [waiting]);
+  const shown = waiting || kept;
 
   const load = useCallback(async () => {
     try {
@@ -66,10 +65,14 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
   }, [api, m.id]);
 
   // Re-read when this mailbox's own figures move; no timer of its own — the facts poll is the clock.
+  // Nothing waiting and nothing pressed: nothing to read, so no request is made.
   const f = m.filing;
-  useEffect(() => { void load(); }, [load, f?.stuck, f?.deferred, m.pendingMoves]);
+  useEffect(() => {
+    if (!shown) return;
+    void load();
+  }, [load, shown, f?.stuck, f?.deferred, m.pendingMoves]);
 
-  // Opened from the strip: this mailbox's block takes the focus, once per hash.
+  // Opened from the strip: this mailbox's lines take the focus, once per hash.
   const hash = typeof window === "undefined" ? "" : window.location.hash;
   useLayoutEffect(() => {
     if (route.settingsMailboxId !== m.id || focusedFor.current === hash) return;
@@ -79,7 +82,7 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
   }, [route.settingsMailboxId, m.id, hash]);
 
   const pressed = async (act: () => Promise<Note>) => {
-    onPressed(m.id);
+    setKept(true);
     setBusy(true);
     let next: Note;
     try {
@@ -93,6 +96,8 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
     setBusy(false);
   };
 
+  if (!shown) return null;
+
   const name = m.displayName?.trim() || displayAddress(m.address);
   const folderName = (folder: string): string => {
     const key = PILE_KEY_OF_FOLDER[folder];
@@ -105,7 +110,8 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
   const time = (iso: string): string => clock(new Date(iso), activeFormatZone());
 
   return (
-    <SettingsSheet title={t("title", { mailbox: name })} headRef={heading}>
+    <>
+      <h3 className="oh-text" ref={heading} tabIndex={-1}>{t("title", { mailbox: name })}</h3>
       {read.k === "unread" && f ? (
         <SettingLine label={t("unread", { count: f.due + f.deferred })} />
       ) : null}
@@ -154,6 +160,6 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
       <p className="oh-text" role="status">
         {note === null ? null : note.k === "retried" || note.k === "left" ? t(note.k, { count: note.count }) : t(note.k)}
       </p>
-    </SettingsSheet>
+    </>
   );
 }

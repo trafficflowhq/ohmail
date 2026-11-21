@@ -86,10 +86,10 @@ afterEach(async () => {
 });
 
 describe("owner — the server named an account", () => {
-  it("supplies the verified address to the signed-in frame when that frame asks for it", async () => {
+  it("supplies the verified address and profile name to the signed-in frame when it asks", async () => {
     wire(() => json(fullBody, 200));
     expect(await resolveOwnerOutcome({ includeAddress: true })).toEqual({
-      kind: "owner", accountId: ACCOUNT, address: fullBody.user.email,
+      kind: "owner", accountId: ACCOUNT, address: fullBody.user.email, displayName: fullBody.user.displayName,
     });
   });
 

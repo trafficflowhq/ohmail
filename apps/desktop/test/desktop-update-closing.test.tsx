@@ -94,18 +94,20 @@ async function tell(closing: unknown): Promise<void> {
 }
 
 describe("UpdateClosing", () => {
+  const words = "Installing the update. ohmail closes when it is done";
+
   it("says the one sentence when a quit waits on the install, in the polite live region", async () => {
     fakeShell();
     await mount();
-    expect(host.textContent ?? "").not.toContain(DOOR_COPY.updateClosing);
+    expect(host.textContent ?? "").not.toContain(words);
     await tell(true);
     const text = host.textContent ?? "";
-    expect(text.split(DOOR_COPY.updateClosing).length - 1).toBe(1);
-    const live = [...host.querySelectorAll('[role="status"][aria-live="polite"]')].map((el) => el.textContent);
-    expect(live).toContain(DOOR_COPY.updateClosing);
+    expect(text.split(words).length - 1).toBe(1);
+    const live = [...host.querySelectorAll('[role="status"][aria-live="polite"]')].find((el) => el.textContent === words);
+    expect(live?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     // The report is re-sent while the quit waits; the sentence is not said twice.
     await tell(true);
-    expect((host.textContent ?? "").split(DOOR_COPY.updateClosing).length - 1).toBe(1);
+    expect((host.textContent ?? "").split(words).length - 1).toBe(1);
   });
 
   it("says nothing while no quit waits", async () => {
@@ -113,7 +115,7 @@ describe("UpdateClosing", () => {
     await mount();
     await tell(false);
     await tell(undefined);
-    expect(host.textContent ?? "").not.toContain(DOOR_COPY.updateClosing);
+    expect(host.textContent ?? "").not.toContain(words);
   });
 
   it("leaves the feed when the window's tree goes", async () => {

@@ -681,6 +681,7 @@ export async function consentSettings(
    * the arithmetic happens.
    */
   resurfaceTime: string | null;
+  draftReplies: boolean;
   /**
    * mail 0083 — WHEN the first-run flow was last left, by finishing it or by cancelling it.
    *
@@ -766,6 +767,7 @@ export async function consentSettings(
     // closes the format). Null means "never chosen", which every client renders as
     // {@link DEFAULT_RESURFACE_TIME} — and unlike a language nobody can load, that fallback is
     // drawn in the chooser's own control before any press, so a wrong stored value is visible.
+    draftReplies: row?.draftReplies ?? true,
     resurfaceTime: RESURFACE_TIME_RE.test(row?.resurfaceTime ?? "") ? row!.resurfaceTime : null,
     // NULL and an absent row both mean "this account has never left the first-run flow", which is
     // the state that OPENS it. That is the safe direction here in the sense that matters: the
@@ -1716,6 +1718,19 @@ export async function setResurfaceTime(
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
   });
   return { resurfaceTime };
+}
+
+/** Store this account’s draft-offer choice and ring the shared settings record. */
+export async function setDraftReplies(ctx: ServiceContext, draftReplies: boolean): Promise<boolean> {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
+    const updatedAt = ctx.now();
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, draftReplies, updatedAt })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { draftReplies, updatedAt } });
+    await recordSettingsChange(tx, ctx.accountId);
+  });
+  return draftReplies;
 }
 
 /**

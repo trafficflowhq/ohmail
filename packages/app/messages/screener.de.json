@@ -76,6 +76,7 @@
     "junkBodyLoading": "Die Nachricht wird aus dem Spam-Ordner gelesen …",
     "junkBodyFailed": "Die Nachricht ließ sich nicht aus dem Spam-Ordner lesen.",
     "junkSearchPlaceholder": "Spam-Ordner durchsuchen",
+    "hideSpamSearch": "Spam-Suche ausblenden",
     "junkSearchLabel": "Deinen Spam-Ordner durchsuchen",
     "junkSearchLocalNone": "Nichts Geladenes passt zu „{q}“.",
     "junkSearching": "Der Spam-Ordner deines Mailservers wird nach „{q}“ durchsucht …",
@@ -165,7 +166,7 @@
       "running": "Wird vorgeschlagen …",
       "progress": "{done} von {total} vorgeschlagen …",
       "stoppedAt": "{done} von {total} vorgeschlagen. {reason}",
-      "confirm": "{count, select, all {Für alle {n} Absender vorschlagen} first {Für die ersten {n} Absender vorschlagen} other {{n, plural, one {Für 1 Absender vorschlagen} other {Für # Absender vorschlagen}}}}}",
+      "confirm": "{count, select, all {Für alle {n} Absender vorschlagen} first {Für die ersten {n} Absender vorschlagen} other {{n, plural, one {Für 1 Absender vorschlagen} other {Für # Absender vorschlagen}}}}",
       "cancel": "Abbrechen",
       "again": "Neu vorschlagen …",
       "labelAgain": "Neu vorschlagen",
@@ -466,7 +467,8 @@
     "settingsLabel": "Leute, denen du schreibst",
     "reopenBody": "Schau nochmal auf die Leute, denen du geschrieben hast, und entscheide, wer durchkommt. Wen du schon entschieden hast, bleibt wie er ist; das hier nimmt nur Leute dazu, für die du noch nicht geantwortet hast — und genau die bringt ein neu verbundenes Postfach mit.",
     "reopenAction": "Ansehen",
-    "recentSent": "Nur die letzten {count, number} gesendeten Mails geprüft"
+    "recentSent": "Nur die letzten {count, number} gesendeten Mails geprüft",
+    "reopenConsequence": "Für jede ausgewählte Person wird eine Regel angelegt. Ihre Mails, die im Screener warten, wandern in deine Ohbox. Deine übrigen Mails bleiben dort, wo dein Mailserver sie abgelegt hat."
   },
   "screening": {
     "auditPlaceWhen": "{place} · {when}",
@@ -488,6 +490,7 @@
     "placeScreener": "den Screener",
     "placeHistory": "Historie",
     "nowIn": "Jetzt in {place}",
+    "nowInWithCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}} — jetzt in {place}",
     "nowSpread": "Jetzt an {count} Orten",
     "footRule": "Wartet im Screener, deshalb wird das eine Regel: Künftige Mails von {sender} landen auch dort. Mails dieses Absenders, die schon anderswo einsortiert sind, bleiben, wo sie sind.",
     "footListClaim": "Aussortieren und Spam sind hier die Ausnahme: Beide legen nur die Nachrichten ab, die sich als {brand} ausgeben, und erstellen keine Regel.",
@@ -618,7 +621,7 @@
     "deleteQueuedForOrganizer": "Für den Organizer vorgemerkt — gelöscht wird beim nächsten Durchgang.",
     "stillWaitingForOrganizer": "Warte weiterhin auf den Organizer.",
     "auditOpen": "Alle ansehen",
-    "auditOpenAria": "Alle {count, plural, one {1 Nachricht} other {# Nachrichten}} ansehen →",
+    "auditOpenAria": "Alle {count, plural, one {1 Nachricht} other {# Nachrichten}} ansehen",
     "auditAria": "Nachrichten von {subject}, und wo jede einzelne liegt",
     "auditTitleDomain": "Alle bei {domain}",
     "auditClose": "Schließen",

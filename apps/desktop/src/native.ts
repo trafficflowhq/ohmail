@@ -429,7 +429,7 @@ export interface OsNotice {
  * first frame's stamp reaches this file and may reach no package, not even for a type.
  */
 export async function postOsNotice(
-  notice: OsNotice, opening?: NoticeWriter & { letter?: string },
+  notice: OsNotice, opening?: NoticeWriter & { letter?: string; details?: { sender: string; subject: string }; summary?: readonly unknown[] },
 ): Promise<void> {
   const shell = internals();
   if (!shell) return;

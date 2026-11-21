@@ -106,7 +106,7 @@ Filing is a real IMAP move into a few plain folders, and your rules are stored i
 
 ohmail 2.0 keeps the 1.0 phone interface on iPhone and Android.
 
-<img src="docs/assets/readme/mark-ios.svg" alt="" width="13" height="13" />&nbsp;iPhone: [on the App Store][app-store], not yet available in the EU<br/><img src="docs/assets/readme/mark-android.svg" alt="" width="13" height="13" />&nbsp;Android: [ohmail-android.apk](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk)
+<img src="docs/assets/readme/mark-ios.svg" alt="" width="13" height="13" />&nbsp;iPhone: [on the App Store][app-store], not yet available in the EU<br/><img src="docs/assets/readme/mark-android.svg" alt="" width="13" height="13" />&nbsp;Android: [on Google Play][google-play] · [ohmail-android.apk](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk)
 
 </td></tr>
 <tr><td width="53%" valign="middle">
@@ -158,7 +158,7 @@ The builds are not code-signed yet, so the first launch on macOS and Windows nee
 | <img src="docs/assets/readme/mark-apple.svg" alt="" width="13" height="13" />&nbsp;**macOS** 15 or later (Apple silicon and Intel) | [ohmail.dmg](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail.dmg) |
 | <img src="docs/assets/readme/mark-windows.svg" alt="" width="13" height="13" />&nbsp;**Windows** 10 or later (x86_64) | [ohmail-windows-setup.exe](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-windows-setup.exe) |
 | <img src="docs/assets/readme/mark-ios.svg" alt="" width="13" height="13" />&nbsp;**iPhone** | [On the App Store][app-store], not yet available in the EU |
-| <img src="docs/assets/readme/mark-android.svg" alt="" width="13" height="13" />&nbsp;**Android** | [ohmail-android.apk](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk) |
+| <img src="docs/assets/readme/mark-android.svg" alt="" width="13" height="13" />&nbsp;**Android** | [on Google Play][google-play] · [ohmail-android.apk](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk) |
 
 [All builds and checksums](https://github.com/trafficflowhq/ohmail/releases/latest). On Linux x86_64, after the download:
 
@@ -218,3 +218,4 @@ Bugs and ideas go to [GitHub issues](https://github.com/trafficflowhq/ohmail/iss
 [AGPL-3.0](LICENSE) for the whole program: desktop, phone, web and server. The name and the icon are covered by [TRADEMARK.md](docs/legal/TRADEMARK.md).
 
 [app-store]: https://apps.apple.com/app/ohmail/id6810824816
+[google-play]: https://play.google.com/store/apps/details?id=app.ohmail

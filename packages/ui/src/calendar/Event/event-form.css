@@ -62,6 +62,17 @@
     box-shadow: var(--oh-evform-field-line);
     cursor: text;
   }
+  .oh-evform-field[data-kind="open-text"] {
+    text-align: start;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .oh-evform-status {
+    flex: 1 0 100%;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
   .oh-evform-field:focus-visible {
     outline: none;
     border-radius: var(--r-sq);

@@ -4,7 +4,11 @@ import { useContext, type ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
 import { MailRichEditor } from "../../write/rich-entry.js";
-import { useNoticesVersion, writeCalendarNotice } from "@ohmail/app-logic/notices/browser-channels";
+import {
+  storedCalendarChoices,
+  useNoticesVersion,
+  writeCalendarNotice,
+} from "@ohmail/app-logic/notices/browser-channels";
 import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useMailState } from "@ohmail/app-logic/mail-state";
@@ -77,7 +81,7 @@ export function BrowserNotificationsPane() {
   const choices =
     host.wires.calendar === NONE || door === NONE
       ? undefined
-      : door.choices?.(door.liveNoticeScope?.() === scope ? scope : null);
+      : storedCalendarChoices(door.liveNoticeScope?.() === scope ? scope : null);
   return (
     model && (
       <NotificationsPane

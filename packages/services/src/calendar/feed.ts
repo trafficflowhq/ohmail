@@ -4,7 +4,7 @@
  * builder does not compile. Every read names the account in the same statement; a record carries
  * no sign-in, token, provider id, version tag or original text, by construction of the selects.
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions } from "@trafficflow/db/mail";
 import { asCalendarSyncFault, isCalendarConnectionStatus } from "@trafficflow/db/calendar";
 import type {
@@ -14,10 +14,11 @@ import type {
 } from "@ohmail/wire";
 import type { Db } from "../context.js";
 import { CALENDAR_EVENT_MAX_BYTES } from "../sync-page-byte-budget.js";
+import { changedSeriesAudience } from "@trafficflow/db/calendar";
 import { proofPlaceOf, PROVEN_REPEATS, repeatDeleteScopes, type RepeatShape } from "@ohmail/cal-providers/repeat-shapes";
 import { eventTimeOf, parseRRule } from "@ohmail/cal-core";
 import { intlZones } from "@ohmail/cal-core/time/zones";
-import { personalSeriesOf, seriesDeleteMembers, storedObjectFacts } from "@ohmail/cal-providers/series";
+import { personalSeriesOf, cloudDeleteMembers, seriesDeleteMembers, storedObjectFacts } from "@ohmail/cal-providers/series";
 import { availabilityOf, zoneForAvailability } from "./availability.js";
 import { writeMarksOf } from "./write-marks.js";
 
@@ -115,7 +116,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
   if (ids.length === 0) return new Map();
   const rows = await db.select({
     id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color,
-    access: calCalendars.access, shown: calCalendars.shown, timeZone: calCalendars.timeZone, availabilityKey: calCalendars.availabilityKey,
+    access: calCalendars.access, nativeMove: calCalendars.nativeMove, shown: calCalendars.shown, timeZone: calCalendars.timeZone, availabilityKey: calCalendars.availabilityKey,
     windowStart: calCalendars.windowStart, windowEnd: calCalendars.windowEnd, lastSyncedAt: calCalendars.lastSyncedAt,
     errorCode: calCalendars.errorCode, updatedAt: calCalendars.updatedAt,
   }).from(calCalendars).where(and(eq(calCalendars.accountId, accountId), inArray(calCalendars.id, [...ids])));
@@ -126,6 +127,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
     name: r.name,
     color: r.color,
     access: accessOf(r.access),
+    ...(r.nativeMove && { nativeMove: true as const }),
     shown: r.shown,
     timeZone: r.access === "busy" && r.timeZone !== null ? zoneForAvailability(r.timeZone, r.availabilityKey) : r.timeZone,
     window: r.windowStart !== null && r.windowEnd !== null ? { from: String(r.windowStart), to: String(r.windowEnd) } : null,
@@ -163,14 +165,19 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     startsAt: calEvents.startsAt, endsAt: calEvents.endsAt, occurrenceAt: calEvents.occurrenceAt,
     repeatRule: calEvents.repeatRule, excludedDates: calEvents.excludedDates, addedDates: calEvents.addedDates,
     busy: calEvents.busy, private: calEvents.private, organizer: calEvents.organizer, organizerName: calEvents.organizerName,
-    myAnswer: calEvents.myAnswer, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
+    myAnswer: calEvents.myAnswer, portableCopy: calEvents.portableCopy, removedOccurrences: calEvents.removedOccurrences, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
   }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
     .where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, [...ids])));
   const detailed = rows.filter((r) => r.access !== "busy");
   const candidates = detailed.filter((r) => (r.access === "owner" || r.access === "writer") && !r.heldBack && r.recurrenceId === "" && r.repeatRule).map((r) => r.id);
   const sources = candidates.length === 0 ? [] : await db.select({
-    id: calEvents.id, original: calEvents.original, provider: calConnections.provider,
+    id: calEvents.id, original: calEvents.original, provider: calConnections.provider, partial: calEvents.partial,
+    hasOverrides: sql<boolean>`exists (
+      select 1 from cal_events as changed
+      where changed.account_id = ${calEvents.accountId} and changed.calendar_id = ${calEvents.calendarId}
+        and changed.uid = ${calEvents.uid} and changed.recurrence_id <> ''
+    )`,
     serverUrl: calConnections.serverUrl, principal: calConnections.principal, organizer: calEvents.organizer,
   }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calEvents.calendarId, calCalendars.id), eq(calCalendars.accountId, accountId)))
@@ -204,17 +211,39 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       invitees.set(p.eventId, list);
     }
   }
+  const sourcesById = new Map(sources.map((item) => [item.id, item] as const));
   const records = new Map<string, CalendarEventRecord>();
+  const changed = new Map<string, Awaited<ReturnType<typeof changedSeriesAudience>>>();
+  for (const row of detailed) {
+    const source = sourcesById.get(row.id);
+    if (source?.hasOverrides && !source.partial && organized.has(row.id) && (source.provider === "google" || source.provider === "microsoft")) {
+      changed.set(row.id, await changedSeriesAudience(db, accountId, row));
+    }
+  }
   for (const r of rows) {
     const rules = r.repeatRule === null ? [] : r.repeatRule.split("\n").map((l) => l.trim()).filter((l) => l !== "");
     const excluded = times(r.excludedDates);
     const added = times(r.addedDates);
-    const source = deletion.get(r.id);
+    const provider = sourcesById.get(r.id);
+    const cloud = provider && (provider.provider === "google" || provider.provider === "microsoft") ? provider.provider : null;
+    const unchangedCloudSeries = cloud && provider && organized.has(r.id) && !provider.partial && !provider.hasOverrides && !excluded.length
+      ? cloudDeleteMembers(cloud, {
+        organizer: r.organizer, deleteGuests: invitees.get(r.id) ?? [], unchangedSeries: true,
+      }, true, { kind: "record" }) : null;
+    const changedDays = changed.get(r.id);
+    const cloudMaster = cloud && changedDays && cloudDeleteMembers(cloud, {
+      organizer: r.organizer, deleteGuests: invitees.get(r.id) ?? [], unchangedSeries: true,
+    }, true, { kind: "record" });
+    const source = deletion.get(r.id) ?? (unchangedCloudSeries && cloud
+      ? { members: unchangedCloudSeries, place: cloud }
+      : cloudMaster && changedDays && cloud
+        ? { members: [...cloudMaster, ...changedDays.members], place: cloud }
+        : null);
     const start = time(r.startKind, r.startLocal, r.startZone);
     const first = eventTimeOf(start);
     const rule = rules.length === 1 && !added.length ? parseRRule(rules[0]!) : null;
     const deleteScopes = source && rule && first
-      ? repeatDeleteScopes(source.place, rule, first, ZONES, Date.now()) : [];
+      ? repeatDeleteScopes(source.place, rule, first, ZONES, Date.now()).filter((scope) => !changedDays || scope === "record") : [];
     const record: CalendarEventRecord = {
       id: r.id,
       calendarId: r.calendarId,
@@ -241,10 +270,12 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       private: r.private,
       organizer: r.organizer === null ? null : { address: r.organizer, name: r.organizerName },
       myAnswer: r.myAnswer === null ? null : answerOf(r.myAnswer),
+      ...(r.removedOccurrences?.length && { removedOccurrences: r.removedOccurrences }),
       heldBack: r.heldBack,
       invitees: invitees.get(r.id) ?? [],
       alarms: alarms.get(r.id) ?? [],
       cut: false,
+      ...(r.portableCopy && { portableCopy: true as const }),
       writes: marks.get(r.id) ?? [],
       updatedAt: r.updatedAt.toISOString(),
     };

@@ -1,9 +1,7 @@
 /** @vitest-environment jsdom */
 /**
- * THE KEY TABLE AT THE SEATED OHBOX IS THE SHIPPED SHELL'S, ROW FOR ROW. Read out of the registry (what the `?` sheet
- * is drawn from) over the real shell, with nothing open and with a letter open, against the table the shell held at
- * today's Ohbox before the seat (`fixtures/keys-at-the-ohbox.base.json`, read on the lane's base). The rows that
- * differ are the declared ones, each named here with why. No chord runs twice in one state, and none is lost.
+ * Read the whole shortcut registry of the mounted Ohbox against the shipped bindings, with the current Studio
+ * names and focus ownership in `seatedTable`. Test both the documented table and the binding that wins a press.
  *
  * WITH ROWS PICKED the sorted rows cannot say which of two bindings of one chord runs: that state is also read chord
  * by chord, the first enabled binding in the registry's own order, which is the order a key press walks.
@@ -42,6 +40,7 @@ vi.mock("@ohmail/app-logic/keys", async (load) => {
   };
 });
 const keySheet = () => screen.queryByRole("dialog", { name: en.shortcuts.title });
+const nothingToUndo = en.shortcuts.nothingToUndo.replace(/\.$/, "");
 
 /** The window at a width, as today's own narrow rule and the frame's plan both read it. */
 function sized(w: number, hgt: number): void {
@@ -105,6 +104,22 @@ async function mountSeatedOhbox(...ids: string[]) {
   await mountShell("#/ohbox", ids.map((id) => message(id)), [], { places: { settings } });
 }
 
+async function verifyTagOwner(zone: "list" | "reader") {
+  const target = zone === "list"
+    ? rows()[0]!
+    : within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "Tag" });
+  const binding = zone === "list" ? "Tag the message" : "Tag";
+  await act(async () => { target.focus(); });
+  expect(document.activeElement).toBe(target);
+  expect(document.documentElement.dataset.zone).toBe(zone);
+  expect(table.rows.filter((row) => row.startsWith("t|"))).toEqual([`t|${binding}|on`]);
+  expect(runs(table.rows).t).toBe(binding);
+  await key("t");
+  expect(screen.getByRole("menu", { name: en.tag.pickerAria })).toBeTruthy();
+  await key("Escape");
+  expect(document.activeElement).toBe(target);
+}
+
 describe("the keys at the seated Ohbox", () => {
   it("the table is the shipped shell's row for row, with nothing open and with a letter open, and no chord runs twice", async () => {
     await mountSeatedOhbox("m1", "m2", "m3");
@@ -122,6 +137,7 @@ describe("the keys at the seated Ohbox", () => {
        chord may be live more often here than there. */
     expect.soft(twice(enabled(nothingOpen)).sort(), "chords live twice with nothing open").toEqual(twice(enabled(wasNothingOpen)).sort());
     expect.soft(twice(enabled(letterOpen)).sort(), "chords live twice with a letter open").toEqual(twice(enabled(wasLetterOpen)).sort());
+    await verifyTagOwner("list");
   }, 60_000);
 
   it("a letter open with two rows picked: the table is the shipped shell's, and chord by chord the binding that runs is the selection's", async () => {
@@ -146,6 +162,9 @@ describe("the keys at the seated Ohbox", () => {
     await key("Escape");
     expect(pickedRows()).toBe(0);
     expect(letter()).not.toBeNull();
+    const listFocus = document.activeElement as HTMLElement;
+    await verifyTagOwner("reader");
+    await act(async () => { listFocus.focus(); });
     await key("Escape");
     expect(letter()).toBeNull();
   }, 60_000);
@@ -204,8 +223,8 @@ describe("the keys at the seated Ohbox", () => {
     await waitFor(() => keySheet() === null, "? closes it again");
 
     await key("z");
-    await waitFor(() => (document.querySelector('[role="status"]')?.textContent ?? "") !== "" || document.body.textContent!.includes(en.shortcuts.nothingToUndo), "z answers");
-    expect(document.body.textContent, "z with nothing armed says so").toContain(en.shortcuts.nothingToUndo);
+    await waitFor(() => document.body.textContent!.includes(nothingToUndo), "z answers");
+    expect(document.body.textContent, "z with nothing armed says so").toContain(nothingToUndo);
 
     await key("g");
     await key("h");
@@ -241,7 +260,28 @@ async function seatLetters() {
 }
 
 function seatedTable(original: readonly string[], narrowOpen: boolean, picked: boolean): string[] {
-  const expected = original.filter((row) => !row.startsWith("w|Switch layout (Zero / classic)|"));
+  const studioNames: Record<string, string> = {
+    "Move it to Trash": "Move to Trash",
+    "Queue it for the Reply Run": "Later",
+    "Resurface it later": "Resurface",
+    "Delete — asks first": "Move to Trash",
+    "Park it (out of the way, still here)": "Park",
+    "Move to another place": "Move",
+    "Reply inside the message": "Reply",
+    "Forward the message on": "Forward",
+    "Reply to everyone on the message": "Reply all",
+  };
+  const expected = original.flatMap((row) => {
+    const [chord, label, availability] = row.split("|") as [string, string, string];
+    if (chord === "w" && label === "Switch layout (Zero / classic)") return [];
+    if (chord === "t") {
+      if (narrowOpen && label === "Tag the message") return [`t|Tag|on`];
+      // When the reader has focus, its Tag wins even if rows are picked in the list.
+      if (narrowOpen && label === "Tag the selection") return [];
+      if (picked && label === "Tag the message") return [];
+    }
+    return [`${chord}|${studioNames[label] ?? label}|${availability}`];
+  });
   /* The old Zero sheet's dormant exit leaves with the sheet. Keep the zone walk's own declaration. */
   for (const retired of ["ArrowLeft|Back to the list|off", "h|Back to the list|off"]) {
     const duplicate = expected.indexOf(retired);
@@ -433,7 +473,7 @@ describe("keys available in the mounted mail frame", () => {
 
     await key("z");
     await tick(50);
-    expect(document.body.textContent).toContain(en.shortcuts.nothingToUndo);
+    expect(document.body.textContent).toContain(nothingToUndo);
     await key("p");
     await tick(50);
     expect(vi.mocked(globalThis.fetch).mock.calls.filter(([input, request]) =>

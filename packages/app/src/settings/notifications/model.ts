@@ -22,6 +22,7 @@ export interface NotificationsModel {
   readonly permission: NoticePermission;
   /** The master is on and the platform draws: only then do the events' switches mean anything. */
   readonly live: boolean;
+  readonly showsMailDetails?: boolean;
   /** The kinds this surface's emitter draws (its `carries`); every other kind has no switch. None where it draws none. */
   readonly carries: readonly NoticeKind[];
   /** The calendar choices already held by this device, when the calendar is available. */

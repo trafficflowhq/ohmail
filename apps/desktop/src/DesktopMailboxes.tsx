@@ -692,7 +692,7 @@ const signInEnded = (id: string): void => {
  * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
-  { door, host, flavor, server, openServer, onShellStatus, scope, goToSetup, removalDoor }: {
+  { door, host, flavor, server, openServer, onShellStatus, scope, goToSetup, removalDoor, filingsFor }: {
     door?: string | null;
     /**
      * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
@@ -714,6 +714,8 @@ export function DesktopMailboxes(
     removalDoor?: { readonly active: boolean; readonly version?: number };
     openServer?: () => Promise<void>;
     goToSetup?(how: "add" | "again", mailbox?: string): void;
+    /** One mailbox's waiting filings, drawn as lines of that mailbox's own sheet. */
+    filingsFor?: (mailbox: MailboxFacts) => ReactNode;
   },
 ) {
   const t = useTranslations("mailboxes");
@@ -2391,6 +2393,13 @@ export function DesktopMailboxes(
               On a row this machine organizes it is the release; on every other one it is the fact and
               the way back — see `organizerBlock`. */}
           {organizerBlock(shown)}
+          {/* ── THE FILINGS THAT WAIT, UNDER THIS ROW'S OTHER LINES ──────────────────────────
+              They used to stand below every row, in a sheet of their own, so a pane with four
+              mailboxes put one mailbox's wait after all four — the strip's link landed on a
+              heading that was not beside the row it named. The block draws its lines in the row's
+              own sheet now; it asks for nothing while nothing waits, and a press that cleared the
+              wait keeps the lines standing to say what the press did. */}
+          {filingsFor ? filingsFor(shown) : null}
           {/* ══ THE PASSWORD THIS MAILBOX IS REFUSED WITH — one field, because the engine merges
               the server, the port and the username from what it keeps; asking again would be
               asking somebody to re-type what is already right. The server fields appear ONLY

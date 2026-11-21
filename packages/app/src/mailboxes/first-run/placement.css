@@ -74,3 +74,9 @@
   display: grid;
   gap: var(--s3);
 }
+
+:root[data-device="phone"] .mbx-run-material:has([data-page-filling-form]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}

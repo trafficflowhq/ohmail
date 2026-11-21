@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { openCalRestPage } from "./calrest-page-open.js";
 import { openPlacesPage, placesStatesPage } from "./places-pages.js";
 import { comparedKeys, PLACE_SCREENS } from "./places-states.mjs";
 
@@ -206,4 +207,62 @@ describe("the places' states, each drawn", () => {
     }
     expect(found).toEqual([]);
   }, 1_200_000);
+});
+
+describe.each([
+  { face: "paper", scheme: "light" },
+  { face: "paper", scheme: "dark" },
+  { face: "ohmarchy", scheme: "dark" },
+])("desktop $face $scheme", ({ face, scheme }) => {
+  it("covers scrolled Calendar accounts across the Mail Settings header", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 540 }, reducedMotion: "reduce" });
+    try {
+      await openCalRestPage(page, `screen=mail-settings&face=${face}&scheme=${scheme}`);
+      const scroller = page.getByRole("region", { name: "Calendar accounts" });
+      const heading = scroller.getByRole("heading", { name: "Calendar accounts", level: 1 });
+      await heading.waitFor();
+      await page.evaluate(() => document.fonts.ready);
+      const before = await heading.boundingBox();
+      expect(before).not.toBeNull();
+      await scroller.evaluate((el) => el.scrollBy(0, 240));
+      await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(120);
+      const after = await heading.boundingBox();
+      expect(after).not.toBeNull();
+      expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+
+      const { clip, gaps, contentUnderHeader } = await heading.evaluate((el) => {
+        const header = el.closest("header")!;
+        const scroller = header.parentElement!;
+        const content = header.nextElementSibling as HTMLElement;
+        const head = header.getBoundingClientRect();
+        const port = scroller.getBoundingClientRect();
+        const left = port.left + scroller.clientLeft;
+        const right = left + scroller.clientWidth;
+        const top = port.top + scroller.clientTop;
+        return {
+          clip: {
+            x: Math.ceil(left),
+            y: Math.ceil(top),
+            width: Math.floor(right) - Math.ceil(left),
+            height: Math.floor(head.bottom) - Math.ceil(top),
+          },
+          gaps: [head.left - left, right - head.right, head.top - top],
+          contentUnderHeader: [...content.querySelectorAll("button")].some((button) => {
+            const row = button.getBoundingClientRect();
+            return row.top < head.bottom && row.bottom > top;
+          }),
+        };
+      });
+      for (const gap of gaps) expect(gap).toBeLessThanOrEqual(1);
+      expect(contentUnderHeader).toBe(true);
+
+      const visible = await page.screenshot({ clip, animations: "disabled" });
+      await heading.evaluate((el) => {
+        (el.closest("header")!.nextElementSibling as HTMLElement).style.visibility = "hidden";
+      });
+      expect((await page.screenshot({ clip, animations: "disabled" })).equals(visible)).toBe(true);
+    } finally {
+      await page.close();
+    }
+  }, 30_000);
 });

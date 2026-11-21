@@ -31,7 +31,7 @@ export async function writeMarksOf(db: Db, accountId: string, eventIds: readonly
       key: r.key,
       state: r.state === "refused" ? "refused" : "pending",
       reason: r.refusal === null ? null : asCalendarWriteFault(r.refusal),
-      act: payload?.act ?? null,
+      act: payload?.transfer && payload.act.kind === "calendar_event_move" ? { ...payload.act, copyThenRemove: true } : payload?.act ?? null,
       part: payload?.part?.n ?? null,
       at: r.createdAt.toISOString(),
     });

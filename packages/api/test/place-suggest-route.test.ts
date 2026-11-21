@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { calendarRoutes, makePlaceSuggester } from "@trafficflow/api/calendar";
+import type { AccessVerdict, EntitlementsPort } from "@trafficflow/db";
 import type { PlaceSuggestAnswer } from "@ohmail/wire";
 import { makeDeps, req, seedSession, FIXED_NOW } from "./helpers.js";
 import { boxAddress, collection, feature, loopback, placeBox, type PlaceBox } from "./_place-box.js";
@@ -8,27 +9,28 @@ import { boxAddress, collection, feature, loopback, placeBox, type PlaceBox } fr
 /**
  * `POST /calendar/places/suggest` THROUGH THE COMPOSED PIPELINE: a signed-in question reaches the
  * geocoder with nothing of the person's request on it, a malformed one is refused as a bad request
- * before anything is asked, a well-formed one is always answered 200 with its state, and a caller
- * with no session is refused as every route refuses one.
+ * before anything is asked, and a well-formed one from an allowed account gets 200 with its state.
+ * The pipeline refuses callers without a session and accounts denied by the entitlements port.
  */
 
 const app = createApp([...apiRoutes, ...calendarRoutes]);
 const open: PlaceBox[] = [];
 afterEach(async () => { for (const b of open.splice(0)) await b.close(); });
 
-async function rig(opts: { places?: boolean } = {}) {
+async function rig(opts: { places?: boolean; entitlementsPort?: EntitlementsPort } = {}) {
   const { db, deps } = await makeDeps();
   const box = await placeBox();
   open.push(box);
   box.answer(() => ({ status: 200, body: collection(feature({ name: "Limmatquai", postcode: "8001", city: "Zürich", countrycode: "CH", type: "street" })) }));
   // The suggester's clock is the test's: a case reads what is asked, never how fast.
   let t = 1_000_000;
-  if (opts.places !== false) {
-    deps.services = {
-      ...deps.services,
+  deps.services = {
+    ...deps.services!,
+    ...(opts.places !== false ? {
       places: makePlaceSuggester({ address: boxAddress(box), token: "box-bearer" }, { resolver: loopback, now: () => t }),
-    } as never;
-  }
+    } : {}),
+    ...(opts.entitlementsPort ? { entitlementsPort: opts.entitlementsPort } : {}),
+  };
   const s = await seedSession(db, { now: FIXED_NOW });
   const ask = (body: unknown, headers: Record<string, string> = {}, bearer: string | null = s.token): Promise<Response> => app.handle(
     req("POST", "/calendar/places/suggest", {
@@ -43,6 +45,42 @@ async function rig(opts: { places?: boolean } = {}) {
 
 const read = async (res: Response): Promise<PlaceSuggestAnswer> => (await res.json()) as PlaceSuggestAnswer;
 const codeOf = async (res: Response): Promise<string> => ((await res.json()) as { error: { code: string } }).error.code;
+
+function portWith(verdict: AccessVerdict): EntitlementsPort {
+  const access = async () => verdict;
+  return {
+    access,
+    accessOrFault: access,
+    spend: async (_account, _action, attempt) => ({ verdict: "ok", charged: true, attempt }),
+    release: async () => "settled",
+    manageLink: async () => null,
+    releaseAccount: async () => "none",
+  };
+}
+
+describe("subscription access for place suggestions", () => {
+  it("an account that requires payment is refused before the geocoder is asked", async () => {
+    const r = await rig({ entitlementsPort: portWith({ ok: false, reason: "payment_required" }) });
+    const res = await r.ask({ text: "limmatquai" });
+    expect(res.status).toBe(402);
+    expect(await codeOf(res)).toBe("subscription_required");
+    expect(r.box.asked).toHaveLength(0);
+  });
+
+  it("an account on a trial can ask the geocoder", async () => {
+    const r = await rig({ entitlementsPort: portWith({
+      ok: true,
+      limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: true },
+      lifecycle: {
+        state: "trialing", closedReason: null, trialEndsAt: "2026-09-30T20:00:00.000Z", graceUntil: null,
+        closedAt: null, erasureAt: null, erasedAt: null, formerlyPaid: false,
+      },
+    }) });
+    const res = await r.ask({ text: "limmatquai" });
+    expect(res.status).toBe(200);
+    expect(r.box.asked).toHaveLength(1);
+  });
+});
 
 describe("(2) through the route, nothing of the person's request goes on to the geocoder", () => {
   it("no cookie, no address, no client name, no account: only the question, our name and the bearer", async () => {

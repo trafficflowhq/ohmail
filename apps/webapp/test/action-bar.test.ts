@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
 import { storeMessage } from "./_store-fixture";
@@ -271,15 +271,14 @@ describe("every verb the flat row had is still reachable", () => {
   it("a pane whose host names no drafter offers no Draft reply", async () => {
     mountPanel();
     await openMore();
-    expect(items("More"), "More opened no menu of verbs").toContain("Move");
+    expect(within(menu("More")!).getByRole("menuitem", { name: "Delete" })).toBeTruthy();
     expect(items("More"), "a host with no drafter was offered a draft").not.toContain("Draft reply");
     expect(shown()).not.toContain("Draft reply");
   });
 
   it("offers a way back out of both panels", async () => {
     const { actions } = mountPanel();
-    await openMore();
-    await pressItem("More", "Move");
+    await pressVerb("Move");
     expect(menu("Move")).not.toBeNull();
     await key(menu("Move")!, "Escape");
     expect(menu("Move")).toBeNull();
@@ -454,8 +453,7 @@ describe("More holds the verbs the row dropped", () => {
 
   it("closes a half-open panel when the CURSOR moves to another message", async () => {
     const { openOther } = mountPanel({}, { others: [letter("m2", { unread: false })] });
-    await openMore();
-    await pressItem("More", "Move");
+    await pressVerb("Move");
     expect(menu("Move")).not.toBeNull();
     await openOther("m2");
     expect(menu("Move"), "a half-open Move carried onto the next message").toBeNull();
@@ -564,19 +562,27 @@ describe("the Tag verb stands in the pill", () => {
     cleanup();
 
     for (const fold of [false, true]) {
-      const { mail, openOther } = mountPanel({}, { tags: TAGS, fold, others: [letter("m2")] });
+      const { mail, openOther } = mountPanel({}, { tags: TAGS, readerKeys: true, fold, others: [letter("m2")] });
       await openOther("m2");
-      await key(fold ? moreButton() : verb("Tag")!, "t");
-      const picker = screen.getByRole("menu", { name: "Tag" });
-      await press(within(picker).getByRole("menuitemradio", { name: "Work" }));
+      const anchor = fold ? moreButton() : verb("Tag")!;
+      expect(anchor, fold ? "More holds the folded tag" : "Tag has its own button").toBeTruthy();
+      await act(() => anchor.focus());
+      expect(verb("Tag")?.querySelector("kbd")?.textContent, `reader key hint when folded: ${fold}`)
+        .toBe(fold ? undefined : "t");
+      await key(anchor, "t");
+      const picker = await screen.findByRole("menu", { name: "Tag" });
+      await press(within(picker).getByRole("menuitemcheckbox", { name: "Work" }));
       expect(mail.mutations).toContainEqual({ kind: "tag_assign", messageId: "m2", tagId: "t-work", assigned: true });
       cleanup();
     }
   });
 
   it("is ABSENT on a surface that cannot tag, rather than a verb that opens nothing", async () => {
-    mountPanel({}, { tags: {} });
-    expect(verb("Tag"), "a bar offered a tag verb it cannot run").toBeNull();
+    mountPanel({}, {
+      tags: {},
+      mailboxes: async () => [mailbox({ id: "mb-1", organizerRole: "reader" })],
+    });
+    await waitFor(() => expect(verb("Tag"), "a bar offered a tag verb it cannot run").toBeNull());
     await openMore();
     expect(items("More")).not.toContain("Tag");
   });
@@ -661,7 +667,7 @@ describe("the Delete verb", () => {
     expect(shown()).not.toContain("Delete");
     await openMore();
     expect(actions, "opening the ask dispatched — the ask must come first").toEqual([]);
-    expect(items("More")).toContain("Delete");
+    expect(within(menu("More")!).getByRole("menuitem", { name: "Delete" })).toBeTruthy();
     await pressItem("More", "Delete");
     expect(actions).toEqual(["delete"]);
   });

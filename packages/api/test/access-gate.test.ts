@@ -142,9 +142,10 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
         ok: true, limits: { mailboxes: 2, storageBytes: null, canAddMailbox: true, aiEnabled: true },
         manageUrl: "https://manage.example/manage?token=live",
         lifecycle: {
-          state: "trialing", closedReason: null, trialEndsAt: "2026-09-30T20:00:00.000Z", graceUntil: null,
+          state: "trialing", closedReason: null, trialEndsAt: "2026-08-06T12:00:00.000Z", graceUntil: null,
           closedAt: null, erasureAt: null, erasedAt: null, formerlyPaid: false,
         },
+        trial: { startedAt: "2026-07-23T12:00:00.000Z" },
       } as unknown as AccessVerdict),
     }));
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
@@ -152,6 +153,7 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     const body = await (await r.handler(req("GET", "/account/access", { bearer: s.token }), deps, {})).json();
     expect(body.access).toBe("open");
     expect(body.lifecycle?.state).toBe("trialing");
+    expect(body.trialProgress).toEqual({ day: 6, total: 14 });
     expect(Object.keys(body)).not.toContain("manageUrl");
   });
 
@@ -182,6 +184,34 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     const r = await accessHandler();
     const res = await r.handler(req("GET", "/account/access", { bearer: s.token }), deps, {});
     expect((await res.json()).aiEnabled).toBe(false);
+  });
+
+  it("passes the current account's stated credit balance and allowance to Settings", async () => {
+    const read = vi.fn(async (_owner: string): Promise<AccessVerdict> => ({
+      ok: true,
+      limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: false },
+      aiCredits: { remaining: 0, total: 2000 },
+    }));
+    const { db, deps } = await depsWith(stubPort({ access: read }));
+    const session = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const res = await H(req("GET", "/account/access", { bearer: session.token }), deps);
+    expect(res.status).toBe(200);
+    expect((await res.json()).aiCredits).toEqual({ remaining: 0, total: 2000 });
+    expect(read.mock.calls.some(([id]) => id === session.accountId)).toBe(true);
+  });
+
+  it("answers with just the balance when the billing program provides no allowance", async () => {
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({
+        ok: true,
+        limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: true },
+        aiCredits: { remaining: 460 },
+      }),
+    }));
+    const session = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const res = await H(req("GET", "/account/access", { bearer: session.token }), deps);
+    expect(res.status).toBe(200);
+    expect((await res.json()).aiCredits).toEqual({ remaining: 460 });
   });
 
   it("a METERED account with a cap reads its storage: bytes, cap and the letters emptied for space", async () => {

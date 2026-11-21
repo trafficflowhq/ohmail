@@ -3618,7 +3618,6 @@ export class AuthService extends SessionLifecycle {
   protected override async pruneDeviceGrants(db: Tx, familyIds: readonly string[]): Promise<void> {
     const families = [...new Set(familyIds)];
     const table = mailboxOauthDeviceCeremonies;
-    const unusedMailboxGrant = and(eq(table.purpose, "mailbox"), isNull(table.consumedAt));
     for (let i = 0; i < families.length; i += GRANT_PRUNE_BATCH) {
       const chunk = families.slice(i, i + GRANT_PRUNE_BATCH);
       const ended = await db.select({ id: sessions.id, accountId: sessions.accountId })
@@ -3628,9 +3627,14 @@ export class AuthService extends SessionLifecycle {
       // A family keeps the account it was minted in (a rotation never moves it), so these are at
       // most one account per family of the chunk.
       const accountsBySession = new Map(ended.map(({ id, accountId }) => [id, accountId]));
+      const unusedMailboxGrant = and(
+        eq(table.purpose, "mailbox"),
+        isNull(table.consumedAt),
+        inArray(table.accountId, [...new Set(accountsBySession.values())]),
+      );
       const grants = await db.select({
         state: table.state, accountId: table.accountId, ciphertext: table.deviceCodeEnc, keyVersion: table.deviceCodeKeyVersion,
-      }).from(table).where(and(unusedMailboxGrant, inArray(table.accountId, [...new Set(accountsBySession.values())])));
+      }).from(table).where(unusedMailboxGrant);
 
       // The session identity is inside the sealed grant. Older or unreadable grants already fail
       // closed at poll time, as do grants whose session was revoked before this cleanup.
@@ -3649,7 +3653,6 @@ export class AuthService extends SessionLifecycle {
       for (let j = 0; j < toDelete.length; j += GRANT_PRUNE_BATCH) {
         await db.delete(table).where(and(
           unusedMailboxGrant,
-          inArray(table.accountId, [...new Set(accountsBySession.values())]),
           inArray(table.state, toDelete.slice(j, j + GRANT_PRUNE_BATCH)),
         ));
       }

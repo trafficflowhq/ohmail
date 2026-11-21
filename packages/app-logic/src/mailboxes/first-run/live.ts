@@ -15,9 +15,14 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useCallback, useMemo } from "react";
-import { firstContactTime, notifiedSenderName } from "@ohmail/client-engine";
+import {
+  consentPartition,
+  firstContactTime,
+  notifiedSenderName,
+  type OhmailEngine,
+} from "@ohmail/client-engine";
 import { useConsent } from "../../consent/consent-row.js";
-import { usePartition } from "../../consent/partition.js";
+import { usePartition, type Partition } from "../../consent/partition.js";
 import { firstRunImportOver, useFirstRunQueueSettle } from "../../doors/first-run-queue-settle.js";
 import { accountOrganizer, firstRunCounts, screenerForMailbox } from "../../doors/first-run-subject.js";
 import { importOverOf } from "../../doors/onboarding.js";
@@ -25,12 +30,14 @@ import { useEngine } from "../../engine/context.js";
 import type { PlaceLiveArgs } from "../../lists/place-live.js";
 import { useMailState } from "../../mail-state/mail-state-binding.js";
 import { liveMailboxes, serverUnreachable, type MailboxFacts } from "../../mail-state/mail-state.js";
+import { shellConsentOptions, type ShellConsentFacts } from "../../press/consent-options.js";
 import { usePresented } from "../../reading/presented-mirror.js";
 import type { ScreenerState } from "../../screener/screener-state.js";
 import { mailboxIdOfAnswer, subjectOf } from "../connect/subject.js";
 import type { MailboxId } from "../connect/types.js";
 import { markDecisionAsked } from "./decision-asked.js";
 import type { FirstRunAbout, FirstRunGround, FirstRunRow, FirstRunSender } from "./ground.js";
+import type { WindowChoice } from "./rules.js";
 
 /** What only the stage's seat can read: the run's words off the address, the Screener's one model, its words, a date. */
 export interface FirstRunLiveOwn {
@@ -79,11 +86,50 @@ function rowOf(
   };
 }
 
+function useHistoryCount({
+  engine,
+  consent,
+  partition,
+  subject,
+  held,
+}: {
+  engine: OhmailEngine;
+  consent: ShellConsentFacts;
+  partition: Partition;
+  subject: FirstRunRow | null;
+  held: ReadonlySet<string>;
+}) {
+  const { consentView, ownAddresses, firstImportDoneAt } = partition;
+  return useCallback(
+    async (window: WindowChoice): Promise<number | null> => {
+      if (subject === null || !importOverOf(subject) || consentView === null) return null;
+      const coverage = engine.storeCoverage();
+      const covered = coverage.state === "unread" ? await engine.readStoreCoverage() : coverage;
+      if (covered.state !== "whole") return null;
+
+      const options = shellConsentOptions(consent, new Date(), ownAddresses, firstImportDoneAt);
+      const chosen = {
+        baselineAt: consent.screeningBaselineAt,
+        dormancyDays: window === "all" ? consent.dormancyDays : Number(window),
+        scope: window === "all" ? ("all_time" as const) : ("window" as const),
+      };
+      // Preview the proposed window against the same rules as History without changing the live partition.
+      const preview =
+        options.byMailbox === undefined
+          ? { ...options, dormancyDays: chosen.dormancyDays, screeningScope: chosen.scope }
+          : { ...options, byMailbox: { ...options.byMailbox, [subject.id]: chosen } };
+      const { history } = consentPartition(engine.read(), preview);
+      return history.filter((message) => message.mailboxId === subject.id && !held.has(message.id)).length;
+    },
+    [subject, consentView, consent, ownAddresses, firstImportDoneAt, engine, held],
+  );
+}
+
 export function useFirstRunLive(args: PlaceLiveArgs, own: FirstRunLiveOwn): FirstRunGround {
   const engine = useEngine();
   const { mailboxes, refresh, pulled, importOver } = useMailState(); // throws where no ground stands above
   const consent = useConsent(); // throws where no ground stands above
-  const { consentView } = usePartition(); // throws where no ground stands above
+  const partition = usePartition(); // throws where no ground stands above
   const presented = usePresented(); // throws where no ground stands above
   const { how, word, screener, words, dateOf } = own;
   const held = args.press.deleting.held;
@@ -133,10 +179,11 @@ export function useFirstRunLive(args: PlaceLiveArgs, own: FirstRunLiveOwn): Firs
   /* What this device holds of the mailbox, in the two parts the screens name. History is the partition's own list,
      without what stands inside a delete's Undo window, as every list is drawn. */
   const counts = useMemo(() => {
-    const history = (consentView?.history ?? []).filter((m) => !held.has(m.id));
+    const history = (partition.consentView?.history ?? []).filter((m) => !held.has(m.id));
     return firstRunCounts(presented.list<EngineMessage>("message"), history, subjectId);
-  }, [presented, consentView, held, subjectId]);
+  }, [presented, partition.consentView, held, subjectId]);
   const whole = engine.storeCoverage().state === "whole";
+  const historyCount = useHistoryCount({ engine, consent, partition, subject, held });
   const head = queue[0];
   const { waitingCount, decide } = screener;
   const sender = useMemo((): FirstRunSender | null => {
@@ -158,11 +205,12 @@ export function useFirstRunLive(args: PlaceLiveArgs, own: FirstRunLiveOwn): Firs
       /* The count and the card come from one list; on one mailbox the Screener's own count is the sharper one. */
       queuedSenders: many ? queue.length : waitingCount,
       pull: { ...counts, pulled, whole },
+      historyCount,
       sender,
       queueSettling: settling,
       rereadQueue,
     }),
-    [many, queue.length, waitingCount, counts, pulled, whole, sender, settling, rereadQueue],
+    [many, queue.length, waitingCount, counts, pulled, whole, historyCount, sender, settling, rereadQueue],
   );
 
   const account = useMemo(

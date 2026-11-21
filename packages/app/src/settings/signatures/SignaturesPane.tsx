@@ -1,7 +1,7 @@
 import { useDraftLeave } from "../../host/use-draft-leave.js";
 import { useEffect, useRef, useState } from "react";
 import { Button, Dialog, Tag } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import {
   isDirty,
@@ -13,6 +13,7 @@ import {
   type SignaturesModel,
 } from "./model.js";
 import { SIGNATURES_NAMESPACE } from "./namespace.js";
+import "./signature-field.css";
 
 export interface SignaturesPaneProps {
   readonly model: SignaturesModel;
@@ -31,6 +32,7 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
   );
   const [pending, setPending] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ id: string; line: string } | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -82,10 +84,6 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
 
   return (
     <>
-      <SettingsSheet>
-        <SettingNote>{t("signatures.intro")}</SettingNote>
-        <SettingNote>{t("signatures.note")}</SettingNote>
-      </SettingsSheet>
       {mailboxes.map((mb) => (
         <MailboxSignature
           key={mb.id}
@@ -93,6 +91,8 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
           model={model}
           draft={drafts[mb.id]}
           pending={pending}
+          editing={editing === mb.id}
+          onFocus={() => setEditing(mb.id)}
           failed={failed?.id === mb.id ? failed.line : null}
           onDraft={(value) => setDrafts((now) => ({ ...now, [mb.id]: value }))}
           drop={() => drop(mb.id)}
@@ -120,12 +120,14 @@ function MailboxSignature(props: {
   model: SignaturesModel;
   draft: RichValue | undefined;
   pending: string | null;
+  editing: boolean;
+  onFocus: () => void;
   failed: string | null;
   onDraft: (value: RichValue) => void;
   drop: () => void;
   save: (value: RichValue) => void;
 }) {
-  const { mb, model, draft, pending, failed, onDraft, drop, save } = props;
+  const { mb, model, draft, pending, editing, onFocus, failed, onDraft, drop, save } = props;
   const t = useText("settings");
   const own = useText(SIGNATURES_NAMESPACE);
   const shown = draft ?? mb.stored;
@@ -143,15 +145,18 @@ function MailboxSignature(props: {
       aside={mb.reading ? <Tag>{own("read")}</Tag> : empty ? <Tag>{own("none")}</Tag> : undefined}
       wants={failed !== null ? { word: t("notSaved"), line: failed } : undefined}
     >
-      {model.editor({
-        label: `${t("signatures.title")}: ${mb.address}`,
-        value: shown,
-        placeholder: t("signatures.placeholder"),
-        editable: !mb.reading && pending === null,
-        preview: false,
-        onChange: onDraft,
-      })}
-      {isRichEmpty(shown)
+      <div className="signature-field" onFocus={mb.reading ? undefined : onFocus}>
+        {model.editor({
+          label: `${t("signatures.title")}: ${mb.address}`,
+          value: shown,
+          placeholder: t("signatures.placeholder"),
+          editable: !mb.reading && pending === null,
+          preview: false,
+          tools: editing,
+          onChange: onDraft,
+        })}
+      </div>
+      {!editing || isRichEmpty(shown)
         ? null
         : model.editor({
             label: t("signatures.preview"),
@@ -162,8 +167,9 @@ function MailboxSignature(props: {
             onChange: () => undefined,
           })}
       {model.changeNote(mb.id)}
-      <SettingLine label={t("signatures.title")} value={status}>
-        {mb.reading ? null : (
+      <p className="oh-vh">{status}</p>
+      {mb.reading || (!editing && !dirty && pending !== mb.id) ? null : (
+        <SettingLine label={t("signatures.title")}>
           <>
             {dirty && pending === null ? (
               <Button kind="quiet" size="s" onPress={drop}>
@@ -174,8 +180,8 @@ function MailboxSignature(props: {
               {pending === mb.id ? t("signatures.saving") : t("signatures.save")}
             </Button>
           </>
-        )}
-      </SettingLine>
+        </SettingLine>
+      )}
     </SettingsSheet>
   );
 }

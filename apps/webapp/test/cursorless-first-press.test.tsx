@@ -299,7 +299,7 @@ describe("a list with rows and no cursor", () => {
     await key("Backspace");
 
     expect(selectedIds(container), "the cursor did not land on the first row").toEqual([before[0]]);
-    expect(toastText()).toBe(hintFor(messages.shortcuts.deleteKey));
+    expect(toastText()).toBe(hintFor(messages.reader.key.deleteKey));
     /* THE HALF THAT MATTERS. A first press that also deleted would be the design inverted: the
        blind ⌫ this rule exists to make impossible. */
     expect(rowIds(container), "the first press moved mail").toEqual(before);
@@ -314,7 +314,7 @@ describe("a list with rows and no cursor", () => {
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(before[0]!), "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).toContain(messages.ohbox.toastDeleted.replace(/\.$/u, ""));
     expect(toastText()).toContain(messages.screener.toastUndo);
   }, 30000);
 
@@ -330,9 +330,9 @@ describe("a list with rows and no cursor", () => {
    * verb — which is the whole reason the sentence is built this way rather than one string each.
    */
   for (const [chord, label, name] of [
-    ["r", messages.shortcuts.reply, "Reply"],
-    ["e", messages.shortcuts.park, "Park"],
-    ["b", messages.shortcuts.resurface, "Resurface"],
+    ["r", messages.reader.key.reply, "Reply"],
+    ["e", messages.reader.key.park, "Park"],
+    ["b", messages.reader.key.resurface, "Resurface"],
   ] as const) {
     it(`\`${chord}\` places the cursor and its hint names ${name}`, async () => {
       const container = await shell(["m1", "m2", "m3"]);
@@ -362,7 +362,7 @@ describe("a list with rows and no cursor", () => {
     await shell(["m1", "m2", "m3"]);
     await key("Backspace");
     /* The premise: the hint stands (in the frame's report at a seated place), so its offering nothing means something. */
-    expect(toastText()).toBe(hintFor(messages.shortcuts.deleteKey));
+    expect(toastText()).toBe(hintFor(messages.reader.key.deleteKey));
     expect(reportPress(), "the hint offers an action").toBeNull();
     expect(CURSOR_HINT_MS).toBe(2400);
   }, 30000);
@@ -477,7 +477,7 @@ describe("the `?` sheet says WHY a message row is grey", () => {
     await key("?");
     await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
 
-    const del = sheetRow(messages.shortcuts.deleteKey);
+    const del = sheetRow(messages.reader.key.deleteKey);
     expect(del, "the sheet does not document the delete key").toBeTruthy();
     expect(del!.getAttribute("aria-disabled")).toBe("true");
     expect(del!.getAttribute("title")).toBe(messages.shortcuts.needsCursor);
@@ -496,7 +496,7 @@ describe("the `?` sheet says WHY a message row is grey", () => {
     await key("?");
     await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
 
-    const del = sheetRow(messages.shortcuts.deleteKey);
+    const del = sheetRow(messages.reader.key.deleteKey);
     expect(del, "the sheet does not document the delete key").toBeTruthy();
     expect(del!.getAttribute("aria-disabled")).not.toBe("true");
     expect(del!.getAttribute("title"), "the sentence outlived the state it describes").toBeNull();

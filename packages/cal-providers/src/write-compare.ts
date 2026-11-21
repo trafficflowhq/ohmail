@@ -113,3 +113,21 @@ export function sameAudience(
   }
   return guests.size === expected.guests.length && expected.guests.every((address) => guests.has(address));
 }
+
+export function sameCancellationAudience(
+  expected: import("./port.js").WriteTarget["audience"],
+  items: readonly Extract<import("./port.js").ChangeItem, { kind: "upsert" }>[],
+): boolean {
+  if (!expected) return false;
+  const guests = new Set<string>();
+  for (const item of items) {
+    const organizer = item.event.organizer?.email?.trim().toLowerCase() ?? null;
+    if (item.audienceIncomplete || organizer !== expected.organizer) return false;
+    for (const attendee of item.event.attendees) {
+      const address = attendee.email?.trim().toLowerCase();
+      if (!address) return false;
+      if (address !== organizer) guests.add(address);
+    }
+  }
+  return guests.size === expected.guests.length && expected.guests.every((guest) => guests.has(guest));
+}

@@ -28,7 +28,7 @@ const noWire: HostWires = {
 function hostThatCannot(over: Partial<Pick<HostContract, "wires" | "features" | "capabilities">> = {}): HostContract {
   return {
     engine: {} as HostContract["engine"],
-    session: { resolve: NONE, confirmed: NONE, state: NONE, scope: null, mirrorAccount: null, account: null, accountAddress: null, signOut: NONE, recover: NONE, today: NONE },
+    session: { resolve: NONE, confirmed: NONE, state: NONE, scope: null, mirrorAccount: null, account: null, accountAddress: null, accountDisplayName: null, signOut: NONE, recover: NONE, today: NONE },
     reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
     wires: noWire,
     capabilities: { service: "ownComputer", ...CANNOT },

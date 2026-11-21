@@ -1,4 +1,4 @@
-import { useId, type CSSProperties } from "react";
+import { useId, useState, type CSSProperties } from "react";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
 import { bridgeShape, type BridgeForm, type BridgeInput } from "./bridge-shape.js";
 import "./event-bridge.css";
@@ -22,6 +22,7 @@ export interface EventBridgeProps extends BridgeInput {
  * app the point the card grows from.
  */
 export function EventBridge({ tone, width, height, still, ...input }: EventBridgeProps) {
+  const [settled, settle] = useState(false);
   const id = `oh-bridge-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const edge = `${id}-edge`;
   const skin = `${id}-skin`;
@@ -37,14 +38,7 @@ export function EventBridge({ tone, width, height, still, ...input }: EventBridg
   const to = input.card.box[cardFirst ? high : low];
   const headEnd = input.card.headBottom ?? height;
   const fadesAlongSide = !shape.turned && headEnd < shape.bottom;
-  const fill = (d: string, paint: string) => (
-    <>
-      <path d={d} fill={paint} />
-      {shape.ends.map((end) => (
-        <path key={end} d={end} fill="none" stroke={paint} strokeWidth={shape.endWidth} />
-      ))}
-    </>
-  );
+  const fill = (d: string, paint: string) => <path d={d} fill={paint} />;
   const form = (name: "liquid" | "straight", { fill: path, sides }: BridgeForm) => (
     <g className="oh-bridge-form" data-form={name} transform={turn}>
       {fadesAlongSide ? (
@@ -65,7 +59,10 @@ export function EventBridge({ tone, width, height, still, ...input }: EventBridg
       className={cx("oh-bridge", own.className)}
       data-tone={own["data-tone"]}
       data-side={input.side}
-      data-still={still ? "" : undefined}
+      data-still={still || settled ? "" : undefined}
+      onAnimationEnd={(event) => {
+        if (event.currentTarget === event.target) settle(true);
+      }}
       aria-hidden
       width={width}
       height={height}

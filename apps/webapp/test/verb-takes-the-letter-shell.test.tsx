@@ -6,7 +6,7 @@ import {
 } from "./fixtures/live-walk-shell.js";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import en from "../messages/en.json";
-import { barVerb, letterShown, lettersShown, menuItem, moreButton } from "./ohbox/_finders.js";
+import { barVerb, letterShown, lettersShown, menuItem } from "./ohbox/_finders.js";
 
 /**
  * TRIAGE VERBS ON AN ANSWERED CONVERSATION ACT AT THE LETTER, through the shipped shell and the
@@ -892,9 +892,27 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(posted("none").map(([id]) => id), "our reply's pin is spent").toContain("x7");
   };
   const moveToReceipts = async (host: HTMLElement): Promise<void> => {
-    /* The new reader keeps Move in More (FOR-S3-TO-S8 point 63 (d)): More, Move, then the place. */
-    await click(moreButton(host)!);
-    await click(menuItem("Move")!);
+    // At this viewport the studio's resurfaced reader gives the bar 324 px. jsdom has no layout.
+    const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!.get!;
+    const scrollWidth = Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth")!.get!;
+    const room = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("oh-actionpanel") ? 324 : clientWidth.call(this);
+    });
+    const needs = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      if (!this.classList.contains("oh-actionpanel-bar")) return scrollWidth.call(this);
+      return this.querySelectorAll("button:not([hidden])").length * 64;
+    });
+    try {
+      await openRow(host);
+      const actions = within(within(host).getByRole("region", { name: "Reading" })).getByRole("toolbar", { name: "Actions" });
+      expect(within(actions).queryByRole("button", { name: "Move" })).toBeNull();
+      await click(within(actions).getByRole("button", { name: "More" }));
+      const more = within(screen.getByRole("menu", { name: "More" }));
+      await click(more.getByRole("menuitem", { name: "Move" }));
+    } finally {
+      needs.mockRestore();
+      room.mockRestore();
+    }
     const receipts = menuItem("Receipts") ?? undefined;
     expect(receipts, "the strip's Receipts").toBeTruthy();
     await click(receipts!);
@@ -936,7 +954,6 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
 
   it("a Resurfaced row of seven pins: the bar's Move to Receipts spends every pin and the row leaves Resurfaced; `z` puts every pin back", async () => {
     const host = await mount(seven(() => "resurfaced"));
-    await openRow(host);
     await moveToReceipts(host);
     await spentThenBack(host);
   }, 60_000);
@@ -1081,10 +1098,11 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
       expect(filedIds().filter((id) => id !== "u1").sort()).toEqual(moved);
       expect(posted("none").map(([id]) => id)).toEqual(["m1", "m3", "m5", "u2", "x7"]);
       expect(resurfacedRows(host)).toEqual([]);
-      const result = `Receipts — ${moved.length} messages moved.`;
+      const result = `Receipts — ${moved.length} messages moved`;
       const notice = removedId === "u1" ? `${en.reader.gone} ${result}` : result;
       const report = screen.getAllByRole("status").find((status) => status.textContent?.includes(result));
       expect(report?.textContent).toBe(notice);
+      expect(report?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     }
   }, 120_000);
 
@@ -1130,7 +1148,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     await click(resurfacedRows(host)[0]!);
     await key("Backspace");
     expect(resurfacedRows(host)).toEqual([]);
-    for (const press of [(h: HTMLElement) => openRow(h).then(() => moveToReceipts(h)), (h: HTMLElement) => sheetTo(h, "receipts")]) {
+    for (const press of [moveToReceipts, (h: HTMLElement) => sheetTo(h, "receipts")]) {
       await teardownShellEnv();
       installShellEnv(); seq = 0; window.location.hash = "#/ohbox";
       host = await mount(one());

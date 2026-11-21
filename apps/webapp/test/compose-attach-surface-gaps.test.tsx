@@ -283,7 +283,7 @@ describe("an attached picture shows itself and opens in the preview", () => {
     const compose = within(host!);
     const letter = compose.getByRole("region", { name: "New message" });
     const editor = within(letter).getByRole("textbox", { name: "Message" });
-    const attach = within(letter).getByRole("button", { name: /^Attach files/ });
+    const attach = within(letter).getByRole("button", { name: /^Attach · .+ a message$/ });
     const file = new File([new Uint8Array(512)], "shot.png", { type: "image/png" });
     await act(async () => {
       fireEvent.drop(attach, { dataTransfer: { types: ["Files"], files: [file] } });

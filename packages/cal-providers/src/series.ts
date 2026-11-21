@@ -601,6 +601,7 @@ export function confirmedDeleteAudience(
     readonly original: string | null;
     readonly organizer: string | null;
     readonly deleteGuests?: DeleteMember["guests"];
+    readonly unchangedSeries?: boolean;
   },
   repeating: boolean,
   scope: Parameters<typeof deleteAudienceOf>[1],
@@ -617,14 +618,24 @@ export function confirmedDeleteAudience(
   return confirmed ? actual : null;
 }
 
-function cloudDeleteMembers(
+export function cloudDeleteMembers(
   place: ProofPlace | null,
-  event: { readonly organizer: string | null; readonly deleteGuests?: DeleteMember["guests"] },
+  event: {
+    readonly organizer: string | null;
+    readonly deleteGuests?: DeleteMember["guests"];
+    readonly unchangedSeries?: boolean;
+  },
   repeating: boolean,
   scope: Parameters<typeof deleteAudienceOf>[1],
 ): readonly DeleteMember[] | null {
   const { deleteGuests } = event;
-  if ((place !== "google" && place !== "microsoft") || repeating || scope.kind !== "record" || !deleteGuests)
+  if (
+    (place !== "google" && place !== "microsoft") ||
+    (repeating && !event.unchangedSeries) ||
+    scope.kind === "following" ||
+    (!repeating && scope.kind !== "record") ||
+    !deleteGuests
+  )
     return null;
   const organizer = event.organizer?.trim().toLowerCase() ?? null;
   const guests = deleteGuests.map((guest) => ({ ...guest, address: guest.address.trim().toLowerCase() }));

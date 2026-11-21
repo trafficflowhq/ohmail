@@ -58,7 +58,7 @@ it("an unreachable host on the generic entry offers the hosts the lookup found, 
       smtp: { host: "smtp.studio.example", port: 587, secure: true },
     },
   });
-  await ui.press(P.otherLabel);
+  await ui.press(P.otherShort);
   await ui.type("address", "person@studio.example");
   await ui.type("pass", "app-password-fixture");
   await ui.type("imap", "old.studio.example");
@@ -120,7 +120,7 @@ async function mount(
   }
   const connect = [...connectRefusals.map((leg) => noEncryption(leg)), CONNECTED, CONNECTED];
   const ui = await addRun({ probe, connect });
-  await ui.press(P.otherLabel);
+  await ui.press(P.otherShort);
   await ui.type("address", "pat@home.example");
   await ui.type("pass", "app-password-fixture");
   await ui.type("imap", "mail.home.arpa");
@@ -310,10 +310,12 @@ describe("the add run asks for the address first", () => {
     const chosen = () => {
       const tile = [...el.querySelectorAll('[role="group"] button[aria-pressed="true"]')][0];
       const name = (tile?.textContent ?? "").trim();
-      return name === P.otherLabel ? "imap" : (["webde", "microsoft", "infomaniak", "gmx", "imap"].find((p) => providerById(p)?.label === name) ?? name);
+      if (name === P.otherShort) return "imap";
+      if (name === P.microsoftShort) return "microsoft";
+      return ["webde", "infomaniak", "gmx"].find((p) => providerById(p)?.label === name) ?? name;
     };
     const choose = async (id: string) => {
-      const label = id === "imap" ? P.otherLabel : providerById(id)!.label;
+      const label = id === "imap" ? P.otherShort : providerById(id)!.label;
       const tile = [...el.querySelectorAll<HTMLButtonElement>('[role="group"] button')].find((b) => (b.textContent ?? "").trim() === label);
       await act(async () => { tile!.click(); });
     };
@@ -325,8 +327,8 @@ describe("the add run asks for the address first", () => {
     const ui = await form((domain) => (domain === "acme-365.example"
       ? { preset: "microsoft", proton: false, imap: null, smtp: null } : null));
     /* The address field and the provider's tiles, in the order they stand. */
-    const order = [...ui.el.querySelectorAll('input[type="email"], [role="group"] button')].map((n) => (n instanceof HTMLInputElement ? n.type : "radio"));
-    expect(order[0]).toBe("email");
+    const order = [...ui.el.querySelectorAll('input, [role="group"] button')].map((n) => (n instanceof HTMLInputElement ? n.type : "radio"));
+    expect(order[0]).toBe("text");
     await ui.address(personalAt("fixture.pat", "web.de"));
     expect(ui.chosen()).toBe("webde");
     await ui.address("pat@acme-365.example");
@@ -338,9 +340,10 @@ describe("the add run asks for the address first", () => {
     const ui = await form();
     await ui.choose("infomaniak");
     await ui.address(personalAt("fixture.pat", "gmx.net"));
-    expect(ui.chosen()).toBe("infomaniak");
     await ui.address(personalAt("fixture.pat", "proton.me"));
     expect(ui.el.textContent).toContain(messages.providerPicker.protonNote.replace("{other}", messages.providerPicker.otherLabel));
+    await act(async () => { within(ui.el).getByRole("button", { name: O.back }).click(); });
+    expect(ui.chosen()).toBe("infomaniak");
   });
 
   it("on this computer's own engine, a Proton address says how to reach Bridge here", async () => {

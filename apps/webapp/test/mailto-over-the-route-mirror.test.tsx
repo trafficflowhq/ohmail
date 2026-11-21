@@ -57,6 +57,7 @@ const letterSend = (el: HTMLElement): HTMLButtonElement | undefined =>
   [...el.querySelectorAll<HTMLButtonElement>(`${LETTER} [role="toolbar"][aria-label="Send or discard"] button`)]
     .find((b) => b.getAttribute("aria-label") === "Send" || (b.textContent ?? "").trim() === "Send");
 /** What the app says, wherever it says it: every status and alert on the page (today's toasts among them). */
+const blockedReopen = en.drafts.reopenBlockedUnsaved.replace(/\.$/, "");
 const said = (): string =>
   [...document.querySelectorAll('[role="status"], [role="alert"]')].map((n) => n.textContent ?? "").join(" | ");
 /** A line typed as a person types it: the native setter of its own kind, then the input event. */
@@ -186,7 +187,7 @@ describe("a mail link over a letter being written", () => {
     s.refuseSave.add("d-x");
     await setSubject(s, "Plans for Friday, changed");
     await s.mailto.open(LINK);
-    await waitFor(() => toasts().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", 240);
+    await waitFor(() => toasts().includes(blockedReopen), "the refusal said", 240);
     await navigate("#/ohbox");
     await rounds(4);
     await navigate("#/compose");
@@ -203,7 +204,7 @@ describe("a mail link over a letter being written", () => {
     await setSubject(s, "Plans for Friday, at one");
     await rounds(100);
     await s.mailto.open(LINK);
-    await waitFor(() => toasts().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", 240);
+    await waitFor(() => toasts().includes(blockedReopen), "the refusal said", 240);
     await rounds(10);
     expect({ shown: subject(s)?.value, seeded: s.mailto.seeded }).toEqual({ shown: "Plans for Friday, at one", seeded: 1 });
   }, 60_000);
@@ -235,7 +236,7 @@ describe("a mail link over a letter being written", () => {
     const s = await mountShell("#/ohbox", [], [], { ...await atLaunch(), mailto: LINK });
     await rowsWhenLinkShows(s);
     await waitFor(() => rows(s).length > 0, "the first sync's drafts", 240);
-    expect(said()).not.toContain(en.drafts.reopenBlockedUnsaved);
+    expect(said()).not.toContain(blockedReopen);
     expect(rows(s)).toContain("Plans for Friday|Shall we meet at noon?");
   }, 60_000);
 
@@ -294,7 +295,7 @@ describe("a mail link with no mailbox connected", () => {
     await settleEditor();
     await setLine(letterSubject(s.el)!, "Notes from the meeting");
     await s.mailto.open(LINK);
-    await waitFor(() => said().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", AT_ONCE);
+    await waitFor(() => said().includes(blockedReopen), "the refusal said", AT_ONCE);
     expect({ shown: letterSubject(s.el)?.value ?? null, seeded: s.mailto.seeded }).toEqual({ shown: "Notes from the meeting", seeded: 1 });
   }, 60_000);
 

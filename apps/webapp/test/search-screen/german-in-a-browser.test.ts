@@ -98,3 +98,52 @@ describe("German on every Search state, at Text size 1.5", () => {
     expect(found).toEqual([]);
   }, 900_000);
 });
+
+describe.each([
+  { face: "paper", scheme: "light" },
+  { face: "paper", scheme: "dark" },
+  { face: "ohmarchy", scheme: "dark" },
+])("desktop $face $scheme", ({ face, scheme }) => {
+  it("keeps the Search controls edge to edge above overflowing results", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 540 }, reducedMotion: "reduce" });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?q=glaze&many=1&face=${face}&scheme=${scheme}`);
+      const heading = page.getByRole("heading", { level: 1, name: "Search", exact: true });
+      await page.getByRole("listitem").filter({ hasText: "Glaze sample 40" }).waitFor();
+
+      const header = heading.locator("xpath=ancestor::header");
+      const scroller = header.locator("xpath=following-sibling::*[1]");
+      const before = await heading.boundingBox();
+      expect(before).not.toBeNull();
+      await scroller.hover();
+      await expect.poll(async () => {
+        const top = await scroller.evaluate((el) => el.scrollTop);
+        if (top <= 120) await page.mouse.wheel(0, 240);
+        return top;
+      }).toBeGreaterThan(120);
+      const after = await heading.boundingBox();
+      expect(after).not.toBeNull();
+      expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+      const { gaps, clipped, headCoversResults } = await scroller.evaluate((el) => {
+        const header = el.previousElementSibling!;
+        const head = header.getBoundingClientRect();
+        const port = el.getBoundingClientRect();
+        const inside = [head.left + 1, (head.left + head.right) / 2, head.right - 1];
+        return {
+          gaps: [Math.abs(head.left - port.left), Math.abs(head.right - port.right), Math.abs(head.bottom - port.top)],
+          clipped: getComputedStyle(el).overflowY === "auto",
+          headCoversResults: inside.every((x) => {
+            const hits = document.elementsFromPoint(x, port.top - 2);
+            return hits.some((hit) => header.contains(hit)) && hits.every((hit) => !el.contains(hit));
+          }),
+        };
+      });
+      for (const gap of gaps) expect(gap).toBeLessThanOrEqual(1);
+      expect(clipped).toBe(true);
+      expect(headCoversResults).toBe(true);
+    } finally {
+      await page.close();
+    }
+  }, 30_000);
+});

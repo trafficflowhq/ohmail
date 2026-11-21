@@ -98,6 +98,7 @@ export interface FrameInner {
   readonly connection: Feed<ConnectionFeed>;
   /** A letter handed to `write`, taken once by the place that writes. */
   readonly draft: { current: LinkedDraft | null };
+  readonly calendarInvitation: { current: import("../calendar/faces.js").CalendarEventFace | null };
   readonly calendarDraftSeed: { current: CalendarDraftSeed | null };
   /** The letter a `go` named as entered, until the place that lists it takes the word or the address moves on. */
   readonly entered: Feed<EnteredTarget | null>;
@@ -152,6 +153,10 @@ export function useDragFeed(): Feed<Dragging | null> {
 /** Search text kept for the lifetime of this account’s frame. */
 export function useSearchQuery() {
   return useInner().searchQuery;
+}
+
+export function useCalendarInvitation() {
+  return useInner().calendarInvitation;
 }
 
 export function useCalendarDraftSeed(): FrameInner["calendarDraftSeed"] {

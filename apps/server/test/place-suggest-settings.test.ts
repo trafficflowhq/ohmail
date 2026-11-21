@@ -1,14 +1,11 @@
+import { createApp } from "@trafficflow/api";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProgram, type Program } from "../src/program.js";
 import { loadSettings } from "../src/settings.js";
 import { MANAGED_ENV, PLAIN_ENV, PROCESS_DOOR, env, fixture, functionDoor, functionInput, processInput, recordingLogger } from "./_envs.js";
 
 /**
- * PLACE SUGGESTIONS ARE OFFERED ONLY WHERE THE OPERATOR NAMES A GEOCODER (`PLACES_SUGGEST_URL`,
- * with `PLACES_SUGGEST_TOKEN` where it wants a bearer), and only beside the calendar. Neither set:
- * no suggester in the bag, the route answers `off`, and `/hello` does not offer them, so an app
- * never asks. A half or malformed configuration refuses the start, naming the variables and never
- * a value.
+ * Both services offer map suggestions beside the calendar when the operator names a geocoder.
  */
 
 const open: Program[] = [];
@@ -30,7 +27,7 @@ const helloOf = async (p: Program): Promise<{ features: Record<string, unknown> 
 /** The descriptor `/hello` answers from, on either service. */
 const wordsOf = (p: Program): Record<string, unknown> =>
   p.buildDeps(new Request("https://api.ohmail.app/hello")).hello!.features as Record<string, unknown>;
-const refusalOf = (extra: Record<string, string>, base = PLAIN_ENV): string => {
+const refusalOf = (extra: Record<string, string>, base = MANAGED_ENV): string => {
   try {
     loadSettings(env(base, extra), base === PLAIN_ENV ? PROCESS_DOOR : functionDoor());
   } catch (err) {
@@ -41,6 +38,7 @@ const refusalOf = (extra: Record<string, string>, base = PLAIN_ENV): string => {
 
 const BEARER = fixture("places", "bearer", "of", "the", "geocoder");
 const CALENDAR = { OHMAIL_CALENDAR: "1" };
+const PUBLIC_PHOTON = "https://photon.komoot.io";
 
 describe("PLACES_SUGGEST_URL and PLACES_SUGGEST_TOKEN", () => {
   it("neither: off on both services; no suggester, and /hello does not offer them", async () => {
@@ -54,11 +52,31 @@ describe("PLACES_SUGGEST_URL and PLACES_SUGGEST_TOKEN", () => {
     }
   });
 
-  it("the address alone: suggestions without a bearer; /hello offers them where the calendar is kept", async () => {
-    const p = plain({ ...CALENDAR, PLACES_SUGGEST_URL: "http://photon:2322" });
-    expect(p.settings.places).toEqual({ address: { origin: "http://photon:2322", hostname: "photon", transport: "http-private" }, token: null });
+  it.each([
+    { geocoder: "public Photon", address: PUBLIC_PHOTON, hostname: "photon.komoot.io", token: null },
+    { geocoder: "its own keyed geocoder", address: "https://places.example.com", hostname: "places.example.com", token: BEARER },
+  ])("a self-hosted server offers suggestions from $geocoder", async ({ address, hostname, token }) => {
+    const p = plain({ ...CALENDAR, PLACES_SUGGEST_URL: address, ...(token ? { PLACES_SUGGEST_TOKEN: token } : {}) });
+    expect(p.settings.managed).toBe(false);
+    expect(p.settings.places).toEqual({ address: { origin: address, hostname, transport: "https" }, token });
     expect(p.services.places).toBeDefined();
-    expect(wordsOf(p).placeSuggestions).toBe(true);
+
+    const req = new Request("https://mail.example.com/hello");
+    const deps = p.buildDeps(req);
+    // Stand in for the setup-state database read while serving the real /hello route.
+    const res = await createApp(p.chosen.routes).handle(req, { ...deps, hello: { ...deps.hello!, needsSetup: false } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ flavor: "selfhost", features: { placeSuggestions: true } });
+  });
+
+  it("the managed service offers suggestions from a private HTTP geocoder without a bearer", async () => {
+    const p = managed({ ...CALENDAR, PLACES_SUGGEST_URL: "http://photon:2322" });
+    expect(p.settings.places).toEqual({
+      address: { origin: "http://photon:2322", hostname: "photon", transport: "http-private" },
+      token: null,
+    });
+    expect(p.services.places).toBeDefined();
+    expect((await helloOf(p)).features.placeSuggestions).toBe(true);
   });
 
   it("the address and its bearer, on the managed service", async () => {
@@ -85,11 +103,18 @@ describe("PLACES_SUGGEST_URL and PLACES_SUGGEST_TOKEN", () => {
   });
 
   it("an address the rule refuses refuses the start, naming the variable and never the value", () => {
-    for (const raw of ["http://places.example.com", "http://203.0.113.9:2322", "https://places.example.com/photon", "https://u:p@places.example.com", "ftp://places.example.com", "places"]) {
-      const said = refusalOf({ PLACES_SUGGEST_URL: raw });
+    const publicHttpAddress = "http://203.0.113.9:2322";
+    for (const raw of ["http://places.example.com", publicHttpAddress, "https://places.example.com/photon", "https://u:p@places.example.com", "ftp://places.example.com", "places"]) {
+      const extra = { PLACES_SUGGEST_URL: raw };
+      const said = refusalOf(extra);
       expect(said, raw).toContain("PLACES_SUGGEST_URL");
       expect(said, raw).not.toContain("places.example.com");
       expect(said, raw).not.toContain("203.0.113.9");
+      if (raw === publicHttpAddress) {
+        const plainRefusal = refusalOf(extra, PLAIN_ENV);
+        expect(plainRefusal).toContain("PLACES_SUGGEST_URL");
+        expect(plainRefusal).not.toContain("203.0.113.9");
+      }
     }
   });
 

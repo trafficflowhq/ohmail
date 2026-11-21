@@ -150,8 +150,10 @@ export interface Settings {
     notices: { microsoftValidation: boolean };
   };
   /**
-   * The geocoder the calendar's place field is suggested from (`PLACES_SUGGEST_URL`), and its bearer
-   * (`PLACES_SUGGEST_TOKEN`) or null for one that takes none. Null: no suggestions are offered.
+   * An operator-named Photon-compatible geocoder for the calendar's place field
+   * (`PLACES_SUGGEST_URL`) and its optional bearer (`PLACES_SUGGEST_TOKEN`).
+   * ohmail Cloud uses its own keyed geocoder. A self-hosted server may use the public Photon
+   * endpoint or its own. Null means the server offers no map suggestions.
    */
   places: { address: ServiceAddress; token: string | null } | null;
   /** Who this deployment is to a mailbox it organizes (`resolveCloudInstallId`). */
@@ -165,9 +167,9 @@ export const PLAIN_LEAD = "OHMAIL_ORIGIN";
 export const MANAGED_LEAD = "DATABASE_URL_POOLED";
 
 /**
- * Names only the managed service reads and no self-hosted file carries. Beside `OHMAIL_ORIGIN`
- * each one says the configuration was meant for the managed service: read as a self-hosted server
- * it would migrate the database, meter nothing and ask no verified address, with the name ignored.
+ * Names reserved for the managed service, including its place suggestion settings. Beside
+ * `OHMAIL_ORIGIN` each one says the configuration was meant for the managed service: read as a
+ * self-hosted server it would migrate the database, meter nothing and ask no verified address.
  */
 export const MANAGED_ONLY_NAMES = [
   "TF_AUTH_ORIGINS", "TF_RP_ID", "TF_COOKIE_HOSTS", "DATABASE_URL_ADMIN", "TF_ADMIN_SECRET", "CRON_SECRET",
@@ -434,10 +436,10 @@ const atLeast24 = (env: NodeJS.ProcessEnv, key: string): string | null => {
 const HEADER_TOKEN = /^[\x21-\x7e]{1,4096}$/;
 
 /**
- * The place suggestions' geocoder, or null. The address alone is a geocoder that takes no bearer;
- * the bearer alone refuses, as every half block does. The address follows the rule of every service
- * this program calls: https, or plain http to a private service name only, since what a person typed
- * rides each request. A refusal names the variables, never a value.
+ * The operator's Photon-compatible geocoder, or null. The address can stand alone when the
+ * geocoder needs no bearer. The bearer requires an address. The address follows the rule of every
+ * service this program calls: https, or plain http to a private service name only, since what a
+ * person typed rides each request. A refusal names the variables without revealing their values.
  */
 function loadPlaces(env: NodeJS.ProcessEnv): Settings["places"] {
   const raw = trimmed(env, "PLACES_SUGGEST_URL");

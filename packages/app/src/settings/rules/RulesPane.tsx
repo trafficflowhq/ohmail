@@ -272,7 +272,7 @@ function RulesFilters({
   const t = useText("rules");
   const own = useText(RULES_NAMESPACE);
   const showSearch = model.rules.length >= 2;
-  const showFacets = model.facets.length >= 2;
+  const showFacets = model.facets.length > 0;
   const showBulk = revokableCount >= 2;
   const locked = model.locked !== null;
   return (

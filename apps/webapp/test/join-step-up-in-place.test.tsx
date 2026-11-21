@@ -121,12 +121,13 @@ async function atTheMailboxStep() {
     await act(async () => { button!.click(); });
     await settle();
   };
-  const h1 = () => host.querySelector("h1")?.textContent ?? "";
+  const h1 = () => (host.querySelector("[data-page-filling-form] h1") ?? host.querySelector("h1"))?.textContent ?? "";
   const value = (id: string) => probes.input(id)?.value ?? null;
-  const connectButton = () => probes.button(en.join.connectMailbox);
+  const connectButton = () => probes.button(en.join.manualConnect);
 
-  expect(h1()).toBe(en.join.step_mailbox_title);
-  await probes.choose(en.providerPicker.otherLabel);
+  expect(h1().trim()).toBe(en.onboarding.providerFirst);
+  await probes.choose(en.providerPicker.otherShort);
+  expect(h1()).toBe(en.join.manualTitle);
   await type("join-mb-address", "pat@family.example");
   await type("join-imap", "mail.family.example");
   await type("join-smtp", "smtp.family.example");
@@ -138,9 +139,9 @@ describe("the mailbox step asks for the second factor in place", () => {
   it("a closed window opens the prompt; the verified code re-sends the same connect once; the step ends connected", async () => {
     creates = [{ status: 403, body: STEP_UP }, { status: 201, body: MAILBOX_DTO }];
     const ui = await atTheMailboxStep();
-    await ui.press(en.join.connectMailbox);
+    await ui.press(en.join.manualConnect);
 
-    expect(ui.h1(), "the refusal is not the sign-in screen").toBe(en.join.step_mailbox_title);
+    expect(ui.h1(), "the refusal is not the sign-in screen").toBe(en.join.manualTitle);
     expect(ui.prompt(), "the step-up prompt is on screen").toBeTruthy();
     expect(ui.value("join-mb-pass"), "the typed password is still there").toBe("app-password-fixture");
     expect(ui.connectButton()?.disabled, "Connect waits for the factor").toBe(true);
@@ -159,12 +160,12 @@ describe("the mailbox step asks for the second factor in place", () => {
   it("Cancel keeps everything typed and sends nothing more", async () => {
     creates = [{ status: 403, body: STEP_UP }];
     const ui = await atTheMailboxStep();
-    await ui.press(en.join.connectMailbox);
+    await ui.press(en.join.manualConnect);
     expect(ui.prompt()).toBeTruthy();
     await ui.press(en.stepUp.cancel, ui.prompt()!);
     expect(ui.prompt()).toBeNull();
     expect(createBodies).toHaveLength(1);
-    expect(ui.h1()).toBe(en.join.step_mailbox_title);
+    expect(ui.h1()).toBe(en.join.manualTitle);
     expect(ui.value("join-mb-address")).toBe("pat@family.example");
     expect(ui.value("join-imap")).toBe("mail.family.example");
     expect(ui.value("join-mb-pass")).toBe("app-password-fixture");
@@ -174,7 +175,7 @@ describe("the mailbox step asks for the second factor in place", () => {
   it("a second refusal right after a verified factor is the sign-in screen, and its link resumes /join", async () => {
     creates = [{ status: 403, body: STEP_UP }];
     const ui = await atTheMailboxStep();
-    await ui.press(en.join.connectMailbox);
+    await ui.press(en.join.manualConnect);
     await ui.type("stepup-code", "123456");
     await ui.press(en.stepUp.verify, ui.prompt()!);
     expect(createBodies).toHaveLength(2);
@@ -251,7 +252,7 @@ describe("the trial mail's button, for an account that never connected a mailbox
 
     creates = [{ status: 403, body: STEP_UP }, { status: 201, body: MAILBOX_DTO }];
     const ui = await atTheMailboxStep();
-    await ui.press(en.join.connectMailbox);
+    await ui.press(en.join.manualConnect);
     expect(ui.prompt(), "the factor is asked for on the step, not a dead end").toBeTruthy();
     await ui.type("stepup-code", "123456");
     await ui.press(en.stepUp.verify, ui.prompt()!);

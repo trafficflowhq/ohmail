@@ -2,7 +2,7 @@
 
 On the web, the page that stands while ohmail renews your sign-in, says the server could not be reached, or asks you to
 sign in again (with the reason) is drawn in the new design, and so are the page for an address that does not exist and
-the page a build with no server shows. So are, on your own server, the page that makes its first account from the
+the page shown when the app runs with no server. So are, on your own server, the page that makes its first account from the
 setup token and the page a household invite link opens, and, on ohmail Cloud, the page you come back to after paying.
 So is the page the confirmation mail opens: it still asks for your password, so the link alone confirms nothing. They
 say and do what they did before.

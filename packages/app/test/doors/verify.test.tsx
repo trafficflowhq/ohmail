@@ -249,11 +249,10 @@ describe("the email confirmation", () => {
     }
   });
 
-  it("carries the small mark of a page opened cold at its top, said to nobody", () => {
+  it("leaves the header empty on the confirmation page opened from mail", () => {
     draw(form());
-    const mark = screen.getByText("oh");
-    expect(mark.closest("header")).not.toBeNull();
-    expect(mark.closest("[aria-hidden='true']")).not.toBeNull();
+    expect(screen.queryByText("oh")).toBeNull();
+    expect(blank(en.verify.passwordLabel)).toBeTruthy();
   });
 
   it("speaks German where the catalogue is German", () => {

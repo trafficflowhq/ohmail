@@ -233,6 +233,7 @@ const FORWARDED_IN_CLOUD_MODE = [
   "POST /calendar/writes",
   "POST /calendar/writes/x/retry",
   "DELETE /calendar/writes/x",
+  "POST /calendar/proposals",
   /* THE CALENDAR'S CONNECT DOOR, all six. A phone and a desktop on a hosted account connect a
      calendar in the app, as they add a mailbox: what is typed is sealed on the account's server,
      so each of these is forwarded there and answered from there (`relay-allowlist.ts` names all
@@ -456,6 +457,7 @@ const CALENDAR_HOSTED_DOOR_ONLY = [
   "POST /calendar/writes",
   "POST /calendar/writes/x/retry",
   "DELETE /calendar/writes/x",
+  "POST /calendar/proposals",
   "GET /calendar/connect",
   "POST /calendar/connections",
   "DELETE /calendar/connections/x",

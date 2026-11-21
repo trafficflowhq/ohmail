@@ -14,7 +14,7 @@
 import type { AuthVerdict, ISODateTime, Page, UnsubscribeHeaderState } from "./base.js";
 import type { HelloAnswer } from "./client.js";
 import type {
-  CalendarConnectBody, CalendarConnectWire, CalendarConnectionRecord, CalendarEventAct, CalendarPatchBody, CalendarRecord,
+  CalendarConnectBody, CalendarConnectWire, CalendarConnectionRecord, CalendarEventAct, CalendarProposalAct, CalendarPatchBody, CalendarRecord,
   CalendarRemovalWire, CalendarSettingsBody, CalendarSettingsWire, CalendarSignInBody, CalendarWriteAnswer,
 } from "./calendar.js";
 import type { Assert, Same } from "./complete.js";
@@ -161,6 +161,7 @@ export interface Routes {
   "PATCH /calendar/settings": { params: None; body: CalendarSettingsBody; answer: CalendarSettingsWire };
   "PATCH /calendar/suggestions/:id": { params: Id; body: { dismissed: boolean }; answer: { dismissed: boolean } };
   /** An act on an event, recorded under the press's `Idempotency-Key` (required) and carried out by the worker. `202`. */
+  "POST /calendar/proposals": { params: None; body: CalendarProposalAct; answer: { status: SendAnswer["status"] } };
   "POST /calendar/writes": { params: None; body: CalendarEventAct; answer: CalendarWriteAnswer };
   /** A refused write owed again, with the writes refused only because they waited for it. */
   "POST /calendar/writes/:id/retry": { params: Id; body: never; answer: CalendarWriteAnswer };

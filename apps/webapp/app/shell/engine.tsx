@@ -176,7 +176,7 @@ export function EngineProvider({
    * request that left as A could be re-judged as B. A prop, not an import: `app/shell/**` ships
    * in the desktop program, which has no session client. Absent on the desktop and the demo.
    */
-  onConfirmed?: (accountId: string, address?: string, familyId?: string) => void;
+  onConfirmed?: (accountId: string, address?: string, familyId?: string, displayName?: string) => void;
   /** The web can preload a remembered mirror while its session is still being checked. */
   drawMail?: "now" | "wait" | "confirmed";
   edgeOwner?: string | null;
@@ -381,7 +381,8 @@ export function EngineProvider({
             .catch(() => undefined);
         };
         const confirm = () => {
-          if (outcome.familyId !== undefined) onConfirmed?.(owner, outcome.address, outcome.familyId);
+          if (outcome.displayName !== undefined) onConfirmed?.(owner, outcome.address, outcome.familyId, outcome.displayName);
+          else if (outcome.familyId !== undefined) onConfirmed?.(owner, outcome.address, outcome.familyId);
           else if (outcome.address === undefined) onConfirmed?.(owner);
           else onConfirmed?.(owner, outcome.address);
         };

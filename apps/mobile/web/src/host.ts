@@ -66,7 +66,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       // A hosted account stands behind a phone paired to a server; a desktop's door and the phone's own engine have none.
       account: setting === "managed" || setting === "selfHosted" ? facts.accountId : null,
       mirrorAccount: null,
-      accountAddress: null,
+      accountAddress: null, accountDisplayName: null,
       signOut: own ? NONE : has.signOut,
       recover: has.frame.recover,
       today: NONE,

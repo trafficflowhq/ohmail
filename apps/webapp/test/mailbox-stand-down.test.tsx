@@ -429,9 +429,9 @@ describe("the strip renders the stand-down sentence it is handed", () => {
     const sync = messages.sync as unknown as Record<string, string>;
     expect(text, "the copy key did not resolve — the strip rendered the key path")
       .not.toContain("blocked_organized_elsewhere");
-    expect(text).toContain(sync.blocked_organized_elsewhere_local!);
+    expect(text).toContain(sync.blocked_organized_elsewhere_local!.replace(/\.$/, ""));
     expect(text).toContain("person@example.test");
-    expect(text, "and the false sentence must be nowhere near it").not.toContain(sync.noMailbox!);
+    expect(text, "and the false sentence must be nowhere near it").not.toContain(sync.noMailbox!.replace(/\.$/, ""));
   });
 
   it("no spinner: a claimed mailbox is a CONDITION, not work in progress", async () => {

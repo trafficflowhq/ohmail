@@ -3,7 +3,7 @@
  * its ink button. Everything the ceremony does is the door's, the blanks as typed among it: the page draws them, hands
  * each change back, and says what the door's state says. A press with a blank empty sends nothing: the first empty
  * blank takes the keys and says it is wanted. The ways to the join and to the demo are the ways the host hands, links
- * on the web. Its words are the `login` namespace's.
+ * on the web. The reason the previous sign-in ended uses the same words as the resume page.
  */
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button, EndDot, Menu, MenuItem, Page, RefusalLine, Slot, Tag } from "@ohmail/ui/base";
@@ -11,6 +11,7 @@ import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
 import { useWanted } from "../stage/AccountSentence.js";
 import { DoorLine } from "../stage/DoorLine.js";
+import { REASON_SAID } from "../stage/reasons.js";
 import { Said, SaidWith } from "../stage/Said.js";
 import { SentenceBlank } from "../stage/SentenceBlank.js";
 import { WayButton } from "../stage/way.js";
@@ -34,6 +35,7 @@ function refusalWords(refusal: SignInRefusal, login: Text): string {
 export function SignInPage({ door }: { door: SignInDoor | None }): ReactNode {
   const login = useText("login");
   const gate = useText("gate");
+  const resume = useText("resume");
   if (door === NONE || door.state.at === "unavailable") {
     const demo = door === NONE ? NONE : door.demo;
     const acts =
@@ -49,14 +51,23 @@ export function SignInPage({ door }: { door: SignInDoor | None }): ReactNode {
     );
   }
   const state = door.state as Ongoing;
-  /* A sign-out that ended unconfirmed is said first, then the step's own refusal. */
-  const said = [door.pending.said, state.refusal === null ? null : refusalWords(state.refusal, login)].filter(
+  const why = state.at === "password" ? door.why : null;
+  const reason = why === null ? null : resume(REASON_SAID[why]);
+  const reused = why === "reused";
+  const previousRefusal = door.pending.said ?? (reused ? reason : null);
+  const said = [previousRefusal, state.refusal === null ? null : refusalWords(state.refusal, login)].filter(
     (s): s is string => s !== null,
   );
   const refusal: Refusal =
     said.length === 0 ? undefined : said.length === 1 ? [said[0]!] : [said[0]!, said[1]!];
   return state.at === "password" ? (
-    <PasswordStep door={door} busy={state.busy} refusal={refusal} login={login} />
+    <PasswordStep
+      door={door}
+      busy={state.busy}
+      reason={reused ? null : reason}
+      refusal={refusal}
+      login={login}
+    />
   ) : (
     <FactorStep door={door} state={state} refusal={refusal} login={login} />
   );
@@ -68,8 +79,14 @@ type Blank = (typeof BLANKS)[number];
 /** Each blank's sentence when a press found it empty. */
 const WANTED: Readonly<Record<Blank, string>> = { email: "emailWanted", password: "passwordWanted" };
 
-function PasswordStep(p: { door: SignInDoor; busy: boolean; refusal: Refusal; login: Text }): ReactNode {
-  const { door, busy, refusal, login } = p;
+function PasswordStep(p: {
+  door: SignInDoor;
+  busy: boolean;
+  reason: string | null;
+  refusal: Refusal;
+  login: Text;
+}): ReactNode {
+  const { door, busy, reason, refusal, login } = p;
   const { pending, fields } = door;
   /* The blank a press found empty takes the keys and says it is wanted: nothing leaves half filled. */
   const { wanted, want, typed, at } = useWanted(BLANKS);
@@ -96,7 +113,10 @@ function PasswordStep(p: { door: SignInDoor; busy: boolean; refusal: Refusal; lo
           )
         }
         refusal={refusal}
-        line={[{ tag: login(door.note === "selfhost" ? "whereServer" : "whereCloud") }]}
+        line={[
+          ...(reason === null ? [] : [{ heavy: reason }]),
+          { tag: login(door.note === "selfhost" ? "whereServer" : "whereCloud") },
+        ]}
         acts={
           <>
             {/* Named by its words alone, the key it prints left out: the journeys find the sign-in's Continue by

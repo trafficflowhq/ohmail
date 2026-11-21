@@ -108,8 +108,8 @@ describe("flag-off parity (§16.7)", () => {
 describe("the live window", () => {
   it("renames the segment to Junk and renders each row with its ORIGIN marker", async () => {
     await mount(wire({ items: [item({ uid: 2, origin: "verdict" }), item({ uid: 1, origin: "provider" })] }));
-    expect(tabs()).toContain("Junk");
-    expect(button("Spam")).toBeNull();
+    expect(within(host).getByRole("button", { name: "Spam 2", pressed: true })).toBeTruthy();
+    expect(button("Junk")).toBeNull();
     expect(rows()).toHaveLength(2);
     expect(rows().map((r) => r.textContent).join(" ")).toContain("Your verdict");
     expect(rows().map((r) => r.textContent).join(" ")).toContain("Mail server");
@@ -138,7 +138,7 @@ describe("the live window", () => {
 
   it("in German the window is the Spam-Ordner, and the English word Junk is nowhere on it", async () => {
     await mount(wire(), "de");
-    expect(tabs()).toContain(de.screener.segJunk);
+    expect(tabs()).toContain(de.screener.segSpam);
     expect(host.textContent).toContain(de.screener.place.empty.junk);
     expect(within(host).getByRole("searchbox").getAttribute("placeholder")).toBe(de.screener.junkSearchPlaceholder);
     const said = [host.textContent ?? "", ...[...host.querySelectorAll("[aria-label], [placeholder]")]

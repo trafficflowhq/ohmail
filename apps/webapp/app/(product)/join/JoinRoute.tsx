@@ -205,8 +205,8 @@ export function JoinRoute(props: JoinProps) {
     waitlist: { href: "/#pricing" },
     demo: { href: "/?demo=1" },
     slots: {
-      mailbox: () => (
-        <ConnectForm ask={mailbox.ask} door={mailbox.door} factor={(ask) => <StepUp {...ask} />} />
+      mailbox: (page) => (
+        <ConnectForm ask={mailbox.ask} door={mailbox.door} factor={(ask) => <StepUp {...ask} />} page={page} />
       ),
       authenticatorQr: () => (c.totp === null ? null : <QrCode value={c.totp.otpauthUrl} ariaLabel={t("totpQrAria")} />),
     },

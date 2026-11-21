@@ -3417,7 +3417,9 @@ describe("the UI bundle's build config", () => {
     expect(frame).toMatch(/return <DesktopSettings \{\.\.\.install\} \/>/);
     expect(frame).toMatch(/browserMailParts\(NATIVE_PANE_PARTS\)/);
     expect(panes).toMatch(/desktop: NONE/);
-    expect(panes).toMatch(/desktop: parts\.desktop === NONE \? NONE : paneOf\("desktop", \{ Body: parts\.desktop \}\)/);
+    expect(panes).toMatch(
+      /desktop:\s*parts\.desktop === NONE\s*\? NONE\s*:\s*paneOf\("desktop", \{ Body: parts\.desktop, useSummary: parts\.useDesktopSummary \}\)/,
+    );
     expect(web).toMatch(/export const WEB_PANE_PARTS[^=]*= \{\s*\.\.\.NO_PANE_PARTS/);
     expect(web).not.toMatch(/\bdesktop:/);
     expect(menu).toMatch(/if \(pane !== NONE && pane\.listed\(host\)\) listed\.push\(pane\)/);

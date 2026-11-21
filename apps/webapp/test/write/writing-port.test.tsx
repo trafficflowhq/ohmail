@@ -113,7 +113,6 @@ const FAILED_CODES = [
   "a_code_no_build_has_heard_of", undefined,
 ];
 const SPOKEN: readonly SendState[] = [
-  { phase: "sending", since: Date.now() },
   { phase: "sending", since: Date.now() - 60_000 },
   { phase: "queued" },
   { phase: "queued", accepted: true },
@@ -127,6 +126,12 @@ const SPOKEN: readonly SendState[] = [
 ];
 
 describe("the send line's words", () => {
+  it("marks Send busy while a fresh send has no status line yet", async () => {
+    const w = await stand([], { phase: "sending", since: Date.now() });
+    expect(within(w.el).getByRole("button", { name: "Send" }).getAttribute("aria-busy")).toBe("true");
+    expect(w.sendLines()).toEqual([]);
+  });
+
   for (const send of SPOKEN) {
     it(`says its own sentence for ${JSON.stringify(send)}`, async () => {
       const w = await stand([], send);

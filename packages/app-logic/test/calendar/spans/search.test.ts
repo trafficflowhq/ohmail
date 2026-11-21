@@ -34,6 +34,40 @@ const find = (q: string) =>
     zones,
   });
 
+describe("events placed on a typed day", () => {
+  const midnight = zoned(wall(2026, 11, 19, 23, 30), "UTC");
+  const crossing = ev("crossing", "Late call", midnight);
+  const trip = { ...ev("trip", "Trip", at(2026, 11, 19, 10)), end: at(2026, 11, 21, 10) };
+  const unknown = ev("unknown", "Unknown venue", zoned(wall(2026, 11, 20, 10, 0), "Unmapped zone"));
+  const findOn = (day: string) =>
+    searchEvents({
+      query: day,
+      date: day,
+      items: [crossing, trip, unknown],
+      keyOf: (event) => event.id,
+      textOf: (event) => event.text,
+      today: day,
+      zone: ZONE,
+      zones,
+    });
+  it("reports events that cannot be placed because their time zone is unknown", () => {
+    expect(findOn("2026-11-20").unplaced).toBe(1);
+  });
+  it("places a late UTC event on the next day in Zurich", () => {
+    expect(findOn("2026-11-19").hits.map((hit) => hit.key)).not.toContain("crossing");
+    expect(findOn("2026-11-20").hits.find((hit) => hit.key === "crossing")).toMatchObject({
+      day: "2026-11-20",
+      startMinute: 30,
+    });
+  });
+  it("shows the middle day of a timed event as all day", () => {
+    expect(findOn("2026-11-20").hits.find((hit) => hit.key === "trip")).toMatchObject({
+      startMinute: null,
+      endMinute: null,
+    });
+  });
+});
+
 describe("search over what the device holds", () => {
   it("words are folded: case and accents", () => {
     expect(wordsOf("Café with ZOË, Größe")).toEqual(["cafe", "with", "zoe", "grosse"]);

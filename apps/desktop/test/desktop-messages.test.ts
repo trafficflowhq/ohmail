@@ -253,7 +253,6 @@ const ACCOUNT_ONLY: Record<string, string> = {
   account: "the Account pane's sheet (who is signed in, sign-out, the way to erase): the window's Account is the card",
   accountDevices: "the Devices pane's own words: the window draws its own Devices pane",
   accountInvites: "the Invites pane's own words: a self-hosted web build's pane, never the window's",
-  accountLifecycle: "the Subscription pane's standing: the window draws its own Subscription",
   accountOwn: "the Account pane's and the password form's own words: the window's Account is the card",
   accountSecurity: "the Security pane's own words: the window's Security is the card",
   accountStorage: "the Storage pane's own words: the window draws Storage with the web shell's shared pane",

@@ -9,8 +9,8 @@ import {
 } from "./fixtures/cloud-confirm-shell";
 
 const FILED = "Ohbox — filed";
-const SUMMARY = "1 suggestion · 1 credit used.";
-const UNDONE = /^Undone — 1 waiting again\.$/;
+const SUMMARY = "1 suggestion · 1 credit used";
+const UNDONE = /^Undone — 1 waiting again$/;
 
 const msg = (id: string): EngineMessage => ({
   id, accountId: ACCOUNT, mailboxId: "mb_1", threadId: null, messageIdHeader: null,
@@ -189,6 +189,7 @@ describe("on a fake server: the decision's Undo beside the suggestion summary", 
     expect(decisions, "committed at the end of the window").toEqual(["arrival"]);
     expect(undoButton()).toBeNull();
     expect(reportText(), "the advice report follows the decision in the shared slot").toBe(SUMMARY);
+    expect(report()?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     await tick(3000);
     expect(reportSlot().textContent).not.toContain(SUMMARY);
   });
@@ -203,6 +204,7 @@ describe("on a fake server: the decision's Undo beside the suggestion summary", 
     await undo();
     expect(undoButton(), "Undo dismissed its own capsule").toBeNull();
     expect(reportText()).toMatch(UNDONE);
+    expect(report()?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     expect(waitingRows(), "the sender is back").toHaveLength(1);
     await tick(COMMIT_MS * 2);
     expect(decisions, "an undone decision is never sent").toEqual([]);
@@ -215,6 +217,7 @@ describe("on a fake server: the Undo's own sentence outlives the suggestion summ
     await tick(549);
     await undo();
     expect(reportText()).toMatch(UNDONE);
+    expect(report()?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     await tick(1558 - 549);
     await answer();
     await tick(2000 - 1558);
@@ -223,6 +226,7 @@ describe("on a fake server: the Undo's own sentence outlives the suggestion summ
 
     await tick(549 + 2600 + 300 - 2000 + 1);
     expect(reportText(), "then the summary is said, never dropped").toBe(SUMMARY);
+    expect(report()?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     expect(waitingRows(), "the sender is back").toHaveLength(1);
     await tick(COMMIT_MS * 2);
     expect(decisions, "an undone decision is never sent").toEqual([]);

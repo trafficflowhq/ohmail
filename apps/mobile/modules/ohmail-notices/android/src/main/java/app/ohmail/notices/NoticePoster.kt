@@ -39,7 +39,10 @@ internal object NoticePoster {
   private class Words(val channel: String, val channelName: Int, val id: Int, val title: String, val body: String)
 
   /** Draw one notice; true once the system was handed it. */
-  fun post(context: Context, instance: String, kind: String, count: Int, change: String?, device: String?): Boolean {
+  fun post(
+    context: Context, instance: String, kind: String, count: Int, change: String?, device: String?,
+    sender: String? = null, subject: String? = null,
+  ): Boolean {
     if (!LiveInstanceGate.mayDraw(LiveInstanceStore.kept(context), instance)) return false
     return try {
       val words = wordsOf(context, kind, count, change, device) ?: return false
@@ -55,8 +58,8 @@ internal object NoticePoster {
         .setContentTitle(words.title)
       val builder = NotificationCompat.Builder(context, words.channel)
         .setSmallIcon(android.R.drawable.sym_action_email)
-        .setContentTitle(words.title)
-        .setContentText(words.body)
+        .setContentTitle(sender ?: words.title)
+        .setContentText(subject ?: words.body)
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         .setAutoCancel(true)
         .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)

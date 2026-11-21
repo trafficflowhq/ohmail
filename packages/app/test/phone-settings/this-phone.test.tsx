@@ -33,12 +33,12 @@ it("explains the hand-back before asking the phone to stop", () => {
   const stop = vi.fn();
   draw({ ...base, tag: "organizing", stop });
   fireEvent.click(screen.getByRole("button", { name: words.stop }));
-  const confirm = screen.getByRole("dialog", { name: words.stopAsk.title });
+  const confirm = screen.getByRole("dialog", { name: "Stop organizing here" });
   expect(within(confirm).getByText(words.stopAsk.what)).toBeTruthy();
   fireEvent.click(within(confirm).getByRole("button", { name: words.stopAsk.cancel }));
   expect(stop).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: words.stop }));
-  const reopened = screen.getByRole("dialog", { name: words.stopAsk.title });
+  const reopened = screen.getByRole("dialog", { name: "Stop organizing here" });
   fireEvent.click(within(reopened).getByRole("button", { name: words.stopAsk.confirm }));
   expect(stop).toHaveBeenCalledTimes(1);
 });
@@ -48,7 +48,7 @@ it("retires a stop question when the phone loses its original claim", () => {
   const laterStop = vi.fn();
   const view = draw({ ...base, tag: "organizing", stop: firstStop });
   fireEvent.click(screen.getByRole("button", { name: words.stop }));
-  expect(screen.getByRole("dialog", { name: words.stopAsk.title })).toBeTruthy();
+  expect(screen.getByRole("dialog", { name: "Stop organizing here" })).toBeTruthy();
 
   view.rerender(sheet({ ...base, tag: "reader" }));
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -62,7 +62,7 @@ it("lets the handset choose when to explain background organizing", () => {
   const start = vi.fn();
   draw({ ...base, tag: "notOrganized", start, explainBackground: true });
   fireEvent.click(screen.getByRole("button", { name: words.start }));
-  const explain = screen.getByRole("dialog", { name: words.background.title });
+  const explain = screen.getByRole("dialog", { name: "Organizing in the background" });
   expect(within(explain).getByText(words.background.why)).toBeTruthy();
   fireEvent.click(within(explain).getByRole("button", { name: words.background.continue }));
   expect(start).toHaveBeenCalledTimes(1);

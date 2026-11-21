@@ -17,7 +17,7 @@ describe("web Settings → Mailboxes says the same count", () => {
     const { wire } = fakePane({ list: [ok([mailbox])] });
     const view = drawPane(wire);
     const verdict = await view.findByText(/^Sync failed/);
-    const text = verdict.textContent?.replace(/^error · /, "");
+    const text = verdict.textContent?.replace(/^Error · /, "");
     view.unmount();
     return text;
   }

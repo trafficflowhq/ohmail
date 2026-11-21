@@ -8,10 +8,23 @@
       "resizeStart": "Ersten Tag ändern",
       "resizePreview": "{first} – {last} · {title}",
       "resizeEnd": "Letzten Tag ändern",
+      "cancelEvent": "Termin absagen",
+      "writeGuests": "Eingeladenen schreiben",
+      "emailOrganizer": "Organisator kontaktieren",
+      "removeCancelled": "Entfernen",
+      "removeFromCalendar": "Aus meinem Kalender entfernen",
+      "removeScope": "{title} entfernen",
+      "answerScope": "Auf {title} antworten",
       "delete": "Löschen",
       "moveTo": "Verschieben nach",
       "hideCalendar": "Diesen Kalender ausblenden",
       "tellsDelete": "{title} ist abgesagt",
+      "cancellationMessage": "Der Termin wurde abgesagt",
+      "moveRestriction": {
+        "guests": "Termine mit Gästen bleiben in den Kalendern ihres Accounts",
+        "fields": "Dieser Termin enthält Details, die ein anderer Kalender nicht übernehmen kann"
+      },
+      "moving": "Termin wird verschoben",
       "sendCancellation": "Absage senden",
       "panel": "Terminaktionen",
       "deleteTitle": "{title} löschen",
@@ -34,6 +47,24 @@
     "draft": {
       "discarded": "Verworfen",
       "undo": "Rückgängig"
+    },
+    "proposal": {
+      "keepQuestion": "{name} sagen, dass die Zeit bleibt?",
+      "keepConfirm": "Bestätigen",
+      "action": "Neue Zeit vorschlagen",
+      "question": "Diese Zeit vorschlagen?",
+      "questionWhen": "Diese Zeit vorschlagen? {when}",
+      "confirm": "Vorschlagen",
+      "accept": "{time} annehmen",
+      "keep": "{time} beibehalten",
+      "proposed": "Vorgeschlagen",
+      "incoming": "{name} schlägt {when} vor",
+      "changed": "Der Termin wurde geändert",
+      "sending": "Vorschlag wird gesendet",
+      "undo": "Rückgängig",
+      "undone": "Senden rückgängig gemacht",
+      "undoLate": "Der Vorschlag wurde bereits gesendet",
+      "failed": "Der Vorschlag konnte nicht gesendet werden"
     },
     "edit": {
       "closeEditor": "Terminbearbeitung schließen",
@@ -100,6 +131,10 @@
       "copied": "Kopiert"
     },
     "location": {
+      "placeholder": "Ein Ort",
+      "unavailable": "Ortsvorschläge sind nicht verfügbar",
+      "back": "Zurück",
+      "clear": "Ort löschen",
       "own": "Deine Orte",
       "suggestions": "Ortsvorschläge",
       "credit": "© OpenStreetMap-Mitwirkende",

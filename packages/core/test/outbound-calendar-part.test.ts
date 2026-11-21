@@ -3,7 +3,7 @@ import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { simpleParser } from "mailparser";
 import { outboundToMail } from "../src/adapters/imap.js";
 import type { OutboundMessage } from "../src/adapters/imap-types.js";
-import { invitationReplyText } from "../src/invitation-reply.js";
+import { invitationCounterText, invitationReplyText } from "../src/invitation-reply.js";
 import { normalizeMime } from "../src/mime.js";
 
 /**
@@ -91,5 +91,19 @@ describe("the letter an answer sends", () => {
     const hostile = { method: "REPLY", text: TEXT, path: "/etc/passwd", href: "http://169.254.169.254/", raw: "x" } as unknown as OutboundMessage["calendar"];
     const options = outboundToMail({ ...LETTER, calendar: hostile }, LETTER.messageId!, DATE);
     expect(options.alternatives).toEqual([{ contentType: "text/calendar; charset=utf-8; method=REPLY", content: TEXT }]);
+  });
+});
+
+it.each(["COUNTER", "DECLINECOUNTER"] as const)("delivers and reads back a %s with its own MIME method", async (method) => {
+  const text = invitationCounterText({
+    method, uid: "kiln-check", recurrenceId: "", sequence: 7, organizer: LETTER.to[0]!, invitedAddress: ME,
+    answer: "tentative", stamp: DATE, startRaw: "20261201T100000Z", startsAt: null,
+    start: "20261201T120000Z", end: "20261201T130000Z",
+  })!;
+  const raw = await build({ ...LETTER, calendar: { method, text } });
+  expect(leaves(raw)[1]?.type).toContain(`method=${method.toLowerCase()}`);
+  expect((await normalizeMime(raw)).calendar?.invitation).toMatchObject({
+    method, uid: "kiln-check", sequence: 7,
+    proposal: { start: { kind: "instant", value: "20261201T120000Z" }, end: { kind: "instant", value: "20261201T130000Z" } },
   });
 });

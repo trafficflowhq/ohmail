@@ -1,5 +1,9 @@
 {
   "settingsScreener": {
-    "notApplied": "Not applied"
+    "notApplied": "Not applied",
+    "suggestions": "Suggestions",
+    "details": "About {title}",
+    "confidence": "Only Screen out and Spam, at 90% or more.",
+    "creditPerSender": "1 credit per sender"
   }
 }

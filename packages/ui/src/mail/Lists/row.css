@@ -525,6 +525,22 @@
     color: var(--oh-row-second);
   }
 
+  .oh-row-thread-preview {
+    display: flex;
+    flex-flow: row-reverse wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    max-block-size: var(--oh-readsquares-h);
+    overflow: hidden;
+  }
+
+  .oh-row-thread-preview > .oh-row-preview {
+    flex: 1 1 12ch;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   /* Read from unread by weight first; the dot on the circle confirms it. */
   .oh-row[data-unread] .oh-row-who,
   .oh-row[data-unread] .oh-row-subject {

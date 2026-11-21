@@ -94,6 +94,8 @@ export interface RowProps {
   file?: string;
   /** How far the conversation is read: its squares. */
   squares?: ReactNode;
+  /** Put the conversation squares beside the preview on a narrow split. */
+  squaresBelow?: boolean;
   /** One tag, whole or not there. */
   tag?: ReactNode;
   /** The place the letter is in, as a word. */

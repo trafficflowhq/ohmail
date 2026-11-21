@@ -4,6 +4,7 @@
  * a reading stream's line, and the views a client groups folders into.
  */
 import type { EmailAddress, Folder, ISODateTime, SensitivityFlags } from "./base.js";
+import type { MessageInvitationDTO } from "./invitations.js";
 import type { MessageStateDTO, TriageState } from "./mail.js";
 
 /** Fixture-only display extras a message row may carry in the demo world. */
@@ -127,6 +128,8 @@ export interface EngineMessage extends EngineMessageExtras {
    * absent means "not known" and says nothing, as every older mirror did.
    */
   invitationWithoutEvent?: boolean;
+  /** The invitation and answer projected onto this device by the server. */
+  invitation?: MessageInvitationDTO;
   /**
    * TRUE ⇒ the message declares `method=REPLY`, on its top-level `Content-Type` or on a
    * calendar part's stored type. One arm of

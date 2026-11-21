@@ -15,7 +15,7 @@ export function ServerFields({
   form: ConnectForm;
   labels: { readonly imap: string; readonly smtp: string };
   /** An edit's port fields, with what a blank keeps. `null`: a new connection. */
-  ports: { readonly imap: string; readonly smtp: string; readonly keep: string } | null;
+  ports: { readonly imap: string; readonly smtp: string; readonly keep: string | undefined } | null;
 }): ReactNode {
   const { typed } = form.state;
   const imap = (

@@ -148,22 +148,22 @@ export function useFirstRun(input: FirstRunInput): FirstRun {
   const writes = useWrites({ step: cursor.step, rerun, setAt: cursor.setAt, refresh, factor: input.factor });
   const [confirm, setConfirm] = useState<"cancel" | "restart" | null>(null);
   const [forgetRefused, setForgetRefused] = useState(false);
-  const agree = useAgree({
-    verbs,
-    facts,
-    read,
-    step: cursor.step,
-    mailboxId,
-    claimAnswered: cursor.claimAnswered,
-    rerun,
-    ...(ground.screening ? { screening: ground.screening } : {}),
-  });
   const wait = useHolderWait({
     facts,
     step: cursor.step,
     mailboxId,
     claimAnswered: cursor.claimAnswered,
     refresh,
+  });
+  const agree = useAgree({
+    verbs,
+    facts,
+    read,
+    step: wait.awaiting ? null : cursor.step,
+    mailboxId,
+    claimAnswered: cursor.claimAnswered,
+    rerun,
+    ...(ground.screening ? { screening: ground.screening } : {}),
   });
   const pull = usePull({
     pulled: about.pull.pulled,

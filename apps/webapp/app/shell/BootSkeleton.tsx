@@ -35,8 +35,7 @@
 
 import { useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Opening } from "@ohmail/ui/base";
-import { motion } from "@ohmail/tokens/design";
+import { Button, Opening, openingReloadDelay } from "@ohmail/ui/base";
 import { useBrowserOnline } from "@ohmail/app-logic/session/browser-online";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 
@@ -169,7 +168,6 @@ export function BootSkeleton({
   );
 }
 
-const RELOAD_AFTER_MS = Number.parseInt(motion.slick["d-opening-reload"], 10);
 const noSubscription = () => () => {};
 
 /** The web's quiet opening frame and the way forward when it stays on screen. */
@@ -179,7 +177,7 @@ export function MailboxOpening({ serverFrame = false, network = true }: { server
   const online = useBrowserOnline();
   const served = useSyncExternalStore(noSubscription, () => false, () => serverFrame);
   const waiting = useLoadingGrace(!serverFrame);
-  const late = useLoadingGrace(!serverFrame, RELOAD_AFTER_MS);
+  const late = useLoadingGrace(!serverFrame, openingReloadDelay);
 
   if (served) {
     return <Opening kind="web" late label={session("opening")} action={<Button kind="two" href="/">{reload}</Button>} />;

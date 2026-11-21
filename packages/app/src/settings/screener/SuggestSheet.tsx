@@ -3,6 +3,7 @@ import { Button } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import type { ScreenerModel, ScreenerSuggest, ScreenerUnsubscribe } from "./model.js";
+import { SettingDetails } from "./SettingDetails.js";
 import { useWrite, WrittenSwitch } from "./written.js";
 
 /**
@@ -10,16 +11,16 @@ import { useWrite, WrittenSwitch } from "./written.js";
  * the ones that do not, and the one whose consequence leaves the building sits last.
  */
 export function SuggestSheet({ model }: { readonly model: ScreenerModel }) {
+  const t = useText("settingsScreener");
   const { suggest, ownSuggest, act, unsubscribe } = model;
   if (!suggest && !ownSuggest && !act && !unsubscribe) return null;
   return (
-    <SettingsSheet>
+    <SettingsSheet title={t("suggestions")}>
       {suggest ? <AutoSuggest suggest={suggest} /> : null}
       {ownSuggest ? (
         <WrittenSwitch
           label={ownSuggest.said.title}
           on={ownSuggest.on}
-          note={ownSuggest.said.description}
           failed={ownSuggest.said.failed}
           set={ownSuggest.set}
         />
@@ -30,7 +31,8 @@ export function SuggestSheet({ model }: { readonly model: ScreenerModel }) {
             label={act.said.title}
             on={act.on}
             held={act.why !== null}
-            note={act.said.description}
+            note={t("confidence")}
+            info={<SettingDetails title={act.said.title} lines={[act.said.description]} />}
             failed={act.said.failed}
             set={act.set}
           />
@@ -44,19 +46,23 @@ export function SuggestSheet({ model }: { readonly model: ScreenerModel }) {
 
 export function UnsubscribeSwitch({ control }: { readonly control: ScreenerUnsubscribe }) {
   const t = useText("settings");
+  const label = t("autoUnsub.title");
   return (
-    <>
-      <WrittenSwitch
-        label={t("autoUnsub.title")}
-        on={control.on}
-        note={control.on ? t("autoUnsub.on") : t("autoUnsub.off")}
-        failed={t("autoUnsub.failed")}
-        set={(next) => control.setBlocked(!next)}
-      />
-      <SettingNote>
-        {t(control.from === "computer" ? "autoUnsub.microcopyComputer" : "autoUnsub.microcopy")}
-      </SettingNote>
-    </>
+    <WrittenSwitch
+      label={label}
+      on={control.on}
+      failed={t("autoUnsub.failed")}
+      set={(next) => control.setBlocked(!next)}
+      info={
+        <SettingDetails
+          title={label}
+          lines={[
+            t(control.on ? "autoUnsub.on" : "autoUnsub.off"),
+            t(control.from === "computer" ? "autoUnsub.microcopyComputer" : "autoUnsub.microcopy"),
+          ]}
+        />
+      }
+    />
   );
 }
 
@@ -67,6 +73,7 @@ export function UnsubscribeSwitch({ control }: { readonly control: ScreenerUnsub
 function AutoSuggest({ suggest }: { readonly suggest: ScreenerSuggest }) {
   const write = useWrite();
   const t = useText("screener");
+  const own = useText("settingsScreener");
   const [reviewing, setReviewing] = useState(false);
   useEffect(() => {
     if (suggest.on !== false) setReviewing(false);
@@ -87,6 +94,7 @@ function AutoSuggest({ suggest }: { readonly suggest: ScreenerSuggest }) {
     <>
       <SettingLine
         label={said.title}
+        tag={said.cost ? own("creditPerSender") : undefined}
         toggle={{
           on: suggest.on === true,
           onChange: (next) => {
@@ -101,7 +109,6 @@ function AutoSuggest({ suggest }: { readonly suggest: ScreenerSuggest }) {
         }}
         off={write.pending || suggest.on === null}
       />
-      <SettingNote>{said.state}</SettingNote>
       {confirming ? (
         <>
           <SettingNote>{said.what}</SettingNote>

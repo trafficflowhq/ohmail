@@ -283,7 +283,7 @@ describe("one compose lane, two messages", () => {
     const s = await mountShell("#/drafts", [message("m1")], [A, B], { handOff: true });
     await aRefusedThenB(s);
     await press(footButton(en.sendingLine.open), "A's Open");
-    await waitFor(() => toasts().includes(en.compose.notSentOpenBlocked), "why A's Open waits");
+    await waitFor(() => toasts().includes(en.compose.notSentOpenBlocked.replace(/\.$/, "")), "why A's Open waits");
     expect(composeSubject(s.el), "A's Open replaced the letter being written").toBe("Budget review");
     expect(footLine(), "A's ending left the foot line unopened").toContain(en.compose.statusUnreachable);
     await navigate("#/drafts");

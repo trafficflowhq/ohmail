@@ -6,7 +6,7 @@
  */
 import { eventTimeOf, formatRRule, parseRRule, storedTimeOf, type DeleteMember, type EventTime, type RRule, type StoredTime, type ZoneSource } from "@ohmail/cal-core";
 import {
-  clockOf, continuedSeries, endedRule, movedRule, offItsClock, sameTime, seriesProven, untilSkipped, type EventChange, type EventDraft, type ProofPlace,
+  clockOf, continuedSeries, endedRule, movedRule, offItsClock, sameTime, repeatDeleteScopes, seriesProven, untilSkipped, type EventChange, type EventDraft, type ProofPlace,
   type ProvenRepeats, type ProviderRefusal, type WriteRefusal, type WriteReply, type WriteTarget,
 } from "@ohmail/cal-providers";
 import {
@@ -32,6 +32,7 @@ export interface StoredEvent extends CalendarWriteRowFacts {
   readonly providerId: string;
   readonly uid?: string;
   readonly partial?: boolean;
+  readonly portableCopy?: boolean;
   readonly original: string | null;
   /** The version of the copy the store holds now: a write goes under its own recorded one. */
   readonly versionTag: string | null;
@@ -240,6 +241,7 @@ export function writeCallOf(o: {
   readonly firstAttempt?: boolean;
   readonly confirmedFollowing?: boolean;
   readonly exception?: WriteTarget["exception"];
+  readonly seriesCancellation?: WriteTarget["seriesCancellation"];
   /**
    * The second half of a press on a day and the days after it: where it comes from, and that series
    * as the store holds it (`null`: gone from the store). Its new series is made from that series'
@@ -248,6 +250,7 @@ export function writeCallOf(o: {
   readonly continuation?: { readonly from: CalendarWriteContinuation; readonly source: StoredEvent | null };
 }): WriteCall {
   const { act } = o;
+  if (act.kind === "calendar_event_delete" && act.localOnly) return { kind: "refuse", reason: "read_only" };
   const seriesEdit = act.kind === "calendar_event_update" && (act.audience !== undefined || o.confirmedFollowing) &&
     o.event !== null && writeRowOf(o.event) === "series";
   const editing = seriesEdit || o.continuation?.from.confirmed === true;
@@ -301,7 +304,16 @@ export function writeCallOf(o: {
       return { kind: "refuse", reason: "version_stale" };
     if (o.place === "google" || o.place === "microsoft" || o.confirmedFollowing) updateAudience = { organizer, guests: [] };
   }
-  if (writeRowOf(o.event) === "series" && (stored === null || unproven(stored, first))) return { kind: "refuse", reason: "repeat_unsupported" };
+  if (writeRowOf(o.event) === "series") {
+    const cloud = o.place === "google" || o.place === "microsoft";
+    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || ((act.kind === "calendar_event_delete" || act.kind === "calendar_event_move") && act.audience !== undefined));
+    if (stored === null || first === null || (checkingStoredCloudSeries
+      ? !seriesEditShape(o.place, stored, first, o.zones, o.now)
+      : unproven(stored, first))) return { kind: "refuse", reason: "repeat_unsupported" };
+    if (act.kind === "calendar_event_delete" &&
+      !repeatDeleteScopes(o.place, stored, first, o.zones, o.now, o.proven).includes(act.scope.kind))
+      return { kind: "refuse", reason: "repeat_unsupported" };
+  }
   // A day of the series whose clock time is not the series' own (the night its zone's clocks go forward over that time) is named by
   // no write, one day or the days from it on, whatever today is: where it is written would be a guess. The door refuses the same.
   const firstDayEnd = endOf(o.event);
@@ -315,7 +327,7 @@ export function writeCallOf(o: {
   const whole = targetOf(o.event, o.base);
   if (whole === null) return { kind: "refuse", reason: "version_unknown" };
   const deleteAudience = act.kind === "calendar_event_delete" && o.base === o.event.versionTag
-    ? confirmedDeleteAudience(o.place, o.event, stored !== null, act.scope, act.audience, o.zones)
+    ? (o.seriesCancellation && act.scope.kind === "record" && stored && (o.place === "google" || o.place === "microsoft") ? (act.audience ?? null) : confirmedDeleteAudience(o.place, { ...o.event, unchangedSeries: o.event.changedDays === 0 }, stored !== null, act.scope, act.audience, o.zones))
     : null;
   const checkCancellation = act.kind === "calendar_event_delete" && o.cancellationAttempted === true
     && o.place?.startsWith("caldav:") === true && o.base !== o.event.versionTag;
@@ -367,12 +379,20 @@ export function writeCallOf(o: {
     case "calendar_event_delete":
       // Cloud writers compare the live audience under this same provider version before deleting.
       return { kind: "remove", target: deleteAudience && (o.place === "google" || o.place === "microsoft")
-        ? { ...target, audience: deleteAudience }
+        ? { ...target, audience: deleteAudience, ...(stored && { recurringSeries: true }), ...(o.seriesCancellation && { seriesCancellation: o.seriesCancellation }) }
         : target };
     case "calendar_event_answer":
-      if (o.event.ownInvitee === null) return { kind: "refuse", reason: "content_refused" };
-      return { kind: "answer", target, as: o.event.ownInvitee, reply: REPLY[act.answer] };
-    case "calendar_event_move":
-      return o.to === null ? { kind: "refuse", reason: "not_found" } : { kind: "move", target, to: o.to };
+      if (o.event.ownInvitee === null || o.event.status === "cancelled") return { kind: "refuse", reason: "content_refused" };
+      return { kind: "answer", target: day === null ? target : { ...target, recurringSeries: true }, as: o.event.ownInvitee, reply: REPLY[act.answer] };
+    case "calendar_event_move": {
+      if (o.to === null) return { kind: "refuse", reason: "not_found" };
+      const audience = o.base === o.event.versionTag
+        ? confirmedDeleteAudience(o.place, { ...o.event, unchangedSeries: o.event.changedDays === 0 },
+          stored !== null, { kind: "record" }, act.audience, o.zones)
+        : null;
+      return audience
+        ? { kind: "move", target: { ...target, audience, ...(stored && { recurringSeries: true }) }, to: o.to }
+        : { kind: "refuse", reason: "version_stale" };
+    }
   }
 }

@@ -34,6 +34,10 @@
   min-width: 0;
 }
 
+:root[data-device="desktop"] .cal-body-panel {
+  flex: 0 0 var(--cal-side-width);
+}
+
 .cal-body [data-drag="lifted"] {
   cursor: grabbing;
 }
@@ -113,4 +117,32 @@
 
 .cal-edit-conflict-copy {
   margin: 0;
+}
+
+.cal-event-panel[data-proposal] {
+  --cal-proposal-z: 7;
+  z-index: var(--cal-proposal-z);
+  padding-block-end: var(--s4);
+}
+
+.cal-proposal-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-block-start: var(--s2);
+}
+
+.cal-proposal-question {
+  margin: 0;
+  text-align: center;
+}
+
+:root[data-device="phone"] .cal-proposal-answers {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+}
+
+:root[data-device="phone"] .cal-event-panel[data-proposal] {
+  position: static;
 }

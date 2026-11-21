@@ -18,6 +18,8 @@ export interface RailProps {
   groups: readonly ReactNode[];
   /** What stays on screen while the places scroll: the foot. */
   foot?: ReactNode;
+  /** The phone drawer scrolls its foot with the places. */
+  drawer?: boolean;
   /** The keys are in the rail: the face that rings the column with the keyboard draws its ring. */
   focused?: boolean;
   /** Which edge hides more before the rail has measured itself. Afterwards it says so by its own scroll. */
@@ -34,7 +36,7 @@ function clipOf(scroll: HTMLElement): Clip {
 }
 
 /** Every place in the app's order, the way to write, and the account. */
-export function Rail({ label, switcher, write, groups, foot, focused, clip }: RailProps) {
+export function Rail({ label, switcher, write, groups, foot, drawer, focused, clip }: RailProps) {
   const scroll = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -60,6 +62,7 @@ export function Rail({ label, switcher, write, groups, foot, focused, clip }: Ra
       className="oh-rail"
       aria-label={label}
       data-focused={focused ? "" : undefined}
+      data-drawer={drawer ? "" : undefined}
       data-switcher={switcher ? "" : undefined}
     >
       {switcher}
@@ -82,8 +85,9 @@ export function Rail({ label, switcher, write, groups, foot, focused, clip }: Ra
             {group}
           </div>
         ))}
+        {drawer ? foot : null}
       </div>
-      {foot}
+      {drawer ? null : foot}
     </nav>
   );
 }

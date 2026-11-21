@@ -1,4 +1,4 @@
-/** Screen the selected letters and decide the waiting senders they name. */
+/** Screen the senders named by the selected letters. */
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { FOLDER_OF_VIEW, landingOfMoves, pressGained } from "@ohmail/client-engine";
 import { readerMoveRefusal } from "../mail-state/mail-state.js";
@@ -22,9 +22,8 @@ export interface BulkScreeningPlan {
   subject: EngineMessage[];
 }
 
-/** Use the Screener's decision for waiting senders and limit explicit moves to the selection. */
+/** Count every eligible letter from the selected senders before confirming the move. */
 export function planBulkScreening(cx: VerbContext, ids: string[], dest: ScreeningDest): BulkScreeningPlan {
-  const picked = new Set(ids);
   const seen = new Set<string>();
   const plans: EngineMutation[] = [];
   const subject: EngineMessage[] = [];
@@ -37,13 +36,8 @@ export function planBulkScreening(cx: VerbContext, ids: string[], dest: Screenin
     const s = senderScreening(read, id);
     if (!s || seen.has(s.key)) continue;
     seen.add(s.key);
-    const plan = planScreeningChange(s, dest, "sender", false);
-    planned.push({ ...plan, outOfPlace: plan.outOfPlace.filter((m) => picked.has(m.id)) });
-    subject.push(
-      ...s.scopes.sender.messages.filter(
-        (m) => picked.has(m.id) || (plan.ruleState === "promoted" && m.folder === FOLDER_OF_VIEW.screener),
-      ),
-    );
+    planned.push(planScreeningChange(s, dest, "sender", false));
+    subject.push(...s.scopes.sender.messages);
   }
   /* THE MOVES THE LISTS WILL SHOW AT THE PLACE (`movesAtLanding`), over ONE partition for the whole selection; the
      demo's lists are not partitioned, so every candidate lands there. */
@@ -81,6 +75,18 @@ export function screenBulk(cx: VerbContext, ids: string[], dest: ScreeningDest):
     return false;
   }
   const plan = planBulkScreening(cx, ids, dest);
+  const moves = plan.mutations.flatMap((mutation) => (mutation.kind === "move" ? [mutation.messageId] : []));
+  if (moves.length > 0) {
+    const moveRefusal = readerMoveRefusal(
+      cx.press.rosterRef.current,
+      mailboxesOf(cx, moves),
+      cx.press.refusalCopy,
+    );
+    if (moveRefusal !== null) {
+      cx.toast(moveRefusal);
+      return false;
+    }
+  }
   const place = PLACE_LABEL[dest] ?? dest;
   if (plan.mutations.length === 0) {
     cx.toast(t("screening.toastBulkNothing", { place }));

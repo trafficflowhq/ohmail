@@ -67,7 +67,7 @@ journeysOf("settings", () => {
 
     await person.act("press", "menu-settings-rules");
     await person.here("settings-rules");
-    await person.reads("rules.empty");
+    await person.readsWithDot("rules.empty");
 
     await person.act("press", "menu-settings-tags");
     await person.act("type", "tag-new", { value: "Demo pottery" });

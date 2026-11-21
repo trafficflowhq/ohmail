@@ -267,6 +267,8 @@ function shelfFacts(
     const newest = sender.held.at(-1);
     if (sender.detection || (newest && model.wasAutoFiledSpam?.(newest.id))) labels.push(t("autoDetected"));
   }
+  if (segment === "spam" && sender.held.length > 1)
+    labels.push(t("place.heldLabel", { count: sender.held.length }));
   return { labels };
 }
 

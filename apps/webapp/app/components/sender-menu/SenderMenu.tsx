@@ -495,7 +495,7 @@ export function SenderMenu({
       },
       now: !own && count > 0 ? {
         place: current,
-        description: nowSentence,
+        description: current ? t("nowInWithCount", { place: current, count }) : nowSentence,
         line: current ? t("cardNowIn", { place: current }) : t("cardNowSpread", { count: subject.places.length }),
         all: detail,
       } : undefined,

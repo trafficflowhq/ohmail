@@ -193,13 +193,19 @@ async function click(el: HTMLElement | null): Promise<void> {
 
 const settle = (): Promise<void> => tick(250);
 const providerTile = (el: HTMLElement): HTMLElement | null =>
-  within(el).queryByRole("button", { name: /Microsoft 365/ });
+  within(el).queryByRole("button", {
+    name: (name) => name === messages.providerPicker.microsoftShort || /Microsoft 365/.test(name),
+  });
 const password = (el: HTMLElement): HTMLElement | null =>
   el.querySelector('input[type="password"]');
 
 async function closeSetup(el: HTMLElement): Promise<void> {
-  await click(byText(el, messages.onboarding.cancel));
-  await click(byText(el, messages.onboarding.cancelConfirm));
+  const setup = messages.onboarding.setupMenu;
+  await click(within(el).queryByRole("button", { name: setup }));
+  const menu = within(el).getByRole("menu", { name: setup });
+  await click(within(menu).getByRole("menuitem", { name: messages.onboarding.cancel }));
+  const confirm = within(el).getByRole("dialog", { name: messages.onboarding.cancel });
+  await click(within(confirm).getByRole("button", { name: messages.onboarding.cancelConfirm }));
 }
 
 describe("Settings → Mailboxes offers Outlook beside the password form", () => {

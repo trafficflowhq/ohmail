@@ -47,5 +47,5 @@ export function HelpContactPane({ host, mailboxes, onWrite, os, copyText, sheet 
       : host.mailtoLeaves !== false
         ? { kind: "mailto", href }
         : { kind: "copy", copied, copy };
-  return <HelpPane model={{ write, facts }} sheet={sheet} />;
+  return <HelpPane model={{ write, facts, clipboard: { copied, copy } }} sheet={sheet} />;
 }

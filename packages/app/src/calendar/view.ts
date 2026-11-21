@@ -45,6 +45,7 @@ export interface CalendarViewProps {
   readonly edge: HeldEdge;
   /** The id (`CalendarEventView.id`) of the event open now. */
   readonly openId: string | null;
+  readonly revealOpen?: boolean;
   /** The reader's zone, the zone rules, and now. */
   readonly clock: { readonly zone: string; readonly zones: ZoneSource; readonly nowMs: number };
   readonly settings: CalendarViewSettings;
@@ -81,7 +82,9 @@ export function timedResizeProps(
 ) {
   const id = block.item.id;
   const enabled =
-    props.onResizeTime && block.item.timeEditable && (props.openId === null || props.openId === id);
+    props.onResizeTime &&
+    block.item.timeEditable &&
+    (props.openId === null || props.openId === id || block.item.state === "draft");
   const start = enabled && !block.before;
   const end = enabled && !block.after;
   return {

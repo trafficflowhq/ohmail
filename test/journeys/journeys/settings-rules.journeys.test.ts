@@ -15,7 +15,7 @@ journeysOf("settings-rules", () => {
   paneJourneys("settings-rules", PANE);
   journey(GUARDS[PANE.length]!, async (b) => {
     const { person } = await openPane(b, "settings-rules");
-    await person.reads("rules.empty");
+    await person.readsWithDot("rules.empty");
   });
   journey(GUARDS[PANE.length + 1]!, async (b) => {
     const account = await b.account();

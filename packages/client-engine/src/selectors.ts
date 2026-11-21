@@ -974,6 +974,31 @@ export function threadMarkOf(m: Pick<EngineMessage, "folder" | "mailboxId" | "lo
   return isOwnOutbound(m) ? "mine" : m.unread ? "unread" : "read";
 }
 
+const memberCache = new WeakMap<EntityReader, { v: number; members: Map<string, EngineMessage[]> }>();
+
+/** Placed conversations with the same held-letter and twin exclusions as the reader. */
+export function placedThreadMembers(reader: EntityReader): ReadonlyMap<string, readonly EngineMessage[]> {
+  const version = typeof reader.version === "function" ? reader.version() : null;
+  const cached = version === null ? undefined : memberCache.get(reader);
+  if (cached?.v === version) return cached.members;
+
+  const claims = winningStates(reader);
+  const groups = new Map<string, EngineMessage[]>();
+  for (const message of reader.list<EngineMessage>("message")) {
+    if (!message.threadId || standsHeld(message, claims)) continue;
+    const members = groups.get(message.threadId);
+    if (members) members.push(message);
+    else groups.set(message.threadId, [message]);
+  }
+  for (const [id, messages] of groups) {
+    const members = collapseTwins(messages.sort(byDateAsc), "");
+    if (members.length < 2) groups.delete(id);
+    else groups.set(id, members);
+  }
+  if (version !== null) memberCache.set(reader, { v: version, members: groups });
+  return groups;
+}
+
 const marksCache = new WeakMap<EntityReader, { v: number; marks: Map<string, ThreadMark[]> }>();
 
 /**
@@ -988,21 +1013,8 @@ export function threadMarksIndex(reader: EntityReader): ReadonlyMap<string, read
     const hit = marksCache.get(reader);
     if (hit && hit.v === v) return hit.marks;
   }
-  const claims = winningStates(reader);
-  const byThread = new Map<string, EngineMessage[]>();
-  for (const m of reader.list<EngineMessage>("message")) {
-    if (!m.threadId || standsHeld(m, claims)) continue;
-    const list = byThread.get(m.threadId);
-    if (list) list.push(m);
-    else byThread.set(m.threadId, [m]);
-  }
   const marks = new Map<string, ThreadMark[]>();
-  for (const [threadId, list] of byThread) {
-    if (list.length < 2) continue;
-    const members = collapseTwins(list.sort(byDateAsc), "");
-    if (members.length < 2) continue;
-    marks.set(threadId, members.map(threadMarkOf));
-  }
+  for (const [id, members] of placedThreadMembers(reader)) marks.set(id, members.map(threadMarkOf));
   if (v !== null) marksCache.set(reader, { v, marks });
   return marks;
 }

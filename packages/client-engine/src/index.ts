@@ -238,7 +238,7 @@ export {
   type CalendarNoticeChoices, type MailNoticeChoices, type NoticeChoices, type NoticeWhere,
 } from "./notices/choices.js";
 export {
-  AHEAD_DAYS, AHEAD_ID_MAX, AHEAD_LATE_MS, AHEAD_MAX, type AheadSet, type NoticeAhead, type NoticeEmitter, type NoticeTaken,
+  AHEAD_DAYS, AHEAD_ID_MAX, AHEAD_LATE_MS, AHEAD_MAX, type AheadSet, type NoticeAhead, type NoticeEmitter, type CalendarSummaryDetails, type MailNoticeDetails, type NoticeTaken,
 } from "./notices/emitter.js";
 export type { CalendarLook, CalendarSample, CalendarStanding, NoticeDevices, NoticeGate, NoticeSample, SendStanding } from "./notices/gate.js";
 export { TOLD_DEVICES_PREFIX, devicesOf, noticeSampleOf } from "./notices/sample.js";
@@ -258,7 +258,7 @@ export {
 export { noticeFields, type NoticeFacts, type NoticeFields, type NoticeWording } from "./notices/fields.js";
 export {
   CALENDAR_SNAPSHOT_FILE, CALENDAR_SNAPSHOT_VERSION, SNAPSHOT_DAYS, SNAPSHOT_DAY_EVENTS_MAX,
-  type CalendarSnapshot, type SnapshotDay, type SnapshotEvent, type SnapshotMonth, type SnapshotSummary,
+  type CalendarSnapshot, type SnapshotDay, type SnapshotEvent, type SnapshotMonth, type SnapshotSummary, type SummaryEvent,
 } from "./notices/snapshot.js";
 
 // Wire vocabulary + errors.
@@ -401,6 +401,7 @@ export {
   fullDateTime,
   longDateStamp,
   messageStamp,
+  shortCivilDateStamp,
   shownDateOf,
   weekdayClock,
   weekdayDateClock,
@@ -491,6 +492,7 @@ export {
   heldUnpinned,
   threadSizeIndex,
   threadMarksIndex,
+  placedThreadMembers,
   threadMarkOf,
   type ThreadMark,
   threadSubject,

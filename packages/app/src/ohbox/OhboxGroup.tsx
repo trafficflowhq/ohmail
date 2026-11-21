@@ -58,7 +58,8 @@ export function OhboxGroup({
   heading,
 }: OhboxGroupProps) {
   const t = useText("ohbox");
-  const host = useContext(FrameContext)?.api.host;
+  const frame = useContext(FrameContext)?.api;
+  const host = frame?.host;
   const reader = host?.features.reader;
   const newestFirst = readThreadOrder(host?.session.scope ?? null) === "top";
   const ScreenContact = reader === NONE ? undefined : reader?.Screening;
@@ -105,6 +106,7 @@ export function OhboxGroup({
               newestFirst={newestFirst}
               beside={beside}
               showTaggedByline={showTaggedByline}
+              squaresBelow={frame?.plan.device === "fold"}
               row={row}
               index={rowBase === undefined ? undefined : rowBase + from + k}
               place={{ at: from + k + 1, of: rows.length }}
@@ -148,6 +150,7 @@ const sameAddress = (a: string, b: string): boolean => a.toLowerCase() === b.toL
 
 interface OhboxRowItemProps {
   newestFirst: boolean;
+  squaresBelow: boolean;
   model: OhboxListModel;
   beside: OhboxBeside;
   showTaggedByline: boolean;
@@ -179,6 +182,7 @@ function rowStamp(format: Stamp, message: EngineMessage): ReturnType<Stamp> {
 function OhboxRowItem({
   model,
   newestFirst,
+  squaresBelow,
   beside,
   showTaggedByline,
   row,
@@ -239,6 +243,7 @@ function OhboxRowItem({
       whenTitle={stamp.title}
       onWhen={beside.flipTime}
       file={file ?? undefined}
+      squaresBelow={squaresBelow}
       squares={
         marks && run !== null ? (
           <ReadSquares

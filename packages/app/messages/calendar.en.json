@@ -8,10 +8,23 @@
       "resizeStart": "Change first day",
       "resizePreview": "{first} – {last} · {title}",
       "resizeEnd": "Change last day",
+      "cancelEvent": "Cancel event",
+      "writeGuests": "Write to invitees",
+      "emailOrganizer": "Email organizer",
+      "removeCancelled": "Remove",
+      "removeFromCalendar": "Remove from my calendar",
+      "removeScope": "Remove {title}",
+      "answerScope": "Answer {title}",
       "delete": "Delete",
       "moveTo": "Move to",
       "hideCalendar": "Hide this calendar",
       "tellsDelete": "{title} is cancelled",
+      "cancellationMessage": "The event has been cancelled",
+      "moveRestriction": {
+        "guests": "Events with guests stay in their account’s calendars",
+        "fields": "This event has details that another calendar can’t keep"
+      },
+      "moving": "Moving event",
       "sendCancellation": "Send cancellation",
       "panel": "Event actions",
       "deleteTitle": "Delete {title}",
@@ -34,6 +47,24 @@
     "draft": {
       "discarded": "Discarded",
       "undo": "Undo"
+    },
+    "proposal": {
+      "keepQuestion": "Tell {name} the time stays?",
+      "keepConfirm": "Confirm",
+      "action": "Propose a new time",
+      "question": "Propose this time?",
+      "questionWhen": "Propose this time? {when}",
+      "confirm": "Propose",
+      "accept": "Accept {time}",
+      "keep": "Keep {time}",
+      "proposed": "Proposed",
+      "incoming": "{name} proposes {when}",
+      "changed": "The event changed",
+      "sending": "Sending proposal",
+      "undo": "Undo",
+      "undone": "Send undone",
+      "undoLate": "The proposal has already left",
+      "failed": "Couldn’t send the proposal"
     },
     "edit": {
       "closeEditor": "Close event editor",
@@ -100,6 +131,10 @@
       "copied": "Copied"
     },
     "location": {
+      "placeholder": "A place",
+      "unavailable": "Place suggestions are unavailable",
+      "back": "Back",
+      "clear": "Clear place",
       "own": "Your places",
       "suggestions": "Place suggestions",
       "credit": "© OpenStreetMap contributors",

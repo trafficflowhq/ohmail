@@ -17,7 +17,8 @@ export function useFaceSettings(
   failed: () => string,
   report: ToastFn,
 ): GeneralModel["look"] {
-  const { face, resolved, facePreference, accountFace, setFace, adoptAccountFace } = useTheme();
+  const { face, resolved, facePreference, deviceFaceExplicit, accountFace, setFace, adoptAccountFace } =
+    useTheme();
   /** Local, so a rejection can be reported without any shared flag owning the message. */
   const [saving, setSaving] = useState(false);
   const [localEdits] = useState(newFaceEdits);
@@ -26,6 +27,9 @@ export function useFaceSettings(
   /* "Applies on all your devices" may only be claimed when the account really governs this
      device: the stored account face matches AND no device pin outranks it. */
   const accountGoverns = accountFace === face && facePreference === null;
+  const pin = () => {
+    if (!saving && edits.pending === null) setFace(face, true);
+  };
 
   const writeAccount = (
     { apply, captureOwner }: NonNullable<FaceSettingsProps["accountWrite"]>,
@@ -37,6 +41,7 @@ export function useFaceSettings(
     if (prior === null) {
       edits.confirmed = accountFace;
       edits.pin = facePreference;
+      edits.pinExplicit = deviceFaceExplicit;
     }
     edits.chosen = submitted;
     adoptAccountFace(submitted);
@@ -49,11 +54,12 @@ export function useFaceSettings(
         if (edits.pending === null || !stillOwns()) return;
         edits.confirmed = stored;
         edits.pin = null;
+        edits.pinExplicit = false;
         if (edits.pending === work) adoptAccountFace(stored);
       } catch {
         if (edits.pending !== work || !stillOwns()) return;
         adoptAccountFace(edits.confirmed);
-        setFace(edits.pin);
+        setFace(edits.pin, edits.pinExplicit);
         report(failed());
       } finally {
         if (edits.pending === work) {
@@ -72,7 +78,9 @@ export function useFaceSettings(
     scheme: resolved,
     set(next) {
       if (next === face) return;
-      if (accountWrite === null) {
+      if (deviceFaceExplicit) {
+        setFace(next, true);
+      } else if (accountWrite === null) {
         setFace(next);
         holdForAccount?.(next);
       } else {
@@ -83,10 +91,11 @@ export function useFaceSettings(
       accountWrite === null
         ? null
         : accountGoverns
-          ? { governs: "all" }
+          ? { governs: "all", busy: saving, pin }
           : {
               governs: accountFace === null && facePreference === null ? "default" : "device",
               busy: saving,
+              pin,
               applyAll() {
                 if (!saving) writeAccount(accountWrite, face);
               },

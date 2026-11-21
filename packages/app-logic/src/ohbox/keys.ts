@@ -295,14 +295,18 @@ function cursorKeys({
   noCursor,
 }: KeyParts & { noCursor: NoCursor }): KeyBinding[] {
   return [
-    {
-      chord: "t",
-      group: "message",
-      label: t("keyTag"),
-      disabled: selected == null,
-      ...noCursor,
-      run: () => selected && onAddTag(selected.id, input.anchors.row(selected.id)),
-    },
+    ...(picked.size === 0
+      ? [
+          {
+            chord: "t",
+            group: "message" as const,
+            label: t("keyTag"),
+            disabled: selected == null,
+            ...noCursor,
+            run: () => selected && onAddTag(selected.id, input.anchors.row(selected.id)),
+          },
+        ]
+      : []),
     {
       chord: "x",
       group: "message",

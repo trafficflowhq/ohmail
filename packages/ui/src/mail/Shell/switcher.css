@@ -50,6 +50,20 @@
     }
   }
 
+  .oh-switcher-entry {
+    margin-inline: var(--s2);
+    border-block-end: var(--oh-hair) solid var(--line);
+    padding-block-end: var(--s1);
+  }
+
+  .oh-switcher-entry[data-product="mail"] {
+    --oh-railentry-stop: var(--oh-switcher-mail);
+  }
+
+  .oh-switcher-entry[data-product="cal"] {
+    --oh-railentry-stop: var(--oh-switcher-cal);
+  }
+
   .oh-switcher {
     box-sizing: border-box;
     position: relative;

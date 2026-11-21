@@ -107,9 +107,9 @@ describe("Microsoft against the double: the calendars and the sign-in", () => {
     expect(answer).toEqual({
       ok: true,
       value: [
-        { id: "cal-studio", name: "Calendar", color: null, writable: true, byToken: true, zone: null },
-        { id: "cal-market", name: "Market", color: null, writable: true, byToken: true, zone: null },
-        { id: "cal-closing-days", name: "Studio closing days", color: null, writable: false, byToken: true, zone: null },
+        { id: "cal-studio", name: "Calendar", color: null, writable: true, owned: true, byToken: true, zone: null },
+        { id: "cal-market", name: "Market", color: null, writable: true, owned: true, byToken: true, zone: null },
+        { id: "cal-closing-days", name: "Studio closing days", color: null, writable: false, owned: true, byToken: true, zone: null },
       ],
     });
     expect(sent).toEqual([{ method: "GET", path: "/v1.0/me/calendars", tokenGoesTo: { "127.0.0.1": true, "graph.microsoft.com": false, "login.microsoftonline.com": false } }]);

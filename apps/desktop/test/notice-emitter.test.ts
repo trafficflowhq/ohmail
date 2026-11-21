@@ -46,6 +46,38 @@ describe("the window's emitter", () => {
     });
   });
 
+  it("hands local details only for one identified arrival through its signed-in window", async () => {
+    const invoke = vi.fn(async () => undefined);
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke, transformCallback: () => 1 });
+    const writer = { document: 2, session: 3 };
+    const details = { sender: "Fixture Person", subject: "New meeting" };
+    const emitter = desktopEmitterFor(writer);
+    await emitter.post({ kind: "ohbox", count: 1 }, () => true, "arrived", details);
+    expect(invoke).toHaveBeenCalledWith("notify", {
+      notice: { kind: "ohbox", count: 1 }, opening: { ...writer, letter: "arrived", details },
+    });
+    await emitter.post({ kind: "ohbox", count: 2 }, () => true, undefined, details);
+    expect(invoke).toHaveBeenLastCalledWith("notify", {
+      notice: { kind: "ohbox", count: 2 }, opening: { ...writer, letter: undefined },
+    });
+  });
+
+  it("hands the day's agenda to the desktop with its current calendar document", async () => {
+    const invoke = vi.fn(async () => undefined);
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke, transformCallback: () => 1 });
+    const writer = { document: 2, session: 3 };
+    const emitter = desktopEmitterFor(writer);
+    expect(emitter.carries).toContain("cal_summary");
+    await emitter.post({ kind: "cal_summary", events: 1, first: null, toAnswer: 0 },
+      () => true, undefined, undefined, {
+        zone: "UTC", agenda: [{ startMs: NOW, allDay: false, label: { as: "title", text: "Meeting" } }],
+      });
+    expect(invoke).toHaveBeenCalledWith("notify", {
+      notice: { kind: "cal_summary", count: 1 },
+      opening: { ...writer, summary: [{ time: "08:00", label: { as: "title", text: "Meeting" } }] },
+    });
+  });
+
   it("sends each calendar replacement immediately with the frame's captured writer and increasing order", async () => {
     const invoke = vi.fn(async (_name: string, _payload?: unknown, _options?: unknown) => []);
     vi.stubGlobal("__TAURI_INTERNALS__", { invoke, transformCallback: () => 1 });

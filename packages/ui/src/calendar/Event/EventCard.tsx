@@ -44,6 +44,8 @@ export interface EventCardRow {
 
 export interface EventCardProps {
   title: string;
+  /** Invitation and mail cards carry a neutral head. */
+  neutralHead?: boolean;
   titleInput?: { label: string; value: string; onChange: (value: string) => void; readOnly: boolean };
   editor?: ReactNode;
   /** Whose it is: the head stands on that colour, a step deeper. `null` while it is on no calendar. */
@@ -72,7 +74,7 @@ export interface EventCardProps {
   /** In a sheet from the foot: the event's verbs, which stay at its foot. */
   foot?: ReactNode;
   /** `card` stands beside its event; `inline` is set into a list under the row that is its head; `sheet` comes up from the foot. */
-  frame?: "card" | "inline" | "sheet";
+  frame?: "card" | "inline" | "sheet" | "reading";
   /** Which side of its event it stands on, as the app placed it. */
   side?: "r" | "l" | "b" | "t" | "o";
   /** Where the app placed it, and how wide where it had to narrow it to fit. */
@@ -120,6 +122,7 @@ export function EventCard(p: EventCardProps) {
       data-tone={own["data-tone"]}
       data-frame={frame === "card" ? undefined : frame}
       data-editing={p.titleInput ? "" : undefined}
+      data-neutral-head={p.neutralHead ? "" : undefined}
       data-side={p.side}
       data-still={p.still ? "" : undefined}
       style={{

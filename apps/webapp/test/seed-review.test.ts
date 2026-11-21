@@ -167,7 +167,7 @@ describe("the sent-mail seed review", () => {
   it("names the people and the count before writing anything", async () => {
     const { container } = await mount();
     // The kit draws a title's closing full stop as its end dot: the sentence is the same.
-    expect(text(container)).toContain("You've written to 3 people.".replace(/\.$/, ""));
+    expect(text(container)).toContain("3 people you wrote to");
     expect(text(container)).toContain("Lena Roth");
     expect(text(container)).toContain("ben@studio.example");
     // Nothing was posted by looking at the list. The list is an offer.
@@ -203,10 +203,10 @@ describe("the sent-mail seed review", () => {
 
     // Untick Ben. The button restates the number, so the count is never implicit.
     await act(async () => { checks[1]!.click(); await Promise.resolve(); });
-    expect(text(container)).toContain("Let 1 person through");
+    expect(text(container)).toContain("Let 1 in");
 
     const confirm = [...container.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").includes("Let 1 person through"));
+      .find((b) => b.textContent?.trim() === "Let 1 in");
     expect(confirm).toBeTruthy();
     await act(async () => { confirm!.click(); await Promise.resolve(); await Promise.resolve(); });
 
@@ -234,7 +234,7 @@ describe("the sent-mail seed review", () => {
     confirmFails = true;
     const press = (): HTMLButtonElement | undefined =>
       [...container.querySelectorAll("button")]
-        .find((b) => (b.textContent ?? "").includes("Let 1 person through")) as HTMLButtonElement | undefined;
+        .find((b) => b.textContent?.trim() === "Let 1 in") as HTMLButtonElement | undefined;
     await act(async () => { press()!.click(); await Promise.resolve(); await Promise.resolve(); });
 
     // The list is still on screen — not an apology card — and it still knows who was unticked.
@@ -263,7 +263,7 @@ describe("the sent-mail seed review", () => {
     expect(text(container)).not.toContain("lena@atelier.example");
 
     const untickShown = [...container.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").includes("Untick"));
+      .find((b) => b.textContent?.trim() === "None");
     expect(untickShown, "no bulk untick was offered under a filter").toBeTruthy();
     await act(async () => { untickShown!.click(); await Promise.resolve(); });
 
@@ -273,13 +273,13 @@ describe("the sent-mail seed review", () => {
     const after = boxes(container);
     expect(after[0]!.checked, "Lena was unticked by a filtered bulk action").toBe(true);
     expect(after[1]!.checked).toBe(false);
-    expect(text(container)).toContain("Let 1 person through");
+    expect(text(container)).toContain("Let 1 in");
 
     // And the other direction puts them back.
     const tickAll = [...container.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").includes("Tick all"));
+      .find((b) => b.textContent?.trim() === "All");
     await act(async () => { tickAll!.click(); await Promise.resolve(); });
-    expect(text(container)).toContain("Let 2 people through");
+    expect(text(container)).toContain("Let 2 in");
   });
 
   it("'Not now' writes nothing at all", async () => {
@@ -316,7 +316,7 @@ describe("the sent-mail seed review", () => {
       let handed = 0;
       const { container } = await mount({ onNothingToDecide: () => { handed += 1; } });
       expect(handed).toBe(1);
-      expect(text(container)).not.toContain("Let 0 people through");
+      expect(text(container)).not.toContain("Let 0 in");
     });
 
     it("opened from Settings: one sentence and a way out, no confirm", async () => {

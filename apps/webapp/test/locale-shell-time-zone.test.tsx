@@ -100,7 +100,7 @@ describe("dates under the app's own locale provider", () => {
   it("renders the dated rows — otherwise a count of zero errors is a count of nothing", async () => {
     const el = await mountUnderTheRealShell();
     // The positive control this case exists to carry: the pane really did format dates.
-    const rows = el.querySelectorAll('.set-row[role="group"]');
+    const rows = el.querySelectorAll('.oh-settingline[role="group"]');
     expect(rows.length, "no device row rendered").toBeGreaterThanOrEqual(2);
     // Both rows carry a formatted year, so a later count of zero errors is a count of something.
     expect((el.textContent ?? "").match(/2026/g)?.length ?? 0).toBeGreaterThanOrEqual(2);

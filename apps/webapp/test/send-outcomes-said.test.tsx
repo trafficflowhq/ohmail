@@ -71,6 +71,8 @@ const held = (): HTMLElement | null => document.querySelector<HTMLElement>('.fr-
 const openAct = (): HTMLButtonElement | null =>
   [...(held()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => (b.textContent ?? "").trim() === "Open") ?? null;
 const notSentToast = (): boolean => /Not sent/.test(held()?.textContent ?? "");
+// The report draws its end dot separately from the sentence text.
+const reportWords = (sentence: string): string => sentence.replace(/\.$/, "");
 const toasts = (): string => [...document.querySelectorAll('.fr-report [role="status"]')].map((n) => n.textContent ?? "").join(" | ");
 const row = (el: HTMLElement, id: string): HTMLElement | null =>
   el.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
@@ -116,7 +118,7 @@ describe("a send that ends Not sent", () => {
     await act(async () => { window.location.hash = "#/ohbox"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
     await waitFor(() => composeRegion() == null, "the composer off screen");
     await online();
-    await waitFor(() => (held()?.textContent ?? "").includes(en.compose.statusUnreachable), "the Not sent toast");
+    await waitFor(() => (held()?.textContent ?? "").includes(reportWords(en.compose.statusUnreachable)), "the Not sent toast");
 
     s.refuseSend.on = false;
     await press(openAct(), "Open");
@@ -235,7 +237,7 @@ describe("at a phone width, where the reading column is hidden", () => {
     await press(sheetBack(), "the sheet's back control");
     await waitFor(() => document.querySelector(".fr-frame[data-letter]") == null, "the sheet closed");
     await online();
-    await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
+    await waitFor(() => (held()?.textContent ?? "").includes(reportWords(en.reply.statusUnreachable)), "the Not sent toast");
   }, 30_000);
 
   it("6 — Open from another letter's sheet brings the reply and its words into the sheet", async () => {
@@ -248,7 +250,7 @@ describe("at a phone width, where the reading column is hidden", () => {
     await press(row(s.el, "m2"), "tap the next letter");
     await waitFor(() => sheetSubject("Subject m2") !== null, "the sheet on m2");
     await online();
-    await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
+    await waitFor(() => (held()?.textContent ?? "").includes(reportWords(en.reply.statusUnreachable)), "the Not sent toast");
     s.refuseSend.on = false;
     await press(openAct(), "Open");
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("See you on Thursday"), "the reply in the sheet");
@@ -313,7 +315,7 @@ describe("Open never puts older words over the ones refused", () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
     await forwardThenLetter(s);
     await online();
-    await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
+    await waitFor(() => (held()?.textContent ?? "").includes(reportWords(en.reply.statusUnreachable)), "the Not sent toast");
     s.refuseSend.on = false;
     await press(openAct(), "Open");
     await waitFor(() => (forwardDock(s)?.textContent ?? "").includes("FORWARD NOTE"), "the forward's own dock");
@@ -324,13 +326,13 @@ describe("Open never puts older words over the ones refused", () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
     await forwardThenLetter(s);
     await online();
-    await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
+    await waitFor(() => (held()?.textContent ?? "").includes(reportWords(en.reply.statusUnreachable)), "the Not sent toast");
     // The original leaves this device: the forward's row can only open in the composer now.
     s.remote.push({ type: "message", op: "delete", id: "m1", seq: 0, updatedAt: NOW.toISOString(), entity: null } as unknown as SyncChange);
     await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
     s.refuseSend.on = false;
     await press(openAct(), "Open");
-    await waitFor(() => toasts().includes(en.compose.notSentOpenBlocked), "the refusal in words");
+    await waitFor(() => toasts().includes(reportWords(en.compose.notSentOpenBlocked)), "the refusal in words");
     expect(readComposeDraft(storageOwner())?.subject, "the letter in the composer").toBe("LETTER B");
     expect(composeField("Subject")?.value).toBe("LETTER B");
   }, 60_000);
@@ -391,7 +393,7 @@ describe("every ending stays reachable until it is acted on", () => {
     await waitFor(() => words.some((text) => replySurface(s.el)?.textContent?.includes(text)), "the reported reply back");
     const remaining = words.find((text) => !replySurface(s.el)?.textContent?.includes(text));
     const notice = () => document.querySelector<HTMLElement>('.fr-railnotice [role="status"], .fr-noticebar [role="status"]');
-    await waitFor(() => notice()?.textContent?.includes(en.reply.statusUnreachable) === true, "the other failure remains on the notice line");
+    await waitFor(() => notice()?.textContent?.includes(reportWords(en.reply.statusUnreachable)) === true, "the other failure remains on the notice line");
     const openNotice = [...(notice()?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "Open");
     await press(openNotice ?? null, "Open the remaining reply");
     await waitFor(() => remaining !== undefined && replySurface(s.el)?.textContent?.includes(remaining) === true, "the other reply back");
@@ -415,7 +417,7 @@ describe("every ending stays reachable until it is acted on", () => {
       await press(row(s.el, "m3"), "row m3");
       await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
       await act(async () => { release(); });
-      await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), `the Not sent toast for ${id}`);
+      await waitFor(() => (held()?.textContent ?? "").includes(reportWords(en.reply.statusUnreachable)), `the Not sent toast for ${id}`);
       if (id === "m1") {
         await press(openAct(), "Open");
         await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("First reply"), "the first reply back");
@@ -436,9 +438,9 @@ describe("every ending stays reachable until it is acted on", () => {
     await press(row(s.el, "m3"), "row m3");
     await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
     await act(async () => { release(); });
-    await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
+    await waitFor(() => (held()?.textContent ?? "").includes(reportWords(en.reply.statusUnreachable)), "the Not sent toast");
     await key("e");
-    await waitFor(() => !(held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the toast replaced");
+    await waitFor(() => !(held()?.textContent ?? "").includes(reportWords(en.reply.statusUnreachable)), "the toast replaced");
     await toDrafts();
     await waitFor(() => draftNotes(s).includes(en.reply.statusUnreachable), "the row says Not sent");
   }, 60_000);
@@ -500,7 +502,7 @@ describe("an ending that may have gone is never counted as not sent", () => {
       const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
       await twoEndings(s, UNVERIFIED, UNREACHABLE, hidden);
       const said = await settledNotice();
-      expect(said).toContain(en.reply.statusUnverified);
+      expect(said).toContain(reportWords(en.reply.statusUnverified));
       expect(said).not.toMatch(notSentCount);
       // Open goes to the reply that may have gone, with its words, never to a count of rows.
       await press(openAct(), "Open");
@@ -515,7 +517,7 @@ describe("an ending that may have gone is never counted as not sent", () => {
       const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
       await twoEndings(s, UNVERIFIED, UNVERIFIED, hidden);
       const said = await settledNotice();
-      expect(said).toContain(en.reply.statusUnverified);
+      expect(said).toContain(reportWords(en.reply.statusUnverified));
       expect(said).not.toMatch(notSentCount);
     }, 60_000);
 
@@ -523,7 +525,7 @@ describe("an ending that may have gone is never counted as not sent", () => {
       const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
       await twoEndings(s, DUPLICATE, UNREACHABLE, hidden);
       const said = await settledNotice();
-      expect(said).toContain(en.reply.statusDuplicate);
+      expect(said).toContain(reportWords(en.reply.statusDuplicate));
       expect(said).not.toMatch(notSentCount);
       await toDrafts();
       await waitFor(() => draftNotes(s).includes(en.reply.statusUnreachable), "the unreachable one marked in Drafts");
@@ -534,7 +536,7 @@ describe("an ending that may have gone is never counted as not sent", () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
     await twoEndings(s, UNREACHABLE, UNVERIFIED, false);
     const said = await settledNotice();
-    expect(said).toContain(en.reply.statusUnverified);
+    expect(said).toContain(reportWords(en.reply.statusUnverified));
     expect(said).not.toMatch(notSentCount);
   }, 60_000);
 });

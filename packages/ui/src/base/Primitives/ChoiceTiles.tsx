@@ -19,6 +19,7 @@ export interface ChoiceTilesProps<V extends string> {
   /** The one Enter takes, with the key printed on it. The app listens for the key; the kit draws the hint. */
   enter?: { value: V; keyHint: string };
   onChange?: (value: V) => void;
+  compact?: boolean;
 }
 
 /**
@@ -28,7 +29,7 @@ export interface ChoiceTilesProps<V extends string> {
  * the tiles and take none.
  */
 export function ChoiceTiles<V extends string>(props: ChoiceTilesProps<V>) {
-  const { label, options, value, enter, onChange } = props;
+  const { label, options, value, enter, onChange, compact } = props;
   const group = useRef<HTMLDivElement | null>(null);
   /* The tile the keys are on while they are in the group: Tab leaves the group from there. */
   const [on, setOn] = useState<number | null>(null);
@@ -69,7 +70,7 @@ export function ChoiceTiles<V extends string>(props: ChoiceTilesProps<V>) {
       onFocus={entered}
       onBlur={left}
     >
-      <div className="oh-choicetiles-grid">
+      <div className="oh-choicetiles-grid" data-compact={compact ? "" : undefined}>
         {options.map((option, i) => (
           <span key={option.value} className="oh-choicetiles-tile" data-dim={option.dim ? "" : undefined}>
             <Button

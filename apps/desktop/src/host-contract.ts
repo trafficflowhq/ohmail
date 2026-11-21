@@ -108,7 +108,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       scope: facts.scope,
       mirrorAccount: status.accountId ?? null,
       account: facts.account,
-      accountAddress: null,
+      accountAddress: null, accountDisplayName: null,
       signOut: has.signOut,
       recover: has.frame.recover,
       today: NONE,
@@ -161,7 +161,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       language: "install",
       // The bundled store takes filters. A remote server must advertise the capability.
       searchBy: local || cloud ? has.search ?? (local ? "people" : CANNOT.searchBy) : CANNOT.searchBy,
-      products: CANNOT.products,
+      products: calendar !== NONE && isManagedDoor(status) ? "both" : CANNOT.products,
     },
     features: {
       ...has.features,

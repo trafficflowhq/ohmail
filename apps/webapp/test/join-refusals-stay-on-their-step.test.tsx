@@ -98,7 +98,7 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
     await act(async () => { button!.click(); });
     await settle();
   };
-  const h1 = () => host.querySelector("h1")?.textContent ?? "";
+  const h1 = () => (host.querySelector("[data-page-filling-form] h1") ?? host.querySelector("h1"))?.textContent ?? "";
   const alertText = () => [...host.querySelectorAll('[role="alert"]')].map((el) => el.textContent ?? "").join(" | ");
   const value = (id: string) => probes.input(id)?.value ?? null;
   return { host, type, submit, h1, alertText, value, settle, choose: probes.choose };
@@ -107,8 +107,9 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
 /** The generic entry, filled as a person on their own mail server fills it. */
 async function mailboxForm(messages: Messages, imapHost: string) {
   const ui = await mount(messages);
-  expect(ui.h1()).toBe(messages.join.step_mailbox_title);
-  await ui.choose(messages.providerPicker.otherLabel);
+  expect(ui.h1().trim()).toBe(messages.onboarding.providerFirst);
+  await ui.choose(messages.providerPicker.otherShort);
+  expect(ui.h1()).toBe(messages.join.manualTitle);
   await ui.type("join-mb-address", "pat@family.example");
   await ui.type("join-imap", imapHost);
   await ui.type("join-smtp", "smtp.family.example");
@@ -121,8 +122,8 @@ describe("the mailbox step keeps its own refusals", () => {
     const said = "That incoming (IMAP) server address names this machine or your own network, not a mail server on the internet.";
     mailboxAnswer = refusal(400, "validation_failed", said);
     const ui = await mailboxForm(en, "mail.home.lan");
-    await ui.submit(en.join.connectMailbox);
-    expect(ui.h1()).toBe(en.join.step_mailbox_title);
+    await ui.submit(en.join.manualConnect);
+    expect(ui.h1()).toBe(en.join.manualTitle);
     expect(ui.h1()).not.toBe(en.join.myInvite.replace("<blank></blank>.", en.join.inviteLabel));
     expect(ui.alertText()).toContain(said);
     expect(ui.alertText()).not.toContain(en.join.inviteRequiredAfterAll);
@@ -134,8 +135,8 @@ describe("the mailbox step keeps its own refusals", () => {
     const said = "Mail is not carried on port 995. Use 993, 143.";
     mailboxAnswer = refusal(400, "validation_failed", said, { port: 995, ports: [993, 143] });
     const ui = await mailboxForm(en, "mail.family.example:995");
-    await ui.submit(en.join.connectMailbox);
-    expect(ui.h1()).toBe(en.join.step_mailbox_title);
+    await ui.submit(en.join.manualConnect);
+    expect(ui.h1()).toBe(en.join.manualTitle);
     expect(ui.alertText()).toContain(said);
   });
 
@@ -144,8 +145,8 @@ describe("the mailbox step keeps its own refusals", () => {
       "The mail server refused this password. If your provider requires an app-specific password, generate one there and use it here instead of your account password.",
       { reason: "auth", transport: "imap" });
     const ui = await mailboxForm(de, "mail.family.example");
-    await ui.submit(de.join.connectMailbox);
-    expect(ui.h1()).toBe(de.join.step_mailbox_title);
+    await ui.submit(de.join.manualConnect);
+    expect(ui.h1()).toBe(de.join.manualTitle);
     expect(ui.alertText()).toBe(de.mailboxes.probe_auth);
   });
 });

@@ -31,18 +31,25 @@ function mount(unread: number, fresh?: number, lang: "en" | "de" = "en") {
     fireEvent.click(banner.getByRole("button", { name: menuName }));
     return within(screen.getByRole("menu", { name: menuName })).getByRole("menuitem", { name });
   };
-  return { banner, item, mail, line };
+  return { item, mail, line };
 }
 
-describe("MarkAllRead — absent exactly when there is nothing to clear", () => {
-  it("renders nothing at unreadCount === 0 (and no fresh count)", () => {
-    const { banner } = mount(0);
-    expect(banner.queryByRole("button", { name: "List" })).toBeNull();
+// The list menu stays visible. The studio shows its Mark all read action disabled when both counts are zero.
+describe("MarkAllRead — disabled when there is nothing to clear", () => {
+  it("is disabled and sends nothing when there is no unread or fresh count", () => {
+    const { item, mail } = mount(0);
+    const markAll = item("Mark all read");
+    expect(markAll).toHaveProperty("disabled", true);
+    fireEvent.click(markAll);
+    expect(mail.mutations).toEqual([]);
   });
 
-  it("renders nothing when both counts are zero — an explicit zero is not a count", () => {
-    const { banner } = mount(0, 0);
-    expect(banner.queryByRole("button", { name: "List" })).toBeNull();
+  it("is disabled and sends nothing when both counts are explicitly zero", () => {
+    const { item, mail } = mount(0, 0);
+    const markAll = item("Mark all read");
+    expect(markAll).toHaveProperty("disabled", true);
+    fireEvent.click(markAll);
+    expect(mail.mutations).toEqual([]);
   });
 
   it("renders a pressable button when unread > 0", async () => {

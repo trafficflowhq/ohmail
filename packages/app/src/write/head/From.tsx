@@ -19,6 +19,7 @@ export function useFromLine(
 ): RecipientsProps["from"] {
   const t = useText("write");
   const stateId = useId();
+  const matchedId = useId();
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement | null>(null);
   const roster = useContext(MailStateContext)?.mailboxes;
@@ -28,6 +29,9 @@ export function useFromLine(
     from.substituted && from.substitutedFrom !== null
       ? t("from.substituted", { was: displayAddress(from.substitutedFrom) })
       : undefined;
+  const matched = from.domainMatched ? { label: t("from.matched"), id: matchedId } : undefined;
+  const describedBy =
+    [matched?.id, state === undefined ? undefined : stateId].filter(Boolean).join(" ") || undefined;
   const shown = displayAddress(from.address);
   const value =
     from.choices.length > 1 ? (
@@ -36,7 +40,7 @@ export function useFromLine(
           ref={anchor}
           label={t("from.choose", { address: shown })}
           expanded={open}
-          describedBy={state === undefined ? undefined : stateId}
+          describedBy={describedBy}
           onPress={locked ? undefined : () => setOpen(true)}
         >
           {shown}
@@ -70,7 +74,7 @@ export function useFromLine(
     label: t("from.label"),
     value,
     tag,
-    tags: from.domainMatched ? [t("from.matched")] : undefined,
+    tags: matched ? [matched] : undefined,
     ...(state !== undefined ? { state, stateId } : {}),
   };
 }

@@ -1,3 +1,4 @@
+import type { CloudSessionWire } from "./cloud-session.js";
 /**
  * THE DESKTOP WINDOW'S FRAME: the host built from the door in force, and the mail's places in it over the mail
  * ground. Every entry renders the node the window drew for that door, and nothing under any further condition the
@@ -19,8 +20,7 @@ import { type WayOutDoor, type WayOutSection } from "@ohmail/app/account/way-out
 import { calendar as calendarEntry, calendarNoticePlace } from "@ohmail/app/calendar";
 import { NO_PANE_PARTS } from "@ohmail/app/mail";
 import { AwaySettings, awayFeedOver, useAwayNotice } from "@ohmail/app/settings/away";
-import type { CalendarEventRecord, CalendarPort } from "@ohmail/app-logic/calendar";
-import { eventsWithWrites } from "@ohmail/client-engine/calendar-acts";
+import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
 import { readerZone } from "@ohmail/app-logic/reader";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useMailState } from "@ohmail/app-logic/mail-state";
@@ -44,7 +44,7 @@ import { desktopFileShell } from "../../webapp/app/shell/open-attachment";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
 import { readSearchBy } from "@ohmail/app-logic/search";
-import { bridgeFetch, readDesktopCalendarSettings, type EngineStatus } from "./bridge-fetch.js";
+import { bridgeFetch, desktopCalendarWrites, readDesktopCalendarSettings, type EngineStatus } from "./bridge-fetch.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { useDefaultMailNotice } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
@@ -53,13 +53,13 @@ import { DesktopPairingDevices } from "./DesktopDevices.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { ownModelAutoSuggest } from "./local-auto-suggest.js";
 import { DesktopScreening, DesktopUnsubscribeSettings } from "./DesktopScreening.js";
-import { DesktopSettings } from "./DesktopSettings.js";
+import { desktopStatusSummary, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { DesktopStorage, DesktopSubscription } from "./DesktopSubscription.js";
 import { useAppLocale } from "./DesktopLocale.js";
 import { DOOR_COPY } from "./door-copy.js";
-import { accountDoorFor, awayDoorFor, flavorOf, selfHostedServerOf, type HostedSession } from "./doors.js";
+import { accountDoorFor, awayDoorFor, flavorOf, isManagedDoor, selfHostedServerOf, type HostedSession } from "./doors.js";
 import { desktopHost } from "./host-contract.js";
 import type { LinkSlot } from "./link-in.js";
 import { awayOverBridge } from "./local-away.js";
@@ -91,6 +91,9 @@ export interface DesktopFrameProps {
   session: HostedSession;
   /** The hosted session was refused and the window's card says so. */
   sessionRefused: boolean;
+  hostedConnection?: CloudSessionWire | null;
+  hostedCheckedAt?: number | null;
+  hostedAddress?: string | null;
   sealFailed: boolean;
   paired: boolean;
   hostLabel: string | null;
@@ -152,6 +155,11 @@ function DesktopInstallPane() {
   return <DesktopSettings {...install} />;
 }
 
+function useDesktopSummary() {
+  const install = useContext(DesktopInstallContext);
+  return install ? { value: desktopStatusSummary(install.status) } : null;
+}
+
 function DesktopScreenerPane() {
   const install = useContext(DesktopInstallContext);
   if (install === null) throw new Error("Screener Settings requires a desktop install");
@@ -168,6 +176,7 @@ const NATIVE_PANE_PARTS = {
   about: DesktopAboutPane,
   help: DesktopHelpPane,
   desktop: DesktopInstallPane,
+  useDesktopSummary,
   screener: DesktopScreenerPane,
 };
 const INSTALL_MAIL_PARTS = browserMailParts(NATIVE_PANE_PARTS);
@@ -184,8 +193,8 @@ function DesktopMailboxesPane({ goToSetup }: {
         key={JSON.stringify([mailboxes.scope, mailboxes.door, mailboxes.flavor, mailboxes.removalDoor?.version])}
         {...mailboxes}
         goToSetup={goToSetup}
+        filingsFor={(mailbox) => <MailboxFilings mailbox={mailbox} api={filingsOverBridge} />}
       />
-      <MailboxFilings api={filingsOverBridge} />
       {mailboxes.door === "local" ? <MailboxSelfCheck check={checkMailboxHere} /> : null}
     </>
   );
@@ -375,6 +384,9 @@ export function DesktopFrame(p: DesktopFrameProps) {
     session,
     sealFailed: p.sealFailed,
     connection: paired ? freshness : null,
+    hostedConnection: p.hostedConnection ?? null,
+    hostedCheckedAt: p.hostedCheckedAt ?? null,
+    hostedAddress: p.hostedAddress ?? null,
     defaultMail: p.takesMailLinks,
     onStatus,
     onSwitchDoor: () => openOverlay("doors"),
@@ -382,7 +394,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
     onPairAgain: () => openOverlay("host"),
     onTakeOver: takeOver,
     onAiStatus: setAi,
-  }), [status, session, p.sealFailed, paired, freshness, p.takesMailLinks, onStatus, openOverlay, takeOver, setAi]);
+  }), [status, session, p.sealFailed, paired, freshness, p.hostedConnection, p.hostedCheckedAt, p.hostedAddress, p.takesMailLinks, onStatus, openOverlay, takeOver, setAi]);
 
   const awayDoor = awayDoorFor(status, session);
   const awayFeed = useMemo(
@@ -430,20 +442,30 @@ export function DesktopFrame(p: DesktopFrameProps) {
   const calendar = useMemo(() => {
     if (!hostedAccount || p.sessionRefused || !noticeSession) return NONE;
     const engine = p.engine;
-    const refuse = () => { throw new Error("This calendar view is read-only"); };
-    return {
-      newId: refuse,
-      press: async () => refuse(),
-      flush: async () => undefined,
-      verdict: () => null,
-      events: () => eventsWithWrites(engine.store.list<CalendarEventRecord>("calendar_event"), []),
+    const mayRun = () => engine.calendarQueueReady() && p.liveNoticeScope?.() === p.scope;
+    const transport = desktopCalendarWrites(noticeSession, () => {
+      // The sidecar catches up its own mirror before replying. Bring that echo into this window.
+      if (mayRun()) void engine.syncOnce().catch(() => undefined);
+    });
+    return calendarPortOf({
+      engine, transport, mayRun, online: window,
+      clock: { uuid: () => crypto.randomUUID(), now: Date.now },
       settings: () => readDesktopCalendarSettings(noticeSession),
       held: () => engine.calendarHeld(),
       load: NONE,
-      version: () => engine.read().version(),
-      subscribe: (changed) => engine.subscribe(changed),
-    } satisfies CalendarPort;
-  }, [hostedAccount, p.sessionRefused, noticeSession, p.engine]);
+    });
+  }, [hostedAccount, p.sessionRefused, noticeSession, p.engine, p.scope, p.liveNoticeScope]);
+  useLayoutEffect(() => {
+    if (calendar === NONE) return;
+    const stop = calendar.activate();
+    let ready = p.engine.calendarQueueReady();
+    const off = p.engine.subscribe(() => {
+      if (ready || !p.engine.calendarQueueReady()) return;
+      ready = true;
+      calendar.resumeWrites();
+    });
+    return () => { off(); stop(); };
+  }, [calendar, p.engine]);
   const [noticeView, setNoticeView] = useState<{
     fragment: string; owner: CalendarPort; document: number;
   } | null>(null);
@@ -516,7 +538,8 @@ export function DesktopFrame(p: DesktopFrameProps) {
     },
     features,
     notifications: { ...desktopNotificationHost, emitter: noticeEmitter, liveNoticeScope: p.liveNoticeScope },
-    frame: calendarNotice === null ? frame : {
+    frame: calendar !== NONE && isManagedDoor(status) ? { ...frame, calendar: calendarEntry }
+      : calendarNotice === null ? frame : {
       ...frame,
       calendar: { ...calendarEntry, notice: { fragment: calendarNotice.fragment, place: calendarNoticePlace } },
     },

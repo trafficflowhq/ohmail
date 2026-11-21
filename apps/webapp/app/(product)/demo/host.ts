@@ -37,7 +37,7 @@ export function demoHost(
     engine,
     /* The demo keeps its frozen day, as today's did: its invented letters are dated around it. */
     session: {
-      resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, account: null, accountAddress: null, recover: NONE, signOut: NONE,
+      resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, account: null, accountAddress: null, accountDisplayName: null, recover: NONE, signOut: NONE,
       mirrorAccount: null,
       today: DEMO_DAY,
     },

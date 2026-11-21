@@ -54,8 +54,8 @@ it("the create's re-read is AWAITED — the form does not come back", async () =
   const wire = fakeDoor({ connect: [{ ok: true, value: { mailboxId, address: null } }] });
   const stage = await mountStage({ rows: [], at: "#/first-run/add", door: "local", verbs: { ai: "on" }, connect: wire.door });
   const page = within(stage.el);
-  expect(stage.heading()).toBe(printed(t.mailboxTitle));
-  await stage.press(P.otherLabel);
+  expect(stage.heading().trim()).toBe(t.providerAnother);
+  await stage.press(P.otherShort);
   for (const [label, value] of [[t.address, "person@studio.example"], [t.password, "app-password-fixture"], [t.imapHost, "imap.studio.example"], [t.smtpHost, "smtp.studio.example"]]) {
     await act(async () => fireEvent.change(page.getByLabelText(label), { target: { value } }));
   }
@@ -65,7 +65,7 @@ it("the create's re-read is AWAITED — the form does not come back", async () =
   expect(page.queryByLabelText(t.address)).toBeNull();
   expect(page.queryByRole("button", { name: t.connect })).toBeNull();
   await stage.move([stageRow({ id: mailboxId })]);
-  expect(stage.heading()).toBe(printed(t.mapTitle));
+  expect(stage.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   expect(wire.of("connect")).toHaveLength(1);
 });
 
@@ -97,7 +97,7 @@ async function fill(el: HTMLElement): Promise<void> {
     await act(async () => { fireEvent.change(within(el).getByLabelText(label), { target: { value } }); });
   };
   await type(t.address, "me@lichtgrat.example");
-  const other = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(P.otherLabel));
+  const other = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(P.otherShort));
   await act(async () => { other!.click(); });
   await type(t.imapHost, "mail-a.home.arpa");
   await type(t.smtpHost, "mail-b.home.arpa");
@@ -152,11 +152,11 @@ async function mount(o: {
 describe("Start over on an add run", () => {
   it("the walk it lands on is one this run HAS — the connect form, not an intro", async () => {
     const s = await mount({ facts: addRun(), add: true });
-    expect(s.heading()).toBe(t.mailboxTitle);
+    expect(s.heading().trim()).toBe(t.providerAnother);
     await s.press(t.restart);
     // The screen after the press, and it may not be the one the walk dropped.
     expect(s.text()).not.toContain(printed(t.welcomeTitle));
-    expect(s.heading()).toBe(t.mailboxTitle);
+    expect(s.heading().trim()).toBe(t.providerAnother);
   });
 
   it("THE CONTROL IS LIVE — the press reaches a form that can be filled in and sent", async () => {
@@ -178,12 +178,12 @@ describe("Start over on an add run", () => {
     // The welcome carries no foot, so walk onto the form — which is where the verb lives.
     expect(s.heading()).toBe(printed(t.welcomeTitle));
     await s.press(t.welcomeStart);
-    expect(s.heading()).toBe(t.mailboxTitle);
+    expect(s.heading().trim()).toBe(t.providerFirst);
     await s.press(t.restart);
     expect(s.heading()).toBe(printed(t.welcomeTitle));
     // And there the control is live, because `welcome` IS on a first run's walk.
     await s.press(t.welcomeStart);
-    expect(s.heading()).toBe(t.mailboxTitle);
+    expect(s.heading().trim()).toBe(t.providerFirst);
   });
 });
 

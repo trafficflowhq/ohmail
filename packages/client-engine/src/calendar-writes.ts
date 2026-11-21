@@ -15,7 +15,7 @@
  * its event until the person acts on the event again.
  */
 import type {
-  CalendarAct, CalendarEventAct, CalendarEventRecord, CalendarReason, CalendarSettingsWire, CalendarWriteAnswer, CalendarWriteFault,
+  CalendarAct, CalendarEventAct, CalendarEventRecord, CalendarProposalAct, CalendarReason, CalendarSettingsWire, CalendarWriteAnswer, CalendarWriteFault,
 } from "@ohmail/wire";
 import { CalendarActKeys, eventsWithWrites, type DeviceAct, type EventWithWrites } from "./calendar-acts.js";
 import {
@@ -30,7 +30,7 @@ export { refusalWordOf, writeFaultOf, type CalendarRefusalWord } from "./calenda
 /** The ordinary outbox shape. Older builds do not send the deferred shape. */
 export const CALENDAR_OUTBOX_VERSION = 1;
 
-const DEFERRED_DELETE_VERSION = 2;
+const DEFERRED_ACT_VERSION = 2;
 const ATTEMPT_MS = 15_000;
 const CLAIM_MS = 30_000;
 const RECEIPT_MS = 5 * 60_000;
@@ -39,18 +39,19 @@ const RETRY_CAP_MS = 30_000;
 
 type CalendarOutboxRecord = {
   readonly key: string;
-  readonly act: CalendarAct;
+  readonly act: CalendarAct | CalendarProposalAct;
   /** When it was pressed (the device's clock), and the session's tiebreak within one millisecond. */
   readonly at: number;
   readonly n: number;
   readonly claimedUntil?: number;
 } & (
   | { readonly v: typeof CALENDAR_OUTBOX_VERSION; readonly notBefore?: never }
-  | { readonly v: typeof DEFERRED_DELETE_VERSION; readonly notBefore: number }
+  | { readonly v: typeof DEFERRED_ACT_VERSION; readonly notBefore: number }
 );
 
 /** How a device reaches our server's three write routes. The engine's HTTP adapter is one. */
 export interface CalendarWriteTransport {
+  mailProposal?(act: CalendarProposalAct, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
   /** `POST /calendar/writes` under `key`. Throws `MutationRejectedError` on a refusal. */
   writeCalendar(act: CalendarEventAct, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
   /** `POST /calendar/writes/:id/retry`. */
@@ -65,15 +66,24 @@ export interface CalendarHostTransport extends CalendarWriteTransport {
   setSuggestionDismissed?(id: string, dismissed: boolean): Promise<void>;
 }
 
+function isProposal(act: CalendarAct | CalendarProposalAct): act is CalendarProposalAct {
+  return act.kind === "calendar_event_propose" || act.kind === "calendar_proposal_keep";
+}
+
 function isRecord(v: unknown): v is CalendarOutboxRecord {
   if (!v || typeof v !== "object") return false;
   const record = v as Partial<CalendarOutboxRecord>;
   if (typeof record.key !== "string" || !record.act || typeof record.act !== "object") return false;
-  return record.v === CALENDAR_OUTBOX_VERSION || (record.v === DEFERRED_DELETE_VERSION &&
-    record.act.kind === "calendar_event_delete" && Number.isFinite(record.notBefore));
+  return record.v === CALENDAR_OUTBOX_VERSION || (record.v === DEFERRED_ACT_VERSION &&
+    (record.act.kind === "calendar_event_delete" || isProposal(record.act)) && Number.isFinite(record.notBefore));
 }
 
-const eventOf = (act: CalendarAct): string | null => ("eventId" in act ? act.eventId : null);
+const eventOf = (act: CalendarAct | CalendarProposalAct): string | null => ("eventId" in act ? act.eventId : null);
+
+/** An account lock stops the request before the server can judge the calendar change. */
+export function calendarWriteMayRetry(error: MutationRejectedError): boolean {
+  return error.retryable || (error.status === 402 && error.code === "subscription_required");
+}
 
 export class CalendarWriteQueue {
   private readonly settlements = new Map<string, { claim: number | undefined; receipt: CalendarSettlement }>();
@@ -118,7 +128,7 @@ export class CalendarWriteQueue {
 
   /** The acts on events this device still owes, for the overlay. */
   deviceActs(): DeviceAct[] {
-    return this.owed().flatMap((r) => (r.act.kind === "calendar_write_retry" || r.act.kind === "calendar_write_dismiss" ? [] : [{ key: r.key, act: r.act }]));
+    return this.owed().flatMap((r) => (r.act.kind === "calendar_write_retry" || r.act.kind === "calendar_write_dismiss" || isProposal(r.act) ? [] : [{ key: r.key, act: r.act }]));
   }
 
   /** Every event the mirror holds, with what waits for it and where. */
@@ -135,15 +145,23 @@ export class CalendarWriteQueue {
     return this.enqueue(act);
   }
 
-  async holdDelete(act: Extract<CalendarEventAct, { kind: "calendar_event_delete" }>, delay: number) {
+  holdDelete(act: Extract<CalendarEventAct, { kind: "calendar_event_delete" }>, delay: number) {
+    return this.hold(act, delay);
+  }
+
+  async hold(act: Extract<CalendarEventAct, { kind: "calendar_event_delete" }> | CalendarProposalAct, delay: number) {
     const record = await this.enqueue(act, delay);
     const deadline = record.notBefore ?? record.at;
     return {
       key: record.key,
       deadline,
       remainingMs: () => Math.max(0, deadline - this.opts.now()),
-      undo: () => this.undoDelete(record.key),
+      undo: () => this.undoHeld(record.key),
     };
+  }
+
+  pendingProposals() {
+    return this.owed().flatMap(({ key, act }) => isProposal(act) ? [{ key, act }] : []);
   }
 
   activate(): () => void {
@@ -184,18 +202,18 @@ export class CalendarWriteQueue {
     return this.running && (this.opts.mayRun?.() ?? true);
   }
 
-  private async enqueue(act: CalendarAct, delay?: number) {
+  private async enqueue(act: CalendarAct | CalendarProposalAct, delay?: number) {
     if (!this.mayRun()) throw new MutationRejectedError("calendar session unavailable", { retryable: true });
     const key = this.opts.uuid();
     const at = this.opts.now();
     // A deferred deletion is stamped with the visible base. It is not a predecessor until sent.
-    const stamped = delay !== undefined || act.kind === "calendar_write_retry" || act.kind === "calendar_write_dismiss"
+    const stamped = delay !== undefined || isProposal(act) || act.kind === "calendar_write_retry" || act.kind === "calendar_write_dismiss"
       ? act : this.keys.stamp(act, key);
     const eventId = eventOf(stamped);
     const record: CalendarOutboxRecord = {
       key, act: stamped, at, n: this.n++,
       ...(delay === undefined ? { v: CALENDAR_OUTBOX_VERSION } :
-        { v: DEFERRED_DELETE_VERSION, notBefore: at + delay }),
+        { v: DEFERRED_ACT_VERSION, notBefore: at + delay }),
     };
     try {
       await this.store.commitLocal([{ type: CALENDAR_OUTBOX_TYPE, id: key, entity: record }], []);
@@ -209,10 +227,10 @@ export class CalendarWriteQueue {
     return record;
   }
 
-  private async undoDelete(key: string): Promise<boolean> {
+  private async undoHeld(key: string): Promise<boolean> {
     if (!this.mayRun()) return false;
     const cancelled = await this.store.decideCalendarRow(key, (row) =>
-      this.mayRun() && isRecord(row) && row.v === DEFERRED_DELETE_VERSION &&
+      this.mayRun() && isRecord(row) && row.v === DEFERRED_ACT_VERSION &&
         row.claimedUntil === undefined && this.opts.now() < row.notBefore ? null : undefined);
     this.opts.onChange?.();
     if (cancelled) this.followDisk();
@@ -255,7 +273,7 @@ export class CalendarWriteQueue {
       }
       let record = next;
       let claim: number | undefined;
-      if (shared || next.v === DEFERRED_DELETE_VERSION) {
+      if (shared || next.v === DEFERRED_ACT_VERSION) {
         let wait = 0;
         await this.store.decideCalendarRow(next.key, (row) => {
           if (!active() || !isRecord(row)) return;
@@ -324,8 +342,10 @@ export class CalendarWriteQueue {
 
   private remember(r: CalendarOutboxRecord, claim: number | undefined, result: CalendarResult): CalendarSettlement {
     const act = r.act;
-    const reference = "eventId" in act
-      ? { type: "event" as const, id: act.eventId }
+    const reference = "recordId" in act
+      ? { type: "event" as const, id: act.recordId }
+      : "eventId" in act
+        ? { type: "event" as const, id: act.eventId }
       : { type: "write" as const, id: act.writeId };
     const receipt = { expiresAt: this.opts.now() + RECEIPT_MS, reference, result };
     this.settlements.set(r.key, { claim, receipt });
@@ -339,6 +359,11 @@ export class CalendarWriteQueue {
     return true;
   }
 
+  private mailProposal(act: CalendarProposalAct, key: string, signal: AbortSignal) {
+    if (!this.transport.mailProposal) throw new MutationRejectedError("Calendar proposals are unavailable.");
+    return this.transport.mailProposal(act, key, signal);
+  }
+
   /** False leaves the original act owed and holds later acts behind it. */
   private async sendOne(r: CalendarOutboxRecord, claim: number | undefined): Promise<boolean> {
     const ctrl = new AbortController();
@@ -346,11 +371,12 @@ export class CalendarWriteQueue {
     const deadline = setTimeout(() => ctrl.abort(), ATTEMPT_MS);
     let answered: { readonly answer: CalendarWriteAnswer; readonly seq: number | null };
     try {
-      answered = r.act.kind === "calendar_write_retry" ? await this.transport.retryCalendarWrite(r.act.writeId, r.key, ctrl.signal)
+      answered = isProposal(r.act) ? await this.mailProposal(r.act, r.key, ctrl.signal)
+        : r.act.kind === "calendar_write_retry" ? await this.transport.retryCalendarWrite(r.act.writeId, r.key, ctrl.signal)
         : r.act.kind === "calendar_write_dismiss" ? await this.transport.dismissCalendarWrite(r.act.writeId, r.key, ctrl.signal)
           : await this.transport.writeCalendar(r.act, r.key, ctrl.signal);
     } catch (err) {
-      if (ctrl.signal.aborted || !this.mayRun() || !(err instanceof MutationRejectedError) || err.retryable) {
+      if (ctrl.signal.aborted || !this.mayRun() || !(err instanceof MutationRejectedError) || calendarWriteMayRetry(err)) {
         await this.settle(r, claim);
         return false;
       }

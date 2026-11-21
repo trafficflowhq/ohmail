@@ -7,11 +7,14 @@ import { useMemo, useRef, useState } from "react";
 import { isoOfDay, nowIn, readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
 import {
   addFound,
+  foundCalendarsOf,
   foundOf,
   targetCalendarOf,
   type CalendarSuggestionRecord,
   type FoundRow,
 } from "@ohmail/app-logic/calendar/found";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
+import { usePressWhereOn } from "../frame/room.js";
 import { useFrame, useReport } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
 import { useText, useTimeZone } from "../text/index.js";
@@ -52,6 +55,7 @@ export function useFound(port: CalendarPort | typeof NONE) {
       pending: rows.filter((row) => row.alreadyOn === null).length,
       today,
       target,
+      choices: foundCalendarsOf(sources.calendars, sources.connections),
       toneOf,
       onCalendar,
     };
@@ -69,7 +73,7 @@ function outOf(port: CalendarPort): Set<string> {
 }
 
 /**
- * Add, for one row or several, one press after the other into one calendar. Each row is read again from the newest
+ * Add, for one row or several, one press after the other. Each row is read again from the newest
  * reading before its press: one gone, already on the calendar or being added by another Add is skipped. A refusal is
  * said by its word and stops the rest; what was taken is said once at the end; while a press is owed nothing is said.
  */
@@ -81,15 +85,21 @@ export function useAdd(port: CalendarPort, found: ReturnType<typeof useFound>) {
   /* The newest reading, for the rows after the first press. */
   const latest = useRef(found);
   latest.current = found;
-  const add = async (rows: readonly FoundRow[], calendarId: string) => {
+  const add = async (
+    rows: readonly FoundRow[],
+    destination: string | ((row: FoundRow, reading: NonNullable<typeof found>) => string | null),
+  ) => {
     if (busy) return;
     setBusy(true);
     const out = outOf(port);
     let taken = 0;
     try {
       for (const row of rows) {
-        const now = latest.current?.rows.find((r) => r.id === row.id);
-        if (now === undefined || now.alreadyOn !== null || out.has(row.id)) continue;
+        const reading = latest.current;
+        const now = reading?.rows.find((r) => r.id === row.id);
+        if (!reading || !now || now.alreadyOn !== null || out.has(row.id)) continue;
+        const calendarId = typeof destination === "string" ? destination : destination(now, reading);
+        if (calendarId === null || !reading.choices.some(({ id }) => id === calendarId)) continue;
         out.add(row.id);
         let heard: Awaited<ReturnType<typeof addFound>>;
         try {
@@ -108,4 +118,57 @@ export function useAdd(port: CalendarPort, found: ReturnType<typeof useFound>) {
     }
   };
   return { add, busy };
+}
+
+export function useDismissFound(port: CalendarPort) {
+  const t = useText("frommail");
+  const mailWords = useText("ohbox");
+  const report = useReport();
+  const retryWords = useText("viewError");
+  const press = usePressWhereOn();
+  const pending = useRef(new Set<string>());
+  const setDismissed = port.setSuggestionDismissed;
+  if (!setDismissed || !press) return undefined;
+
+  return async (id: string) => {
+    if (pending.current.has(id)) return;
+    const reservation = press.reserveUndo();
+    if (!reservation) return;
+    const { claim, signal, drop } = reservation;
+    const toast = press.undoToast;
+    const restore = async () => {
+      if (signal.aborted) return;
+      try {
+        await setDismissed(id, false);
+      } catch {
+        if (signal.aborted) return;
+        toast(t("restoreFailed"), {
+          action: retryWords("tryAgain"),
+          undo: true,
+          actionUntilPressed: true,
+          signal,
+          onAction: () => void restore(),
+        });
+      }
+    };
+    pending.current.add(id);
+    try {
+      await setDismissed(id, true);
+      if (!signal.aborted) {
+        toast(t("dismissed"), {
+          action: mailWords("undo"),
+          undo: true,
+          duration: UNDO_MS,
+          claim,
+          signal,
+          onAction: () => void restore(),
+        });
+      }
+    } catch {
+      if (!signal.aborted) report(t("dismissFailed"));
+    } finally {
+      drop();
+      pending.current.delete(id);
+    }
+  };
 }

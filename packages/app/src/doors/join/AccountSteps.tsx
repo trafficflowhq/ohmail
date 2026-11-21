@@ -179,6 +179,8 @@ export function VerifyStep({ door, state, join, progress }: StepProps<"verify">)
   return (
     <Page
       aside={progress}
+      line={join("step_verify_lead", { email: door.fields.email.trim() })}
+      note={join("verifyWhy")}
       refusal={refusalOf(pending, door.refusal)}
       acts={
         <>

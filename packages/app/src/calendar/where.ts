@@ -254,7 +254,14 @@ export function useFaces(
     return {
       capped: occurrences.capped,
       events: occurrences.shown.map((o): CalendarEventFace =>
-        faceOf(o, sources.connections, sources.faceWords, sources.tones.get(o.calendar.id) ?? "neutral", own),
+        faceOf(
+          o,
+          sources.connections,
+          sources.faceWords,
+          sources.tones.get(o.calendar.id) ?? "neutral",
+          own,
+          !!port.holdProposal,
+        ),
       ),
       /* The held window moves with the version, as the records do. */
       edge: edgeOf({ from, to }, port.held(), at),

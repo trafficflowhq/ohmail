@@ -1,0 +1,25 @@
+.ai-credits-meter {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: var(--s2);
+  margin-block: 0 var(--s3);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--hair);
+  color: var(--hot);
+}
+
+.ai-credits-meter::-webkit-progress-bar {
+  border-radius: var(--r-pill);
+  background: var(--hair);
+}
+
+.ai-credits-meter::-webkit-progress-value {
+  border-radius: var(--r-pill);
+  background: var(--hot);
+}
+.ai-credits-meter::-moz-progress-bar {
+  border-radius: var(--r-pill);
+  background: var(--hot);
+}

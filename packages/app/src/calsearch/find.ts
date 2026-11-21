@@ -6,9 +6,12 @@ export function findCalendarEvents(
   today: DayId,
   zone: string,
   zones: ZoneSource,
+  date?: DayId,
+  includeText = false,
 ) {
   return searchEvents({
     query,
+    ...(date ? { date, includeText } : {}),
     items,
     keyOf: (event) => event.id,
     textOf: (event) => [event.title, event.second, ...event.people, event.notes],

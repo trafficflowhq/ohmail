@@ -19,7 +19,7 @@ import type { SyncStatus } from "../session/sync-scheduler.js";
  * classified through `(product)/session-outcome.ts`.
  */
 export type OwnerOutcome =
-  | { kind: "owner"; accountId: string; address?: string; familyId?: string }
+  | { kind: "owner"; accountId: string; address?: string; familyId?: string; displayName?: string }
   | { kind: "none" }
   | { kind: "unknown"; retryAfterMs: number | null };
 

@@ -103,13 +103,22 @@ describe("General", () => {
     const applyAll = vi.fn();
     const model = generalState();
     const { again } = mount(model);
-    expect(screen.getByText(settingsEn.settings.faceScopeAll)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: settingsEn.settings.faceApplyAll })).toBeNull();
+    const all = () => screen.getByRole("button", { name: generalEn.settingsGeneral.allDevices });
+    expect(all().getAttribute("aria-pressed")).toBe("true");
     again({ ...model, look: { ...model.look, scope: { governs: "device", busy: false, applyAll } } });
-    fireEvent.click(screen.getByRole("button", { name: settingsEn.settings.faceApplyAll }));
+    expect(all().getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(all());
     expect(applyAll).toHaveBeenCalledTimes(1);
     again({ ...model, look: { ...model.look, scope: null } });
-    expect(screen.queryByText(settingsEn.settings.faceScopeAll)).toBeNull();
+    expect(screen.queryByRole("group", { name: generalEn.settingsGeneral.lookScope })).toBeNull();
+  });
+
+  it("switches to this device from the Look scope control", () => {
+    const pin = vi.fn();
+    const model = generalState();
+    mount({ ...model, look: { ...model.look, scope: { governs: "all", pin } } });
+    fireEvent.click(screen.getByRole("button", { name: "This device" }));
+    expect(pin).toHaveBeenCalledOnce();
   });
 
   it("chooses a look by its tile, and a press on the chosen one writes nothing", () => {

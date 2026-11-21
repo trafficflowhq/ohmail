@@ -1,8 +1,8 @@
 /**
  * SEARCH over what the device holds: titles, places, people and notes. Every typed word must be found,
  * as the start of a word, or (four letters or more) one slip away: one letter wrong, added or left out,
- * or two neighbours swapped. Upcoming first, then what has been, the newest first. A date typed is not
- * read here: that needs the sentence reader, which this release does not build.
+ * or two neighbours swapped. Upcoming first, then what has been, the newest first. A date query
+ * selects everything placed on that day in the reader’s time zone.
  */
 import type { ZoneSource } from "@ohmail/cal-core";
 import { daySpanOf, type DayId, type Placed } from "./days.js";
@@ -48,6 +48,8 @@ function readAs(w: string, words: readonly string[]): string | null {
 
 export interface SearchQuery<T extends Placed> {
   readonly query: string;
+  readonly date?: DayId;
+  readonly includeText?: boolean;
   readonly items: readonly T[];
   readonly keyOf: (item: T) => string;
   /** The words an item can be found by: title, place, people, notes. */
@@ -84,6 +86,28 @@ export function searchEvents<T extends Placed>(q: SearchQuery<T>): SearchResult<
   const hits: SearchHit<T>[] = [];
   let unplaced = 0;
   for (const item of q.items) {
+    const dateSpan = q.date ? daySpanOf(item, q.zone, q.zones) : null;
+    if (q.date && !dateSpan) {
+      unplaced++;
+      continue;
+    }
+    if (q.date && dateSpan && q.date >= dateSpan.first && q.date <= dateSpan.last) {
+      const day = q.date;
+      hits.push({
+        key: q.keyOf(item),
+        item,
+        day,
+        startMinute:
+          day === dateSpan.first
+            ? dateSpan.startMinute
+            : day === dateSpan.last && !dateSpan.allDay
+              ? 0
+              : null,
+        endMinute: day === dateSpan.last ? dateSpan.endMinute : null,
+      });
+      continue;
+    }
+    if (q.date && !q.includeText) continue;
     const words = q.textOf(item).flatMap((t) => (t ? wordsOf(t) : []));
     const as: string[] = [];
     let all = true;
@@ -96,7 +120,7 @@ export function searchEvents<T extends Placed>(q: SearchQuery<T>): SearchResult<
       as.push(r);
     }
     if (!all) continue;
-    const span = daySpanOf(item, q.zone, q.zones);
+    const span = dateSpan ?? daySpanOf(item, q.zone, q.zones);
     if (span === null) {
       unplaced++;
       continue;
@@ -113,6 +137,7 @@ export function searchEvents<T extends Placed>(q: SearchQuery<T>): SearchResult<
     });
   }
   hits.sort((a, b) => {
+    if (q.date && (a.day === q.date) !== (b.day === q.date)) return a.day === q.date ? -1 : 1;
     const ua = a.day >= q.today;
     const ub = b.day >= q.today;
     if (ua !== ub) return ua ? -1 : 1;

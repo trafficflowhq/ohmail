@@ -13,7 +13,10 @@ export function useWebFeatureCards(withdrawManage: () => void): WebFeatureCards 
   return useMemo(() => ({
     // The Settings pane registry owns Mailboxes. This feature supplies its notices.
     mailboxes: card("mailboxes", null),
-    subscription: card("subscription", <MountedSubscriptionSection onNowhere={withdrawManage} />),
+    subscription: {
+      name: "subscription",
+      render: (sheet) => <MountedSubscriptionSection onNowhere={withdrawManage} sheet={sheet} />,
+    },
     storageCard: card("storageCard", <CloudStorageNotice />),
   }), [withdrawManage]);
 }

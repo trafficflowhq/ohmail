@@ -19,6 +19,7 @@ import { letterDiscardHeld } from "../write/verbs/Verbs.js";
 import { DraftOpenedAtContext } from "./DraftsAbove.js";
 import { recipientsOf, refusalKey } from "./words.js";
 import "./scheduled.css";
+import "./list.css";
 
 function focusRefusal(line: HTMLParagraphElement | null): void {
   if (line?.parentElement?.contains(line.ownerDocument.activeElement)) line.focus();
@@ -118,12 +119,7 @@ export function DraftsList({ route, plan }: PaneProps) {
         </section>
       ) : null}
       {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
-      {model.empty && draftCount === 0 ? (
-        <Empty
-          label={t("emptyTitle")}
-          act={commands ? { label: t("emptyWrite"), onPress: () => commands.write() } : undefined}
-        />
-      ) : null}
+      {model.empty && draftCount === 0 ? <DraftsEmpty write={commands && (() => commands.write())} /> : null}
       {model.loading ? <Empty label={t("listLoading")} /> : null}
     </>
   );
@@ -135,12 +131,21 @@ export function DraftsList({ route, plan }: PaneProps) {
         <ListHead
           title={t("title")}
           count={model.draftsSettled && count > 0 ? t("metaCount", { count }) : undefined}
-          aside={<ListMenu label={t("listMenu")} items={[]} />}
+          aside={<ListMenu label={t("listMenu")} mail />}
         />
       }
     >
       {rows}
     </ListColumn>
+  );
+}
+
+function DraftsEmpty({ write }: { write: (() => void) | undefined }) {
+  const t = useText("drafts");
+  return (
+    <div className="drafts-empty">
+      <Empty label={t("emptyTitle")} act={write ? { label: t("emptyWrite"), onPress: write } : undefined} />
+    </div>
   );
 }
 

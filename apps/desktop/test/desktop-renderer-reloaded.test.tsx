@@ -85,11 +85,12 @@ describe("RendererReloaded", () => {
 
   it("says the one sentence after a reload, in the polite live region", async () => {
     await mount(true);
+    const line = DOOR_COPY.rendererReloaded.replace(/\.$/, "");
     const text = host.textContent ?? "";
-    expect(text).toContain(DOOR_COPY.rendererReloaded);
-    expect(text.split(DOOR_COPY.rendererReloaded).length - 1).toBe(1);
+    expect(text).toContain(line);
+    expect(text.split(line).length - 1).toBe(1);
     const live = [...host.querySelectorAll('[role="status"][aria-live="polite"]')].map((el) => el.textContent);
-    expect(live).toContain(`${DOOR_COPY.rendererReloaded} ${DOOR_COPY.rendererReloadedDismiss}`);
+    expect(live).toContain(`${line} ${DOOR_COPY.rendererReloadedDismiss}`);
   });
 
   it("reads as a status named by the sentence, stands past its old 8 s, and leaves on its Dismiss button", async () => {
@@ -103,7 +104,7 @@ describe("RendererReloaded", () => {
       const dismiss = within(status).getByRole("button", { name: DOOR_COPY.rendererReloadedDismiss });
       await act(async () => { fireEvent.click(dismiss); vi.advanceTimersByTime(1000); });
       expect(within(host).queryByRole("status", { name: DOOR_COPY.rendererReloaded })).toBeNull();
-      expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded);
+      expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded.replace(/\.$/, ""));
     } finally {
       vi.useRealTimers();
     }
@@ -126,17 +127,18 @@ describe("RendererReloaded", () => {
       </TextProvider>
     ));
     const window = within(host);
-    expect(host.textContent).toContain(DOOR_COPY.rendererReloaded);
+    const line = DOOR_COPY.rendererReloaded.replace(/\.$/, "");
+    expect(host.textContent).toContain(line);
     await act(async () => { fireEvent.click(window.getByRole("button", { name: "Park" })); });
     expect(window.getByRole("button", { name: "Undo" })).toBeTruthy();
     await act(async () => { fireEvent.click(window.getByRole("button", { name: DOOR_COPY.rendererReloadedDismiss })); });
-    expect(host.textContent).not.toContain(DOOR_COPY.rendererReloaded);
+    expect(host.textContent).not.toContain(line);
     expect(window.getByRole("button", { name: "Undo" })).toBeTruthy();
   });
 
   it("says nothing on an ordinary launch", async () => {
     await mount(false);
-    expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded);
+    expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded.replace(/\.$/, ""));
   });
 
   it("the sentence is the brief's, in English", () => {

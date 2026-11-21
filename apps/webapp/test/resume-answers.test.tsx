@@ -10,6 +10,7 @@
  * RENDERED catalogue text, never a source string.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/dom";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -176,8 +177,11 @@ async function mountLogin(): Promise<HTMLElement> {
 }
 
 const text = (el: HTMLElement): string => el.textContent ?? "";
-const buttons = (el: HTMLElement, label: string): number =>
-  [...el.querySelectorAll("a, button")].filter((b) => (b.textContent ?? "").trim() === label).length;
+const buttons = (el: HTMLElement, label: string): number => {
+  const byRole = within(el);
+  return byRole.queryAllByRole("button", { name: label }).length +
+    byRole.queryAllByRole("link", { name: label }).length;
+};
 const stamp = (answer: string, reloadsSoFar = 0): void =>
   sessionStorage.setItem(ONCE_KEY, JSON.stringify({ at: Date.now(), answer, reloads: reloadsSoFar }));
 
@@ -1462,8 +1466,9 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
       return null;
     };
     const faceRoot = createRoot(document.createElement("div"));
-    await act(async () => { faceRoot.render(h(Providers, { children: h(Adopt) })); });
+    await act(async () => { faceRoot.render(h(Providers, { owner: "acct_A", children: h(Adopt) })); });
     await act(async () => { faceRoot.unmount(); });
+    expect(localStorage.getItem("ohmail.face.account.owner")).toBe("acct_A");
     const sub = {
       endpoint: "https://push.example/ep/a", unsubscribe: async () => true,
       getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(7).buffer,

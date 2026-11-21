@@ -22,3 +22,17 @@ export function useStreamText(place: StreamPlace): Text {
   const receipts = useText("receipts");
   return place === "news" ? news : receipts;
 }
+
+const RECEIPT_TOTAL =
+  /^[ \t]*(?:grand total|order total|total(?: paid)?|amount paid|gesamtbetrag|endbetrag|totalbetrag|betrag bezahlt)[ \t]*:?[ \t]*((?:CHF|EUR|USD|GBP)[ \u00a0]+(?:\d{1,3}(?:[ '’.,]\d{3})+|\d+)[.,]\d{2})[ \t]*$/gim;
+
+/** Show one explicitly stated total from the receipt text already available to the preview. */
+export function receiptAmount(message: EngineMessage, text: string | null): string | undefined {
+  if (message.amount) return message.amount;
+  const totals = new Set(
+    Array.from((text ?? message.snippet ?? "").matchAll(RECEIPT_TOTAL), (match) =>
+      match[1]!.replace(/\s+/g, " "),
+    ),
+  );
+  return totals.size === 1 ? totals.values().next().value : undefined;
+}

@@ -98,6 +98,58 @@ describe("CalDAV's writer", () => {
       "",
     ].join("\r\n");
   const cut = plainDate(2026, 11, 18);
+  it("finds the original UID at the destination when the response to MOVE was lost", async () => {
+    const b = await bench({ nativeMove: true, loseMoveReply: true });
+    b.dav.addCalendar("personal");
+    const original = personalText();
+    b.dav.put("studio", "kiln.ics", original, '"original"');
+    const to = { id: b.cal.id.replace(/studio\/$/, "personal/") };
+    const target = {
+      id: b.member("kiln.ics"),
+      version: '"original"',
+      text: original,
+      occurrence: null,
+      audience: { organizer: null, guests: [] },
+      recurringSeries: true,
+    };
+    expect(word(await b.writer.moveEvent!(b.connection, b.cal, to, target, never))).toBe("connection_failed");
+    expect(
+      word(await b.writer.moveEvent!(b.connection, b.cal, to, { ...target, retryMove: true }, never)),
+    ).toBe("ok");
+    expect(b.dav.seen.filter(({ method }) => method === "MOVE")).toHaveLength(1);
+  });
+
+  it("moves an event with guests on a server that permits MOVE, under its original tag", async () => {
+    const b = await bench({ nativeMove: true, autoSchedule: true });
+    b.dav.addCalendar("personal");
+    const host = "host" + "@example.test",
+      guest = "guest" + "@example.test";
+    const original = personalText([`ORGANIZER:mailto:${host}`, `ATTENDEE:mailto:${guest}`]);
+    b.dav.put("studio", "kiln.ics", original, '"original"');
+    const to = { id: b.cal.id.replace(/studio\/$/, "personal/") };
+    expect(
+      word(
+        await b.writer.moveEvent!(
+          b.connection,
+          b.cal,
+          to,
+          {
+            id: b.member("kiln.ics"),
+            version: '"original"',
+            text: original,
+            occurrence: null,
+            audience: { organizer: host, guests: [guest] },
+            recurringSeries: true,
+          },
+          never,
+        ),
+      ),
+    ).toBe("ok");
+    const moved = b.dav.seen.find(({ method }) => method === "MOVE");
+    expect(moved?.headers["if-match"]).toBe('"original"');
+    expect(moved?.headers.overwrite).toBe("F");
+  });
+
   it("checks an unanswered occurrence cancellation without writing to the newer copy", async () => {
     const b = await bench();
     const target = {

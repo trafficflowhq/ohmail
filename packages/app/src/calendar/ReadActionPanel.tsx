@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Menu, MenuItem } from "@ohmail/ui/base";
+import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
 import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 
@@ -11,7 +11,8 @@ export function ReadActionPanel({
   setMore,
   duplicatePrimary,
   retry,
-  hide,
+  behind,
+  note,
   edit,
 }: {
   items: readonly PanelVerb[];
@@ -21,7 +22,8 @@ export function ReadActionPanel({
   setMore: (anchor: HTMLElement | null) => void;
   duplicatePrimary: boolean;
   retry?: PanelVerb;
-  hide?: PanelVerb;
+  behind: readonly PanelVerb[];
+  note?: string;
   edit?: () => void;
 }) {
   const t = useText("calendar");
@@ -60,18 +62,24 @@ export function ReadActionPanel({
     ...items,
   ];
   const panel =
-    readItems.length || hide ? (
+    readItems.length || behind.length || note ? (
       <ActionPanel
         label={t("actions.panel")}
         items={readItems}
         onFold={setFolded}
         folded={folded}
-        more={{ label: t("more"), behind: !!hide, expanded: more !== null, onPress: setMore }}
+        more={{
+          label: t("more"),
+          behind: behind.length > 0 || !!note,
+          expanded: more !== null,
+          onPress: setMore,
+        }}
       />
     ) : null;
   const overflow = more && (
     <Menu open anchor={more} label={t("more")} onClose={() => setMore(null)}>
-      {[...readItems.filter((item) => folded.includes(item.id)), ...(hide ? [hide] : [])].map((item) => (
+      {note && <MenuNote>{note}</MenuNote>}
+      {[...readItems.filter((item) => folded.includes(item.id)), ...behind].map((item) => (
         <MenuItem
           key={item.id}
           icon={item.icon}

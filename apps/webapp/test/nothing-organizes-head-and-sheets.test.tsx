@@ -88,21 +88,28 @@ describe("the subject-rule sheet over a mailbox nothing organizes", () => {
     });
   }
 
-  const choose = (sheet: HTMLElement) => click(within(sheet).getByRole("option", { name: /^Ohbox(?:\s|$)/ }));
+  const choose = async (sheet: HTMLElement) => {
+    const view = within(sheet);
+    const save = view.getByRole<HTMLButtonElement>("button", { name: en.screening.subjectMakeRule });
+    expect(save.disabled).toBe(true);
+    const ohbox = view.getByRole("radio", { name: en.place.ohbox });
+    await click(ohbox);
+    expect(ohbox.getAttribute("aria-checked")).toBe("true");
+    expect(save.disabled).toBe(false);
+  };
 
   it("says so beside the destinations and in the confirm, never what the rule would file", async () => {
     const sheet = await subjectSheet(true);
-    expect(sheet.querySelector(".sm-org")?.textContent).toBe(en.screening.subjectOrgNobody);
+    expect(within(sheet).getByText(en.screening.subjectOrgNobody, { selector: '[role="status"]' })).toBeTruthy();
     await choose(sheet);
-    const confirm = sheet.querySelector(".sm-confirm")!;
-    expect(confirm.textContent).toContain(en.screening.subjectOrgNobody);
-    expect(confirm.textContent, "the confirm promised filing nothing performs").not.toContain("applies the rule");
+    expect(within(sheet).getByText(en.screening.subjectOrgNobody, { selector: '[role="status"]' })).toBeTruthy();
+    expect(sheet.textContent, "the confirmation promised filing nothing performs").not.toContain("applies the rule");
   });
 
   it("CONTROL: an organized mailbox keeps the confirm's own sentence", async () => {
     const sheet = await subjectSheet(false);
     expect(sheet.querySelector(".sm-org")).toBeNull();
     await choose(sheet);
-    expect(sheet.querySelector(".sm-confirm")!.textContent).not.toContain(en.screening.subjectOrgNobody);
+    expect(sheet.textContent).not.toContain(en.screening.subjectOrgNobody);
   });
 });

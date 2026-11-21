@@ -120,7 +120,7 @@ describe("the Settings row", () => {
     await click(buttonNamed(el, "Make default"));
     expect(invoked).toContain("default_mail_request");
     // The platform's own sentence, from the shell's `how` — never guessed from the user agent.
-    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears.");
+    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears");
   });
 
   it("offers no action over an OS that already says ohmail", async () => {
@@ -159,7 +159,7 @@ describe("the one-time ask", () => {
     for (let i = 0; i < 4; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
 
     expect(invoked).toContain("default_mail_request");
-    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears.");
+    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears");
     expect(localStorage.getItem(DEFAULT_MAIL_ASKED_KEY)).toBe("1");
 
     await click(buttonNamed(el, "Done"));
@@ -276,7 +276,7 @@ describe("the ask stands beside the mail, in the stage's card slot, not over it"
       expect(el.querySelector(":is(.row.sel, [role=option][data-open])")?.getAttribute("data-id"), "the row is not the open one").toBe(id);
       await press(key);
       expect(row(id), `${key} left the row in the Ohbox`).toBeNull();
-      expect(el.textContent).toContain("Moved to Trash.");
+      expect(el.querySelector(".oh-report-said")?.textContent).toBe("Moved to Trash");
     }
     expect(el.textContent, "the key answered the card").toContain("Open email links with ohmail?");
   }, 30_000);

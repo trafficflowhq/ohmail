@@ -1,6 +1,5 @@
 import { useState, type MouseEvent } from "react";
 import { DatePicker } from "./DatePicker.js";
-import { SuggestionCredit, SuggestionList } from "@ohmail/ui/base";
 import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } from "@ohmail/ui/calendar";
 import { addDays, clockOf, dayShort, readQuickEntry, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
@@ -9,7 +8,7 @@ import { DraftCalendarMenu } from "./DraftCalendarMenu.js";
 import { ZoneMenu } from "./ZoneMenu.js";
 import { useEditorRows, type EditorRows } from "./use-editor-rows.js";
 import { zoneForCity, zoneName } from "./zone-names.js";
-import { PLACE_CREDIT, useMaps, usePlaceSuggestions } from "./use-place-suggestions.js";
+import { useDraftPlace } from "./DraftPlace.js";
 import { endDayOf, type EventDraft } from "./event-draft.js";
 
 interface Props {
@@ -23,6 +22,7 @@ interface Props {
   readonly proposedGuest?: { name: string; take: () => void };
   readonly fixedTime?: string;
   readonly timeZone?: string;
+  readonly placeSource?: string;
   readonly change: (edit: Partial<EventDraft>) => void;
   readonly submit?: EventFormProps["submit"];
   readonly cancel?: EventFormProps["cancel"];
@@ -100,34 +100,23 @@ function whenRow(
   };
 }
 
-function optionalRow(
-  id: "place" | "notes",
-  draft: EventDraft,
-  change: Props["change"],
-  t: Text,
-  place?: ReturnType<typeof usePlaceSuggestions>,
-  maps?: ReturnType<typeof useMaps>,
-): EventFormRow[] {
-  const value = draft[id];
-  if (value === null) return [];
-  return [
-    {
-      id,
-      icon: id === "place" ? "pin" : "note",
-      items: [
+function notesRow(draft: EventDraft, change: Props["change"], t: Text): EventFormRow[] {
+  return draft.notes === null
+    ? []
+    : [
         {
-          kind: id === "place" ? "text" : "notes",
-          value,
-          label: t(`create.${id}`),
-          onChange: (next: string) => change({ [id]: next }),
-          ...(id === "place" && place ? { suggests: place.field, ref: place.anchor } : {}),
+          id: "notes",
+          icon: "note",
+          items: [
+            {
+              kind: "notes",
+              value: draft.notes,
+              label: t("create.notes"),
+              onChange: (notes) => change({ notes }),
+            },
+          ],
         },
-        ...(maps
-          ? [{ kind: "link" as const, text: maps.label, title: maps.title, onPress: maps.onPress }]
-          : []),
-      ],
-    },
-  ];
+      ];
 }
 
 function inviteeRows(rows: EventFormRow[], guest: Props["proposedGuest"], t: Text): EventFormRow[] {
@@ -154,23 +143,19 @@ export function DraftFields({
   timeZone,
   edit,
   proposedGuest,
+  placeSource,
 }: Props) {
   const t = useText("calendar");
   const locale = useLocale();
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const details = useEditorRows(draft, change, edit);
-  const places = usePlaceSuggestions(draft.place, (place) => change({ place }));
-  const maps = useMaps(draft.place);
+  const place = useDraftPlace(draft.place, (next) => change({ place: next }), placeSource);
   const rows: EventFormRow[] = [
     fixedTime
       ? { id: "when", icon: "clock", items: [{ kind: "word", text: fixedTime }] }
       : whenRow({ draft, today, change }, t, locale, menu, setMenu, timeZone),
   ];
-  rows.push(
-    ...inviteeRows(details.beforePlace, proposedGuest, t),
-    ...optionalRow("place", draft, change, t, places, maps),
-    ...details.afterPlace,
-  );
+  rows.push(...inviteeRows(details.beforePlace, proposedGuest, t), ...place.rows, ...details.afterPlace);
   rows.push({
     id: "calendar",
     mark: tone,
@@ -206,7 +191,7 @@ export function DraftFields({
       },
     ],
   });
-  rows.push(...optionalRow("notes", draft, change, t));
+  rows.push(...notesRow(draft, change, t));
   return (
     <>
       <EventForm
@@ -219,7 +204,10 @@ export function DraftFields({
                   id: "place",
                   word: t("create.place"),
                   icon: "pin" as const,
-                  onPress: () => change({ place: "" }),
+                  onPress: () => {
+                    change({ place: "" });
+                    place.open?.();
+                  },
                 },
               ]
             : []),
@@ -237,17 +225,7 @@ export function DraftFields({
         submit={submit}
         cancel={cancel}
       />
-      {draft.place !== null && (
-        <SuggestionList
-          {...places.list}
-          label={t("location.suggestions")}
-          foot={
-            places.credit ? (
-              <SuggestionCredit href={PLACE_CREDIT}>{t("location.credit")}</SuggestionCredit>
-            ) : null
-          }
-        />
-      )}
+      {place.overlay}
       {details.menu}
       {menu && (
         <DraftMenus {...{ draft, today, calendar, choices, choose, change, menu, setMenu, timeZone }} />

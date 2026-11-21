@@ -64,12 +64,23 @@ function Tile({
   const locale = useLocale();
   const kind = kindOf(item);
   const size = sizeOf(item.sizeBytes, locale);
-  if (item.state === "loading" || item.reasking)
+  if (item.state === "loading")
     return <FileNotArrived state="fetching" kind={kind} name={item.filename} line={t("loading")} />;
   if (item.state === "too_large")
     return <FileNotArrived state="large" kind={kind} name={item.filename} line={t("tooLarge", { size })} />;
   if (item.state === "failed") {
     const fault = faultOf(item);
+    const reason = t(fault.key);
+    if (item.reasking) {
+      return (
+        <FileNotArrived
+          state="failed"
+          kind={kind}
+          name={item.filename}
+          line={t("faultWillRetry", { reason })}
+        />
+      );
+    }
     const recover = host.session.recover;
     const way =
       fault.way === "retry"
@@ -77,8 +88,7 @@ function Tile({
         : fault.way === "signIn" && recover !== NONE
           ? { label: tb("signIn"), onPress: () => recover("signIn") }
           : undefined;
-    const line = t(fault.key);
-    return <FileNotArrived state="failed" kind={kind} name={item.filename} line={line} way={way} />;
+    return <FileNotArrived state="failed" kind={kind} name={item.filename} line={reason} way={way} />;
   }
   const thumb = thumbnailOf(item);
   const look = fileLookOf(item.mimeType) !== "other" ? preview : null;
@@ -125,9 +135,11 @@ export function LetterFiles({
   messageId,
   selection,
   parts,
+  omit,
 }: {
   messageId: string;
   selection?: string;
+  omit?: string | undefined;
   parts: Pick<ReaderParts, "files" | "look">;
 }) {
   const t = useText("attachments");
@@ -148,7 +160,7 @@ export function LetterFiles({
   if (list.state !== "ready") return null;
   /* The door already leaves out an invitation's calendar body that a listed calendar file carries (Google's pair); one
      it lists is the event's one copy (Exchange, Outlook), a file the person can save. */
-  const items = list.items;
+  const items = omit ? list.items.filter((item) => item.id !== omit) : list.items;
   if (items.length === 0) return null;
   const many = items.length > 1;
   return (
@@ -169,7 +181,8 @@ export function LetterFiles({
           ? {
               label: t("downloadAll"),
               busy: files.downloadingAll(messageId),
-              onPress: () => files.downloadAll(messageId, { includeInlineParts: true }),
+              onPress: () =>
+                files.downloadAll(messageId, { includeInlineParts: true, ...(omit ? { omit } : {}) }),
             }
           : undefined
       }
@@ -186,6 +199,7 @@ export function LetterFiles({
           close={() => setPicked(null)}
           files={files}
           usePdf={look.usePdf}
+          omit={omit}
         />
       ) : null}
     </KitFiles>
@@ -200,6 +214,7 @@ function LetterPreview({
   close,
   files,
   usePdf,
+  omit,
 }: {
   messageId: string;
   items: readonly ReaderFile[];
@@ -208,6 +223,7 @@ function LetterPreview({
   close: () => void;
   files: ReaderFiles;
   usePdf: PdfLook;
+  omit?: string | undefined;
 }) {
   const t = useText("attachmentPreview");
   const attachments = useText("attachments");
@@ -243,7 +259,8 @@ function LetterPreview({
           ? {
               label: attachments("downloadAll"),
               busy: files.downloadingAll(messageId),
-              onPress: () => files.downloadAll(messageId, { includeInlineParts: true }),
+              onPress: () =>
+                files.downloadAll(messageId, { includeInlineParts: true, ...(omit ? { omit } : {}) }),
             }
           : undefined
       }

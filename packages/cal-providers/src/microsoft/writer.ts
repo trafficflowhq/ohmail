@@ -11,6 +11,7 @@
  * and notes over a body in markup (the reader reads such a body as Graph's plain preview, so a
  * change of it would replace what the person never saw).
  */
+import { portableMicrosoft } from "../portable.js";
 import { createHash } from "node:crypto";
 import {
   expandSeries,
@@ -56,7 +57,7 @@ import {
   type Precondition,
 } from "../request/index.js";
 import { clockOf, sameTime } from "../series.js";
-import { alreadyHolds, sameAudience } from "../write-compare.js";
+import { alreadyHolds, sameAudience, sameCancellationAudience } from "../write-compare.js";
 import { dayOfSeries, recordOf, ruleOfRecurrence, seriesOfRecord, type SeriesClock } from "./convert.js";
 import { graphBaseOf, insideBase } from "./graph.js";
 import { graphAuthorization, stamp, type MicrosoftDeps } from "./reader.js";
@@ -433,6 +434,79 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     return pre === null ? refused("version_unknown") : { ...master, raw, pre };
   }
 
+  async function cancelChangedSeries(
+    token: string,
+    id: string,
+    target: WriteTarget,
+    signal: AbortSignal,
+  ): Promise<WriteAnswer> {
+    const reviewed = target.seriesCancellation!;
+    const master = await readMaster(token, id, target, signal, true, false);
+    if ("ok" in master)
+      return master.reason === "event_gone" ? answered([{ kind: "gone", id: target.id }]) : master;
+    const listsMatch = (held: Master) => {
+      const live = held.raw.exceptionOccurrences;
+      return (
+        held.item.version === target.version &&
+        Array.isArray(live) &&
+        !held.raw[["exceptionOccurrences", "odata.nextLink"].join("@")] &&
+        live.length === reviewed.overrides.length &&
+        reviewed.overrides.every(
+          (entry) =>
+            live.filter(
+              (day) =>
+                isRecord(day) &&
+                day.id === entry.id &&
+                (day["@odata.etag"] === entry.version || day.changeKey === entry.version),
+            ).length === 1,
+        )
+      );
+    };
+    if (!listsMatch(master)) return refused("version_stale");
+    const items = [master.item];
+    for (const entry of reviewed.overrides) {
+      const key = segment(entry.id);
+      if (!key) return refused("version_stale");
+      const response = await read(token, key, signal);
+      if ("ok" in response) return response;
+      const raw = jsonOf(response.body);
+      const day = recordOf(raw, deps.zones, deps.clock.now());
+      if (
+        response.status !== 200 ||
+        day.kind !== "day" ||
+        !day.changed ||
+        day.seriesId !== target.id ||
+        day.id !== entry.id ||
+        day.raw.isOrganizer !== true
+      )
+        return refused("version_stale");
+      const found = dayOfSeries(day, master.series, deps.zones, deps.clock.now())?.item;
+      if (
+        !found ||
+        typeof found === "string" ||
+        (found.version !== entry.version && day.raw.changeKey !== entry.version)
+      )
+        return refused("version_stale");
+      items.push(found);
+    }
+    if (!sameCancellationAudience(target.audience, items)) return refused("version_stale");
+    const current = await readMaster(token, id, target, signal, true, false);
+    if ("ok" in current) return current;
+    if (!listsMatch(current)) return refused("version_stale");
+    const sent = await send(
+      token,
+      "POST",
+      `${eventUrl(id)}/cancel`,
+      { comment: reviewed.message },
+      signal,
+      current.pre,
+    );
+    if ("ok" in sent) return sent;
+    if (sent.status === 202 || sent.status === 200 || sent.status === 204)
+      return wrote([{ kind: "gone", id: target.id }]);
+    return sent.status === 412 ? refused("version_stale") : refusalOf(sent, "event_gone");
+  }
+
   const keyOf = (time: EventTime): string => recurrenceKeyString(recurrenceKeyOf(time, deps.zones));
 
   function instanceOf(
@@ -440,18 +514,30 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     target: WriteTarget,
     series: SeriesClock,
     subset = false,
+    answering: boolean | "applied" = false,
   ): Instance | Refusal | null {
     const record = recordOf(raw, deps.zones, deps.clock.now());
     if (record.kind !== "day" || record.seriesId !== target.id || target.occurrence === null) return null;
     const day = dayOfSeries({ ...record, changed: true }, series, deps.zones, deps.clock.now());
     if (day === null || keyOf(day.seen.originalStart) !== keyOf(target.occurrence)) return null;
     if (day.item === null || typeof day.item === "string") return refused("unreadable");
-    const audience = subset
-      ? day.item.audienceIncomplete ||
-        !exceptionAudience({ exceptionOccurrences: [record.raw] }, target.audience)
-        ? refused("version_stale")
-        : null
-      : audienceOf(target, day.item, record.raw);
+    const audience = answering
+      ? record.raw.isOrganizer === false &&
+        (answering === "applied" ||
+          (target.exception
+            ? record.changed &&
+              record.id === target.exception.id &&
+              (day.item.version === target.exception.version ||
+                record.raw.changeKey === target.exception.version)
+            : !record.changed))
+        ? null
+        : refused("version_stale")
+      : subset
+        ? day.item.audienceIncomplete ||
+          !exceptionAudience({ exceptionOccurrences: [record.raw] }, target.audience)
+          ? refused("version_stale")
+          : null
+        : audienceOf(target, day.item, record.raw);
     if (audience !== null) return audience;
     const pre = preconditionOf(record.raw);
     return pre === null
@@ -498,6 +584,7 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     target: WriteTarget,
     series: SeriesClock,
     signal: AbortSignal,
+    answering: boolean | "applied" = false,
   ): Promise<Instance | Refusal> {
     const at = target.occurrence === null ? NaN : momentOrUtc(target.occurrence, deps.zones);
     if (!Number.isFinite(at)) return Promise.resolve(refused("version_stale"));
@@ -505,7 +592,7 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     // Include nearby UTC times for all-day events whose original start is midnight on their own clock.
     url.searchParams.set("startDateTime", stamp(at - MS_PER_DAY));
     url.searchParams.set("endDateTime", stamp(at + 2 * MS_PER_DAY));
-    return uniqueMatch(token, url.href, (raw) => instanceOf(raw, target, series), signal);
+    return uniqueMatch(token, url.href, (raw) => instanceOf(raw, target, series, false, answering), signal);
   }
 
   async function readException(
@@ -1227,13 +1314,61 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       : refused("version_stale");
   }
 
+  function findCopy(token: string, calendar: string, transactionId: string, signal: AbortSignal) {
+    const url = new URL(`${base.href}/me/calendars/${calendar}/events`);
+    url.searchParams.set("$select", continuationFields);
+    url.searchParams.set("$orderby", "createdDateTime desc");
+    url.searchParams.set("$top", String(MAX_PAGE_LIMIT));
+    return uniqueMatch(
+      token,
+      url.href,
+      (raw) => {
+        if (!isRecord(raw) || raw.transactionId !== transactionId) return null;
+        const record = recordOf(raw, deps.zones, deps.clock.now());
+        return record.kind === "item" && record.item.kind === "upsert" ? record.item : refused("unreadable");
+      },
+      signal,
+    );
+  }
+
   return {
     provider: "microsoft",
+
+    async findMoveCopy(c, cal, key, signal) {
+      const calendar = segment(cal.id);
+      const transactionId = transactionOf(key);
+      if (calendar === null || transactionId === null) return refused("not_found");
+      const signedIn = await bearerOf(c, signal);
+      if (!signedIn.ok) return signedIn;
+      const found = await findCopy(signedIn.token, calendar, transactionId, signal);
+      return "ok" in found ? found : answered([found]);
+    },
+
+    async readForMove(c, cal, id, signal) {
+      const calendar = segment(cal.id);
+      const event = segment(id);
+      if (!calendar || !event) return refused("not_found");
+      const signedIn = await bearerOf(c, signal);
+      if (!signedIn.ok) return signedIn;
+      const response = await send(
+        signedIn.token,
+        "GET",
+        `${base.href}/me/calendars/${calendar}/events/${event}?$expand=extensions,attachments($select=id)`,
+        null,
+        signal,
+      );
+      if ("ok" in response) return response;
+      if (response.status === 404 || response.status === 410) return answered([{ kind: "gone", id }]);
+      if (response.status !== 200) return refusalOf(response, "event_gone");
+      const held = itemOf(response);
+      if (held?.item?.kind !== "upsert" || held.item.id !== id) return refused("unreadable");
+      return answered([{ ...held.item, ...(portableMicrosoft(held.raw) && { portableCopy: true }) }]);
+    },
 
     async create(
       c: Connection,
       cal: CalendarRef,
-      req: { readonly key: WriteKey; readonly event: EventDraft },
+      req: { readonly key: WriteKey; readonly event: EventDraft; readonly recover?: boolean },
       signal: AbortSignal,
     ): Promise<WriteAnswer> {
       const calendar = segment(cal.id);
@@ -1243,6 +1378,11 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       if (typeof body === "string") return refused(body);
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
+      if (req.recover) {
+        const found = await findCopy(signedIn.token, calendar, transactionId, signal);
+        if (!("ok" in found)) return answered([found]);
+        if (found.reason !== "version_stale") return found;
+      }
       const res = await send(
         signedIn.token,
         "POST",
@@ -1278,40 +1418,125 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
 
     async remove(c, _cal, target, signal) {
       // One day of a series is not written by this writer yet, and is never written as the series whole.
-      if (target.occurrence !== null) return refused("repeat_unsupported");
-      const id = segment(target.id);
+      if (target.occurrence !== null && !target.recurringSeries) return refused("repeat_unsupported");
+      let id = segment(target.id);
       if (id === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
-      const pre = await standing(signedIn.token, id, target, false, signal);
-      if ("ok" in pre) return pre.reason === "event_gone" ? answered([{ kind: "gone", id: target.id }]) : pre;
+      if (target.seriesCancellation && target.occurrence === null)
+        return cancelChangedSeries(signedIn.token, id, target, signal);
+      const master = target.recurringSeries
+        ? await readMaster(signedIn.token, id, target, signal, true)
+        : null;
+      if (
+        master &&
+        !("ok" in master) &&
+        (master.item.version !== target.version ||
+          !Array.isArray(master.raw.exceptionOccurrences) ||
+          master.raw.exceptionOccurrences.length > 0)
+      )
+        return refused("version_stale");
+      let pre =
+        master === null
+          ? await standing(signedIn.token, id, target, false, signal)
+          : "ok" in master
+            ? master
+            : master.pre;
+      let result: ChangeItem = { kind: "gone", id: target.id };
+      if (master && !("ok" in master) && target.occurrence !== null) {
+        const day = await readInstance(signedIn.token, id, target, master.series, signal);
+        if ("ok" in day) return day;
+        const originalStart = day.item.event.recurrenceId;
+        const uid = master.item.event.uid;
+        id = segment(day.item.id);
+        if (day.isException || !uid || !originalStart || !id) return refused("version_stale");
+        pre = day.pre;
+        result = { kind: "cancelled_occurrence", uid, originalStart };
+      }
+      if ("ok" in pre)
+        return pre.reason === "event_gone" && target.occurrence === null ? answered([result]) : pre;
       const res = await send(signedIn.token, "DELETE", eventUrl(id), null, signal, pre);
       if ("ok" in res) return res;
-      if (res.status === 204 || res.status === 200) return wrote([{ kind: "gone", id: target.id }]);
-      if (res.status === 404 || res.status === 410) return answered([{ kind: "gone", id: target.id }]);
+      if (res.status === 204 || res.status === 200) return wrote([result]);
+      if (res.status === 404 || res.status === 410) return answered([result]);
+      if (res.status === 412 && target.occurrence !== null) return refused("version_stale");
       if (res.status === 412) return afterStale(signedIn.token, id, target.id, null, signal);
       return refusalOf(res, "event_gone");
     },
 
-    async answer(c, _cal, target, req: { readonly as: string; readonly reply: WriteReply }, signal) {
-      // One day of a series is not written by this writer yet, and is never written as the series whole.
-      if (target.occurrence !== null) return refused("repeat_unsupported");
-      const id = segment(target.id);
-      if (id === null) return refused("not_found");
+    async answer(
+      c,
+      _cal,
+      target,
+      req: { readonly as: string; readonly reply: WriteReply; readonly retry?: true },
+      signal,
+    ) {
+      if (target.occurrence !== null && !target.recurringSeries) return refused("repeat_unsupported");
+      const initialId = segment(target.id);
+      if (initialId === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
-      // Graph's answer calls take no precondition: the event is read first, and answered only as it was read.
-      const now = await read(signedIn.token, id, signal);
+      const { token } = signedIn;
+      // Graph answers a series or a single instance at its own address.
+      const now = await read(token, initialId, signal);
       if ("ok" in now) return now;
       if (now.status !== 200) return refusalOf(now, "event_gone");
-      const held = itemOf(now);
+      const wanted = { ACCEPTED: "accepted", TENTATIVE: "tentativelyAccepted", DECLINED: "declined" }[
+        req.reply
+      ];
+      let held = itemOf(now);
+      let version = target.version;
+      let parseAfter = itemOf;
+      if (target.occurrence !== null) {
+        const raw = held?.raw;
+        if (!raw || raw.isOrganizer !== false) return refused("read_only");
+        const master = seriesOfRecord(raw, deps.zones, deps.clock.now());
+        if (typeof master === "string" || master.item.id !== target.id || master.item.version !== version)
+          return refused("version_stale");
+        let day = await readInstance(token, initialId, target, master.series, signal, true);
+        if ("ok" in day) {
+          if (!req.retry || day.reason !== "version_stale") return day;
+          day = await readInstance(token, initialId, target, master.series, signal, "applied");
+          if ("ok" in day) return day;
+          if (
+            !day.isException ||
+            (target.exception && day.item.id !== target.exception.id) ||
+            day.item.event.organizer?.email !== master.item.event.organizer?.email ||
+            !isRecord(day.raw.responseStatus) ||
+            day.raw.responseStatus.response !== wanted
+          )
+            return refused("version_stale");
+          return answered([day.item]);
+        }
+        if (day.item.event.organizer?.email !== master.item.event.organizer?.email)
+          return refused("version_stale");
+        const uri = segment(day.item.id);
+        if (uri === null) return refused("not_found");
+        const confirmed = await read(token, uri, signal);
+        if ("ok" in confirmed) return confirmed;
+        if (confirmed.status !== 200) return refusalOf(confirmed, "event_gone");
+        const checked = instanceOf(jsonOf(confirmed.body), target, master.series, false, true);
+        if (!checked || "ok" in checked || checked.item.id !== day.item.id || checked.pre.tag !== day.pre.tag)
+          return refused("version_stale");
+        if (
+          req.retry &&
+          isRecord(checked.raw.responseStatus) &&
+          checked.raw.responseStatus.response === wanted
+        )
+          return answered([checked.item]);
+        parseAfter = (response) => {
+          const after = instanceOf(jsonOf(response.body), target, master.series, false, "applied");
+          return after && !("ok" in after) ? after : null;
+        };
+        held = checked;
+        version = day.item.version;
+      }
       if (held === null || held.item === null || held.item.kind !== "upsert") return refused("unreadable");
-      if (held.item.version !== target.version) {
+      const id = segment(held.item.id);
+      if (id === null) return refused("not_found");
+      if (held.item.version !== version) {
         // Another version: done where Graph already says this answer (an earlier attempt landed); else another copy.
         const said = isRecord(held.raw.responseStatus) ? held.raw.responseStatus.response : null;
-        const wanted = { ACCEPTED: "accepted", TENTATIVE: "tentativelyAccepted", DECLINED: "declined" }[
-          req.reply
-        ];
         return said === wanted ? answered([held.item]) : refused("version_stale");
       }
       const call = { ACCEPTED: "accept", TENTATIVE: "tentativelyAccept", DECLINED: "decline" }[req.reply];
@@ -1327,7 +1552,7 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       // Read again after the answer: a copy Graph's answer call names no version of, so nothing waiting behind it is re-based onto it.
       const after = await read(signedIn.token, id, signal);
       if ("ok" in after || after.status !== 200) return answered([]);
-      const shown = itemOf(after);
+      const shown = parseAfter(after);
       return answered(shown === null || shown.item === null ? [] : [shown.item]);
     },
 

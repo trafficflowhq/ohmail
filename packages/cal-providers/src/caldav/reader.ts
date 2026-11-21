@@ -211,7 +211,7 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
       if (!found.ok) return found;
       const calendars = new Map<string, CalendarInfo>();
       for (const home of found.homes) {
-        const listed = await calendarsOf(found.session, home);
+        const listed = await calendarsOf(found.session, home, found.principal);
         if (!listed.ok) return listed;
         for (const calendar of listed.calendars) if (!calendars.has(calendar.id)) calendars.set(calendar.id, calendar);
       }

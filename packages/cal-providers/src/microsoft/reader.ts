@@ -169,6 +169,8 @@ export function makeReader(deps: MicrosoftDeps): CalendarReader {
     async listCalendars(c, signal) {
       const list = await calendarList(c, signal);
       if (!list.ok) return list;
+      const primary = list.entries.find((e) => e.isDefaultCalendar === true);
+      const self = primary && isRecord(primary.owner) ? addressOf(primary.owner.address)?.toLowerCase() : undefined;
       const calendars: CalendarInfo[] = [];
       for (const e of list.entries) {
         const id = filled(e.id);
@@ -176,7 +178,8 @@ export function makeReader(deps: MicrosoftDeps): CalendarReader {
         const name = filled(e.name);
         // "If the user has never explicitly set a color for the calendar, this property is empty": a theme's name beside it is no colour.
         const color = typeof e.hexColor === "string" && /^#[0-9a-fA-F]{6}$/.test(e.hexColor) ? e.hexColor : null;
-        calendars.push({ id, name: name === undefined || name.length > MAX_CALENDAR_NAME_CHARS ? null : name, color, writable: e.canEdit === true, byToken: true, zone: null });
+        const owned = self !== undefined && isRecord(e.owner) && addressOf(e.owner.address)?.toLowerCase() === self;
+        calendars.push({ id, name: name === undefined || name.length > MAX_CALENDAR_NAME_CHARS ? null : name, color, writable: e.canEdit === true, ...(owned && { owned: true as const }), byToken: true, zone: null });
       }
       return { ok: true, value: calendars };
     },

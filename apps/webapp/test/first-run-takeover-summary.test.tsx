@@ -103,8 +103,7 @@ async function walkToDone() {
   const s = await mount();
   expect(s.heading()).toBe(t.elsewhereSayStopped.replace("{name}", "W-old").replace(/\.$/, ""));
   await s.press(t.continue);
-  expect(s.heading()).toBe(t.mapTitle);
-  await s.press(t.continue);
+  expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   await s.press(t.agree);
   expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());

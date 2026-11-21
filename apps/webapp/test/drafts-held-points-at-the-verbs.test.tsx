@@ -119,8 +119,8 @@ describe("what a held row says, and the two acts it offers", () => {
       draft({ id: "u1", status: "unverified", updatedAt: recent }),
       draft({ id: "u2", status: "unverified", updatedAt: old, subject: "Old" }),
     ]);
-    expect(stateOf()).toBe(words.heldChecking);
-    expect(stateOf(row(/Old/))).toBe(words.heldNotInSent);
+    expect(stateOf()).toBe(`${words.heldLabel}, ${words.heldChecking}`);
+    expect(stateOf(row(/Old/))).toBe(`${words.heldLabel}, ${words.heldNotInSent}`);
     fireEvent.click(row());
     expect(answerNames()).toEqual(answers);
     fireEvent.click(row(/Old/));
@@ -131,12 +131,12 @@ describe("what a held row says, and the two acts it offers", () => {
 
   it("reads an unparseable stamp as past the window — the sentence that claims less", () => {
     mountDrafts([draft({ status: "unverified", updatedAt: "not a date" })]);
-    expect(stateOf()).toBe(words.heldNotInSent);
+    expect(stateOf()).toBe(`${words.heldLabel}, ${words.heldNotInSent}`);
   });
 
   it("a stranded `sending` row says the send was interrupted", () => {
     mountDrafts([draft({ status: "sending" })]);
-    expect(stateOf()).toBe(words.heldInterrupted);
+    expect(stateOf()).toBe(`${words.heldLabel}, ${words.heldInterrupted}`);
     fireEvent.click(row());
     expect(answerNames()).toEqual(answers);
   });

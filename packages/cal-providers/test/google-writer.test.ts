@@ -55,6 +55,7 @@ function google(
   o: {
     refuse?: (s: Sent) => { status: number; body?: unknown; headers?: Record<string, string> } | null;
     noTags?: boolean;
+    losePatch?: (id: string) => boolean;
     inheritSeriesPatches?: boolean;
   } = {},
 ) {
@@ -169,6 +170,7 @@ function google(
           records.set(childId, { ...child, ...inherited, etag: `"${n++}"`, sequence: next.sequence });
         }
       }
+      if (o.losePatch?.(id)) throw Object.assign(new Error("lost reply"), { code: "ECONNRESET" });
       return reply(200, tagged(next));
     }
     if (s.method === "DELETE") {
@@ -1516,6 +1518,176 @@ describe("Google's writer", () => {
     ]);
   });
 
+  it("cancels a single master after checking the changed day's version and the combined audience", async () => {
+    const g = google();
+    const organizer = "host" + "@example.test";
+    const guest = "guest" + "@example.test";
+    const another = "another" + "@example.test";
+    const first = g.plant("series", {
+      organizer: { email: organizer },
+      attendees: [{ email: guest }],
+      recurrence: ["RRULE:FREQ=DAILY"],
+      start: { dateTime: "2026-11-17T09:00:00Z" },
+      end: { dateTime: "2026-11-17T10:00:00Z" },
+    });
+    const changed = g.plant("changed", {
+      organizer: { email: organizer },
+      attendees: [{ email: another }],
+      recurringEventId: first.id,
+      originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+      start: { dateTime: "2026-11-18T12:00:00Z" },
+      end: { dateTime: "2026-11-18T13:00:00Z" },
+    });
+    const remove = (version: string) =>
+      g.writer.remove(
+        connection,
+        { id: "cal-1" },
+        {
+          ...target(first),
+          recurringSeries: true,
+          audience: { organizer, guests: [another, guest] },
+          seriesCancellation: {
+            overrides: [{ id: changed.id, version }],
+            message: "The event has been cancelled",
+          },
+        },
+        never,
+      );
+    expect(word(await remove('"stale"'))).toBe("version_stale");
+    expect(g.sent.filter((r) => r.method === "DELETE")).toHaveLength(0);
+    expect(word(await remove(changed.version))).toBe("ok");
+    expect(g.sent.filter((r) => r.method === "DELETE").map(({ url, ifMatch }) => [url, ifMatch])).toEqual([
+      [`${BASE}/series?sendUpdates=all`, first.version],
+    ]);
+  });
+
+  it("cancels an unchanged series under its confirmed guest list", async () => {
+    const g = google();
+    const host = "host" + "@example.test";
+    const guest = "guest" + "@example.test";
+    const people = { organizer: { email: host }, attendees: [{ email: guest }] };
+    const master = g.plant("booked-series", {
+      ...people,
+      recurrence: ["RRULE:FREQ=DAILY"],
+      start: { dateTime: "2026-11-17T09:00:00Z" },
+      end: { dateTime: "2026-11-17T10:00:00Z" },
+    });
+    g.plant("changed-day", {
+      ...people,
+      recurringEventId: master.id,
+      originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+    });
+    const remove = () =>
+      g.writer.remove(
+        connection,
+        { id: "cal-1" },
+        { ...target(master), recurringSeries: true, audience: { organizer: host, guests: [guest] } },
+        never,
+      );
+    expect(word(await remove())).toBe("repeat_unsupported");
+    expect(g.sent.filter((r) => r.method === "DELETE")).toHaveLength(0);
+    g.records.delete("changed-day");
+    expect(word(await remove())).toBe("ok");
+    expect(g.sent.filter((r) => r.method === "DELETE").map(({ ifMatch }) => ifMatch)).toEqual([
+      master.version,
+    ]);
+  });
+
+  it("cancels only the reviewed occurrence and returns its original time", async () => {
+    const g = google();
+    const organizer = "host" + "@example.test",
+      guest = "guest" + "@example.test";
+    const people = { organizer: { email: organizer }, attendees: [{ email: guest }] };
+    const master = g.plant("cancel-occurrence", {
+      ...people,
+      recurrence: ["RRULE:FREQ=DAILY"],
+      start: { dateTime: "2026-11-17T09:00:00Z" },
+      end: { dateTime: "2026-11-17T10:00:00Z" },
+    });
+    const day = {
+      ...g.records.get(master.id)!,
+      id: "cancel-this-day",
+      etag: '"that-day"',
+      recurrence: undefined,
+      recurringEventId: master.id,
+      originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+      start: { dateTime: "2026-11-18T09:00:00Z" },
+      end: { dateTime: "2026-11-18T10:00:00Z" },
+    };
+    g.generated.set(master.id, day);
+    const occurrence = instant(Date.UTC(2026, 10, 18, 9));
+    const answer = await g.writer.remove(
+      connection,
+      { id: "cal-1" },
+      {
+        ...target(master),
+        recurringSeries: true,
+        occurrence,
+        audience: { organizer, guests: [guest] },
+      },
+      never,
+    );
+    expect(answer).toMatchObject({
+      ok: true,
+      items: [{ kind: "cancelled_occurrence", originalStart: occurrence }],
+    });
+    expect(g.sent.filter((r) => r.method === "DELETE").map(({ url, ifMatch }) => [url, ifMatch])).toEqual([
+      [`${BASE}/cancel-this-day?sendUpdates=all`, day.etag],
+    ]);
+  });
+
+  it("moves an event only under its reviewed version and guest list", async () => {
+    const g = google();
+    const organizer = "host" + "@example.test",
+      guest = "guest" + "@example.test";
+    const source = g.plant("moving", { organizer: { email: organizer }, attendees: [{ email: guest }] });
+    const move = (version: string, guests: string[]) =>
+      g.writer.moveEvent(
+        connection,
+        { id: "cal-1" },
+        { id: "cal-2" },
+        { ...target(source), version, audience: { organizer, guests } },
+        never,
+      );
+    expect(word(await move('"stale"', [guest]))).toBe("version_stale");
+    expect(word(await move(source.version, []))).toBe("version_stale");
+    expect(g.sent.filter((r) => r.method === "POST")).toHaveLength(0);
+    expect(word(await move(source.version, [guest]))).toBe("ok");
+    expect(g.sent.map(({ method }) => method)).toEqual(["GET", "GET", "GET", "POST"]);
+  });
+
+  it("moves a whole series only when its guest list and unchanged days are verified", async () => {
+    const g = google();
+    const organizer = "host" + "@example.test";
+    const source = g.plant("series-to-move", {
+      organizer: { email: organizer },
+      recurrence: ["RRULE:FREQ=DAILY"],
+      start: { dateTime: "2026-11-17T09:00:00Z" },
+      end: { dateTime: "2026-11-17T10:00:00Z" },
+    });
+    const move = () =>
+      g.writer.moveEvent(
+        connection,
+        { id: "cal-1" },
+        { id: "cal-2" },
+        {
+          ...target(source),
+          recurringSeries: true,
+          audience: { organizer, guests: [] },
+        },
+        never,
+      );
+    g.plant("changed-day", {
+      recurringEventId: source.id,
+      originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+    });
+    expect(word(await move())).toBe("repeat_unsupported");
+    expect(g.sent.filter(({ method }) => method === "POST")).toHaveLength(0);
+    g.records.delete("changed-day");
+    expect(word(await move())).toBe("ok");
+    expect(g.sent.filter(({ method }) => method === "POST")).toHaveLength(1);
+  });
+
   it("answers an invitation on the account's own line, written back under the tag of the read it was made on", async () => {
     const g = google();
     const invited = g.plant("evt-9", {
@@ -1541,6 +1713,153 @@ describe("Google's writer", () => {
         { email: "mila@example.test", self: true, responseStatus: "tentative" },
       ],
     });
+  });
+
+  it("answers the named occurrence against its own tag and never patches the master", async () => {
+    const g = google();
+    const host = "host" + "@example.test";
+    const self = "guest" + "@example.test";
+    const people = [
+      { email: host, organizer: true },
+      { email: self, self: true, responseStatus: "accepted" },
+    ];
+    const master = g.plant("meeting", {
+      organizer: { email: host },
+      attendees: people,
+      recurrence: ["RRULE:FREQ=DAILY"],
+      start: { dateTime: "2026-11-17T09:00:00Z" },
+      end: { dateTime: "2026-11-17T10:00:00Z" },
+    });
+    const instance = {
+      ...g.records.get(master.id)!,
+      id: "meeting-tomorrow",
+      etag: '"one-day"',
+      recurrence: undefined,
+      organizer: { email: host },
+      attendees: people,
+      recurringEventId: master.id,
+      originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+      start: { dateTime: "2026-11-18T09:00:00Z" },
+      end: { dateTime: "2026-11-18T10:00:00Z" },
+    };
+    g.generated.set(master.id, instance);
+    const changed = await g.writer.answer(
+      connection,
+      { id: "cal-1" },
+      { ...target(master), recurringSeries: true, occurrence: instant(Date.UTC(2026, 10, 18, 9)) },
+      { as: self, reply: "TENTATIVE" },
+      never,
+    );
+    expect(word(changed)).toBe("ok");
+    const patches = g.sent.filter((r) => r.method === "PATCH");
+    expect(patches.map(({ url, ifMatch }) => [url, ifMatch])).toEqual([
+      [`${BASE}/meeting-tomorrow?sendUpdates=all`, instance.etag],
+    ]);
+  });
+  it("refuses to use a Google event with attachments for a portable move", async () => {
+    const g = google();
+    const reminders = { useDefault: false };
+    const simple = g.plant("portable", { reminders });
+    const stored = g.plant("with-attachment", { reminders, attachments: [{ title: "Plans" }] });
+    await expect(g.writer.readForMove!(connection, { id: "cal-1" }, simple.id, never)).resolves.toMatchObject(
+      {
+        ok: true,
+        items: [{ kind: "upsert", portableCopy: true }],
+      },
+    );
+    const read = await g.writer.readForMove!(connection, { id: "cal-1" }, stored.id, never);
+    expect(read).toMatchObject({ ok: true, items: [{ kind: "upsert" }] });
+    expect(read.ok && read.items[0]).not.toHaveProperty("portableCopy");
+    expect(g.sent.every(({ method }) => method === "GET")).toBe(true);
+  });
+
+  it("recovers an occurrence answer after Google applied it but the reply was lost", async () => {
+    const g = google({ losePatch: () => true });
+    const host = "host" + "@example.test";
+    const self = "guest" + "@example.test";
+    const people = [
+      { email: host, organizer: true },
+      { email: self, self: true, responseStatus: "accepted" },
+    ];
+    const master = g.plant("meeting", {
+      organizer: { email: host },
+      attendees: people,
+      recurrence: ["RRULE:FREQ=DAILY"],
+      start: { dateTime: "2026-11-17T09:00:00Z" },
+      end: { dateTime: "2026-11-17T10:00:00Z" },
+    });
+    const instance = {
+      ...g.records.get(master.id)!,
+      id: "meeting-tomorrow",
+      etag: '"one-day"',
+      recurrence: undefined,
+      organizer: { email: host },
+      attendees: people,
+      recurringEventId: master.id,
+      originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+      start: { dateTime: "2026-11-18T09:00:00Z" },
+      end: { dateTime: "2026-11-18T10:00:00Z" },
+    };
+    g.generated.set(master.id, instance);
+    const write = (retry?: true) =>
+      g.writer.answer(
+        connection,
+        { id: "cal-1" },
+        { ...target(master), recurringSeries: true, occurrence: instant(Date.UTC(2026, 10, 18, 9)) },
+        { as: self, reply: "TENTATIVE", retry },
+        never,
+      );
+    expect(word(await write())).toBe("connection_failed");
+    expect(word(await write(true))).toBe("ok");
+    const patches = g.sent.filter((r) => r.method === "PATCH");
+    expect(patches.map(({ url, ifMatch }) => [url, ifMatch])).toEqual([
+      [`${BASE}/meeting-tomorrow?sendUpdates=all`, instance.etag],
+    ]);
+  });
+
+  it("answers a previously changed instance only while both reviewed copies match", async () => {
+    const g = google();
+    const host = "host" + "@example.test";
+    const self = "guest" + "@example.test";
+    const people = [
+      { email: host, organizer: true },
+      { email: self, self: true, responseStatus: "accepted" },
+    ];
+    const master = g.plant("repeated-meeting", {
+      organizer: { email: host },
+      attendees: people,
+      recurrence: ["RRULE:FREQ=DAILY"],
+      start: { dateTime: "2026-11-17T09:00:00Z" },
+      end: { dateTime: "2026-11-17T10:00:00Z" },
+    });
+    const instance = g.plant("changed-meeting", {
+      organizer: { email: host },
+      attendees: people,
+      recurringEventId: master.id,
+      originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+      start: { dateTime: "2026-11-18T12:00:00Z" },
+      end: { dateTime: "2026-11-18T13:00:00Z" },
+    });
+    const occurrence = instant(Date.UTC(2026, 10, 18, 9));
+    const write = (version: string) =>
+      g.writer.answer(
+        connection,
+        { id: "cal-1" },
+        {
+          ...target(master),
+          recurringSeries: true,
+          occurrence,
+          exception: { id: instance.id, version, occurrence },
+        },
+        { as: self, reply: "TENTATIVE" },
+        never,
+      );
+    expect(word(await write('"stale"'))).toBe("version_stale");
+    expect(g.sent.filter((r) => r.method === "PATCH")).toHaveLength(0);
+    expect(word(await write(instance.version))).toBe("ok");
+    expect(g.sent.filter((r) => r.method === "PATCH").map(({ ifMatch }) => ifMatch)).toEqual([
+      instance.version,
+    ]);
   });
 
   it("takes an answer whose first attempt landed as done when it is sent again, and writes nothing; an answer on a copy someone else moved is refused", async () => {

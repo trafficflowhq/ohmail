@@ -68,7 +68,14 @@ function useDecisionCount(
   const [read, setRead] = useState<{ key: string; value: FirstRunDecisionCount } | null>(null);
   useEffect(() => {
     const count = verbs.countDecision;
-    if (step !== "window" || key === null || mailboxId === null || takingOver || !count) return;
+    if (
+      (step !== "consent" && step !== "window") ||
+      key === null ||
+      mailboxId === null ||
+      takingOver ||
+      !count
+    )
+      return;
     let live = true;
     let again: ReturnType<typeof setTimeout> | null = null;
     const ask = (): void => {

@@ -61,6 +61,7 @@ export interface LetterViewProps {
   readonly streamCard?: "open";
   readonly markUnread?: LetterHeadProps["markUnread"];
   readonly showSubject?: boolean;
+  readonly compactSubject?: boolean;
   /** A heading inside the latest sheet when the conversation heading can scroll out of view. */
   readonly subject?: string;
   /** The addressed letter, whose text ends the route’s opening measurement. */
@@ -87,6 +88,7 @@ export function Letter({
   offMirrorBody,
   retryBody,
   showSubject,
+  compactSubject,
   clip,
   streamCard,
   markUnread,
@@ -102,8 +104,7 @@ export function Letter({
   onPerson,
   card,
 }: LetterViewProps) {
-  const t = useText("reader");
-  const tm = useText("message");
+  const [t, messageText] = [useText("reader"), useText("message")];
   const {
     parts,
     body,
@@ -148,9 +149,10 @@ export function Letter({
       data-unseen={message.unread ? "" : undefined}
       data-body-ready={letterReady(message, body) ? "" : undefined}
     >
-      {look === "tint" && unread ? <span className="oh-vh">{tm("rowUnread")}</span> : null}
+      {look === "tint" && unread ? <span className="oh-vh">{messageText("rowUnread")}</span> : null}
       <Message
         clip={clip}
+        compactSubject={compactSubject}
         subject={clip || showSubject ? message.subject || undefined : subject}
         amount={clip || streamCard ? message.amount : undefined}
         head={
@@ -168,24 +170,22 @@ export function Letter({
         }
         unread={tinted}
         lead={
-          views.length > 0 || invitation !== null ? (
-            <>
-              {views.length > 0 ? (
-                <LetterViews
-                  label={t("views")}
-                  views={views.map((c) => ({ id: c.id, label: c.label, onPress: c.onPress }))}
-                />
-              ) : null}
-              {invitation}
-            </>
+          views.length ? (
+            <LetterViews
+              label={t("views")}
+              views={views.map((c) => ({ id: c.id, label: c.label, onPress: c.onPress }))}
+            />
           ) : undefined
         }
-        after={
-          history ? (
-            <LetterHistory label={history.label} open={history.expanded} onPress={history.onPress} />
-          ) : undefined
+        after={invitation || history ? <LetterAfter invitation={invitation} history={history} /> : undefined}
+        files={
+          <LetterFiles
+            messageId={message.id}
+            selection={previewSelection}
+            parts={parts}
+            omit={parts.invitationFile?.(message)}
+          />
         }
-        files={<LetterFiles messageId={message.id} selection={previewSelection} parts={parts} />}
       >
         <div data-read-body="">
           {kept ? null : textState}
@@ -194,6 +194,18 @@ export function Letter({
         </div>
       </Message>
     </div>
+  );
+}
+
+function LetterAfter({
+  invitation,
+  history,
+}: Pick<ReturnType<typeof useLetterContent>, "invitation" | "history">) {
+  return (
+    <>
+      {invitation && <div className="rd-invitation">{invitation}</div>}
+      {history && <LetterHistory label={history.label} open={history.expanded} onPress={history.onPress} />}
+    </>
   );
 }
 
@@ -239,11 +251,12 @@ function useLetterContent(
   const Body = parts.body;
   const Invitation = parts.invitation;
   const renderedText = loaded ? loaded.text : body.text;
-  /* What the shell says of the letter's invitation stands over its text and outside it, after the text's views. */
+  /* What the shell says of the letter's invitation stands below and outside its text. */
   const invitation =
     Invitation === NONE ? null : (
       <Invitation
         messageId={message.id}
+        message={message}
         invitationWithoutEvent={message.invitationWithoutEvent === true}
         text={renderedText}
         full={loaded !== null || body.state === "full"}

@@ -86,6 +86,7 @@ export function nextSchemePreference(
 }
 /** The appearance face — `paper` is today's look, `ohmarchy` the tiling one. */
 export type FaceName = "paper" | "ohmarchy";
+export const FACE_SCOPE_KEY = "ohmail.face.scope";
 /** The layout arrangement — `classic` is today's, `zero` the tiling one (3b builds it). */
 export type LayoutName = "classic" | "zero";
 
@@ -108,6 +109,8 @@ export interface ThemeContextValue {
   face: FaceName;
   /** This device's explicit face choice, or null when it never made one. */
   facePreference: FaceName | null;
+  /** An explicit This device choice takes precedence over the saved account look. */
+  deviceFaceExplicit: boolean;
   /** The account-level synced face as last adopted, or null for "no account choice". */
   accountFace: FaceName | null;
   /**
@@ -116,7 +119,7 @@ export interface ThemeContextValue {
    */
   linuxDevice: boolean;
   /** "Only this device": set (or clear, with null) this device's explicit face. */
-  setFace: (face: FaceName | null) => void;
+  setFace: (face: FaceName | null, explicit?: boolean) => void;
   /**
    * The layout arrangement (OHMARCHY-CONTRACT.md). Always concrete; absent attribute reads
    * as "classic". The zero layout itself is 3b's work — the machinery exists first so no
@@ -228,7 +231,8 @@ export function themeInitScript(
     : "";
   const deviceFace = `try{f=localStorage.getItem(${faceKey})}catch(e){}`;
   const faceHalf = "var f=null;" + (owner
-    ? ownFace + `if(f!=="paper"&&f!=="ohmarchy"){${deviceFace}}`
+    ? `try{if(localStorage.getItem(${JSON.stringify(FACE_SCOPE_KEY)})==="device"){${deviceFace}}}catch(e){}` +
+      `if(f!=="paper"&&f!=="ohmarchy"){${ownFace}}if(f!=="paper"&&f!=="ohmarchy"){${deviceFace}}`
     : deviceFace + `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem(${accountKey})}catch(e){}}`);
   return (
     themeHalf +
@@ -346,6 +350,7 @@ export function ThemeProvider({
   // needs a third state because null is meaningful — "adopted, and no pin exists").
   const [devicePin, setDevicePin] = useState<FaceName | null | undefined>(undefined);
   const [deviceFaceChanged, setDeviceFaceChanged] = useState(false);
+  const [deviceFaceExplicit, setDeviceFaceExplicit] = useState(false);
   // Undefined means the account look is still unknown; null is a confirmed absence.
   const [accountFace, setAccountFaceState] = useState<FaceName | null>();
   const activeFaceScope = useRef(accountFaceScope);
@@ -381,6 +386,7 @@ export function ThemeProvider({
       const raw = doorRef.current.get(faceStorageKey);
       return isFace(raw) ? raw : null;
     });
+    setDeviceFaceExplicit(doorRef.current.get(FACE_SCOPE_KEY) === "device");
     setAccountFaceState((current) => {
       if (current !== undefined) return current; // a live adoption beat the mirror — it wins
       const raw = doorRef.current.get(accountFaceStorageKey);
@@ -450,7 +456,7 @@ export function ThemeProvider({
   const next = nextSchemePreference(preference, systemNow);
   const nextResolved: ResolvedTheme = next === "system" ? systemNow : next;
   const useLinuxDefault = linux && (!deferLinuxFace || accountFace !== undefined);
-  const savedAccountFace = preferAccountFace && !deviceFaceChanged ? accountFace : null;
+  const savedAccountFace = preferAccountFace && !deviceFaceChanged && !deviceFaceExplicit ? accountFace : null;
   const face: FaceName =
     savedAccountFace ?? devicePin ?? accountFace ?? (useLinuxDefault ? "ohmarchy" : "paper");
   const layout: LayoutName = layoutPin ?? "classic";
@@ -481,12 +487,15 @@ export function ThemeProvider({
   }, [defaultPreference]);
 
   const setFace = useCallback(
-    (next: FaceName | null) => {
+    (next: FaceName | null, explicit = false) => {
       setDeviceFaceChanged(true);
       setDevicePin(next);
+      setDeviceFaceExplicit(next !== null && explicit);
       // The in-memory choice applies either way; "lost" is what the host's notice is for.
       if (next === null) doorRef.current.remove(faceStorageKey);
       else doorRef.current.set(faceStorageKey, next);
+      if (next !== null && explicit) doorRef.current.set(FACE_SCOPE_KEY, "device");
+      else doorRef.current.remove(FACE_SCOPE_KEY);
     },
     [storageKey, faceStorageKey],
   );
@@ -522,6 +531,7 @@ export function ThemeProvider({
       nextResolved,
       face,
       facePreference: devicePin ?? null,
+      deviceFaceExplicit,
       accountFace: accountFace ?? null,
       linuxDevice: linux,
       setFace,
@@ -532,7 +542,7 @@ export function ThemeProvider({
       adoptAccountFace,
       persistence,
     }),
-    [preference, resolved, setTheme, cycle, next, nextResolved, face, devicePin, accountFace, linux, setFace, layout, faces, setLayout, teach, adoptAccountFace, persistence],
+    [preference, resolved, setTheme, cycle, next, nextResolved, face, devicePin, deviceFaceExplicit, accountFace, linux, setFace, layout, faces, setLayout, teach, adoptAccountFace, persistence],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

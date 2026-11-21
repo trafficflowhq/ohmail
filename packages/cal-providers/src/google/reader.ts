@@ -123,6 +123,7 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
           name: text(e.summaryOverride, MAX_CALENDAR_NAME_CHARS) ?? text(e.summary, MAX_CALENDAR_NAME_CHARS),
           color: text(e.backgroundColor, MAX_COLOR_CHARS),
           writable: e.accessRole === "owner" || e.accessRole === "writer",
+          ...(e.accessRole === "owner" && { owned: true as const }),
           byToken: true,
           zone: text(e.timeZone, MAX_ZONE_NAME_CHARS),
         });

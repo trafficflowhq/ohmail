@@ -3,7 +3,7 @@
  * their senders (Screening), and Screening's confirmation, which says how many senders and letters, and the rules,
  * before anything moves. Which question stands is the model's (`pickPanel`).
  */
-import type { RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { MOVE_TARGETS, type MoveTarget } from "@ohmail/app-logic/press/actions";
 import { EndDot, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
@@ -26,6 +26,7 @@ export function OhboxMoveAsk({
 }) {
   const t = useText("ohbox");
   const places = useText("place");
+  const cancelScreening = useRef<HTMLButtonElement>(null);
   const panel = model.pickPanel;
   const close = () => model.setPickPanel(null);
   const place = (to: MoveTarget) => places(to);
@@ -66,6 +67,7 @@ export function OhboxMoveAsk({
         anchor={foot}
         up
         kind="ask"
+        initialFocus={cancelScreening}
         label={title ?? t("bar.screen")}
       >
         {plan && panel?.kind === "confirm" && title ? (
@@ -83,7 +85,9 @@ export function OhboxMoveAsk({
             <MenuItem disabled={plan.senders === 0} onPress={() => model.screenPicked(panel.dest)}>
               {t("bar.screenCommit")}
             </MenuItem>
-            <MenuItem onPress={close}>{t("moveCancel")}</MenuItem>
+            <MenuItem ref={cancelScreening} onPress={close}>
+              {t("moveCancel")}
+            </MenuItem>
           </>
         ) : null}
       </Menu>

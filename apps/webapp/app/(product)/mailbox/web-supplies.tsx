@@ -139,6 +139,7 @@ export interface WebWords {
   readonly storageBlock: boolean;
   readonly account: string | null;
   readonly accountAddress?: string | null;
+  readonly accountDisplayName?: string;
   readonly firstRun: FirstRunHost | undefined;
   readonly mailboxFacts: Exclude<WebSupplies["reads"]["mailboxes"], typeof NONE>;
   readonly resolve: WebSupplies["session"]["resolve"];
@@ -309,8 +310,9 @@ export function useWebHost(
     isolatedScope: isolatedScopeOf(engine),
     account: confirmed,
     accountAddress: words.accountAddress,
+    accountDisplayName: words.accountDisplayName,
     build: { version: process.env.NEXT_PUBLIC_APP_VERSION ?? null, commit: process.env.NEXT_PUBLIC_BUILD ?? null },
-  }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, server.calendar, invites, subscriptionPage, storageBlock, scope, confirmed, words.accountAddress, supplies, sendSurface]);
+  }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, server.calendar, invites, subscriptionPage, storageBlock, scope, confirmed, words.accountAddress, words.accountDisplayName, supplies, sendSurface]);
 }
 
 /**
@@ -351,6 +353,6 @@ function useWebNotifications(
         if (before.calendarPort === NONE || mounted.current.calendarPort !== before.calendarPort) return false;
         return openCalendarNotice(before.address, before.calendarPort, notice.eventId, mounted.current.zone, notice.kind === "cal_alert" ? notice.startMs : undefined);
       };
-    }),
+    }, true),
   }), []);
 }

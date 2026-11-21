@@ -30,6 +30,7 @@ export interface MessageProps {
   line?: ReactNode;
   /** The message's own subject, where the column's head is out of sight or every message prints its own. */
   subject?: string;
+  compactSubject?: boolean;
   /** A receipt amount beside the folded subject, and below it when opened. */
   amount?: string;
   /** What stands between the subject and the text: an event found in the letter. */
@@ -54,6 +55,7 @@ export function Message({
   back,
   line,
   subject,
+  compactSubject,
   amount,
   lead,
   children,
@@ -64,7 +66,11 @@ export function Message({
   clip,
 }: MessageProps) {
   const text = typeof children === "string" ? <div className="oh-message-body">{children}</div> : children;
-  const heading = subject ? <h2 className="oh-text oh-display oh-message-subject">{subject}</h2> : null;
+  const heading = subject ? (
+    <h2 className="oh-text oh-display oh-message-subject" data-compact={compactSubject ? "" : undefined}>
+      {subject}
+    </h2>
+  ) : null;
   const amountLine = amount ? <p className="oh-text oh-display oh-message-amount">{amount}</p> : null;
   const cutId = useId();
   const shut = clip ? !clip.open : false;

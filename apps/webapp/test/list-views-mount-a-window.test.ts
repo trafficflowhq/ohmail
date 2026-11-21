@@ -283,10 +283,9 @@ describe("every list view mounts its window", () => {
     expect(window.maps.map(({ receiver }) => receiver)).toEqual(["(windowed?.slots ?? rows)"]);
     const folder = readFileSync("packages/app/src/folder/FolderList.tsx", "utf8");
     expect(folder).toMatch(/const \{ scroller, window \} = useCursorWindow\(/);
-    expect(folder).toMatch(/const first = Math\.max\(0, window\.start - index\)/);
-    expect(folder).toMatch(/const slice = list\.slice\(first, Math\.max\(0, window\.end - index\)\)/);
-    expect(folder).toMatch(/<LetterRows[\s\S]*?rows=\{slice\}/);
-    expect(folder).toMatch(/rows\(t\("group\.earlier"\), model\.earlier,/);
+    expect(folder).toMatch(/const \{ rows, cursor \} = model\.list;/);
+    expect(folder).toMatch(/const visible = rows\.slice\(window\.start, window\.end\)/);
+    expect(folder).toMatch(/<LetterRows[\s\S]*?rows=\{visible\}\s+slice=\{\{ index: window\.start, first: window\.start, total: rows\.length \}\}/);
     const folderWindow = readListViews(folder, "FolderList.tsx");
     expect(folderWindow.origins).toBe(1);
     expect(folderWindow.gatedOrigins).toBe(0);

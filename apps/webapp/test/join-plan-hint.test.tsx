@@ -72,7 +72,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+const trialCopy = {
+  en: { title: "Start your 14-day trial", noCard: "No card" },
+  de: { title: "Starte deine 14-tägige Testphase", noCard: "Keine Karte" },
+};
+
 async function join(messages: typeof en, props: Record<string, unknown> = {}) {
+  const locale = messages === de ? "de" : "en";
   vi.resetModules();
   process.env.NEXT_PUBLIC_API_BASE = "/api";
   delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
@@ -88,7 +94,7 @@ async function join(messages: typeof en, props: Record<string, unknown> = {}) {
   const root = createRoot(host);
   await act(async () => {
     root.render(React.createElement(NextIntlClientProvider, {
-      locale: messages === de ? "de" : "en", messages, timeZone: "UTC",
+      locale, messages, timeZone: "UTC",
       children: React.createElement(JoinScreen, { initialCode: "", publicSignup: true, ...props }),
     }));
   });
@@ -98,7 +104,7 @@ async function join(messages: typeof en, props: Record<string, unknown> = {}) {
   const trial = () => {
     const heading = host.querySelector("h1")?.textContent?.trim();
     const tags = [...host.querySelectorAll(".oh-page-line .oh-tag")].map((el) => el.textContent ?? "");
-    const chosen = heading && heading !== messages.join.startTrialTitle.replace(/\.$/, "") && heading !== messages.join.step_plan_title;
+    const chosen = heading && heading !== trialCopy[locale].title && heading !== messages.join.step_plan_title;
     return [chosen ? heading : null, ...tags].filter(Boolean).join(" · ");
   };
   return { host, trial, close: async () => { await close(); unmount = null; } };
@@ -153,7 +159,7 @@ describe("the plan step names the site's choice beside the trial, and the accoun
     localStorage.clear();
     mints = [];
     const none = await join(en);
-    expect(none.trial()).toBe(en.join.planNoCard);
+    expect(none.trial()).toBe(trialCopy.en.noCard);
     expect(mints).toEqual([{ lang: "en" }]);
   });
 });
@@ -172,12 +178,12 @@ describe("the choice survives the verification mail's round trip", () => {
     const week = 7 * 24 * 60 * 60 * 1000;
     localStorage.setItem(KEY, JSON.stringify({ plan: "pro", interval: "year", at: Date.now() - week - 60_000 }));
     const stale = await join(en);
-    expect(stale.trial()).toBe(en.join.planNoCard);
+    expect(stale.trial()).toBe(trialCopy.en.noCard);
     await stale.close();
     localStorage.setItem(KEY, JSON.stringify({ plan: "enterprise", interval: "decade", at: Date.now() }));
     mints = [];
     const odd = await join(en);
-    expect(odd.trial()).toBe(en.join.planNoCard);
+    expect(odd.trial()).toBe(trialCopy.en.noCard);
     expect(mints).toEqual([{ lang: "en" }]);
   });
 
@@ -216,8 +222,8 @@ describe("the plan step names a trial only for an account that never started one
 
     it(`${lang}: never started: the trial, its button and the hint that it waits`, async () => {
       const { host, trial } = await join(messages);
-      expect(host.querySelector("h1")?.textContent).toBe(messages.join.startTrialTitle.replace(/\.$/, ""));
-      expect(trial()).toBe(messages.join.planNoCard);
+      expect(host.querySelector("h1")?.textContent).toBe(trialCopy[lang].title);
+      expect(trial()).toBe(trialCopy[lang].noCard);
       expect(button(host)).toBe(messages.join.planStartTrial);
     });
 
@@ -226,12 +232,12 @@ describe("the plan step names a trial only for an account that never started one
         lifecycle = block;
         const { host, trial } = await join(messages, { planHint: { plan: "pro", interval: "year" } });
         expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_plan_title);
-        expect(host.textContent).not.toContain(messages.join.startTrialTitle.replace(/\.$/, ""));
+        expect(host.textContent).not.toContain(trialCopy[lang].title);
         expect(trial(), "the site's choice is still named, without a trial").toBe(
           lang === "de" ? "Pro · Jährliche Abrechnung" : "Pro · Billed yearly",
         );
         expect(button(host)).toBe(messages.join.planContinue);
-        expect(host.textContent).not.toContain(messages.join.planNoCard);
+        expect(host.textContent).not.toContain(trialCopy[lang].noCard);
         expect(host.textContent).not.toContain(messages.join.planLaterHint);
         expect(host.textContent).not.toMatch(/\b14\b/);
       });

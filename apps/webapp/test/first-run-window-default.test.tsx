@@ -160,11 +160,10 @@ async function mount(o: {
   };
 }
 
-/** Walk the re-run from its opening screen to "How far back". */
+/** The re-run opens with the folder map and the import window together. */
 async function toWindow(s: Stage): Promise<void> {
-  expect(s.heading(), "the re-run did not open on the consent statement").toBe(t.mapTitle);
-  await s.press(t.continue);
-  expect(s.heading(), "Continue did not reach the window screen").toContain(t.organizeLast.split(" the last")[0]!);
+  expect(s.el.textContent).toContain(t.mapOhbox);
+  expect(s.heading()).toContain(t.organizeLast.split(" the last")[0]!);
 }
 
 describe("the window screen agrees with its own label", () => {

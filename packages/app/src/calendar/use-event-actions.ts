@@ -1,34 +1,28 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import {
-  eventTimeOf,
-  deleteAudienceOf,
-  pressAndHear,
-  moveTime,
-  type CalendarPort,
-  type ZoneSource,
-} from "@ohmail/app-logic/calendar";
-import type { ToastFn } from "@ohmail/app-logic/press/report";
-import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
-import type { CalendarAct, CalendarRemoveScope } from "@ohmail/wire";
+import { deleteAudienceOf, moveTime, type CalendarPort, type ZoneSource } from "@ohmail/app-logic/calendar";
+import type { CalendarRemoveScope } from "@ohmail/wire";
 import { useFrame, useReport } from "../frame/commands.js";
 import { useKnownOwnAddresses } from "../frame/room.js";
 import { fragmentOf } from "../frame/route.js";
-import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
+import { useLocale, useText, useTimeZone } from "../text/index.js";
 import {
-  editBase,
   editSchedule,
   editVersions,
   editableEvent,
   eventOwned,
   moveDestinations,
+  nativeMoveTo,
   removableEvent,
   type EditableEvent,
 } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
+import { commitAction } from "./commit-event-action.js";
+import { reviewedEventAct } from "./event-action-act.js";
 import { useCalendarGestureReport } from "./update-report.js";
 import { canStartTimeChange, changedTimes, resizedDays, type EventChange } from "./event-time-change.js";
 import { eventWhen } from "./event-words.js";
-import { editGuestUpdate, eventUpdate, guestUpdate } from "./guest-update.js";
+import { useEventProposals } from "./use-event-proposals.js";
+import { editGuestUpdate, guestUpdate } from "./guest-update.js";
 
 const versionOf = (current: EditableEvent) => `${editVersions(current)}\n${editSchedule(current)}`;
 
@@ -36,6 +30,7 @@ const needsFreshSeriesQuestion = (current: EditableEvent, change: EventChange, v
   !!current.record.repeat &&
   change.kind !== "delete" &&
   change.kind !== "calendar" &&
+  change.kind !== "accept-time" &&
   version !== versionOf(current) &&
   version.split("\n")[1] === editSchedule(current);
 
@@ -114,43 +109,6 @@ function guestsFor(
   return audience;
 }
 
-function actionFor(
-  change: EventChange,
-  face: CalendarEventFace,
-  current: EditableEvent,
-  scope: CalendarRemoveScope,
-  zone: string,
-  zones: ZoneSource,
-  newId: () => string,
-  audience: Request["audience"],
-): CalendarAct | null {
-  const { record, exception } = current;
-  const stamped = { eventId: record.id, base: record.updatedAt };
-  if (change.kind === "delete")
-    return {
-      kind: "calendar_event_delete",
-      ...stamped,
-      scope,
-      ...((record.repeat || audience.guests.length > 0) && { audience }),
-    };
-  if (change.kind === "calendar") {
-    return { kind: "calendar_event_move", ...stamped, toCalendarId: change.target };
-  }
-  // The whole series moves from its stored start. A single occurrence starts where it is drawn.
-  const wholeSeries = scope.kind === "record" && record.repeat !== null;
-  const start = wholeSeries ? eventTimeOf(record.start) : face.start;
-  const end = wholeSeries ? record.end && eventTimeOf(record.end) : face.end;
-  if (!start || !end) return null;
-  const times = changedTimes(change, { ...face, start, end }, zone, zones);
-  if (!times) return null;
-  if (change.kind === "resize-time" && (!record.repeat || wholeSeries) && record.end) {
-    if (change.edge === "start") times.end = record.end;
-    else times.start = record.start;
-  }
-  const updateScope = scope.kind === "following" ? { ...scope, newEventId: newId() } : scope;
-  return eventUpdate(exception ?? record, editBase(current, updateScope), times, updateScope, { audience });
-}
-
 function refreshedAction(
   { change, face, version, scope, audience }: Request,
   current: EditableEvent,
@@ -159,6 +117,7 @@ function refreshedAction(
   zone: string,
   zones: ZoneSource,
   port: CalendarPort,
+  cancellationMessage: string,
 ) {
   if (!scope) return "refusal.invalid";
   const { record } = current;
@@ -176,7 +135,19 @@ function refreshedAction(
       ? moveDestinations(host, current).find((target) => target.id === change.target)
       : undefined;
   if (change.kind === "calendar" && !destination) return "refusal.readOnly";
-  const act = actionFor(change, face, current, scope, zone, zones, () => port.newId(), audience);
+  const act = reviewedEventAct(
+    change,
+    face,
+    current,
+    scope,
+    zone,
+    zones,
+    () => port.newId(),
+    audience,
+    cancellationMessage,
+  );
+  if (act?.kind === "calendar_event_move" && destination && !nativeMoveTo(current, destination))
+    return { act: { ...act, copyThenRemove: true as const }, destination };
   return act ? { act, destination } : "refusal.invalid";
 }
 
@@ -198,56 +169,22 @@ function scopedRequest(
   return found ? { ...question, scope, guests: found.names, audience: found.audience } : null;
 }
 
-async function commitAction(
-  port: CalendarPort,
-  act: CalendarAct,
-  guests: readonly string[],
-  locale: string,
-  e: Text,
-  report: ToastFn,
-  current: () => boolean,
-  close: () => void,
-  updated?: (act: Extract<CalendarAct, { kind: "calendar_event_update" }>) => void,
-  destination?: string,
+function requestFrom(
+  current: EditableEvent,
+  face: CalendarEventFace,
+  change: EventChange,
+  anchor: HTMLElement,
+  own: readonly string[] | null,
 ) {
-  if (act.kind === "calendar_event_delete" && guests.length === 0 && port.holdDelete) {
-    const held = await port.holdDelete(act, UNDO_MS);
-    if (!current()) return;
-    const remaining = held.remainingMs();
-    report(
-      e("taken.delete"),
-      remaining > 0
-        ? {
-            action: e("undoDelete"),
-            duration: remaining,
-            actionDeadline: held.deadline,
-            onAction: () => {
-              if (held.remainingMs() <= 0) {
-                report(e("undoLate"));
-                return;
-              }
-              void held.undo().then(
-                (restored) => report(e(restored ? "deleteUndone" : "undoLate")),
-                () => report(e("refusal.unknown")),
-              );
-            },
-          }
-        : undefined,
-    );
-    close();
-    return;
-  }
-  const heard = await pressAndHear(port, act);
-  if (!current()) return;
-  if (heard.verdict?.kind === "refused" && heard.verdict.word === "version_stale")
-    report(e("refusal.changed"));
-  else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_delete" && guests.length)
-    report(e("taken.deleteAudience", { guests: new Intl.ListFormat(locale).format(guests) }));
-  else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_update" && updated) updated(act);
-  else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_move" && destination)
-    report(destination);
-  else if (heard.say) report(e(heard.say));
-  if (heard.verdict?.kind !== "refused") close();
+  const next = requestFor(current, face, change, anchor);
+  if (change.kind !== "accept-time") return next;
+  return scopedRequest(
+    next,
+    current,
+    face.ref.occurrence ? "occurrence" : "record",
+    face.ref.occurrence,
+    own,
+  );
 }
 
 function useEventActionState(page: string, engine: object, port: CalendarPort, zone: string) {
@@ -271,15 +208,43 @@ function whenFor(question: Request, zone: string, zones: ZoneSource, locale: str
   return times && eventWhen(times, zone, zones, locale, change.kind === "resize-time");
 }
 
+function chooseActionScope(
+  question: Request | null,
+  kind: CalendarRemoveScope["kind"],
+  own: readonly string[] | null,
+  canWrite: (face: CalendarEventFace, change: EventChange) => EditableEvent | null,
+  ask: (request: Request | null) => void,
+  send: (request: Request) => Promise<void>,
+  stale: () => void,
+) {
+  if (!question || !question.scopes.includes(kind)) return;
+  const current = canWrite(question.face, question.change);
+  const at = question.face.ref.occurrence;
+  if (!current || (kind !== "record" && !at)) {
+    ask(null);
+    return;
+  }
+  const next = scopedRequest(question, current, kind, at, own);
+  if (!next) {
+    ask(null);
+    stale();
+    return;
+  }
+  if (next.guests.length) ask(next);
+  else void send(next);
+}
+
 export function useEventActions(port: CalendarPort, zones: ZoneSource) {
   const { host, commands, route } = useFrame();
   const own = useKnownOwnAddresses();
   const zone = useTimeZone();
   const e = useText("event");
+  const t = useText("calendar");
   const locale = useLocale();
   const reportUpdate = useCalendarGestureReport(port, zone, zones);
   const report = useReport();
   const page = fragmentOf(route);
+  const proposal = useEventProposals(port, zones);
   const { question, ask, busy, setBusy, ticket } = useEventActionState(page, host.engine, port, zone);
 
   const canWrite = (face: CalendarEventFace, change: EventChange): EditableEvent | null => {
@@ -302,7 +267,16 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
     if (!current) return report(e("refusal.readOnly"));
     if (needsFreshSeriesQuestion(current, change, request.version))
       return ask(requestFor(current, face, change, request.anchor));
-    const outcome = refreshedAction(request, current, host, own, zone, zones, port);
+    const outcome = refreshedAction(
+      request,
+      current,
+      host,
+      own,
+      zone,
+      zones,
+      port,
+      t("actions.cancellationMessage"),
+    );
     if (typeof outcome === "string") return report(e(outcome));
     const range = change.kind === "resize" && resizedDays(face.start, face.end, change.edge, change.days);
     const currentRecord = () => canWrite(face, change)?.record ?? null;
@@ -340,10 +314,16 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
     anchor: HTMLElement,
     expectedVersion?: string,
   ) => {
-    if (ticket.current || question || !canStartTimeChange(face, change, zone, zones)) return;
+    if (ticket.current || question || proposal.draft || !canStartTimeChange(face, change, zone, zones))
+      return;
     const current = canWrite(face, change);
-    if (!current) return;
-    const request = requestFor(current, face, change, anchor);
+    if (!current) {
+      if (change.kind === "time" || change.kind === "resize" || change.kind === "resize-time")
+        proposal.start(face, change, expectedVersion);
+      return;
+    }
+    const request = requestFrom(current, face, change, anchor, own);
+    if (!request) return report(e("refusal.changed"));
     if (expectedVersion !== undefined && request.version !== expectedVersion) {
       if (needsFreshSeriesQuestion(current, change, expectedVersion)) ask(request);
       else report(e("refusal.changed"));
@@ -353,34 +333,19 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
     else void send(request);
   };
 
-  const chooseScope = (kind: CalendarRemoveScope["kind"]) => {
-    if (!question || !question.scopes.includes(kind)) return;
-    const current = canWrite(question.face, question.change);
-    const at = question.face.ref.occurrence;
-    if (!current || (kind !== "record" && !at)) {
-      ask(null);
-      return;
-    }
-    const next = scopedRequest(question, current, kind, at, own);
-    if (!next) {
-      ask(null);
-      report(e("refusal.changed"));
-      return;
-    }
-    if (next.guests.length) ask(next);
-    else void send(next);
-  };
-
   return {
     busy,
+    proposal,
     question: allowed && question ? { ...question, when: whenFor(question, zone, zones, locale) } : null,
     start,
-    chooseScope,
+    chooseScope: (kind: CalendarRemoveScope["kind"]) =>
+      chooseActionScope(question, kind, own, canWrite, ask, send, () => report(e("refusal.changed"))),
     moveTime: (face: CalendarEventFace, delta: number, snap: boolean) =>
       moveTime(face, delta, snap, zone, zones),
     moveVersion: (face: CalendarEventFace) => {
-      const event = !busy && !question && canWrite(face, { kind: "time", days: 0, minutes: 0 });
-      return event ? versionOf(event) : undefined;
+      if (busy || question || proposal.draft) return undefined;
+      const event = canWrite(face, { kind: "time", days: 0, minutes: 0 });
+      return event ? versionOf(event) : proposal.baseOf(face);
     },
     cancel: () => ask(null),
     confirm: () => question && void send(question),

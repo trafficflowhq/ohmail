@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Seg, design, hueStyle } from "@ohmail/ui/base";
+import { Seg, design, hueStyle } from "@ohmail/ui/base";
 import { LookPicture, SettingLine, SettingsSheet, SettingTile, SettingTiles } from "@ohmail/ui/mail";
 import { useText, type Text } from "../../text/index.js";
 import type { GeneralModel, LookFace, ServerSwitch, ThemeChoice } from "./model.js";
@@ -88,25 +88,23 @@ function AppearanceSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Tex
           ]}
         />
       </SettingLine>
-      {scope ? (
-        <SettingLine
-          label={t("face")}
-          narrow="detail"
-          value={t(
-            scope.governs === "all"
-              ? "faceScopeAll"
-              : scope.governs === "device"
-                ? "faceScopeDevice"
-                : "faceScopeDefault",
-          )}
-        >
-          {scope.governs === "all" ? null : (
-            <Button kind="quiet" size="s" disabled={scope.busy} onPress={() => scope.applyAll()}>
-              {t("faceApplyAll")}
-            </Button>
-          )}
-        </SettingLine>
-      ) : null}
+      <SettingLine label={t("face")} narrow="under">
+        {scope ? (
+          <Seg
+            label={g("lookScope")}
+            value={scope.governs === "all" ? "all" : "device"}
+            disabled={scope.busy}
+            options={[
+              { value: "all", label: g("allDevices") },
+              { value: "device", label: g("thisDevice") },
+            ]}
+            onChange={(next) => {
+              if (scope.governs !== "all" && next === "all") scope.applyAll();
+              else if (scope.governs !== "device" && next === "device") scope.pin?.();
+            }}
+          />
+        ) : null}
+      </SettingLine>
       <SettingTiles label={g("lookChoice")}>
         {tile("paper", t("facePaper"))}
         {tile("ohmarchy", t("faceOhmarchy"), g("followsOmarchy"))}

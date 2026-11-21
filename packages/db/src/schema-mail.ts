@@ -2542,6 +2542,7 @@ export const messageInvitations = pgTable("message_invitations", {
   startsAt: timestamp("starts_at", { withTimezone: true }),
   organizer: text("organizer"),
   invitedAddress: text("invited_address"),
+  proposal: jsonb("proposal").$type<import("@ohmail/wire").InvitationProposal>(),
   /**
    * On a REQUEST, the answer this mailbox gave on record (`accepted`, `tentative`, `declined`) and
    * when; on a REPLY, the answer the letter carries. Written by the door in `message-invitations.ts`.
@@ -2801,6 +2802,8 @@ export const accountSettings = pgTable("account_settings", {
    */
   subjectHeading: text("subject_heading"),
   subjectHeadingAt: timestamp("subject_heading_at", { withTimezone: true }),
+  // LAST: ADD COLUMN appends to the migrated table.
+  draftReplies: boolean("draft_replies").notNull().default(true),
 });
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -2885,6 +2888,7 @@ export const calCalendars = pgTable("cal_calendars", {
   name: text("name").notNull().default(""),
   color: text("color"),
   access: text("access").notNull().default("reader"),
+  nativeMove: boolean("native_move").notNull().default(false),
   shown: boolean("shown").notNull().default(true),
   timeZone: text("time_zone"),
   syncToken: text("sync_token"),
@@ -2950,10 +2954,12 @@ export const calEvents = pgTable("cal_events", {
   organizer: text("organizer"),
   organizerName: text("organizer_name"),
   myAnswer: text("my_answer"),
+  removedOccurrences: jsonb("removed_occurrences").$type<string[]>(),
   heldBack: boolean("held_back").notNull().default(false),
   /** A desktop's copy received this event cut to fit the feed: no notes, no invitees. */
   partial: boolean("partial").notNull().default(false),
   original: text("original"),
+  portableCopy: boolean("portable_copy").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

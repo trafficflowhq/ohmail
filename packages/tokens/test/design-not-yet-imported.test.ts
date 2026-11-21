@@ -22,6 +22,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -240,10 +241,18 @@ describe("where they meet, the seam is loaded", () => {
     expect(without(files)[1]).toEqual([]);
   });
 
-  it("a frame that stops loading its own is found on every root but the mailbox's, where the wall's stage loads it too", () => {
+  it("Frame imports the seam directly and reachability fails only when both Frame and DoorStage drop it", () => {
     const frame = "packages/app/src/frame/Frame.tsx";
-    const files = planted({ [frame]: tree.get(frame)!.replace('import "./seam.generated.css";', "") });
-    expect(without(files)).toEqual([SEAM_ROOTS.filter((root) => root !== `${PRODUCT}/mailbox/page.tsx`), SEAM_ROOTS]);
+    const door = "packages/app/src/doors/stage/DoorStage.tsx";
+    const frameSource = tree.get(frame)!;
+    const seamImport = /^\s*import\s+["']\.\/seam\.generated\.css["'];?[ \t]*$/m;
+    expect(withoutComments(frameSource)).toMatch(seamImport);
+    const frameless = frameSource.replace(seamImport, "");
+    const doorless = tree.get(door)!.replace('import "../../frame/seam.generated.css";', "");
+    expect(frameless).not.toBe(tree.get(frame));
+    expect(doorless).not.toBe(tree.get(door));
+    expect(without(planted({ [frame]: frameless }))).toEqual([[], SEAM_ROOTS]);
+    expect(without(planted({ [frame]: frameless, [door]: doorless }))).toEqual([SEAM_ROOTS, SEAM_ROOTS]);
   });
 });
 
@@ -271,7 +280,7 @@ describe("a door on the web", () => {
     expect(DOOR_PAGES.filter((page) => todays.has(page))).toEqual([]);
   });
 
-  it("a stage that stops loading the frame's seam sheet is found on every door's page", () => {
+  it("door pages lose the seam stylesheet when both the stage and frame drop it", () => {
     // The shared Frame can also supply the sheet through the mounted doors' imports.
     const frame = "packages/app/src/frame/Frame.tsx";
     const withoutFrameSheet = tree.get(frame)!.replace('import "./seam.generated.css";', "");

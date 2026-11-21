@@ -96,6 +96,44 @@ async function press(): Promise<void> {
 }
 
 describe("the switch reads and writes the account's flag", () => {
+  it("shows the separate stored Draft reply choice and hands its press to the account setting", async () => {
+    const { AiSection } = await import("../app/(product)/mailbox/AiSection");
+    const set = vi.fn(async () => undefined);
+    await mount(h(AiSection, { draftReplies: { enabled: false, set } }));
+    const control = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="switch"]'))
+      .find((button) => button.getAttribute("aria-label") === "Draft reply");
+    expect(control?.getAttribute("aria-checked")).toBe("false");
+    await act(async () => { control?.click(); });
+    expect(set).toHaveBeenCalledWith(true);
+  });
+
+  it("shows the server's AI balance, including an empty allowance, and leaves an unknown balance blank", async () => {
+    const { AiSection } = await import("../app/(product)/mailbox/AiSection");
+    await mount(h(AiSection, { credits: { remaining: 1200, total: 2000 } }));
+    expect(text()).toContain("1,200 of 2,000 left");
+    await mount(h(AiSection, { credits: { remaining: 0, total: 2000 } }));
+    expect(text()).toContain("0 credits");
+    expect(text()).toContain("0 of 2,000 left");
+    await mount(h(AiSection));
+    expect(text()).not.toContain("AI budget left");
+  });
+
+  it.each([
+    { supplied: { remaining: 1200 }, label: "1,200 credits left", meter: false },
+    { supplied: { remaining: 1200, total: 0 }, label: "1,200 credits left", meter: false },
+    { supplied: { remaining: 1200, total: -1 }, label: "1,200 credits left", meter: false },
+    { supplied: { remaining: 1200, total: 2000 }, label: "1,200 of 2,000 left", meter: true },
+  ])("draws the account's credits as $label", async ({ supplied, label, meter }) => {
+    const { accessAiCredits } = await import("../app/api-client");
+    const { AiSection } = await import("../app/(product)/mailbox/AiSection");
+    const credits = accessAiCredits({
+      metered: true, access: "open", mailboxes: 2, canAddMailbox: true, aiCredits: supplied,
+    });
+    await mount(h(AiSection, { credits }));
+    expect(text()).toContain(label);
+    expect(host.querySelector("progress") !== null).toBe(meter);
+  });
+
   it("renders the server's position, not a guess", async () => {
     const { AiSection } = await import("../app/(product)/mailbox/AiSection");
     serverFlag = false;

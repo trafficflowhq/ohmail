@@ -25,21 +25,26 @@ import {
   type ListVisit,
   type ThreadReadWiring,
 } from "@ohmail/app-logic/reading";
-import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys";
+import { EngineContext } from "@ohmail/app-logic/engine";
+import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
+import { KeymapContext, useKeymapStore, useZoneNav } from "@ohmail/app-logic/keys";
+import type { MailboxProbe } from "@ohmail/app-logic/mail-state";
 import { useKeyBindings, type KeymapStore } from "@ohmail/app-logic/keys/keymap";
 import { Frame } from "../../../packages/app/src/frame/Frame.js";
 import { useRoomResurface } from "../../../packages/app/src/frame/room.js";
+import { MailStateProvider } from "../../../packages/app/src/mail-state/index.js";
 import type { PaneProps, PlaceEntry } from "../../../packages/app/src/frame/contract.js";
 import { readerEntry, type ContactScreeningProps, type LetterProps } from "../../../packages/app/src/reader/index.js";
-import { TextProvider, type Messages } from "../../../packages/app/src/text/index.js";
+import { TextProvider, useText, type Messages } from "../../../packages/app/src/text/index.js";
 import readerEn from "../../../packages/app/messages/reader.en.json" with { type: "json" };
+import tagsEn from "../../../packages/app/messages/tags.en.json" with { type: "json" };
 import { fakeMail, letter } from "../../../packages/app/test/reader/support/fake-mail.js";
 import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 import { FRAME_WORDS } from "../../../packages/app/test/support/frame-words.js";
 
 /** The reader's words over the frame's, as the reader's own cases compose them. */
-const WORDS = { ...FRAME_WORDS.en, ...readerEn } as Messages;
+const WORDS = { ...FRAME_WORDS.en, ...readerEn, ...tagsEn } as Messages;
 
 /** The body: its text and the end the read rule reads. */
 function Body(props: LetterProps) {
@@ -84,6 +89,11 @@ function Keys({ children, caseBindings }: { children: ReactNode; caseBindings: b
   return <KeymapContext.Provider value={registry}>{children}</KeymapContext.Provider>;
 }
 
+function ReaderZone(): null {
+  useZoneNav(useText("shortcuts"), { reader: { selector: "[data-read-column]", disabled: false } });
+  return null;
+}
+
 /** A fresh read record, as a list's visit holds one (made by the column's own visit hook). */
 function freshRecord(): ThreadReadWiring["record"] {
   const { result, unmount } = renderHook(() => useReaderVisit({ shown: letter("record"), markSeen: () => true }));
@@ -113,10 +123,12 @@ export interface PanelOpts {
   readonly visit?: boolean;
   /** Chords declared in the registry, each recording its run in `ran`. */
   readonly bound?: readonly string[];
+  readonly readerKeys?: boolean;
   readonly disabled?: readonly string[];
   readonly draft?: (messageId: string) => void;
-  /** The account's tags, by id and name (the Tag verb stands only where the account has tags). */
+  /** The account's tags, by id and name. */
   readonly tags?: Readonly<Record<string, string>>;
+  readonly mailboxes?: MailboxProbe;
   readonly size?: "desktop" | "phone" | "fold";
   /** Room for three verbs and a half (jsdom lays nothing out): what does not fit stands behind More. */
   readonly fold?: boolean;
@@ -240,8 +252,9 @@ export function mountPanel(over: Partial<EngineMessage> = {}, opts: PanelOpts = 
     engine,
     service: "self",
     scope: "acct-1",
+    mailboxes: opts.mailboxes,
     places: { ohbox: READER_PLACE, write: WRITE_PLACE },
-    reader: opts.bound === undefined ? entry : {
+    reader: opts.bound === undefined && !opts.readerKeys ? entry : {
       ...entry,
       // The reading column has the keyboard while a case supplies its own bindings.
       Reading: (pane) => <entry.Reading {...pane} keysHere />,
@@ -252,14 +265,22 @@ export function mountPanel(over: Partial<EngineMessage> = {}, opts: PanelOpts = 
   });
   const meeting: ListMeeting | undefined = meetingOf("m1");
   /* The presented mirror over this engine's own rows: the column reads its letters there. */
-  const frame = (
+  const readers = (
     <PresentedMirrorContext.Provider value={hiding}>
       <Frame host={made.host} />
     </PresentedMirrorContext.Provider>
   );
+  const frame = typeof opts.mailboxes === "function"
+    ? (
+      <EngineContext.Provider value={{ engine, demo: false, serverDemo: false, sync: SYNC_SETTLED }}>
+        <MailStateProvider scope="acct-1" probe={opts.mailboxes} mirrored={letters.length}>{readers}</MailStateProvider>
+      </EngineContext.Provider>
+    )
+    : readers;
   render(
     <TextProvider locale="en" messages={WORDS} timeZone="Europe/Zurich">
       <Keys caseBindings={opts.bound !== undefined}>
+        {opts.readerKeys ? <ReaderZone /> : null}
         {meeting === undefined ? frame : <ListMeetingContext.Provider value={meeting}>{frame}</ListMeetingContext.Provider>}
         {opts.bound === undefined ? null : <Declare bound={opts.bound} disabled={opts.disabled ?? []} ran={ran} />}
       </Keys>

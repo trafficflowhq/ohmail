@@ -4,6 +4,8 @@
  * held in app-logic's tests; the app's tests import no value of the client engine.
  */
 import { render } from "@testing-library/react";
+import { createPortal } from "react-dom";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type {
@@ -172,6 +174,7 @@ export function mountFrame(
   setup: CalendarSetupPort | None,
   extra: {
     places?: Partial<FramePlaces>;
+    portal?: boolean;
     entry?: Partial<CalendarEntry>;
     locale?: "en" | "de";
     timeZone?: string;
@@ -192,6 +195,7 @@ export function mountFrame(
     places: extra.places,
   });
   const locale = extra.locale ?? "en";
+  const frame = <Frame host={made.host} />;
   const { unmount } = render(
     <TextProvider
       locale={locale}
@@ -199,7 +203,11 @@ export function mountFrame(
       timeZone={extra.timeZone ?? ZURICH}
     >
       <SetupPortProvider value={setup}>
-        <Frame host={made.host} />
+        {extra.portal ? (
+          <portalRenderer.Provider value={createPortal}>{frame}</portalRenderer.Provider>
+        ) : (
+          frame
+        )}
       </SetupPortProvider>
     </TextProvider>,
   );

@@ -7,6 +7,7 @@
  * core's view of that component. Every string that keys or names something is held to the reader's
  * ceiling at this door; a record that breaks one is left out by the reader's word.
  */
+import { portableGoogle } from "../portable.js";
 import {
   eventOf,
   instant,
@@ -208,5 +209,5 @@ export function convertEvent(raw: unknown, zones: ZoneSource, nowMs: number): Co
   const event: CalEvent = eventOf({ ...made, properties: [...made.properties, ...more] });
   // The entity tag is what a change is made against. A record without one (a recorded exchange keeps none) is told apart by its last change.
   const version = text(raw.etag) ?? text(raw.updated) ?? "";
-  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null, ...(incompleteAudience(raw, event) && { audienceIncomplete: true }) } };
+  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null, ...(portableGoogle(raw) && { portableCopy: true as const }), ...(incompleteAudience(raw, event) && { audienceIncomplete: true }) } };
 }

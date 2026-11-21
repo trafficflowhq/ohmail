@@ -68,6 +68,13 @@
     margin-inline-start: auto;
   }
 
+  .oh-message-subject[data-compact] {
+    font-family: var(--f-text);
+    font-size: var(--subject-preview-heading);
+    font-weight: var(--w-bold);
+    letter-spacing: normal;
+  }
+
   .oh-message-amount {
     margin-bottom: var(--s2);
     font-size: var(--t-title);

@@ -87,6 +87,7 @@ export interface ConnectAsk {
   readonly holdLeave?: (ask: AskLeave) => () => void;
   /** "Do this later", where the mount has such a way. */
   readonly later?: () => void;
+  readonly setup?: { restart: () => void; close: () => void };
   /** A mail to support, where the mount has one: the provider's id and the last refusal's code, nothing typed. */
   readonly help?: (facts: { readonly provider: string | null; readonly reason: string | null }) => void;
 }
@@ -96,6 +97,12 @@ export interface ConnectFormProps {
   readonly door: ConnectDoor;
   /** The second factor's dialog. `none`: a refusal that asks for it says to sign in again, and nothing is parked. */
   readonly factor: FactorSlot | None;
+  readonly page?: (
+    material: ReactNode,
+    backToProviders: (() => void) | null,
+    providerBlank?: ReactNode,
+    later?: () => void,
+  ) => ReactNode;
 }
 
 /** The form as another feature's page mounts it. */

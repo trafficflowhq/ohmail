@@ -2,6 +2,7 @@
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import type { Answered, ConnectProbed } from "@ohmail/app-logic/mailboxes/connect/types";
+import doors from "../../../packages/app/messages/doors.en.json";
 import { O, P, fakeDoor } from "../../../packages/app/test/mailboxes/connect/support.js";
 import { mountStage } from "./_first-run-stage.js";
 
@@ -88,14 +89,15 @@ async function mount(answer: ConnectProbed): Promise<Harness> {
   const el = st.el;
   /* A run with nothing behind it opens on the welcome screen, so the mailbox step — the one that
      holds the fields and the test — is one press in. */
-  await pressIn(el, "Set up a mailbox");
+  await pressIn(el, O.welcomeStart);
   /* The form asks for a provider, the address, the password and both servers before a Test. */
-  await pressIn(el, P.otherLabel);
+  await pressIn(el, P.otherShort);
+  await act(async () => { within(el).getByText(doors.join.manualPorts).click(); });
   await typeIn(el, O.address, "someone@example.test");
   await typeIn(el, O.password, "app-password-fixture");
   await typeIn(el, O.imapHost, "imap.example.test");
   await typeIn(el, O.smtpHost, "outgoing.example.test");
-  return { el, text: () => el.textContent ?? "", test: () => pressIn(el, "Test connection") };
+  return { el, text: () => el.textContent ?? "", test: () => pressIn(el, O.test) };
 }
 
 const RECEIVING: Omit<ConnectProbed, "sending"> = {

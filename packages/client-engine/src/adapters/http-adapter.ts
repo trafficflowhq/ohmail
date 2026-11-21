@@ -47,6 +47,7 @@ import type {
   CalendarConnectBody,
   CalendarConnectionRecord,
   CalendarEventAct,
+  CalendarProposalAct,
   CalendarPatchBody,
   CalendarRecord,
   CalendarSettingsWire,
@@ -964,6 +965,16 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.call("POST /calendar/writes", { body, idempotencyKey: key, ...(signal ? { signal } : {}) });
     if (!res.ok) throw await this.rejectionOf(res);
     return { answer: await this.readAnswer<"POST /calendar/writes">(res), seq: this.noteSeq(res) };
+  }
+
+  async mailProposal(act: CalendarProposalAct, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const body = act as Extract<CalendarProposalAct, { kind: "calendar_event_propose" }>;
+    const res = await this.call("POST /calendar/proposals", { body, idempotencyKey: key, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res);
+    const { status } = await this.readAnswer<"POST /calendar/proposals">(res);
+    if (status === "in_flight") throw new MutationRejectedError("The proposal is being sent.", { retryable: true });
+    if (status !== "sent" && status !== "queued") throw new MutationRejectedError("The proposal could not be confirmed.");
+    return { answer: { write: null, events: [] }, seq: this.noteSeq(res) };
   }
 
   async retryCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {

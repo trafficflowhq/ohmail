@@ -197,7 +197,7 @@ describe("the hosted door's suggest control", () => {
 
   /** The confirm, whatever number the server quoted into its label. */
   const confirm = async () => {
-    const button = screen.getByRole("button", { name: /^Suggest for \d+ sender/ });
+    const button = screen.getByRole("button", { name: /^Suggest for (?:all |the first )?\d+ senders?$/ });
     expect(button.hasAttribute("disabled")).toBe(false);
     await act(async () => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -340,7 +340,8 @@ describe("the hosted door's suggest control", () => {
     engineAnswering();
     await mount([], SENDERS.slice(0, 7));
     expect(hostEl.textContent).toContain("7");
-    expect(buttons().map((b) => b.textContent)).toContain("Suggest again…");
+    await click("List");
+    expect(screen.getByRole("menuitem", { name: "Suggest again…" }).textContent).toContain("7");
   });
 });
 

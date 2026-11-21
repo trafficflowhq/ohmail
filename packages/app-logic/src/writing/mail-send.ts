@@ -32,7 +32,7 @@
  * scratch draft simply outlives the send's record. Closing that means binding the scratch to the
  * lane's durable claim and clearing on the row's `sent` transition — ledgered, not smuggled in here.
  */
-import type { EmailAddress, EngineMessage } from "@ohmail/wire";
+import type { EmailAddress, EngineDraft, EngineMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pileRowIdsOf, pressVerdict } from "@ohmail/client-engine";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
@@ -194,6 +194,8 @@ export interface SendLineItem {
   /** For `sending`: when the phase began. */
   since?: number;
   /** For `sent`: its Sent copy's note, which stands until its own Dismiss ({@link SentCopyLineNote}). */
+  /** The mailbox that sent this letter, when the current window knows it. */
+  mailboxId?: string;
   copy?: SentCopyNote;
 }
 
@@ -1879,10 +1881,14 @@ export function useMailSend(
    */
   const notes = useRef<readonly SentCopyLineNote[] | null>(null);
   if (notes.current === null) notes.current = readSentCopyNotes(scope) ?? [];
+  const noteMailboxes = useRef(new Map<string, string>());
   /** Change the notes over what this browser keeps now (another tab's included), and keep the result. */
   const changeNotes = useCallback((change: (was: readonly SentCopyLineNote[]) => readonly SentCopyLineNote[]): void => {
     const next = change(readSentCopyNotes(owner.current) ?? notes.current ?? []);
     notes.current = next;
+    for (const id of noteMailboxes.current.keys()) {
+      if (!next.some((note) => note.key === id)) noteMailboxes.current.delete(id);
+    }
     writeSentCopyNotes(owner.current, next);
     bumpLine();
   }, [bumpLine]);
@@ -1894,6 +1900,14 @@ export function useMailSend(
     const note: SentCopyLineNote = {
       key, lane, to: firstRecipient(engine, m), subject: pressSubject(engine, m), note: copy, at: Date.now(),
     };
+    if (copy.state === "pending" && copy.reason === "full") {
+      const parent = m?.inReplyTo ?? m?.forwardOf;
+      const reader = typeof engine.read === "function" ? engine.read() : null;
+      const mailboxId = m?.mailboxId
+        ?? (m?.draftId ? reader?.get<EngineDraft>("draft", m.draftId)?.mailboxId : undefined)
+        ?? (parent ? reader?.get<EngineMessage>("message", parent)?.mailboxId : undefined);
+      if (mailboxId) noteMailboxes.current.set(key, mailboxId);
+    }
     changeNotes((was) => [note, ...was.filter((n) => n.key !== key)].slice(0, SENT_COPY_NOTES_MAX));
   }, [engine, endLaneOn, changeNotes]);
   /** A send restored from the outbox, by its key, as the line last read it: its note names its letter. */
@@ -2992,7 +3006,11 @@ export function useMailSend(
     const lanes = new Set<string>();
     const add = (item: SendLineItem): void => { lanes.add(item.key); out.push(item); };
     for (const n of notes.current ?? []) {
-      out.push({ id: `note:${n.key}`, key: n.lane, state: "sent", to: n.to, subject: n.subject, copy: n.note });
+      const mailboxId = noteMailboxes.current.get(n.key);
+      out.push({
+        id: `note:${n.key}`, key: n.lane, state: "sent", to: n.to, subject: n.subject, copy: n.note,
+        ...(mailboxId ? { mailboxId } : {}),
+      });
     }
     for (const [id, e] of endedLine.current) {
       if (shownHolding(e.lane, e.held)) continue;

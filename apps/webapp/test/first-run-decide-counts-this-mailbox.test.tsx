@@ -65,18 +65,16 @@ async function mount(o: {
   return { el: st.el, rerender: render };
 }
 
-/** The step's lead: the line under its title. */
-const lead = (el: HTMLElement) => (el.querySelector(".oh-page-line")?.textContent ?? "").replace(/\s+/g, " ");
-/** The sentence after the verbs: the last line of the sender's group. */
-const after = (el: HTMLElement) => (el.querySelector("[role=group]")?.lastElementChild?.textContent ?? "").replace(/\s+/g, " ");
+const left = (el: HTMLElement): string | null =>
+  [...el.querySelectorAll(".oh-tag")].find((tag) => /^\d+ left$/.test(tag.textContent ?? ""))?.textContent ?? null;
 
 describe("the decide step on an install with several mailboxes", () => {
-  it("the lead counts this mailbox, the second sentence the account", async () => {
+  it("shows the waiting count for the setup mailbox", async () => {
     const countWaiting = vi.fn(async () => ({ senders: 24 }));
     const { el } = await mount({ decide: subject({ many: true }), countWaiting });
-    expect(lead(el)).toContain("24 senders who wrote to this mailbox are waiting");
-    expect(lead(el)).not.toContain("37");
-    expect(after(el)).toContain("all 37 senders waiting across your mailboxes");
+    expect(left(el)).toBe("24 left");
+    expect(el.textContent).not.toContain("37 left");
+    expect(countWaiting).toHaveBeenCalledWith("mb-2");
   });
 
   it("asks with the run's own mailbox id", async () => {
@@ -87,13 +85,13 @@ describe("the decide step on an install with several mailboxes", () => {
 
   it("a read that fails says no number in the lead", async () => {
     const { el } = await mount({ decide: subject({ many: true }), countWaiting: async () => { throw new Error("down"); } });
-    expect(lead(el)).toContain("Senders who wrote to this mailbox are waiting");
-    expect(lead(el)).not.toMatch(/\d/);
+    expect(left(el)).toBeNull();
+    expect(el.querySelector("[role=group][aria-label='Lena Roth']")).not.toBeNull();
   });
 
   it("a count above the rail's is clamped to the rail's", async () => {
     const { el } = await mount({ decide: subject({ many: true }), countWaiting: async () => ({ senders: 40 }) });
-    expect(lead(el)).toContain("37 senders who wrote to this mailbox are waiting");
+    expect(left(el)).toBe("37 left");
   });
 
   it("an answer for another mailbox is never shown", async () => {
@@ -102,10 +100,9 @@ describe("the decide step on an install with several mailboxes", () => {
     const countWaiting = vi.fn(async (id: string) => (id === "mb-2" ? slow : { senders: 9 }));
     const { el } = await mount({ decide: subject({ many: true }), countWaiting, mailboxId: "mb-2" });
     // Still unanswered: no number.
-    expect(lead(el)).toContain("Senders who wrote to this mailbox are waiting");
-    expect(lead(el)).not.toContain("9 senders");
+    expect(left(el)).toBeNull();
     await act(async () => { release({ senders: 5 }); await Promise.resolve(); });
-    expect(lead(el)).toContain("5 senders who wrote to this mailbox are waiting");
+    expect(left(el)).toBe("5 left");
   });
 
   it("re-reads when the rail's count moves", async () => {
@@ -121,8 +118,8 @@ describe("CONTROL: a single mailbox", () => {
   it("keeps its sentence and never asks", async () => {
     const countWaiting = vi.fn(async () => ({ senders: 24 }));
     const { el } = await mount({ decide: subject(), countWaiting });
-    expect(lead(el)).toContain("37 senders are waiting. Start with this one");
-    expect(after(el)).toContain("every other waiting sender");
+    expect(left(el)).toBe("37 left");
+    expect(el.querySelector("[role=group][aria-label='Lena Roth']")).not.toBeNull();
     expect(countWaiting).not.toHaveBeenCalled();
   });
 });

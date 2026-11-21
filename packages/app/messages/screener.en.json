@@ -76,6 +76,7 @@
     "junkBodyLoading": "Reading the message from Junk…",
     "junkBodyFailed": "The message couldn't be read from Junk.",
     "junkSearchPlaceholder": "Search Junk",
+    "hideSpamSearch": "Hide Spam search",
     "junkSearchLabel": "Search your Junk folder",
     "junkSearchLocalNone": "Nothing loaded here matches “{q}”.",
     "junkSearching": "Searching your mail server's Junk folder for “{q}”…",
@@ -466,7 +467,8 @@
     "settingsLabel": "People you write to",
     "reopenBody": "Look again at the people you have written to and decide who gets through. Anyone you have already decided about stays as they are; this only adds people you have not answered for yet — which is what a newly connected mailbox brings.",
     "reopenAction": "Review them",
-    "recentSent": "Scanned only the last {count, number} sent messages"
+    "recentSent": "Scanned only the last {count, number} sent messages",
+    "reopenConsequence": "This adds a rule for each selected person. Their mail waiting in the Screener moves to your Ohbox. The rest of your mail stays where your mail server has it."
   },
   "screening": {
     "auditPlaceWhen": "{place} · {when}",
@@ -488,6 +490,7 @@
     "placeScreener": "the Screener",
     "placeHistory": "History",
     "nowIn": "Now in {place}",
+    "nowInWithCount": "{count, plural, one {1 message} other {# messages}} — now in {place}",
     "nowSpread": "Now in {count} places",
     "footRule": "Waiting in the Screener, so this becomes a rule: future mail from {sender} files there too. Mail of theirs already filed elsewhere stays where it is.",
     "footListClaim": "Screen out and Spam are the exception here: they set aside only the messages that claim to be {brand}, and make no rule.",
@@ -618,7 +621,7 @@
     "deleteQueuedForOrganizer": "Queued for the organizer — it is deleted on the next pass.",
     "stillWaitingForOrganizer": "Still waiting for the organizer.",
     "auditOpen": "See all",
-    "auditOpenAria": "See all {count, plural, one {1 message} other {# messages}} →",
+    "auditOpenAria": "See all {count, plural, one {1 message} other {# messages}}",
     "auditAria": "Messages from {subject}, and where each one sits",
     "auditTitleDomain": "Everyone at {domain}",
     "auditClose": "Close",

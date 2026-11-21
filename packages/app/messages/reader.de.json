@@ -237,6 +237,7 @@
     "faultOhmail": "ohmail konnte diese Datei nicht holen",
     "faultBusy": "ohmail hat die Verbindungen zu diesem Postfach schon offen",
     "faultUnreachable": "Dein Mailserver hat nicht geantwortet",
+    "faultWillRetry": "ohmail versucht es gleich noch einmal. {reason}.",
     "faultServerBusy": "Dein Mailserver bedient dieses Postfach gerade nicht",
     "faultNotSecured": "Dein Mailserver hat die Verbindung nicht gesichert",
     "faultLoginRefused": "Dein Mailserver hat die Anmeldung abgelehnt — prüf das Passwort in den Einstellungen",

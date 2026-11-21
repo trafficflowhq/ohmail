@@ -11,6 +11,7 @@ import type { CalendarRecord, CalendarSuggestionRecord } from "@ohmail/wire";
 import type { CalendarReads } from "../../notices/use-notices.js";
 import { mayOffer } from "../found/gate.js";
 import { calendarLookOf, calendarSampleOf } from "./sample.js";
+import { calendarSnapshotOf } from "./snapshot.js";
 import { alertsAhead, noticeClockOf } from "./ahead.js";
 
 /** Where the reads come from: the calendar's port and store, the reader's zone, the person's one title switch. */
@@ -63,6 +64,26 @@ export function calendarReadsOf(source: CalendarReadsSource): CalendarReads {
         }),
         nowMs,
       ),
+    summary: (scope, nowMs, summaryAt) => {
+      const zone = source.zone();
+      const copy = calendarSnapshotOf({
+        scope,
+        nowMs,
+        zone,
+        zones: source.zones,
+        ownAddresses: source.ownAddresses() ?? [],
+        events: source.events(),
+        calendars: source.calendars(),
+        acts: [],
+        alertsOn: false,
+        showTitles: false,
+        widgetTitles: false,
+        summaryOn: true,
+        summaryAt,
+        summaryTitles: source.showTitles(),
+      });
+      return copy?.summary ? { summary: copy.summary, zone } : null;
+    },
     clock: (startMs, nowMs) => noticeClockOf(startMs, nowMs, source.zone(), source.zones),
   };
 }

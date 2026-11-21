@@ -148,3 +148,12 @@
   color: var(--ink3);
   font-size: var(--t-meta);
 }
+
+.way-said-trail {
+  max-inline-size: 100%;
+  font-family: var(--f-display);
+  font-weight: var(--w-display);
+  font-size: var(--t-ui);
+  font-variation-settings: var(--opsz);
+  letter-spacing: var(--track);
+}

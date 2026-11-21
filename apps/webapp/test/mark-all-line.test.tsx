@@ -74,14 +74,19 @@ describe("first paint over a warm import is truthful (Reads)", () => {
 });
 
 describe("Mark all read clears WHAT THE VIEW SHOWS, not just its own button", () => {
-  it("after the flips land, nothing renders unread and the button's absence is true", async () => {
-    const { header, rows, openMenu, markAll, mark } = await arrive("reads", warm);
+  it("after the flips land, nothing renders unread and Mark all read is disabled", async () => {
+    const { header, rows, openMenu, markAll, mark, sent } = await arrive("reads", warm);
     openMenu();
     await mark();
     await waitFor(() => header.queryByText("Nothing new since you were here") !== null, "nothing remains new");
     expect(rows().map((option) => option.hasAttribute("data-unread"))).toEqual([false, false, false, false]);
     openMenu();
-    expect(markAll()).toBeNull();
+    // The studio replaces the absent button with a disabled menu item.
+    const control = markAll();
+    expect(control).toHaveProperty("disabled", true);
+    const sentBefore = [...sent];
+    await act(async () => { fireEvent.click(control!); });
+    expect(sent).toEqual(sentBefore);
   });
 
   it("mail read in ANOTHER client: zero unread, a stale line — the headline says nothing is new, the control still clears the line", async () => {

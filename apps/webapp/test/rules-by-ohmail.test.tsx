@@ -118,7 +118,7 @@ describe("the act's rules in their own group", () => {
       .find((candidate) => candidate.textContent?.includes(R.origin.byOhmail))!;
     const revoke = within(row).getByRole("button", { name: R.revoke });
     await act(async () => { revoke.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    const confirm = within(screen.getByRole("dialog")).getByRole("button", { name: R.revokeConfirm });
+    const confirm = within(screen.getByRole("dialog", { name: "Revoke 1 rule" })).getByRole("button", { name: R.revoke });
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await tick(500);
     expect(revoked).toEqual(["a1"]);

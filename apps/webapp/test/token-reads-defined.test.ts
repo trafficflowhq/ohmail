@@ -15,10 +15,11 @@ const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "
 const DOMAIN = ["apps/webapp/app", "packages/app-logic/src", "packages/app/src/keys", "packages/letter-body/src", "packages/ui/src", "packages/tokens/src"];
 const TOKENS = "packages/tokens/src/tokens.css";
 const FACE = "packages/tokens/src/ohmarchy.css";
+const DESIGN_TOKENS = "packages/tokens/src/design/tokens.css";
 
 /** Reads with no declaration anywhere, before this census existed. Each is a gap row, never a new entry. */
 const KNOWN_UNDEFINED = new Set([
-  "--accent-soft-ink", "--bg", "--bg2", "--ink1", "--line", "--mono",
+  "--bg", "--bg2", "--line", "--mono",
 ]);
 
 const walk = (dir: string, out: string[] = []): string[] => {
@@ -28,13 +29,8 @@ const walk = (dir: string, out: string[] = []): string[] => {
   }
   return out;
 };
-/* The new design's files load beside the views this census reads only inside the frame, and there each design keeps
-   its own meaning under its own root (the tokens package's design-not-yet-imported test holds who may meet and that
-   both seam sheets load; packages/app/test/frame/seam.test.ts holds the sheets). Every other page loads today's
-   sheets alone. So what the new design declares defines nothing here: a sheet of today's views reads today's names.
-   The design's own reads are held by the tokens package's design-one-source test: the design's folders, the
-   kit's three, whose stylesheets read the design's tokens, and the body's sheet look, whose every rule stands
-   under `.mb[data-look="sheet"]`, which the reader's body entry alone sets, on a page of the new design. */
+/* The tokens package guards the kit's own reads. The app styles below can also use declarations
+   from the design's shared root, which the frame loads with its other sheets. */
 const NEW_DESIGN = [
   "packages/tokens/src/design/", "packages/ui/src/icons/", "packages/ui/src/motion/",
   "packages/ui/src/base/", "packages/ui/src/mail/", "packages/ui/src/calendar/",
@@ -47,9 +43,9 @@ const css = (f: string): string => text(f).replace(/\/\*[\s\S]*?\*\//g, "");
 const declared = (s: string): Set<string> => new Set([...s.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]!));
 
 /** The base block's body: `:root, [data-theme="light"]{…}`, brace-matched. */
-function baseBlock(s: string): string {
-  const at = s.search(/(^|\n):root\s*,\s*\[data-theme="light"\]\s*\{/);
-  if (at < 0) throw new Error("the paper base block was not found in tokens.css");
+function baseBlock(s: string, root: RegExp): string {
+  const at = s.search(root);
+  if (at < 0) throw new Error("the shared base block was not found in tokens.css");
   const open = s.indexOf("{", at);
   let depth = 0;
   for (let i = open; i < s.length; i += 1) {
@@ -71,9 +67,10 @@ for (const f of stylesheets) {
 const component = new Set<string>();
 for (const f of stylesheets) if (f !== TOKENS && f !== FACE) for (const n of declared(css(f))) component.add(n);
 for (const f of files.filter((x) => /\.(tsx?|mjs)$/.test(x))) for (const m of text(f).matchAll(/["'`](--[\w-]+)["'`]/g)) component.add(m[1]!);
-const paperBase = declared(baseBlock(css(TOKENS)));
+const paperBase = declared(baseBlock(css(TOKENS), /^:root\s*,\s*\[data-theme="light"\]\s*\{/m));
 const paperAny = declared(css(TOKENS));
 const face = declared(css(FACE));
+const designBase = declared(baseBlock(css(DESIGN_TOKENS), /^:root\s*\{/m));
 
 describe("the stylesheets' token reads", () => {
   it("reads something: the census is not empty, and the base block holds the ink it compares", () => {
@@ -83,7 +80,7 @@ describe("the stylesheets' token reads", () => {
 
   it("every read is declared somewhere, or is a known undefined read", () => {
     const undefinedReads = [...reads.keys()]
-      .filter((n) => !component.has(n) && !paperAny.has(n) && !face.has(n) && !KNOWN_UNDEFINED.has(n))
+      .filter((n) => !component.has(n) && !paperAny.has(n) && !face.has(n) && !designBase.has(n) && !KNOWN_UNDEFINED.has(n))
       .map((n) => `${n} (read at ${[...new Set(reads.get(n)!.map((r) => r.at))].join(", ")})`);
     expect(undefinedReads).toEqual([]);
   });

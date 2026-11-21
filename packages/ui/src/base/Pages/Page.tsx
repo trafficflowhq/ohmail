@@ -46,6 +46,8 @@ export interface PageProps {
   stack?: boolean;
   /** On a phone the sentence is set a step smaller, where it carries a whole address that has to be read on one line. */
   smaller?: boolean;
+  /** Inset the Ohmarchy page on an unfolded phone. */
+  foldInset?: boolean;
 }
 
 /**
@@ -69,6 +71,7 @@ export function Page(props: PageProps) {
     high,
     stack,
     smaller,
+    foldInset,
   } = props;
   const page = useRef<HTMLElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -134,6 +137,7 @@ export function Page(props: PageProps) {
       data-high={high ? "" : undefined}
       data-stack={stack ? "" : undefined}
       data-smaller={smaller ? "" : undefined}
+      data-fold-inset={foldInset ? "" : undefined}
     >
       <header className="oh-page-top">
         <span className="oh-page-back">{back}</span>

@@ -44,38 +44,59 @@ const STAGES = [
   { id: "decide", steps: ["decide", "summary", "pair"] },
 ] as const;
 
-function Progress({ run, say }: { run: FirstRun; say: Say }): ReactNode {
+function Progress({
+  run,
+  say,
+  mailboxScreen,
+}: {
+  run: FirstRun;
+  say: Say;
+  mailboxScreen?: number;
+}): ReactNode {
   const { step, path } = run.cursor;
   const stage = Math.max(
     0,
     STAGES.findIndex(({ steps }) => steps.some((screen) => screen === step)),
   );
   const current = STAGES[stage]!;
+  const total = run.add ? 2 : STAGES.length;
+  const at = Math.min(stage, total - 1);
   const screens = path.filter((screen) => current.steps.some((candidate) => candidate === screen));
-  const screen = step === null ? 0 : screens.indexOf(step) + 1;
-  const hasCount = screens.length > 1 && screen > 0;
-  const values = { n: stage + 1, total: STAGES.length, phase: say(`onboarding.rail_${current.id}`) };
+  const screen = mailboxScreen ?? (step === null ? 0 : screens.indexOf(step) + 1);
+  const count = mailboxScreen === undefined ? screens.length : 3;
+  const hasCount = count > 1 && screen > 0;
+  const values = { n: at + 1, total, phase: say(`onboarding.rail_${current.id}`) };
   return (
     <StepDots
       label={
         hasCount
-          ? say("onboarding.railSaidSub", { ...values, screen, screens: screens.length })
+          ? say("onboarding.railSaidSub", { ...values, screen, screens: count })
           : say("onboarding.railSaid", values)
       }
-      steps={STAGES.length}
-      at={stage}
-      sub={hasCount ? `${screen}/${screens.length}` : undefined}
+      steps={total}
+      at={at}
+      sub={hasCount ? `${screen}/${count}` : undefined}
     />
   );
 }
 
-function SetupMenu({ run, say, cancel }: { run: FirstRun; say: Say; cancel: boolean }): ReactNode {
+function SetupMenu({
+  run,
+  say,
+  cancel,
+  mailboxScreen,
+}: {
+  run: FirstRun;
+  say: Say;
+  cancel: boolean;
+  mailboxScreen?: number;
+}): ReactNode {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const setup = say("onboarding.setupMenu");
   return (
     <span className="mbx-run-row">
-      <Progress run={run} say={say} />
+      <Progress run={run} say={say} mailboxScreen={mailboxScreen} />
       <Button
         kind="quiet"
         size="s"
@@ -115,7 +136,11 @@ function SetupMenu({ run, say, cancel }: { run: FirstRun; say: Say; cancel: bool
 export function stepTop(
   run: FirstRun,
   say: Say,
-  { back = false, cancel = true }: { back?: boolean; cancel?: boolean } = {},
+  {
+    back = false,
+    cancel = true,
+    mailboxScreen,
+  }: { back?: boolean; cancel?: boolean; mailboxScreen?: number } = {},
 ): Pick<PageProps, "back" | "aside"> {
   const previous = run.cursor.back;
   return {
@@ -129,7 +154,7 @@ export function stepTop(
           onPress={() => run.acts.goTo(previous)}
         />
       ) : undefined,
-    aside: <SetupMenu run={run} say={say} cancel={cancel} />,
+    aside: <SetupMenu run={run} say={say} cancel={cancel} mailboxScreen={mailboxScreen} />,
   };
 }
 

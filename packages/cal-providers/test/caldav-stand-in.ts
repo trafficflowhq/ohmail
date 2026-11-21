@@ -46,6 +46,8 @@ export interface StandInCalendar {
 }
 
 export interface StandInOptions {
+  readonly nativeMove?: boolean;
+  readonly loseMoveReply?: boolean;
   readonly user?: string;
   readonly password?: string;
   /** Where the service lives. */
@@ -193,6 +195,7 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     put("getctag", c.tagged ? `<CS:getctag>${ctagOf(c)}</CS:getctag>` : null, "<CS:getctag/>");
     put("sync-token", c.sync ? `<sync-token>${tokenOf(c)}</sync-token>` : null, "<sync-token/>");
     put("calendar-color", c.color === null ? null : `<A:calendar-color>${esc(c.color)}</A:calendar-color>`, "<A:calendar-color/>");
+    if (given.nativeMove) put("owner", `<owner><href>${esc(principal)}</href></owner>`, "<owner/>");
     put("current-user-privilege-set", c.privileges === null ? null : `<current-user-privilege-set>${c.privileges.map((p) => `<privilege><${p}/></privilege>`).join("")}</current-user-privilege-set>`, "<current-user-privilege-set/>");
     put("calendar-timezone-id", c.timezoneId === null ? null : `<C:calendar-timezone-id>${esc(c.timezoneId)}</C:calendar-timezone-id>`, "<C:calendar-timezone-id/>");
     put("calendar-timezone", c.timezone === null ? null : `<C:calendar-timezone>${esc(c.timezone)}</C:calendar-timezone>`, "<C:calendar-timezone/>");
@@ -301,6 +304,23 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
         return send(207, multistatus(response(start, propstat("<current-user-principal><unauthenticated/></current-user-principal>"))));
       }
       return send(401, "", { "www-authenticate": 'Basic realm="stand-in"' });
+    }
+    if (given.nativeMove && req.method === "OPTIONS") return send(200, "", { allow: "GET, PUT, DELETE, MOVE" });
+    if (given.nativeMove && req.method === "MOVE") {
+      const from = [...calendars.values()].find((cal) => path.startsWith(paths.collection(cal.slug)));
+      if (!from || typeof req.headers.destination !== "string") return send(404, "");
+      const destination = new URL(req.headers.destination).pathname;
+      const to = [...calendars.values()].find((cal) => destination.startsWith(paths.collection(cal.slug)));
+      if (!to) return send(404, "");
+      const originalName = decodeURIComponent(path.slice(paths.collection(from.slug).length));
+      const newName = decodeURIComponent(destination.slice(paths.collection(to.slug).length));
+      const member = from.members.get(originalName);
+      if (!member || member.etag !== req.headers["if-match"] || to.members.has(newName)) return send(412, "");
+      from.members.delete(originalName);
+      from.removed.set(originalName, ++from.rev);
+      to.members.set(newName, { ...member, rev: ++to.rev });
+      if (given.loseMoveReply) return void res.destroy();
+      return send(201, "");
     }
     const asked = (name: string): boolean => new RegExp(`<(?:[\\w-]+:)?${name}[\\s/>]`).test(body);
     if (req.method === "PROPFIND") {

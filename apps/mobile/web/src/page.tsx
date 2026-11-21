@@ -90,7 +90,7 @@ function PhoneCalendarWidgets({ scope, zone, widgets }: { scope: string; zone: s
         });
         return;
       }
-      void publish(snapshotFromMirror(engine.store, scope, zone, storedWidgetChoices(localStorage)));
+      void publish(snapshotFromMirror(engine.store, scope, zone, storedWidgetChoices(localStorage, scope)));
     };
     const off = widgets.subscribe(update);
     update();

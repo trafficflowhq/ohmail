@@ -1278,7 +1278,7 @@ const TABLE = {
   junkNoteUnnamed:
     "Your mail server's own junk folder is not listed here — ohmail does not mirror it.",
   folderFilter: "Filter folders",
-  folderNoMatch: "No folder matches.",
+  folderNoMatch: "No folder matches",
   folderShowAll: (n: number) => `Show all ${n}…`,
   folderShowFewer: "Show fewer",
   folderExpand: (name: string) => `Expand ${name}`,
@@ -1309,12 +1309,12 @@ const TABLE = {
   historyExplainerMore:
     "Nothing here has moved: each message is still where your mail server keeps it, and its row names that folder. The months and years on the right jump anywhere in it.",
   historyExplainerMoreLabel: "What History holds, and where it lives",
-  historyEmptyTitle: "Nothing here yet.",
+  historyEmptyTitle: "Nothing here",
   historyEmptyHint: "Your mail appears as it syncs.",
   /* The end of the store's timeline: its own count, the first message you own above it. */
   historyTail: (n: number) => `${n} message${n === 1 ? "" : "s"} in History.`,
   historyLoading: "Loading your mail.",
-  historyStoreUnavailable: "Your server did not answer — showing the recent mail this device holds.",
+  historyStoreUnavailable: "Your server did not answer, so these are from the recent mail this device holds.",
   historyStoreRetry: "Try again",
   /* A placeholder row whose page did not load: said in the row, where the reader is. */
   historyRowsNotLoaded: "These messages did not load. Scroll to try again.",
@@ -1449,8 +1449,8 @@ const TABLE = {
   searchSyncedAbout: (n: number) => `Searched the mail synced so far — about ${n} matched`,
   searchSyncing: "The rest of your mail has not synced yet.",
   searchServerMs: (ms: number) => `${ms} ms`,
-  searchUnanswered: "Your server did not answer — showing the recent mail this device holds.",
-  searchFailed: "Your server could not run this search — showing the recent mail this device holds.",
+  searchUnanswered: "Your server did not answer, so these are from the recent mail this device holds.",
+  searchFailed: "Your server could not run this search, so these are from the recent mail this device holds.",
   searchWholeRetry: "Search your whole mailbox again",
   searchIndexingProgress: (percent: number) => `Older mail is still being indexed — ${percent} % done.`,
   searchBounded: (n: number) => `Showing the ${n} best matches — sort by date to walk them all.`,
@@ -2110,7 +2110,7 @@ const TABLE = {
    * pill's Undo cancels a delete not yet sent — the only undo this wire can honour.
    */
   actionDelete: "Delete",
-  deleteAsk: "Delete this message?",
+  deleteAsk: "Move to Trash.",
   deleteNote:
     "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
   toastDeleted: "Moved to Trash.",
@@ -2282,7 +2282,7 @@ const TABLE = {
   replyTo: (name: string) => `Reply to ${name}`,
   replyToAll: (names: string) => `Reply to ${names}`,
   replyCcLine: (names: string) => `Cc ${names}`,
-  replyPlaceholder: "Write your reply…",
+  replyPlaceholder: "Reply",
   replySend: "Send",
   /* SEND + DONE — the second send action, beside Send under the same lock. */
   sendAndDone: "Send + Done",
@@ -2293,7 +2293,7 @@ const TABLE = {
   sendCancelledInDrafts: "Send cancelled. The message is in Drafts.",
   sendCancelledNotKept: "Send cancelled. Nothing was sent, but the words could not be kept as a draft.",
   replySending: "Sending…",
-  replySent: "Reply sent.",
+  replySent: "Sent",
   /* WHEN THE SERVER ANSWERED FROM AN EARLIER PRESS. A second press under a resumed send key
      is answered from the first reservation, so what left is the earlier message — never two
      copies, and never a confirmation that names words nobody sent. Said only when the server
@@ -2397,7 +2397,7 @@ const TABLE = {
   composeAddCopies: "Cc, Bcc",
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
-  forwarded: "Forwarded.",
+  forwarded: "Forwarded",
   forwardedTo: (name: string) => `Forwarded to ${name}`,
   forwardEarlierWent: "This forward had already been sent. Your newer text was not sent as a second copy.",
   /* A MAIL THAT ANSWERS NOTHING — the same composer with no parent, so it asks the two
@@ -2504,7 +2504,7 @@ const TABLE = {
   /** A server that keeps no files for a later send (an older one), and how far ahead one that does keeps them. */
   sendLaterFilesNotHere: "This server can't keep files for a later send, so this message can't be scheduled with them. Send it now, or remove the files to schedule it.",
   sendLaterFilesDays: (days: number) => `A message with files can be scheduled up to ${days} ${days === 1 ? "day" : "days"} ahead.`,
-  scheduledFor: (when: string) => `Scheduled for ${when}.`,
+  scheduledFor: (when: string) => when,
   /** The Scheduled surface — the More tab's row, its screen, and the one verb on a row. */
   scheduled: "Scheduled",
   scheduledWhen: (when: string) => `Sends ${when}`,
@@ -2755,11 +2755,11 @@ const TABLE = {
    * distinct, removable, editable block below the writing area, serialized exactly as shown.
    */
   sigLabel: "Signature",
-  sigRemove: "Remove signature for this message",
-  sigAria: "Signature — part of this message; edit or remove it here",
+  sigRemove: "Remove signature",
+  sigAria: "Signature",
   /** The tag picker (`tag.*`). */
   tagPlaceholder: "Tag this message…",
-  tagNone: "No tags yet. Type a name to create your first.",
+  tagNone: "No tags yet.",
   tagCreate: (name: string) => `Create “${name}”`,
   tagTagged: (name: string) => `Tagged “${name}”.`,
   tagUntagged: (name: string) => `Untagged “${name}”.`,
@@ -2924,7 +2924,7 @@ const TABLE = {
      word for word; its why names the phone, and it tries again each time the account answers. */
   unsavedPendingCount: (n: number) => (n === 1 ? "1 change has not gone through yet" : `${n} changes have not gone through yet`),
   unsavedQueuedWhy: "This phone could not reach your account. It keeps trying.",
-  unsavedShow: "Show them",
+  unsavedShow: "Show",
   unsavedHide: "Hide",
   unsavedRetry: "Try again",
   unsavedDiscard: "Discard",

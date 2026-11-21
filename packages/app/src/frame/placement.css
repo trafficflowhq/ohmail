@@ -8,6 +8,11 @@
   overflow: hidden;
 }
 
+/* Browser focus movement must stay inside the phone reader's scrollport. */
+:root[data-device="phone"] .fr-root {
+  overflow: clip;
+}
+
 /*
  * An entry that mounts in a document's `#root` (the desktop window, the paired page) stands it at the window's height,
  * as the web's body stands: the frame's 100% is then the window's, never its content's, so a list is a window over its
@@ -145,6 +150,21 @@
   inset: 0;
   z-index: var(--fr-layer-over);
   background: var(--ground);
+}
+
+.fr-main:has(> .fr-reading[data-backdrop]) > .fr-list {
+  isolation: isolate;
+}
+
+.fr-main:has(> .fr-reading[data-backdrop])::after {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  content: "";
+}
+
+.fr-reading[data-backdrop] {
+  background: transparent;
 }
 
 .fr-noticebar:empty {

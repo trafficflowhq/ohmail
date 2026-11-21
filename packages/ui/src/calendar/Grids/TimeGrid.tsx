@@ -72,6 +72,8 @@ export interface TimeGridProps {
   onDayContextMenu?: (id: string, event: React.MouseEvent<HTMLDivElement>) => void;
   /** The hours' scroller: the app opens it on the hours it set. */
   scrollRef?: Ref<HTMLDivElement>;
+  /** Leave room to scroll every hour above an open sheet. */
+  scrollRoomForSheet?: boolean;
   scrollGestures?: Pick<
     HTMLAttributes<HTMLDivElement>,
     "onPointerDown" | "onPointerCancel" | "onPointerUp" | "onClickCapture"
@@ -243,6 +245,7 @@ export function TimeGrid(props: TimeGridProps) {
       <div
         className="oh-tg-scroll"
         data-today-scroll=""
+        data-scroll-room={props.scrollRoomForSheet ? "" : undefined}
         ref={scrollRef}
         onScroll={onScroll}
         {...scrollGestures}

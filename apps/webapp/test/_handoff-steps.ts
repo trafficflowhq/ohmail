@@ -143,7 +143,7 @@ export async function pickFrom(el: HTMLElement, mailboxId: string): Promise<void
 }
 /** Attach a small file through the editor's own Attach input inside `scope`. */
 export async function attach(scope: HTMLElement, name: string): Promise<void> {
-  const button = within(scope).getByRole<HTMLButtonElement>("button", { name: /^Attach files/ });
+  const button = within(scope).getByRole<HTMLButtonElement>("button", { name: /^Attach · .+ a message$/ });
   expect(button.disabled).toBe(false);
   const input = button.parentElement?.querySelector<HTMLInputElement>('input[type="file"]');
   expect(input, "Attach opens a file picker").toBeTruthy();

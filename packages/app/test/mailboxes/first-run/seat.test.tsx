@@ -246,7 +246,7 @@ describe("the first run reads the ground, and draws nothing over a guess", () =>
     const v = verbs();
     seated({ mailboxes: async () => [mailbox("mbx-1")], verbs: v });
     await answered();
-    expect(title()).toBe(O.mapTitle);
+    expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     expect(v.organize).not.toHaveBeenCalled();
     /* A step was drawn: this launch has asked the organize decision of the mailbox. */
     expect(decisionAsked(SCOPE)).toBe(true);
@@ -255,12 +255,12 @@ describe("the first run reads the ground, and draws nothing over a guess", () =>
   it("a step drawn for one account marks that account's launch alone: another signed in in the same tab is still to be asked", async () => {
     const made = seated({ mailboxes: async () => [mailbox("mbx-1")] });
     await answered();
-    expect(title()).toBe(O.mapTitle);
+    expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     const marks = { first: decisionAsked(SCOPE), second: decisionAsked("acct-2") };
     /* The second account signs in under the same frame and is drawn its own step. */
     made.as("acct-2");
     await answered();
-    expect(title()).toBe(O.mapTitle);
+    expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     expect({ ...marks, secondOnceDrawn: decisionAsked("acct-2") }).toEqual({
       first: true,
       second: false,
@@ -299,7 +299,7 @@ describe("while setup stands, the app behind it takes no key", () => {
     const v = verbs();
     seated({ mailboxes: async () => [mailbox("mbx-1")], verbs: v });
     await answered();
-    expect(title()).toBe(O.mapTitle);
+    expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     fireEvent.keyDown(document.body, { key: "e" });
     expect(ran).toEqual([]);
 
@@ -317,7 +317,7 @@ describe("while setup stands, the app behind it takes no key", () => {
   it("the app's chords run nothing either while a step is on screen (g o, c, /, z), and run again once setup is closed", async () => {
     seated({ mailboxes: async () => [mailbox("mbx-1")] });
     await answered();
-    expect(title()).toBe(O.mapTitle);
+    expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     behind();
     await settle();
     const whileSetup = { ran: [...ran], undo: undone(), title: title() };
@@ -330,7 +330,11 @@ describe("while setup stands, the app behind it takes no key", () => {
     behind();
     await settle();
     expect({ whileSetup, after: { ran: [...ran], undo: undone() } }).toEqual({
-      whileSetup: { ran: [], undo: false, title: O.mapTitle },
+      whileSetup: {
+        ran: [],
+        undo: false,
+        title: O.organizeLast.replace("<window></window>", O.windowYear).replace(/\.$/, ""),
+      },
       after: { ran: ["archive", "go", "write", "search"], undo: true },
     });
   });
@@ -342,7 +346,6 @@ describe("organizing a mailbox starts once, after the person's yes", () => {
     const v = verbs({ organize: vi.fn(() => answer.promise) as never });
     seated({ mailboxes: async () => [mailbox("mbx-1")], verbs: v });
     await answered();
-    press(words(O.continue));
     await settle();
     expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     expect(v.organize).not.toHaveBeenCalled();
@@ -373,7 +376,6 @@ describe("organizing a mailbox starts once, after the person's yes", () => {
       .mockImplementation(async () => "stored");
     seated({ mailboxes: async () => [mailbox("mbx-1")], verbs: verbs({ organize }) });
     await answered();
-    press(words(O.continue));
     await settle();
     press(words(O.agree));
     await answered();
@@ -394,7 +396,6 @@ describe("organizing a mailbox starts once, after the person's yes", () => {
       verbs: v,
     });
     await answered();
-    press(words(O.continue));
     await settle();
     press(words(O.agree));
     await answered();
@@ -486,9 +487,9 @@ describe("a further mailbox's password goes to the server the person confirmed, 
       connect: door.door,
     });
     await answered();
-    expect(title()).toBe(O.mailboxTitle);
+    expect(title().trim()).toBe(O.providerAnother);
     type(O.address, ADDRESS);
-    press(words(P.otherLabel));
+    press(words(P.otherShort));
     type(O.imapHost, HOST);
     type(O.smtpHost, HOST_OUT);
     type(O.password, MARKER);
@@ -692,7 +693,6 @@ describe("what the run says of the account is what the ground holds of it", () =
         consent: consentOf(async () => ({ ...CONSENT, ...consent })),
       });
       await answered();
-      press(words(O.continue));
       await settle();
       expect(title()).toContain(O.organizeLast.split("<window>")[0]!.trim());
       /* The one rung that stands chosen, by its own name. */
@@ -736,7 +736,6 @@ describe("what the run says of the account is what the ground holds of it", () =
       }),
     );
     await answered();
-    press(words(O.continue));
     await settle();
     const onWindow = title();
     const chosen = screen.getByRole("heading", { level: 1 }).querySelector(".oh-slot")?.textContent ?? "";

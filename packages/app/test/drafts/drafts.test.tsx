@@ -7,6 +7,7 @@ import type { PressVerdict } from "@ohmail/client-engine";
 import { useDraftsList, type DraftsDoor } from "@ohmail/app-logic/drafts";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import type { UndoToastOptions } from "@ohmail/app-logic/press/undo-door";
+import { PullContext } from "@ohmail/app-logic/session/pull-new-mail";
 import { DraftsAbove, DraftsList, DraftsReading, useDiscardWords } from "../../src/drafts/index.js";
 import { at, draft, draw, inWords, pane, PHONE, stamp } from "../places/lists-world.js";
 import { wideWindow } from "../ohbox/setup.js";
@@ -92,6 +93,18 @@ const fresh = (): Seen => ({
   again: [],
   said: [],
 });
+it("offers the list's Pull new mail action from Drafts More", () => {
+  const pull = vi.fn();
+  draw(
+    <PullContext value={{ available: true, pull, pulling: false }}>
+      <Drafts drafts={[]} seen={fresh()} />
+    </PullContext>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: words.drafts.listMenu }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /pull new mail/i }));
+  expect(pull).toHaveBeenCalledOnce();
+});
+
 const flush = () =>
   act(async () => {
     await Promise.resolve();

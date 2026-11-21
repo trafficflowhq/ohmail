@@ -84,6 +84,10 @@ export interface IcsEventPreview {
   oldStart: IcsTime | null;
   oldEnd: IcsTime | null;
   recurrence: IcsRecurrence | null;
+  /** The invitation's complete repeat rule, for a personal calendar copy. */
+  rule?: string;
+  /** Its set cannot be copied as a single rule. */
+  extraDates?: true;
   /**
    * The event's identity, compared and never drawn: UID, RECURRENCE-ID (canonical, see
    * {@link distinctCalendarEvents}) and SEQUENCE, from the first VEVENT only. Sender text.
@@ -638,7 +642,7 @@ export function parseIcsDate(value: string, tzidParam: string | null, valueParam
 }
 
 /** `PT1H30M` / `P1D` / `P1DT2H` → milliseconds. Weeks included; months/years are not durations here. */
-function parseIcsDuration(value: string): number | null {
+export function parseIcsDuration(value: string): number | null {
   const m = /^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(value.trim());
   if (!m) return null;
   const [, sign, w, d, h, mi, s] = m;
@@ -838,6 +842,8 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
   let oldStart: IcsTime | null = null;
   let oldEnd: IcsTime | null = null;
   let recurrence: IcsRecurrence | null = null;
+  let rule: string | undefined;
+  let extraDates = false;
   let uid: string | null = null;
   let uidSeen = false;
   let recurrenceId: string | null = null;
@@ -909,6 +915,13 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
         break;
       case "RRULE":
         if (recurrence === null) recurrence = parseRecurrence(line.value);
+        if (rule !== undefined) extraDates = true;
+        else rule = line.value;
+        break;
+      case "RDATE":
+      case "EXDATE":
+      case "EXRULE":
+        extraDates = true;
         break;
       case "X-MS-OLDSTART":
         if (oldStart === null) oldStart = parseIcsDate(line.value, line.params.get("TZID") ?? null, null);
@@ -976,6 +989,8 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
     oldStart: method === "COUNTER" ? oldStart : null,
     oldEnd: method === "COUNTER" ? oldEnd : null,
     recurrence,
+    ...(rule !== undefined && { rule }),
+    ...(extraDates && { extraDates: true }),
     uid,
     recurrenceId,
     sequence,
@@ -1013,6 +1028,8 @@ function drawnFingerprint(e: IcsEventPreview): string {
   delete drawn.uid;
   delete drawn.recurrenceId;
   delete drawn.sequence;
+  delete drawn.rule;
+  delete drawn.extraDates;
   return JSON.stringify(drawn);
 }
 

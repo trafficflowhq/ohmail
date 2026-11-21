@@ -4,6 +4,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
+  HttpAdapter,
   IndexedDbMirrorStore,
   MemoryMirrorStore,
   MutationRejectedError,
@@ -96,6 +97,38 @@ describe("a press and what is said of it", () => {
       details: { calendarId: "cal-1" },
     });
     expect(port.events().map((e) => e.record.id)).toEqual([]);
+    expect(port.hasOwedWrites()).toBe(false);
+  });
+
+  it("keeps the calendar change through a subscription lock and sends it once access returns", async () => {
+    let locked = true;
+    const adapter = new HttpAdapter({
+      baseUrl: "",
+      fetch: async () =>
+        locked
+          ? Response.json({ error: { code: "subscription_required" } }, { status: 402 })
+          : Response.json({ write: null, events: [] }),
+    });
+    const send = vi.fn((key: string) => adapter.writeCalendar(create, key));
+    const port = portOver(send);
+    const stop = port.activate();
+    try {
+      const heard = await pressAndHear(port, create);
+      expect(port.hasOwedWrites()).toBe(true);
+      expect(heard).toMatchObject({ verdict: null, say: null });
+      expect(send.mock.calls).toEqual([[heard.key]]);
+
+      port.suspendWrites();
+      locked = false;
+      port.resumeWrites();
+      await port.flush();
+      expect(port.hasOwedWrites()).toBe(false);
+      expect(port.verdict(heard.key)).toEqual({ kind: "taken", write: null });
+      await port.flush();
+      expect(send.mock.calls).toEqual([[heard.key], [heard.key]]);
+    } finally {
+      stop();
+    }
   });
 
   it("says no sentence before our server has answered, and its word once it has", async () => {

@@ -103,24 +103,34 @@ describe("the storage card on the Cloud door", () => {
   it("draws the card with the fitted choice, its price and the change buttons", async () => {
     await draw("card", NEAR, true);
     expect(text()).toContain("Storage 80% full");
-    expect(text()).toContain("Plus + 10 GB keeps all of it, $25/month.");
-    expect(buttons()).toEqual(["Dismiss", "Add storage", "Change plan"]);
+    expect(text()).toContain("12.5 GB after the import.");
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("#/settings/storage");
+    expect(buttons()).toEqual(["Add storage", "Not now", "Change plan"]);
+
+    await draw("pane", NEAR, true);
+    expect(text()).toMatch(/Plus.*Keeps all your mail.*With \+10 GB: 15 GB, \$25\/month/);
   });
 
   it("the Mac App Store face: the numbers and the fitted plan named, no amount, no button but Dismiss, no link", async () => {
     await draw("card", NEAR, false);
     expect(text()).toContain("Storage 80% full");
-    expect(text()).toContain("3.2 GB of 4 GB");
-    expect(text()).toContain("Plus + 10 GB keeps all of it.");
+    expect(text()).toContain("12.5 GB after the import.");
+    expect(buttons()).toEqual(["Not now"]);
+    expect(text()).not.toMatch(/\$|€|£|\d+\/month/);
+    expect(host.querySelectorAll("a")).toHaveLength(0);
+
+    await draw("pane", NEAR, false);
+    expect(text()).toContain("3.2 GB");
+    expect(text()).toContain("used, your trial room of 4 GB");
+    expect(text()).toMatch(/Plus.*Keeps all your mail.*With \+10 GB: 15 GB/);
     expect(text()).toContain("Manage your plan at ohmail.app");
     expect(text()).not.toMatch(/\$|€|£|\d+\/month/);
-    expect(buttons()).toEqual(["Dismiss"]);
     expect(host.querySelectorAll("a")).toHaveLength(0);
   });
 
   it("Dismiss writes the choice over the bridge and reads the account again", async () => {
     await draw("card", NEAR, true);
-    await act(() => { host.querySelector<HTMLButtonElement>("[aria-label=Dismiss]")!.click(); });
+    await act(() => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Not now")!.click(); });
     await settle();
     expect(bridge.calls).toEqual([{ path: "/account/storage", method: "PATCH", body: { dismiss: "near" } }]);
     expect(rereads).toBe(1);

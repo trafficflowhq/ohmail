@@ -17,7 +17,7 @@
 import { DEFAULT_LIMITS, MAX_ZONE_NAME_CHARS, readCalendar } from "@ohmail/cal-core";
 import { MAX_CALENDAR_NAME_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { CalendarInfo } from "../port.js";
-import { addressOf, ask, bodyOf, isSelf, isUnder, propfindOf, refuse, sameMemberKey, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
+import { addressOf, allowsMove, ask, bodyOf, isSelf, isUnder, propfindOf, refuse, sameMemberKey, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
 import { APPLE_ICAL, CALDAV, CALENDARSERVER, DAV, childOf, childrenOf, propOf, type DavResponse, type Multistatus } from "./multistatus.js";
 
 /** What a response that names no usable address is listed under: the start of what it wrote. */
@@ -26,7 +26,7 @@ const UNREADABLE_ADDRESS_CHARS = 256;
 /* ── the home ────────────────────────────────────────────────────────────────────────────────────── */
 
 const HOME = propfindOf(
-  "<D:resourcetype/><D:displayname/><C:supported-calendar-component-set/><CS:getctag/><D:sync-token/><A:calendar-color/><D:current-user-privilege-set/><C:calendar-timezone-id/><C:calendar-timezone/>",
+  "<D:resourcetype/><D:displayname/><C:supported-calendar-component-set/><CS:getctag/><D:sync-token/><A:calendar-color/><D:current-user-privilege-set/><D:owner/><C:calendar-timezone-id/><C:calendar-timezone/>",
 );
 /** A colour as servers keep it: six digits, or eight with how opaque it is. */
 const COLOUR = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i;
@@ -62,7 +62,7 @@ function zoneOf(response: DavResponse): string | null {
 }
 
 /** The home's children that are calendars for events (RFC 4791 sections 4.2 and 5.2.3), in the order the server lists them. */
-export async function calendarsOf(s: Session, home: string): Promise<{ readonly ok: true; readonly calendars: readonly CalendarInfo[] } | Refused> {
+export async function calendarsOf(s: Session, home: string, principal: string): Promise<{ readonly ok: true; readonly calendars: readonly CalendarInfo[] } | Refused> {
   const asked = await ask(s, "PROPFIND", home, "1", HOME);
   if (!asked.ok) return refuse(asked.reason, asked.retryAfterMs);
   const scope = scopeOf(asked.url);
@@ -78,14 +78,25 @@ export async function calendarsOf(s: Session, home: string): Promise<{ readonly 
     if (takes !== null && !childrenOf(takes, CALDAV, "comp").some((c) => c.attributes.get("name")?.toUpperCase() === "VEVENT")) continue;
     const name = textOf(response, DAV, "displayname");
     const colour = textOf(response, APPLE_ICAL, "calendar-color");
+    const ownerHref = propOf(response, DAV, "owner");
+    const owner = ownerHref && childOf(ownerHref, DAV, "href");
+    const ownerUrl = owner && addressOf(owner.text.trim(), asked.url);
+    const owned = ownerUrl !== null && isSelf(scopeOf(principal), ownerUrl);
+    const canWrite = writable(response);
     calendars.push({
       id,
       name: name !== "" && name.length <= MAX_CALENDAR_NAME_CHARS ? name : null,
       color: COLOUR.test(colour) ? colour.slice(0, 7).toLowerCase() : null,
-      writable: writable(response),
+      writable: canWrite,
+      ...(owned && { owned: true as const }),
       byToken: textOf(response, DAV, "sync-token") !== "",
       zone: zoneOf(response),
     });
+  }
+  for (let i = 0; i < calendars.length; i += 4) {
+    await Promise.all(calendars.slice(i, i + 4).map(async (cal, index) => {
+      if (cal.owned && cal.writable && await allowsMove(s, cal.id)) calendars[i + index] = { ...cal, nativeMove: true };
+    }));
   }
   return { ok: true, calendars };
 }

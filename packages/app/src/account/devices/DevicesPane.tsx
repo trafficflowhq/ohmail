@@ -173,6 +173,10 @@ function MadeLink({ model, qr }: { readonly model: DevicesModel; readonly qr: Qr
     >
       {qr(made.link, t("qrAria"))}
       <SettingLine label={t("scanWith")} value={t("scanApp")} />
+      <SettingNote>{t("typedEntry")}</SettingNote>
+      <div className="account-device-link">
+        <SettingNote>{made.link}</SettingNote>
+      </div>
       <Button kind="two" size="s" onPress={model.copy}>
         {t("copyLink")}
       </Button>

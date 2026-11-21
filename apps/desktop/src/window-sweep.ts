@@ -8,6 +8,7 @@
  * erasure takes the send lanes, and the mailbox's preferences and tab notes, as well.
  */
 
+import { forgetNewNoticeChoices } from "@ohmail/app-logic/notices/browser-channels";
 import { ROUTING_INTENTS_PREFIX, TOLD_DEVICES_PREFIX } from "@ohmail/client-engine";
 import { clearBootCaches, dropLocalStorageKeysWhere, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import {
@@ -130,7 +131,7 @@ function sweepScopes(
   const keys = dropLocalStorageKeysWhere((k) =>
     k === exactKey || (owed.length > 0 && (k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)))
     || owed.some((s) => scopedTo(k, s) || k === windowSentFoldersKey(s) || alsoGone(k, s)));
-  const sweeps = [keys, ...owed.map((s) => clearBootCaches(s))];
+  const sweeps = [keys, ...owed.flatMap((s) => [clearBootCaches(s), forgetNewNoticeChoices(s)])];
   // The tab's notes naming the mailbox, an erasure's alone; one left over keeps the marker below for a retry.
   if (notes) sweeps.push(dropLocalStorageKeysWhere((k) => owed.some((s) => namesOwner(k, s, true)), "sessionStorage"));
   const swept: LocalSweep = {

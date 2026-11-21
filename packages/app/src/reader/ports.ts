@@ -4,6 +4,7 @@
  * the files of its letters, and its pictures. `none` is a real answer: no tiles, no pictures, never a guess.
  */
 import type { PdfLook } from "./look/FilePreview.js";
+import type { EngineMessage } from "@ohmail/wire";
 import type { ComponentType } from "react";
 import type { SendPhase } from "@ohmail/app-logic/writing/mail-send";
 import type { PanelVerb } from "@ohmail/ui/mail";
@@ -48,6 +49,7 @@ export type ReaderBody = ComponentType<LetterProps>;
 /** The current letter's invitation facts. A snippet is never read as a full invitation. */
 export interface ReaderInvitationProps {
   readonly messageId: string;
+  readonly message?: EngineMessage;
   readonly invitationWithoutEvent: boolean;
   readonly text: string;
   readonly full: boolean;
@@ -96,7 +98,7 @@ export interface ReaderFiles extends EmbeddedPictureSeam {
   ensure(messageId: string, attachmentId: string, opts?: { retry?: boolean }): void;
   blobOf?(messageId: string, attachmentId: string): Blob | undefined;
   releasePreviews?(messageId: string): void;
-  downloadAll(messageId: string, opts?: { includeInlineParts?: boolean }): void;
+  downloadAll(messageId: string, opts?: { includeInlineParts?: boolean; omit?: string }): void;
   downloadingAll(messageId: string): boolean;
 }
 
@@ -140,10 +142,11 @@ export interface ReaderParts {
   /** The reply's sheet and open (`write`'s); `none`: the reader hands a linked draft to the place `write`. */
   readonly reply: ReaderReply | "none";
   /**
-   * What the shell says of a letter's invitation, drawn above the letter's text and outside it: the note where its
+   * What the shell says of a letter's invitation, drawn after the letter's text: the note where its
    * event cannot be shown, and the event once. `none`: nothing stands there.
    */
   readonly invitation: ComponentType<ReaderInvitationProps> | "none";
+  readonly invitationFile?: (message: EngineMessage) => string | undefined;
   /**
    * The shell's clipboard, written inside the person's own press (a person's address, copied from their card): `true`
    * only once the clipboard took it. `none`, or left out: the shell has none, and a copy is not offered.

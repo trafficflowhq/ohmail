@@ -66,7 +66,7 @@ async function mount(held: EngineMessage[]) {
 const sections = () => within(host).queryByRole("group", { name: "Screener sections" });
 const list = () => within(host).queryByRole("listbox", { name: "Screener" });
 const preview = () => within(host).queryByRole("toolbar", { name: "Actions" });
-const empty = () => within(host).getByText(messages.screener.place.empty.waiting, { exact: true });
+const paragraphText = () => within(host).getAllByRole("paragraph").map((paragraph) => paragraph.textContent);
 const row = (id: string) => within(list()!).getByRole("option", { name: new RegExp(`Subject ${id}$`) });
 const decisions = () => sent.filter((mutation) => mutation.kind === "screener_decide");
 
@@ -101,18 +101,18 @@ describe("the last decision on a phone lands somewhere", () => {
     expect(list()).toBeNull();
   });
 
-  it("deciding the only waiting sender returns to the list, where 'No one's waiting.' is drawn and reachable", async () => {
+  it("deciding the only waiting sender returns to the list and draws the 1 decided mark", async () => {
     await mount([msg("m1", "one@example.test")]);
     await press(row("m1"));
     await decide();
     expect(preview()).toBeNull();
     await tick(400);
-    expect(empty()).not.toBeNull();
+    expect(paragraphText()).toContain("1 decided");
     expect(within(sections()!).getByRole("button", { name: /^Waiting/, pressed: true })).not.toBeNull();
     await tick(COMMIT_MS + 20_000);
     expect(decisions()).toHaveLength(1);
     expect(preview()).toBeNull();
-    expect(empty()).not.toBeNull();
+    expect(paragraphText()).toContain("1 decided");
   });
 
   it("control: with a second sender waiting the preview advances to it and full mode stays", async () => {
@@ -149,7 +149,7 @@ describe("the last decision on a phone lands somewhere", () => {
     await act(async () => { await engine.syncOnce(); });
     await tick(400);
     expect(preview()).toBeNull();
-    expect(empty()).not.toBeNull();
+    expect(paragraphText()).toContain("No one’s waiting");
     const entity = msg("m2", "two@example.test");
     arrivals = [{ type: "message", op: "create", id: entity.id, seq: ++seq, updatedAt: ISO, entity }];
     await act(async () => { await engine.syncOnce(); });

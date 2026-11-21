@@ -22,7 +22,7 @@ import { NEAR, open } from "./storage-fixtures";
  * SETTINGS › SUBSCRIPTION OVER THE WEB'S OWN FILLING (`subscription-door.ts`): the address is made by the press and
  * never by the mount; it leaves in this tab with no referrer; no address takes the pane away; a mint that threw is
  * said; the address itself is in no node, no model and no log; the standing is the access answer the shell holds,
- * for the account it hands in; and no price is asked, the plans' read not being served on this line.
+ * for the account it hands in. Plans only carry prices supplied in that answer.
  */
 
 const MINT = "POST /api/account/manage-link";
@@ -74,9 +74,13 @@ async function mounted(withdraw: () => void = () => {}) {
     engine: NO_ENGINE,
     service: "managed",
     address: fakeAddress("#/settings/billing"),
-    places: { settings: mailSettings({ ...NO_PANE_PARTS, billing: WEB_PANE_PARTS.billing }) },
+    places: { settings: mailSettings({
+      ...NO_PANE_PARTS,
+      billing: WEB_PANE_PARTS.billing,
+      billingHasFoot: WEB_PANE_PARTS.billingHasFoot,
+    }) },
     features: {
-      subscription: { name: "subscription", render: () => <SubscriptionSection onNowhere={withdraw} /> },
+      subscription: { name: "subscription", render: (sheet) => <SubscriptionSection onNowhere={withdraw} sheet={sheet} /> },
     },
   });
   function SubscriptionFrame() {
@@ -152,13 +156,30 @@ describe("the door's answers to the press (each read in the shipped section's or
     expect(server.on(MINT).map((s) => s.body)).toEqual([{ lang: "de" }]);
   });
 
-  it("has no read of the plans on this line", async () => {
+  it("has no read of the plans before the matching access answer", async () => {
     const { result } = await filled();
     expect(result.current.plans).toBe(NONE);
   });
 });
 
 describe("the press over the real filling", () => {
+  it("shows the offered plan prices and carries the chosen plan to checkout", async () => {
+    access = { ...open(NEAR), trialProgress: { day: 6, total: 14 } };
+    server.answer(MINT, json({ url: PAGE }));
+    await mounted();
+    expect(await screen.findByText("6 of 14")).toBeTruthy();
+    expect(await screen.findByText("$15")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Monthly" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Yearly" })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /Plus/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Subscribe to Plus" }));
+    });
+    expect(server.on(MINT).map((request) => request.body)).toEqual([
+      { lang: "en", plan: "plus", interval: "month" },
+    ]);
+  });
+
   it("makes no address by being drawn, and asks nothing to draw the pane", async () => {
     await mounted();
     expect(screen.getByRole("button", { name: en.settings.subscriptionManage })).toBeTruthy();
@@ -209,7 +230,8 @@ describe("the press over the real filling", () => {
     for (const spy of spies) spy.mockRestore();
   });
 
-  it("asks no price over a whole visit", async () => {
+  it("asks no price and draws no price when the access answer has no offer", async () => {
+    access = open({ ...NEAR, offer: null });
     server.answer(MINT, json({ url: PAGE }));
     await mounted();
     await press();

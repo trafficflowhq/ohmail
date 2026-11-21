@@ -8,6 +8,13 @@
     "model": "Model",
     "where": "Where the model runs",
     "cloud": "ohmail Cloud",
-    "working": "Working"
+    "working": "Working",
+    "draftReply": "Draft reply",
+    "budget": "AI budget left",
+    "creditsLeft": "{remaining, number} of {total, number} left",
+    "creditsDetail": "{remaining, number} of {total, number} credits",
+    "creditsEmpty": "0 credits",
+    "plans": "Plans",
+    "creditsBalance": "{remaining, number} credits left"
   }
 }

@@ -183,7 +183,7 @@ describe("the reply's own discharge and the release, over one source", () => {
     expect(sends(s)).toHaveLength(1);
     expect(marks(s).length - before, "the discharge and the release both read the source").toBe(1);
     expect(said, "the release found the source already read by the discharge, and said no Undo").toHaveLength(1);
-    expect(toasts, "Reply sent. was raised over Sent · marked done").toEqual([]);
+    expect(toasts, "Sent was raised over Sent · marked done").toEqual([]);
   });
 
   /**
@@ -280,7 +280,7 @@ describe("the reply's own discharge and the release, over one source", () => {
     expect(s.wire.filter((m) => m.kind === "triage_set" && (m as { state?: string }).state === "none"), "the reply's debt was not discharged").toHaveLength(1);
     expect(marks(s)).toEqual([]);
     expect(said).toEqual([]);
-    expect(toasts).toEqual(["Reply sent."]);
+    expect(toasts).toEqual(["Sent"]);
   });
 });
 

@@ -50,7 +50,7 @@ describe("a delivered letter whose Sent copy has a note", () => {
     expect(dismissed).toEqual(["note:k1"]);
   });
 
-  it("a copy still owed says so, not hot; each letter's note stands as its own notice, the oldest first", () => {
+  it("a copy still owed to a full mailbox warns; each letter's note stands on its own, the oldest first", () => {
     const notices = sendNotices(
       t,
       [
@@ -62,8 +62,59 @@ describe("a delivered letter whose Sent copy has a note", () => {
     );
     expect(notices.map((n) => [n.kind, n.id, n.line?.split(" ")[0], n.hot === true])).toEqual([
       ["sentCopy", "note:k1", "sentCopy.missingTooBig", true],
-      ["sentCopy", "note:k2", "sentCopy.waitingFull", false],
+      ["sentCopy", "note:k2", "sentCopy.quotaWaiting", true],
     ]);
+  });
+
+  it("names the full mailbox and opens Mailboxes without dismissing the warning", () => {
+    const closed: string[] = [];
+    const opened: (string | undefined)[] = [];
+    const item = {
+      ...noted("k2", "Ben", "Kiln", { state: "pending", reason: "full" }),
+      mailboxId: "mailbox-2",
+    };
+    const [notice] = sendNotices(
+      t,
+      [item],
+      () => {},
+      (id) => closed.push(id),
+      true,
+      {
+        address: (id: string) => (id === "mailbox-2" ? "mailbox.example" : null),
+        open: (id?: string) => opened.push(id),
+      },
+    );
+    expect(notice!.title).toContain("mailbox.example");
+    expect(notice!.acts?.map((a) => a.label)).toEqual(["sentCopy.openMailboxes", "sentCopy.notNow"]);
+    notice!.acts![0]!.onPress();
+    expect(opened).toEqual(["mailbox-2"]);
+    expect(closed).toEqual([]);
+    notice!.acts![1]!.onPress();
+    expect(closed).toEqual(["note:k2"]);
+  });
+
+  it("shows one warning per full mailbox and dismisses only that mailbox's notes", () => {
+    const full = { state: "pending", reason: "full" } as const;
+    const items = [
+      { ...noted("latest", "One", "Third", full), mailboxId: "first" },
+      { ...noted("other", "Two", "Second", full), mailboxId: "second" },
+      { ...noted("old", "Three", "First", full), mailboxId: "first" },
+    ];
+    const dismissed: string[] = [];
+    const notices = sendNotices(
+      t,
+      items,
+      () => {},
+      (id) => dismissed.push(id),
+      true,
+      {
+        address: (id) => id + ".example",
+      },
+    );
+    expect(notices).toHaveLength(2);
+    const first = notices.find((notice) => notice.title.includes("first.example"));
+    first?.acts?.[0]?.onPress();
+    expect(dismissed.sort()).toEqual(["note:latest", "note:old"]);
   });
 
   it("never hides a letter that did not leave: the ending is said beside it, with its Open", () => {

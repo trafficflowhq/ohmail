@@ -1,4 +1,4 @@
-import type { CatalogueKey } from "./catalogue.js";
+import { say, type CatalogueKey, type Language } from "./catalogue.js";
 
 /**
  * The places of the app a journey can be in. A place has the address that reaches it and the one
@@ -8,13 +8,13 @@ import type { CatalogueKey } from "./catalogue.js";
 export type AriaRole =
   | "heading" | "navigation" | "main" | "region" | "listbox" | "option" | "button" | "link" | "tab" | "tablist"
   | "textbox" | "combobox" | "group" | "status" | "alert" | "dialog" | "menu" | "menuitem" | "article" | "toolbar"
-  | "separator" | "switch" | "checkbox" | "radio" | "form" | "note" | "feed" | "list";
+  | "img" | "separator" | "switch" | "checkbox" | "radio" | "form" | "note" | "feed" | "list";
 
 export interface Place {
   id: string;
   /** `#/…` for a place inside the shell, a path for a door. */
   route: string;
-  landmark: { role: AriaRole; key: CatalogueKey };
+  landmark: { role: AriaRole; key: CatalogueKey; args?: (lang: Language) => Record<string, string | number> };
 }
 
 const view = (id: string, key: CatalogueKey): Place => ({ id, route: `#/${id}`, landmark: { role: "heading", key } });
@@ -62,8 +62,17 @@ export const PLACES = {
   reader: { id: "reader", route: "#/ohbox", landmark: { role: "region", key: "reader.pane" } },
 
   /** The doors. */
-  gate: { id: "gate", route: "/login", landmark: { role: "heading", key: "login.title" } },
-  "first-run": { id: "first-run", route: "/", landmark: { role: "list", key: "join.progress" } },
+  // The catalogue guard checks this key. The bench finds the sentence by the credential fields inside it.
+  gate: { id: "gate", route: "/login", landmark: { role: "heading", key: "login.iAm" } },
+  "first-run": {
+    id: "first-run",
+    route: "/",
+    landmark: {
+      role: "img",
+      key: "join.progressAccount",
+      args: (lang: Language) => ({ stage: 1, name: say("join.rail_account", {}, lang), part: 4 }),
+    },
+  },
   "sign-out": { id: "sign-out", route: "#/settings/account", landmark: { role: "button", key: "account.signOut" } },
   erase: { id: "erase", route: "/account/delete", landmark: { role: "button", key: "deleteAccount.begin" } },
 } as const satisfies Record<string, Place>;

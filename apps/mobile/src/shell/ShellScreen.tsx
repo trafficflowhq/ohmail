@@ -225,7 +225,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
           case "chrome":
             return {};
           case "notices.post":
-            return door.post(a.notice);
+            return door.post(a.notice, a.details);
           case "calendar.snapshot":
             return days.keep(a.snapshot, a.publication);
           case "calendar.clear":

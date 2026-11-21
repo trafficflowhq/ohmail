@@ -127,7 +127,7 @@ describe("the one report slot", () => {
     say("Deleted", undoable());
     expect(said()).toEqual(["DeletedUndoz"]);
     say("Not sent. The server refused it.", { dismiss: "Dismiss" });
-    expect(said()).toEqual(["Not sent. The server refused it. Dismiss"]);
+    expect(said()).toEqual(["Not sent. The server refused it Dismiss"]);
   });
 
   it("a why stands until it is pressed", () => {

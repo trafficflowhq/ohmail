@@ -618,6 +618,11 @@
   --mini-disc: 24px;
   --calhead: var(--h-m);
   --calhead-gap: var(--gap);
+  --cal-side-width: 392px;
+  --cal-from-mail-target-width: 180px;
+  --cal-rail-swatch: 10px;
+  --cal-rail-swatch-gap: 6px;
+  --cal-rail-swatch-top: var(--cal-rail-swatch-gap);
   --cal-grid-air: 10px;
   --cal-grid-foot: 0px;
   --cal-grid-hour-min: 28px;
@@ -669,6 +674,9 @@
 
 :root[data-device="fold"]{
   --cgutter: 46px;
+}
+:root[data-face="ohmarchy"][data-device="fold"]{
+  --cal-rail-swatch-top: 14px;
 }
 
 :root[data-product="cal"]{

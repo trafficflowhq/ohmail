@@ -116,6 +116,7 @@
     overflow: hidden auto;
     overscroll-behavior: contain;
     scrollbar-width: none;
+    overflow-anchor: none;
   }
   .oh-tg-scroll::-webkit-scrollbar {
     display: none;
@@ -124,6 +125,12 @@
     content: "";
     flex: none;
     height: var(--oh-tg-foot);
+  }
+  .oh-tg-scroll[data-scroll-room]::before {
+    content: "";
+    order: 1;
+    flex: none;
+    block-size: 100dvh;
   }
   :root[data-device="phone"] .oh-tg-scroll {
     touch-action: pan-y;

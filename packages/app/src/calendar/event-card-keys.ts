@@ -23,6 +23,7 @@ export function cardKeys({
   setMoveMenu: (anchor: HTMLElement) => void;
   deleteEvent: (anchor: HTMLElement) => void;
 }) {
+  const canMove = edit || actions.proposal.baseOf(event) !== undefined;
   return (key: KeyboardEvent<HTMLDivElement>) => {
     const target = key.target as HTMLElement;
     if (
@@ -35,7 +36,7 @@ export function cardKeys({
       return;
     const pressed = key.key;
     if (key.altKey) {
-      if (!key.shiftKey || !edit || event.start.kind !== "date") return;
+      if (!key.shiftKey || !canMove || event.start.kind !== "date") return;
       const days = pressed === "ArrowLeft" ? -1 : pressed === "ArrowRight" ? 1 : 0;
       if (!days) return;
       actions.start(event, { kind: "resize", edge: key.ctrlKey ? "start" : "end", days }, target);
@@ -47,7 +48,7 @@ export function cardKeys({
       deleteEvent(target);
     } else if (key.shiftKey && pressed.toLowerCase() === "d" && duplicate) {
       duplicate();
-    } else if (key.shiftKey && edit) {
+    } else if (key.shiftKey && canMove) {
       const days = pressed === "ArrowLeft" ? -1 : pressed === "ArrowRight" ? 1 : 0;
       const delta = pressed === "ArrowUp" ? -15 : pressed === "ArrowDown" ? 15 : 0;
       const minutes = delta ? (actions.moveTime(event, delta, false)?.minutes ?? 0) : 0;

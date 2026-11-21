@@ -9,6 +9,7 @@ import type { CalendarSetupPort } from "./setup/port.js";
 import type { EventWithWrites } from "@ohmail/client-engine/calendar-acts";
 import type {
   CalendarAct,
+  CalendarProposalAct,
   CalendarSettingsWire,
   CalendarWindow,
   CalendarWriteFault,
@@ -33,6 +34,13 @@ export interface HeldSpan {
   readonly toMs: number;
 }
 
+interface HeldCalendarAct {
+  readonly key: string;
+  readonly deadline: number;
+  readonly remainingMs: () => number;
+  readonly undo: () => Promise<boolean>;
+}
+
 export interface CalendarPort {
   /** A new event's id, minted on the device. */
   newId(): string;
@@ -42,12 +50,9 @@ export interface CalendarPort {
   holdDelete?(
     act: Extract<CalendarAct, { kind: "calendar_event_delete" }>,
     delay: number,
-  ): Promise<{
-    readonly key: string;
-    readonly deadline: number;
-    readonly remainingMs: () => number;
-    readonly undo: () => Promise<boolean>;
-  }>;
+  ): Promise<HeldCalendarAct>;
+  holdProposal?(act: CalendarProposalAct, delay: number): Promise<HeldCalendarAct>;
+  pendingProposals?(): readonly { key: string; act: CalendarProposalAct }[];
   /** Resume this account's pending queue while its host is present. */
   activate?(): () => void;
   /** Sends what this device still owes; resolves when the queue has gone through once. */

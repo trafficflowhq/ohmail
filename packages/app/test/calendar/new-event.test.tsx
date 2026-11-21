@@ -337,7 +337,7 @@ it("takes a place suggested by the account service and keeps its attribution wit
   Object.assign(w.engine, { suggestPlaces: ask });
   const press = vi.fn(async () => ({ key: "create" }));
   w.port.press = press;
-  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE, { portal: true });
   const form = within(screen.getByRole("dialog", { name: "New event" }));
   await form.findByText("Personal");
   fireEvent.click(form.getByRole("button", { name: "Place" }));
@@ -346,6 +346,8 @@ it("takes a place suggested by the account service and keeps its attribution wit
   expect(ask).not.toHaveBeenCalled();
   fireEvent.change(place, { target: { value: "Lib" } });
   const list = await screen.findByRole("listbox", { name: "Place suggestions" });
+  expect(list.closest("[role=dialog]")).toBeNull();
+  expect(list.closest(".oh-suggest-layer")?.parentElement).toBe(document.body);
   expect(ask).toHaveBeenCalledWith(
     { text: "Lib", lang: "en" },
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -362,20 +364,27 @@ it("takes a place suggested by the account service and keeps its attribution wit
   await act(async () => {});
 });
 
-it("keeps a typed place when the account's suggestion service is off", async () => {
-  const w = world();
-  const ask = vi.fn(async () => ({ state: "off", places: [], credit: null }));
-  Object.assign(w.engine, { suggestPlaces: ask });
-  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
-  const form = within(screen.getByRole("dialog", { name: "New event" }));
-  await form.findByText("Personal");
-  fireEvent.click(form.getByRole("button", { name: "Place" }));
-  const place = form.getByLabelText("Place");
-  fireEvent.change(place, { target: { value: "The rooftop" } });
-  await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
-  expect(screen.queryByRole("listbox", { name: "Place suggestions" })).toBeNull();
-  expect(place).toHaveProperty("value", "The rooftop");
-});
+it.each(["off", "down"] as const)(
+  "keeps a typed place when the account's suggestion service is %s",
+  async (state) => {
+    const w = world();
+    const ask = vi.fn(async () => ({ state, places: [], credit: null }));
+    Object.assign(w.engine, { suggestPlaces: ask });
+    mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+    const form = within(screen.getByRole("dialog", { name: "New event" }));
+    await form.findByText("Personal");
+    fireEvent.click(form.getByRole("button", { name: "Place" }));
+    const place = form.getByLabelText("Place");
+    fireEvent.change(place, { target: { value: "The rooftop" } });
+    await act(async () => {
+      await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    });
+    expect(screen.queryByRole("listbox", { name: "Place suggestions" })).toBeNull();
+    if (state === "off") expect(form.queryByText("Place suggestions are unavailable")).toBeNull();
+    else expect(await form.findByText("Place suggestions are unavailable")).toBeTruthy();
+    expect(place).toHaveProperty("value", "The rooftop");
+  },
+);
 
 it("fills a run of whole days and its place from a typed line", async () => {
   const w = world();
