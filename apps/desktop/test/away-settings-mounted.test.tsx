@@ -121,7 +121,6 @@ it("loads the stored reply over the desktop bridge and saves one complete row", 
   await tick(0);
   expect(calls).toEqual([
     { method: "GET", body: undefined },
-    { method: "GET", body: undefined },
     { method: "PUT", body: { ...row, body: "Back Tuesday." } },
   ]);
 });

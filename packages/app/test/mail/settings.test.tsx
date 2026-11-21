@@ -8,6 +8,7 @@
  */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConsentContext, type ConsentRow } from "@ohmail/app-logic/consent";
 import type { AccountDoor } from "../../src/account/index.js";
 import type { AccountPaneParts } from "../../src/account/account/pane.js";
 import { Frame } from "../../src/frame/Frame.js";
@@ -19,6 +20,7 @@ import { TextProvider, type Messages } from "../../src/text/index.js";
 import accountEn from "../../messages/account.en.json" with { type: "json" };
 import accountOwnEn from "../../messages/account-account.en.json" with { type: "json" };
 import doorsEn from "../../messages/doors.en.json" with { type: "json" };
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
 import settingsEn from "../../messages/settings.en.json" with { type: "json" };
 import menuEn from "../../messages/settings-menu.en.json" with { type: "json" };
 import { madeOf, SETTINGS, type Setting } from "../settings/frame/hosts.js";
@@ -32,6 +34,7 @@ const WORDS: Messages = {
   ...menuEn,
   settings: settingsEn.settings,
   pairLanding: doorsEn.pairLanding,
+  viewError: frameEn.viewError,
   ohbox: { title: "Ohbox" },
 };
 
@@ -77,7 +80,9 @@ function mount(o: {
   });
   render(
     <TextProvider locale="en" messages={WORDS} timeZone="Europe/Zurich">
-      <Frame host={made.host} />
+      <ConsentContext.Provider value={{ foldersStorable: false } as ConsentRow}>
+        <Frame host={made.host} />
+      </ConsentContext.Provider>
     </TextProvider>,
   );
   return { address };
@@ -91,6 +96,7 @@ const whole = (door: AccountDoor): AccountPaneParts => ({
 });
 const alone = (door: AccountDoor): AccountPaneParts => ({ useDoor: () => door, password: NONE });
 const menu = () => within(screen.getByRole("navigation", { name: settingsEn.settings.navAria }));
+const menuReady = () => screen.findByRole("navigation", { name: settingsEn.settings.navAria });
 const sections = () =>
   menu()
     .getAllByRole("button")
@@ -120,7 +126,8 @@ describe("the mail's Settings at the switch: the way out", () => {
     const places = within(screen.getByRole("navigation", { name: "Places" }));
     fireEvent.click(places.getByRole("button", { name: "Settings" }));
     expect(address.read()).toBe("#/settings");
-    await settled();
+    await menuReady();
+    await screen.findByRole("button", { name: "Sign out" });
     expect(sections()).toEqual(["Account"]);
     /* Beside the menu the one section stands: the account that door named, and its way out. */
     expect(screen.getAllByText("mila@lichtgrat.example").length).toBeGreaterThan(0);
@@ -137,8 +144,7 @@ describe("the mail's Settings at the switch: the way out", () => {
   it("Sign out signs this browser out through the host's door, once, with no question before it", async () => {
     const { door, signOut } = doorOf();
     mount({ at: "#/settings/account", setting: WEB, parts: whole(door) });
-    await settled();
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     await settled();
     expect(signOut).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -147,9 +153,9 @@ describe("the mail's Settings at the switch: the way out", () => {
   it("on a browser signed in to somebody's computer it is the sign-out alone, which asks first", async () => {
     const { door, signOut } = doorOf();
     mount({ at: "#/settings/account", setting: PAIRED, parts: alone(door) });
-    await settled();
+    await menuReady();
     expect(sections()).toEqual(["Account"]);
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(signOut).not.toHaveBeenCalled();
     const question = within(screen.getByRole("dialog"));
     expect(question.getByText(doorsEn.pairLanding.signOutConfirm)).toBeTruthy();
@@ -165,23 +171,25 @@ describe("the mail's Settings at the switch: the way out", () => {
       parts: whole(doorOf().door),
       room: "phone",
     });
+    await menuReady();
     expect(sections()).toEqual(["Account"]);
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     fireEvent.click(menu().getByRole("button", { name: "Account" }));
     expect(address.read()).toBe("#/settings/account");
-    await settled();
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Sign out" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: settingsEn.settings.back }));
     expect(address.read()).toBe("#/settings");
   });
 
-  it("a section the handed doors cannot draw is not listed: no half pane, no empty page", () => {
+  it("a section the handed doors cannot draw is not listed: no half pane, no empty page", async () => {
     /* The host says the account is handled in the browser: these doors have no body for that answer. */
     mount({ at: "#/settings", setting: IN_BROWSER, parts: whole(doorOf().door) });
+    await menuReady();
     expect(menu().queryByRole("button", { name: "Account" })).toBeNull();
     cleanup();
     /* The host answers for the whole pane and hands no password's door: the whole pane cannot be drawn. */
     mount({ at: "#/settings", setting: WEB, parts: alone(doorOf().door) });
+    await menuReady();
     expect(menu().queryByRole("button", { name: "Account" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
   });

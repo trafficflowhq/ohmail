@@ -35,7 +35,15 @@ let clipboard: string[] = [];
 let unmount: (() => Promise<void>) | null = null;
 let originalFetch: typeof globalThis.fetch;
 
+function enroll(): void {
+  document.cookie = "tf_family=enroll-fixture; Path=/";
+  document.cookie = "tf_owner=a1; Path=/";
+  session = { status: 200, body: { user: user(), scope: "enrollment", familyId: "enroll-fixture" } };
+}
+
 beforeEach(() => {
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
   session = NO_SESSION;
   answers = {};
   sent = [];
@@ -141,7 +149,7 @@ describe("the rail on the open path", () => {
   });
 
   it("the second factor: account and Email behind", async () => {
-    session = { status: 200, body: { user: user(), scope: "enrollment" } };
+    enroll();
     const ui = await render("join");
     expect(ui.rail().slice(0, 3).map((s) => s.state)).toEqual(["done", "done", "now"]);
   });
@@ -181,7 +189,7 @@ describe("the rail ends with what follows the setup", () => {
 
 describe("the authenticator fallback", () => {
   async function totpOpen() {
-    session = { status: 200, body: { user: user(), scope: "enrollment" } };
+    enroll();
     const ui = await render("join");
     await ui.press(en.join.useTotp);
     return ui;

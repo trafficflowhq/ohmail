@@ -32,6 +32,8 @@ const refusal = (status: number, code: string): Response => json({ error: { code
 
 /** The one server both tabs talk to, and the browser's one cookie jar. */
 let jar: "none" | "enrollment" | "full";
+const ENROLLMENT_FAMILY = "enroll-fixture";
+const FULL_FAMILY = "full-fixture";
 let codeSets = 0;
 let sessionFault: (() => Response) | null = null;
 /* The server's answer to a jar with no refresh cookie, which is every jar here: an empty one, or an enrollment
@@ -52,7 +54,9 @@ const user = () => ({
 function serve(path: string): Response {
   if (path === "/auth/session") {
     if (sessionFault) return sessionFault();
-    return jar === "none" ? refusal(401, "unauthorized") : json({ user: user(), scope: jar });
+    return jar === "none" ? refusal(401, "unauthorized") : json({
+      user: user(), scope: jar, familyId: jar === "enrollment" ? ENROLLMENT_FAMILY : FULL_FAMILY,
+    });
   }
   if (path === "/auth/refresh") return refreshAnswer();
   if (path === "/auth/register") return json({ status: "ok" }, 202);
@@ -60,7 +64,17 @@ function serve(path: string): Response {
   if (path === "/auth/2fa/totp/enroll") {
     return json({ secret: SEED, otpauthUrl: `otpauth://totp/ohmail:fixture?secret=${SEED}&issuer=ohmail` });
   }
-  if (path === "/auth/2fa/totp/activate") { jar = "full"; return json({ twofaEnrolled: user().twofaEnrolled }); }
+  if (path === "/auth/2fa/totp/activate") {
+    jar = "full";
+    document.cookie = `tf_family=${FULL_FAMILY}; Path=/`;
+    document.cookie = "tf_csrf=full-fixture; Path=/";
+    const response = json({
+      twofaEnrolled: user().twofaEnrolled,
+      session: { status: "authenticated", user: user(), familyId: FULL_FAMILY },
+    });
+    response.headers.set("X-Ohmail-Account", user().accountId);
+    return response;
+  }
   if (path === "/auth/2fa/recovery-codes") { codeSets += 1; return json({ codes: [`set${codeSets}-aaaa`, `set${codeSets}-bbbb`] }); }
   if (path === "/account/access") {
     return json({ metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, lifecycle: NEVER_STARTED });
@@ -72,7 +86,14 @@ function serve(path: string): Response {
 
 const enrolled = (): Response => {
   jar = "enrollment";
-  return json({ status: "enrollment", user: user(), next: "enroll_2fa", enrollmentToken: "x", expiresIn: 300 });
+  document.cookie = `tf_family=${ENROLLMENT_FAMILY}; Path=/`;
+  document.cookie = "tf_owner=a1; Path=/";
+  // A changed CSRF cookie tells the client that the ceremony minted a session.
+  document.cookie = "tf_csrf=enroll-fixture; Path=/";
+  return json({
+    status: "enrollment", user: user(), familyId: ENROLLMENT_FAMILY,
+    next: "enroll_2fa", enrollmentToken: "x", expiresIn: 300,
+  });
 };
 
 beforeEach(async () => {

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/react";
-import { enterSearchRoute, RegisteredSearch, searchField, typeSearch } from "./search-registered-fixture";
+import { enterSearchRoute, findSearchField, RegisteredSearch, searchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -94,6 +94,7 @@ afterEach(async () => {
 
 async function render(engine: OhmailEngine, query: string): Promise<void> {
   await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await findSearchField(host);
   await act(async () => { typeSearch(host, query); });
 }
 

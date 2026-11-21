@@ -280,7 +280,7 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
     // And they are told. A send that did not happen must never be silent — in the product's
     // own plain sentence, never the server's wire (ruling 2026-08-21; the whole argument is on
     // `SendStatus.tsx` and pinned in `send-status-copy.test.tsx`).
-    expect(failureText(), "a failed send said nothing at all").toContain("Sending didn't work");
+    expect(failureText(), "a failed send said nothing at all").toContain(messages.reply.statusFailed);
   });
 
   /** The other side of the same rule: one delivery, one discharge, through `settle`. */

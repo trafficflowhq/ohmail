@@ -9,6 +9,7 @@ import { noSuggestionReason } from "@ohmail/app-logic/screener/no-suggestion";
 import { within } from "@testing-library/react";
 import { TextProvider, useText } from "@ohmail/app/text";
 import type { Translator } from "@ohmail/app-logic/text/translator";
+import { quotedResponse } from "../../../test/support/screener-quote";
 import messages from "../messages/en.json";
 import {
   ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
@@ -112,7 +113,8 @@ async function mountView(
     if (method === "POST" && path === "/screener/suggest") {
       const body = JSON.parse(String(init?.body)) as { senders: string[]; dryRun?: boolean };
       if (body.dryRun !== true) purchases++;
-      return suggestReply(body);
+      const response = await suggestReply(body);
+      return body.dryRun ? quotedResponse(response, body.senders) : response;
     }
     if (method === "GET" && path === "/screener" && !url.searchParams.has("live")) {
       if (opts.storedSuggestions) return opts.storedSuggestions();

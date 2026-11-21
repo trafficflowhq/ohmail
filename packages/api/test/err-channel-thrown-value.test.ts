@@ -187,11 +187,11 @@ function dbFailingDeleteFrom(db: ApiDeps["db"], table: unknown, thrown: unknown)
     get(target, prop, recv) {
       const v = Reflect.get(target, prop, recv) as unknown;
       if (prop !== "delete" || typeof v !== "function") {
-        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(recv) : v;
       }
       return (t: unknown, ...rest: unknown[]) => {
         if (t === table) throw thrown;
-        return (v as (...a: unknown[]) => unknown).apply(target, [t, ...rest]);
+        return (v as (...a: unknown[]) => unknown).apply(recv, [t, ...rest]);
       };
     },
   }) as ApiDeps["db"];

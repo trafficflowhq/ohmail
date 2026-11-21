@@ -82,7 +82,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
       box.id === message.mailboxId && box.organizerChecked === true && box.status !== "disabled")) return null;
     const address = person.slot === `${message.id} from` ? undefined : person.address;
     const rules = press.routing.planOver.current?.(read);
-    const sender = senderScreening(read, message.id, address, consentView.placeOf, rules, { mailbox: "seed" });
+    const sender = senderScreening(read, message.id, address, consentView.placeOf, rules);
     return sender ? { read, message, address, sender, rules, placeOf: consentView.placeOf } : null;
   };
   const contact = readContact();

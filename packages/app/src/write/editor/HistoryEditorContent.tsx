@@ -1,13 +1,19 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { EditorContent, type Editor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { closeHistory } from "@tiptap/pm/history";
 import { Selection } from "@tiptap/pm/state";
-import { AfterComposerText } from "@ohmail/ui/mail";
+import { useAfterComposerTextTarget } from "@ohmail/ui/mail";
 import { Button } from "@ohmail/ui/base";
 import type { QuotedHistoryControl } from "../text/history-ports.js";
 import { appendHistory, historyIn, originalHistory } from "./quoted-history.js";
 import "./quoted-history.css";
+
+function AfterComposerText({ children }: { children: ReactNode }) {
+  const target = useAfterComposerTextTarget();
+  return target === undefined ? children : target ? createPortal(children, target) : null;
+}
 
 export function HistoryEditorContent({
   editor,

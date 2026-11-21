@@ -289,6 +289,12 @@ export const STORED_KEYS = [
     words: false, erased: "account-erase", mark: "kept",
   },
   {
+    key: "ohmail.screener.unsubscribeSeen.", family: true, store: "localStorage", owner: "web",
+    at: ["packages/app-logic/src/screener/view-parts.ts"],
+    holds: "whether the one-click unsubscribe explanation was confirmed on this device, per account",
+    words: false, erased: "account-erase", mark: "kept",
+  },
+  {
     key: "ohmail.junkSweepDismissedAt", store: "localStorage", owner: "web",
     at: ["packages/app-logic/src/screener/junk-window.ts"],
     holds: "the count a junk sweep offer was dismissed at, keyed by the account's mailbox ids",
@@ -623,6 +629,12 @@ export const STORED_KEYS = [
     at: ["apps/desktop/src/window-sweep.ts"],
     holds: "the mailbox a Cloud door last showed, so a revoke heard at launch shows its card first",
     words: false, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: "ohmail.desktop.cloudDisclosureOwner", store: "localStorage", owner: "desktop-window",
+    at: ["apps/desktop/src/window-sweep.ts"],
+    holds: "the account and mailbox the Cloud window last served, for erasing the Screener disclosure preference",
+    words: false, erased: "both", mark: "kept",
   },
   {
     key: "ohmail.window.sent-folders.", family: true, store: "localStorage", owner: "desktop-window",

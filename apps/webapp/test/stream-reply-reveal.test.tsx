@@ -110,7 +110,7 @@ describe("a letter answered in place that grows after its reveal", () => {
       fireEvent.click(within(actions).getByRole("button", { name: "Reply" }));
     });
     await drainFrames(4);
-    const dock = within(el).getByRole("textbox", { name: "Reply body" });
+    const dock = await within(el).findByRole("textbox", { name: "Reply body" });
     expect(top("c3"), "the reveal put the end at the foot").toBe(600);
     const grow = async (height: number) => {
       heights[1] = height;

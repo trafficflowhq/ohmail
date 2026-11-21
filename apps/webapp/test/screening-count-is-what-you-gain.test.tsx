@@ -22,6 +22,8 @@ import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import type { ShellConsentFacts } from "@ohmail/app-logic/press/consent-options";
 import { screeningReadBack, screeningShown } from "@ohmail/app-logic/press/press-verdict";
 import { dispatchScreeningChange, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import { planBulkScreening, screenBulk } from "../../../packages/app-logic/src/press/selection-screening.js";
+import type { VerbContext } from "../../../packages/app-logic/src/press/verb-context.js";
 
 /**
  * THE COUNT IS WHAT YOU GAIN. Accepting a waiting sender said "Ohbox — 1 message
@@ -139,6 +141,69 @@ describe("the Screener's accept says what the Ohbox gained", () => {
   });
 });
 
+async function checkSelectedSenderDecision(): Promise<void> {
+  const waiting = msg("picked-waiting", "ohmail/Screener");
+  const second = msg("also-picked", "ohmail/Screener", "2026-09-25T08:00:00.000Z");
+  const unpickedHeld = msg("held-unpicked", "ohmail/Screener", "2026-09-25T07:00:00.000Z");
+  const unpicked = msg("not-picked", "ohmail/Screened");
+  const other = {
+    ...msg("other-waiting", "ohmail/Screener"),
+    from: { name: null, address: "other@split.example" },
+  };
+  const placed = {
+    ...msg("picked-placed", "INBOX"),
+    from: { name: null, address: "placed@split.example" },
+  };
+  const sibling = { ...placed, id: "unpicked-placed" };
+  const engine = await engineWith([waiting, second, unpickedHeld, unpicked, other, placed, sibling]);
+  await engine.start();
+  const sentences: Array<string | null> = [];
+  const reports: Promise<number>[] = [];
+  const cx: VerbContext = {
+    engine,
+    press: {
+      rosterRef: { current: { kind: "absent" } },
+      mutateSetAndReport: (writes, say) => {
+        const report = Promise.all(writes.map((write) => engine.mutate(write))).then(() => {
+          sentences.push(say(writes.length));
+          return writes.length;
+        });
+        reports.push(report);
+        return report;
+      },
+    } as VerbContext["press"],
+    rulesTravel: false,
+    t: createTranslator({ locale: "en", messages: messages as never }) as unknown as VerbContext["t"],
+    toast: (sentence) => { sentences.push(sentence); },
+    consent: { ...FACTS, resurfaceTime: "09:00" },
+    demo: false,
+    nowAt: () => NOW,
+    tags: [],
+    ownAddresses: [],
+    surfaceById: new Map(),
+    markSeen: async () => false,
+    offOhbox: false,
+    letterUp: null,
+    closeLetterUp: vi.fn(),
+    answer: vi.fn(),
+  };
+  const ids = [waiting.id, second.id];
+  expect(planBulkScreening(cx, ids, "reads")).toMatchObject({ senders: 1, messages: 3, rules: 1 });
+  const mixed = planBulkScreening(cx, [...ids, placed.id], "reads");
+  expect(mixed).toMatchObject({ senders: 2, messages: 4, rules: 1 });
+  expect(mixed.mutations.filter((mutation) => mutation.kind === "move")).toEqual([
+    { kind: "move", messageId: placed.id, folder: "ohmail/News" },
+  ]);
+  expect(screenBulk(cx, ids, "reads")).toBe(true);
+  await Promise.all(reports);
+  expect(sentences).toEqual([
+    "News — 3 messages from 1 sender are now there, and 1 rule was made: future mail from them files there too.",
+  ]);
+  expect(sent).toEqual([expect.objectContaining({
+    kind: "screener_decide", senderId: waiting.id, scope: "sender", dest: "reads", applyRetro: true,
+  })]);
+}
+
 /**
  * THE SHEET'S DECIDE, OVER THE SAME READINGS the shell composes (`changeScreening`'s `say`): a
  * waiting sender with one letter at the gate, one in the INBOX shown at the gate, one in Screened.
@@ -185,6 +250,7 @@ describe("the sender sheet's count is the same reading", () => {
     const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
     const bulk = sliceOfDeclaration(source("../../../packages/app-logic/src/press/selection-screening.ts"), "screenBulk");
     expect(bulk.match(/count: gained\(\)/g) ?? [], "both bulk sentences").toHaveLength(2);
+    await checkSelectedSenderDecision();
     const shown = sliceOfDeclaration(source("../../../packages/app-logic/src/screener/live.ts"), "shownAt");
     expect(shown, "the Screener uses the lists' own reading")
       .toMatch(/screeningShown\(engine\.read\(\), subject, dest, \{\s*consent: demo \? null : consent/);

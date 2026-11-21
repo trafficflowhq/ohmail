@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 200, 22],
   "clip": [24, 24, 200, 22],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -36,7 +36,10 @@
       "webkitLocale": "\"en\""
     }
   ],
-  "paints": [{ "backgroundColor": "oklch(0.83 0.093 155.7)", "borderRadius": "2px" }],
+  "paints": [
+    { "boxShadow": "oklch(0.83 0.093 155.7) 0px 0px 0px 1px inset", "borderRadius": "999px" },
+    { "backgroundColor": "oklch(0.83 0.093 155.7)", "borderRadius": "2px" }
+  ],
   "nodes": [
     {
       "role": "button",
@@ -58,7 +61,10 @@
         "borderColor": "rgb(246, 241, 233)"
       },
       "text": [{ "said": "Makersfest", "type": 0 }],
-      "surfaces": [{ "box": [8, 7, 8, 8], "paint": 0 }]
+      "surfaces": [
+        { "box": [0, 0, 200, 22], "paint": 0 },
+        { "box": [8, 7, 8, 8], "paint": 1 }
+      ]
     }
   ],
   "loose": { "text": [], "surfaces": [] }

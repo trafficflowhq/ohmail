@@ -29,15 +29,14 @@ import { describe, expect, it } from "vitest";
  * Re-measured with the rule applied: document scrollWidth 390 at 390, rows/pills/nav all
  * inside the viewport, both themes.
  *
- * MUTATION WATCH: restoring `white-space: nowrap` on `.rules-confirm .what` turns the
- * confirm's case red. (Today's settings grid's `.set-layout > *` case left with today's
- * Settings view; the kit's setting line holds its own.)
+ * The revoke dialog now draws the kit's settings note. Its full rule text still has to
+ * wrap when the viewport leaves a narrow text column.
  */
 
 const bare = (p: string): string =>
   readFileSync(resolve(process.cwd(), p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-const RULES_CSS = bare("apps/webapp/app/views/rules.css");
+const NOTE_CSS = bare("packages/ui/src/mail/Settings/setting-note.css");
 
 /** The declarations of the first `selector { … }` block in `css`, or null. */
 function blockOf(css: string, selector: string): string | null {
@@ -51,8 +50,8 @@ function blockOf(css: string, selector: string): string | null {
 
 describe("SET-H1/M4 — the confirm is the one place a rule is read in full", () => {
   it("rules.css lets .rules-confirm .what wrap instead of ellipsizing", () => {
-    const block = blockOf(RULES_CSS, ".rules-confirm .what");
-    expect(block, ".rules-confirm .what styling is gone").toBeTruthy();
+    const block = blockOf(NOTE_CSS, ".oh-settingnote {");
+    expect(block, "the settings note styling is gone").toBeTruthy();
     // The row may ellipsize — it is a scannable list. The CONFIRM is where somebody checks a
     // rule character by character before acting on it, so the sentence must be whole at every
     // width, including the 140px-wide text column a 390 viewport leaves.

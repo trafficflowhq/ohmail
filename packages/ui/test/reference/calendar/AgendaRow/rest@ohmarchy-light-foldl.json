@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [32, 24, 404, 72],
   "clip": [32, 24, 404, 72],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "foldl",
     "face": "ohmarchy",

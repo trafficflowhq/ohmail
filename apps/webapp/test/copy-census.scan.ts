@@ -80,7 +80,7 @@ import ts from "typescript";
 export const COPY_CENSUS_ROOTS = [
   "packages/ui/src",
   "apps/webapp/app/shell",
-  "apps/webapp/app/views",
+  "packages/app/src/stream",
   "apps/webapp/app/components",
   "packages/letter-body/src",
   "apps/desktop/src",
@@ -371,10 +371,10 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
     readers: { t: "" },
     glue: { mounted: "composer" },
   },
-  /* The rows' words: the badges' hook is handed the `message` reader, the sent label's hook the `ohbox` one. */
+  /* No product code calls useRowBadgeCopy until the list places are mounted. */
   "packages/app-logic/src/text/row-copy.ts": {
-    readers: { t: "message", tOhbox: "ohbox" },
-    glue: { calls: ["useRowBadgeCopy", "useSentLabel"] },
+    readers: { tOhbox: "ohbox" },
+    glue: { calls: ["useSentLabel"] },
   },
   "packages/app-logic/src/keys/zone-nav.ts": {
     readers: { t: "shortcuts" },
@@ -436,12 +436,12 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   },
 };
 
-/** `useTranslations()` → "", `useTranslations("ns")` → "ns", a variable namespace → null, anything else → undefined. */
-function readerNamespace(e: ts.Expression, hook = "useTranslations"): string | null | undefined {
+/** Read the namespace from a translator hook. Null marks a computed namespace. */
+function readerNamespace(e: ts.Expression, hook?: string): string | null | undefined {
   e = unwrapped(e);
-  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression) || e.expression.text !== hook) {
-    return undefined;
-  }
+  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression)) return undefined;
+  const name = e.expression.text;
+  if (hook === undefined ? name !== "useTranslations" && name !== "useText" : name !== hook) return undefined;
   const arg = e.arguments[0];
   return arg === undefined ? "" : ts.isStringLiteral(arg) ? arg.text : null;
 }
@@ -606,7 +606,7 @@ function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | n
     return new Set([""]);
   }
   if (mounted === "cursorKeys" || mounted === "cursorHint") {
-    source(`${app}/ohbox/Seat.tsx`, "const own = useOwn(", "useOhboxLive(args, own)",
+    source(`${app}/ohbox/Seat.tsx`, "const own = useOwn(", "useOhboxLive(args, own,",
       mounted === "cursorKeys" ? 'shortcuts: useText("shortcuts")' : 'cursor: useText("cursor")');
     if (mounted === "cursorKeys") {
       source(`${logic}/ohbox/live.ts`, "cursorRowKeys({ t: own.shortcuts,");
@@ -621,7 +621,7 @@ function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | n
   if (mounted === "ohboxWords") {
     source(`${app}/ohbox/Seat.tsx`, 'const markAll = useText("markAll");',
       "wordsOver({ ohbox: t, screening, session, tag, markAll })", "return { t, words,",
-      "const own = useOwn(", "useOhboxLive(args, own)");
+      "const own = useOwn(", "useOhboxLive(args, own,");
     source(`${logic}/ohbox/live.ts`, "useOhboxVerbs({", "words: own.words");
     source(`${logic}/ohbox/live-verbs.ts`, "const { args, mirror, words } = input;");
     return new Set([""]);
@@ -657,7 +657,7 @@ function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | n
     return new Set(["shortcuts"]);
   }
   source(`${app}/ohbox/Seat.tsx`, 'const t = useText("ohbox");',
-    "return { t, words, shortcuts:", "const own = useOwn(", "useOhboxLive(args, own)");
+    "return { t, words, shortcuts:", "const own = useOwn(", "useOhboxLive(args, own,");
   source(`${logic}/ohbox/live.ts`, "const model = useOhboxList({", "t: own.t,");
   source(`${logic}/ohbox/ohbox-list.ts`, "const t = input.t;",
     "walkSteps({ order, at, t, selectByUser, setLandedOn:", "ohboxKeys({ ...pickSet, ...pickVerbs, ...marks, ...steps, t,");

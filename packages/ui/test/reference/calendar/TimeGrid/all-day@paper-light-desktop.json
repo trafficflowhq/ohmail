@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 1392, 260],
   "clip": [24, 24, 1392, 260],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -66,19 +66,6 @@
       "fontSize": "13px",
       "fontWeight": "400",
       "fontStyle": "normal",
-      "lineHeight": "22px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
       "lineHeight": "13px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
@@ -89,7 +76,9 @@
     }
   ],
   "paints": [
+    { "boxShadow": "oklch(0.6 0.14 153) 0px 0px 0px 1px inset", "borderRadius": "999px" },
     { "backgroundColor": "oklch(0.6 0.14 153)", "borderRadius": "2px" },
+    { "after.backgroundColor": "oklch(0.6 0.14 153)", "after.opacity": "0", "after.borderRadius": "1px" },
     {
       "boxShadow": "rgb(221, 213, 201) 0px 0px 0px 1px, rgba(18, 16, 14, 0.22) 0px 6px 20px -8px, rgba(18, 16, 14, 0.08) 0px 1px 3px 0px",
       "borderRadius": "999px"
@@ -272,6 +261,26 @@
       ]
     },
     {
+      "role": "group",
+      "name": "all day",
+      "box": [0, 52, 1392, 28],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "6px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
       "role": "button",
       "name": "Makersfest",
       "box": [815.1, 52, 560.9, 22],
@@ -291,7 +300,12 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Makersfest", "type": 2 }],
-      "surfaces": [{ "box": [823.1, 59, 8, 8], "paint": 0 }]
+      "surfaces": [
+        { "box": [815.1, 52, 560.9, 22], "paint": 0 },
+        { "box": [823.1, 59, 8, 8], "paint": 1 },
+        { "box": [815.1, 52, 10, 22], "paint": 2, "parts": { "after": [4, 6, 2, 10] } },
+        { "box": [1366, 52, 10, 22], "paint": 2, "parts": { "after": [4, 6, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -313,12 +327,12 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [158.3, 235, 76, 20], "paint": 1 },
-        { "box": [161.3, 238, 14, 14], "paint": 2 },
-        { "box": [177.3, 238, 14, 14], "paint": 3 },
-        { "box": [195.3, 241, 8, 8], "paint": 0 },
-        { "box": [207.3, 241, 8, 8], "paint": 4 },
-        { "box": [219.3, 241, 8, 8], "paint": 0 }
+        { "box": [158.3, 235, 76, 20], "paint": 3 },
+        { "box": [161.3, 238, 14, 14], "paint": 4 },
+        { "box": [177.3, 238, 14, 14], "paint": 5 },
+        { "box": [195.3, 241, 8, 8], "paint": 1 },
+        { "box": [207.3, 241, 8, 8], "paint": 6 },
+        { "box": [219.3, 241, 8, 8], "paint": 1 }
       ]
     },
     {
@@ -341,11 +355,11 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [366.6, 235, 58, 20], "paint": 1 },
-        { "box": [369.6, 238, 14, 14], "paint": 2 },
-        { "box": [385.6, 241, 8, 8], "paint": 5 },
-        { "box": [397.6, 241, 8, 8], "paint": 4 },
-        { "box": [409.6, 241, 8, 8], "paint": 4 }
+        { "box": [366.6, 235, 58, 20], "paint": 3 },
+        { "box": [369.6, 238, 14, 14], "paint": 4 },
+        { "box": [385.6, 241, 8, 8], "paint": 7 },
+        { "box": [397.6, 241, 8, 8], "paint": 6 },
+        { "box": [409.6, 241, 8, 8], "paint": 6 }
       ]
     },
     {
@@ -368,12 +382,12 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [544.8, 235, 70, 20], "paint": 1 },
-        { "box": [547.8, 238, 14, 14], "paint": 2 },
-        { "box": [563.8, 241, 8, 8], "paint": 4 },
-        { "box": [575.8, 241, 8, 8], "paint": 5 },
-        { "box": [587.8, 241, 8, 8], "paint": 0 },
-        { "box": [599.8, 241, 8, 8], "paint": 5 }
+        { "box": [544.8, 235, 70, 20], "paint": 3 },
+        { "box": [547.8, 238, 14, 14], "paint": 4 },
+        { "box": [563.8, 241, 8, 8], "paint": 6 },
+        { "box": [575.8, 241, 8, 8], "paint": 7 },
+        { "box": [587.8, 241, 8, 8], "paint": 1 },
+        { "box": [599.8, 241, 8, 8], "paint": 7 }
       ]
     },
     {
@@ -396,12 +410,12 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [735.1, 235, 70, 20], "paint": 1 },
-        { "box": [738.1, 238, 14, 14], "paint": 2 },
-        { "box": [754.1, 241, 8, 8], "paint": 5 },
-        { "box": [766.1, 241, 8, 8], "paint": 0 },
-        { "box": [778.1, 241, 8, 8], "paint": 4 },
-        { "box": [790.1, 241, 8, 8], "paint": 5 }
+        { "box": [735.1, 235, 70, 20], "paint": 3 },
+        { "box": [738.1, 238, 14, 14], "paint": 4 },
+        { "box": [754.1, 241, 8, 8], "paint": 7 },
+        { "box": [766.1, 241, 8, 8], "paint": 1 },
+        { "box": [778.1, 241, 8, 8], "paint": 6 },
+        { "box": [790.1, 241, 8, 8], "paint": 7 }
       ]
     },
     {
@@ -424,11 +438,11 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [937.4, 235, 58, 20], "paint": 1 },
-        { "box": [940.4, 238, 14, 14], "paint": 2 },
-        { "box": [956.4, 241, 8, 8], "paint": 4 },
-        { "box": [968.4, 241, 8, 8], "paint": 0 },
-        { "box": [980.4, 241, 8, 8], "paint": 6 }
+        { "box": [937.4, 235, 58, 20], "paint": 3 },
+        { "box": [940.4, 238, 14, 14], "paint": 4 },
+        { "box": [956.4, 241, 8, 8], "paint": 6 },
+        { "box": [968.4, 241, 8, 8], "paint": 1 },
+        { "box": [980.4, 241, 8, 8], "paint": 8 }
       ]
     },
     {
@@ -451,11 +465,11 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [1127.7, 235, 58, 20], "paint": 1 },
-        { "box": [1130.7, 238, 14, 14], "paint": 2 },
-        { "box": [1146.7, 241, 8, 8], "paint": 7 },
-        { "box": [1158.7, 241, 8, 8], "paint": 0 },
-        { "box": [1170.7, 241, 8, 8], "paint": 7 }
+        { "box": [1127.7, 235, 58, 20], "paint": 3 },
+        { "box": [1130.7, 238, 14, 14], "paint": 4 },
+        { "box": [1146.7, 241, 8, 8], "paint": 9 },
+        { "box": [1158.7, 241, 8, 8], "paint": 1 },
+        { "box": [1170.7, 241, 8, 8], "paint": 9 }
       ]
     },
     {
@@ -478,18 +492,15 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [1330, 235, 46, 20], "paint": 1 },
-        { "box": [1333, 238, 14, 14], "paint": 2 },
-        { "box": [1349, 241, 8, 8], "paint": 0 },
-        { "box": [1361, 241, 8, 8], "paint": 0 }
+        { "box": [1330, 235, 46, 20], "paint": 3 },
+        { "box": [1333, 238, 14, 14], "paint": 4 },
+        { "box": [1349, 241, 8, 8], "paint": 1 },
+        { "box": [1361, 241, 8, 8], "paint": 1 }
       ]
     }
   ],
   "loose": {
-    "text": [
-      { "said": "all day", "type": 3 },
-      { "said": "05:00 06:00 07:00", "type": 4 }
-    ],
-    "surfaces": [{ "box": [0, 0, 1392, 260], "paint": 8 }]
+    "text": [{ "said": "05:00 06:00 07:00", "type": 3 }],
+    "surfaces": [{ "box": [0, 0, 1392, 260], "paint": 10 }]
   }
 }

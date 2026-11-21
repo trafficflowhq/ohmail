@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 1392, 600],
   "clip": [24, 24, 1392, 600],
-  "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "paper",
@@ -60,8 +60,6 @@
       "fontVariationSettings": "normal",
       "textTransform": "none",
       "webkitLineClamp": "2",
-      "webkitTextStrokeWidth": "5px",
-      "webkitTextStrokeColor": "oklch(0.945 0.042 243)",
       "webkitLocale": "\"en\""
     },
     {
@@ -122,19 +120,6 @@
       "fontSize": "13px",
       "fontWeight": "400",
       "fontStyle": "normal",
-      "lineHeight": "22px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
       "lineHeight": "13px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
@@ -181,12 +166,31 @@
     { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "20px 20px 0px 0px" },
     {
       "backgroundColor": "rgb(31, 75, 255)",
-      "before.backgroundColor": "rgb(31, 75, 255)",
-      "before.borderRadius": "999px",
-      "borderRadius": "1px"
+      "boxShadow": "rgb(255, 255, 255) 0px 0px 0px 2px",
+      "borderRadius": "999px"
     }
   ],
   "nodes": [
+    {
+      "role": "group",
+      "name": "all day",
+      "box": [0, 8, 1392, 28],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "6px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
     {
       "role": "button",
       "name": "Glaze order #2291 arrives",
@@ -215,7 +219,7 @@
     {
       "role": "button",
       "name": "Studio Monday",
-      "box": [54, 333, 182.3, 26],
+      "box": [54, 382, 182.3, 26],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 153)",
@@ -233,16 +237,16 @@
       },
       "text": [{ "said": "Studio Monday", "type": 1 }],
       "surfaces": [
-        { "box": [54, 333, 182.3, 26], "paint": 2 },
-        { "box": [61, 342, 8, 8], "paint": 3 },
-        { "box": [216.3, 338, 13, 13], "paint": 4 },
-        { "box": [217.3, 338, 13, 13], "paint": 5 }
+        { "box": [54, 382, 182.3, 26], "paint": 2 },
+        { "box": [61, 391, 8, 8], "paint": 3 },
+        { "box": [216.3, 387, 13, 13], "paint": 4 },
+        { "box": [217.3, 387, 13, 13], "paint": 5 }
       ]
     },
     {
       "role": "button",
       "name": "Invoices, new template",
-      "box": [244.3, 333, 166.3, 54],
+      "box": [244.3, 382, 166.3, 54],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 243)",
@@ -260,14 +264,14 @@
       },
       "text": [{ "said": "Invoices, new template", "type": 2 }],
       "surfaces": [
-        { "box": [244.3, 333, 166.3, 54], "paint": 2 },
-        { "box": [251.3, 344, 8, 8], "paint": 6 }
+        { "box": [244.3, 382, 166.3, 54], "paint": 2 },
+        { "box": [251.3, 393, 8, 8], "paint": 6 }
       ]
     },
     {
       "role": "button",
       "name": "Resurface · Domain renewal: lichtgrat.example expires 30 November",
-      "box": [410.6, 323, 20, 20],
+      "box": [410.6, 372, 20, 20],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgb(255, 255, 255)",
@@ -284,14 +288,14 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [410.6, 323, 20, 20], "paint": 7 },
-        { "box": [413.6, 326, 14, 14], "paint": 8 }
+        { "box": [410.6, 372, 20, 20], "paint": 7 },
+        { "box": [413.6, 375, 14, 14], "paint": 8 }
       ]
     },
     {
       "role": "button",
       "name": "Kiln technician Kiln room",
-      "box": [434.6, 277, 166.3, 222],
+      "box": [434.6, 326, 166.3, 222],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 153)",
@@ -312,14 +316,14 @@
         { "said": "Kiln room", "type": 4 }
       ],
       "surfaces": [
-        { "box": [434.6, 277, 166.3, 222], "paint": 2 },
-        { "box": [441.6, 288, 8, 8], "paint": 3 }
+        { "box": [434.6, 326, 166.3, 222], "paint": 2 },
+        { "box": [441.6, 337, 8, 8], "paint": 3 }
       ]
     },
     {
       "role": "button",
       "name": "Send later · Re: Would you teach the December glaze evening?",
-      "box": [600.8, 267, 20, 20],
+      "box": [600.8, 316, 20, 20],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgb(255, 255, 255)",
@@ -336,14 +340,14 @@
         "borderColor": "rgb(90, 83, 75)"
       },
       "surfaces": [
-        { "box": [600.8, 267, 20, 20], "paint": 7 },
-        { "box": [603.8, 270, 14, 14], "paint": 9 }
+        { "box": [600.8, 316, 20, 20], "paint": 7 },
+        { "box": [603.8, 319, 14, 14], "paint": 9 }
       ]
     },
     {
       "role": "button",
       "name": "Run with Reto",
-      "box": [624.8, 221, 182.3, 40],
+      "box": [624.8, 270, 182.3, 40],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 243)",
@@ -361,16 +365,16 @@
       },
       "text": [{ "said": "Run with Reto", "type": 5 }],
       "surfaces": [
-        { "box": [624.8, 221, 182.3, 40], "paint": 2 },
-        { "box": [631.8, 232, 8, 8], "paint": 6 },
-        { "box": [787.1, 228, 13, 13], "paint": 4 },
-        { "box": [788.1, 228, 13, 13], "paint": 5 }
+        { "box": [624.8, 270, 182.3, 40], "paint": 2 },
+        { "box": [631.8, 281, 8, 8], "paint": 6 },
+        { "box": [787.1, 277, 13, 13], "paint": 4 },
+        { "box": [788.1, 277, 13, 13], "paint": 5 }
       ]
     },
     {
       "role": "button",
       "name": "Dentist",
-      "box": [624.8, 361, 182.3, 68],
+      "box": [624.8, 410, 182.3, 68],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 243)",
@@ -388,14 +392,14 @@
       },
       "text": [{ "said": "Dentist", "type": 5 }],
       "surfaces": [
-        { "box": [624.8, 361, 182.3, 68], "paint": 2 },
-        { "box": [631.8, 372, 8, 8], "paint": 6 }
+        { "box": [624.8, 410, 182.3, 68], "paint": 2 },
+        { "box": [631.8, 421, 8, 8], "paint": 6 }
       ]
     },
     {
       "role": "button",
       "name": "Glaze evening, planning call",
-      "box": [650.4, 389, 156.8, 26],
+      "box": [650.4, 438, 156.8, 26],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "oklch(0.945 0.042 243)",
@@ -413,43 +417,15 @@
       },
       "text": [{ "said": "Glaze evening, planning call", "type": 1 }],
       "surfaces": [
-        { "box": [650.4, 389, 156.8, 26], "paint": 10 },
-        { "box": [657.4, 398, 8, 8], "paint": 6 },
-        { "box": [792.1, 398, 8, 8], "paint": 11 }
-      ]
-    },
-    {
-      "role": "button",
-      "name": "Lunch with Anna Gartenlokal Rosa",
-      "box": [815.1, 515, 182.3, 54],
-      "drawn": {
-        "color": "rgb(18, 16, 14)",
-        "backgroundColor": "oklch(0.945 0.042 243)",
-        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-        "fontSize": "16px",
-        "fontWeight": "400",
-        "lineHeight": "20px",
-        "letterSpacing": "normal",
-        "borderRadius": "12px",
-        "paddingTop": "5px",
-        "paddingRight": "7px",
-        "paddingBottom": "4px",
-        "paddingLeft": "7px",
-        "borderColor": "rgb(18, 16, 14)"
-      },
-      "text": [
-        { "said": "Lunch with Anna", "type": 5 },
-        { "said": "Gartenlokal Rosa", "type": 4 }
-      ],
-      "surfaces": [
-        { "box": [815.1, 515, 182.3, 54], "paint": 2 },
-        { "box": [822.1, 526, 8, 8], "paint": 6 }
+        { "box": [650.4, 438, 156.8, 26], "paint": 10 },
+        { "box": [657.4, 447, 8, 8], "paint": 6 },
+        { "box": [792.1, 447, 8, 8], "paint": 11 }
       ]
     },
     {
       "role": "button",
       "name": "Train to Lugano Winterthur → Lugano",
-      "box": [1005.4, 278.9, 182.3, 186.5],
+      "box": [1005.4, 327.9, 182.3, 186.5],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "rgb(255, 255, 255)",
@@ -470,8 +446,8 @@
         { "said": "Winterthur → Lugano", "type": 4 }
       ],
       "surfaces": [
-        { "box": [1005.4, 278.9, 182.3, 186.5], "paint": 12 },
-        { "box": [1011.4, 286.9, 14, 14], "paint": 1 }
+        { "box": [1005.4, 327.9, 182.3, 186.5], "paint": 12 },
+        { "box": [1011.4, 335.9, 14, 14], "paint": 1 }
       ]
     },
     {
@@ -633,13 +609,12 @@
   ],
   "loose": {
     "text": [
-      { "said": "all day", "type": 7 },
-      { "said": "04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00 12:00 13:00", "type": 8 },
-      { "said": "09:24", "type": 9 }
+      { "said": "03:00 04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00 12:00 13:00", "type": 7 },
+      { "said": "09:24", "type": 8 }
     ],
     "surfaces": [
       { "box": [0, 0, 1392, 600], "paint": 16 },
-      { "box": [237.3, 354.4, 193.3, 2], "paint": 17, "parts": { "before": [0, -4, 10, 10] } }
+      { "box": [237.3, 399.4, 10, 10], "paint": 17 }
     ]
   }
 }

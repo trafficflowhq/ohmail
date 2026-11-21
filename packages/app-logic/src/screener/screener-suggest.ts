@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import type { ScreenerQuoteGrant } from "@ohmail/wire";
 import { useStableCallback } from "../press/stable-callback.js";
 import { senderKey } from "@ohmail/client-engine";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
@@ -96,6 +97,19 @@ export type SuggestSkipShown = Exclude<ScreenerSkipReason, "not_held" | "no_auto
 
 /** Suggestions known so far, keyed by {@link senderKey}. */
 export type SuggestionOverlay = ReadonlyMap<string, SenderSuggestion>;
+
+interface PricedChunk {
+  readonly senders: string[];
+  readonly ceiling: number;
+  readonly grant: ScreenerQuoteGrant | undefined;
+}
+
+const pairKey = ({ sender, messageId }: ScreenerQuoteGrant["pairs"][number]): string =>
+  JSON.stringify([senderKey(sender), messageId]);
+
+function quoteChanged(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "suggest_quote_changed";
+}
 
 export type SuggestPhase = "closed" | "pricing" | "ready" | "running";
 
@@ -328,7 +342,7 @@ export interface SuggestWire {
    */
   suggest: (
     senders: string[],
-    opts?: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; automatic?: boolean; maySend?: () => boolean; relayGrant?: string | null },
+    opts?: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; quoteGrant?: string; automatic?: boolean; maySend?: () => boolean; relayGrant?: string | null },
   ) => Promise<ScreenerSuggestWire>;
   /**
    * The sentence to show for a refusal this transport produced.
@@ -629,17 +643,8 @@ export function useScreenerSuggestions(opts: {
     permissionVersion,
     quotedPermission: permissionVersion,
     optInPermission: permissionVersion,
-    /**
-     * WHAT EACH CHUNK WAS QUOTED, in credits, in `chunksOf` order — the ceiling the confirm hands
-     * back per request (`maxCredits`).
-     *
-     * The quote and the purchase are two round trips, and a stored suggestion can lapse between
-     * them: the same chunk that priced at 30 can price at 40 by the time somebody presses, and
-     * the press would buy ten they were never quoted for. Kept per CHUNK because that is the unit
-     * the price was taken in; a total would let one chunk spend another's room. Cleared with
-     * every new `run`, so a stale price can never bound a newer press.
-     */
-    quotedChunks: [] as number[],
+    /** The server's grants and ceilings, in the original request's chunk order. */
+    quotedChunks: [] as PricedChunk[],
     /**
      * When the last stored-suggestion read STARTED (epoch ms), and the instant the queue last
      * gained a sender this session had not seen. Together they schedule the re-read below: never
@@ -1177,15 +1182,26 @@ export function useScreenerSuggestions(opts: {
             return;
           }
           senders += res.quoted;
+          const grant = res.quoteGrant;
+          if (res.quoted > 0 && (
+            typeof grant?.proof !== "string" || !grant.proof || !Array.isArray(grant.pairs) ||
+            grant.pairs.length !== res.quoted
+          )) {
+            setPhase("ready");
+            setQuote(null);
+            setNotice(t("suggest.failed"));
+            return;
+          }
           credits += res.quotedCredits;
-          io.current.quotedChunks.push(res.quotedCredits);
+          io.current.quotedChunks.push({ senders: chunk, ceiling: res.quotedCredits, grant });
         }
         if (io.current.run !== run) return;
         setPhase("ready");
         setQuote({ senders, credits });
-        setNotice(
-          senders === 0 ? t(kind === "again" ? "suggest.nothingAgain" : "suggest.nothing") : null,
-        );
+        const noSuggestion = kind === "new"
+          ? "suggest.nothing"
+          : n < from.length ? "suggest.nothingAgainSelected" : "suggest.nothingAgain";
+        setNotice(senders === 0 ? t(noSuggestion) : null);
       })();
     };
 
@@ -1256,15 +1272,13 @@ export function useScreenerSuggestions(opts: {
        * exceeds the quote.
        */
       confirm: () => {
-        // THE SET THE OPEN LADDER QUOTED, whichever it is. Sliced from `target` and not from
-        // `addresses`, or a confirmed re-ask would buy the front of the buy list — a purchase over
-        // senders the price on screen never covered.
-        const set = target.slice(0, chosen);
-        // NO PRICE, NO PURCHASE, whichever surface pressed: only a set with a whole quote of at least one sender.
-        if (set.length === 0 || phase !== "ready" || quote === null || quote.senders === 0) return;
+        const chunks = io.current.quotedChunks;
+        if (chunks.length === 0 || phase !== "ready" || quote === null || quote.senders === 0) return;
         if (!quoteCurrent || quotedRun !== io.current.run || !canRequest(permissionVersion)) return;
         const run = ++io.current.run;
-        const total = set.length;
+        const total = quote.senders;
+        const approved = new Set(chunks.flatMap(({ grant }) => (grant?.pairs ?? []).map(pairKey)));
+        const completed = new Set<string>();
         setPhase("running");
         setNotice(t("suggest.progress", { done: 0, total }));
         // The same fact as the sentence above, in the shape a track can render. Written HERE and
@@ -1285,24 +1299,20 @@ export function useScreenerSuggestions(opts: {
            * instead of inventing a figure.
            */
           let remainingCredits: number | undefined;
-          /* The position in `chunksOf(set)`, which is how a chunk finds the price it was quoted. */
-          let chunkIndex = -1;
-          for (const chunk of chunksOf(set)) {
+          for (const { senders: chunk, ceiling, grant } of chunks) {
             if (io.current.run !== run || !canRequest(permissionVersion)) break;
-            chunkIndex++;
             let res;
             try {
-              /* THE CEILING THIS CHUNK WAS QUOTED AT. Absent only if the pricing loop never got
-                 this far, which cannot happen — the confirm is disabled without a whole quote —
-                 and the service then treats the run as unbounded by any quote, which is the
-                 honest reading of "no figure was shown". */
-              const quotedFor = io.current.quotedChunks[chunkIndex];
+              // A zero-price-count chunk can return cached answers using its empty grant.
+              // An older server without a grant for an empty chunk offers nothing to dispatch.
+              if (grant === undefined) continue;
               flying(setInFlight, chunk, true);
               res = await wire.suggest(chunk, {
                 idempotencyKey: newKey(),
                 relayGrant,
                 maySend: () => io.current.run === run && canRequest(permissionVersion),
-                ...(typeof quotedFor === "number" ? { maxCredits: quotedFor } : {}),
+                maxCredits: ceiling,
+                quoteGrant: grant.proof,
               }).finally(() => flying(setInFlight, chunk, false));
             } catch (err) {
               // Stale — a newer press owns the state; paint nothing.
@@ -1314,7 +1324,11 @@ export function useScreenerSuggestions(opts: {
               // sentence that says the run stopped would be two surfaces disagreeing about the
               // same event, with the moving one winning the reader's attention.
               setProgress(null);
-              const why = whyFor(err, t("suggest.failed"));
+              if (quoteChanged(err)) {
+                setQuote(null);
+                io.current.quotedChunks = [];
+              }
+              const why = quoteChanged(err) ? t("suggest.quoteChanged") : whyFor(err, t("suggest.failed"));
               // The rows it never reached wait on the same refusal — see {@link standingOfRefusal}.
               const stood = standingOfRefusal(err);
               if (stood !== null) writeStanding(stood);
@@ -1322,7 +1336,7 @@ export function useScreenerSuggestions(opts: {
               // the summary describe the same account at the same moment.
               if (charged > 0) announceSpend();
               if (gotSuggestions.length > 0) {
-                setNotice(t("suggest.stoppedAt", { done: gotSuggestions.length, total, reason: why }));
+                setNotice(t("suggest.stoppedAt", { done: completed.size, total, reason: why }));
                 toast(summarize(
                   {
                     suggestions: gotSuggestions, charged, skipped: gotSkipped,
@@ -1353,13 +1367,17 @@ export function useScreenerSuggestions(opts: {
               // The rest of THIS chunk, when the gate stopped part-way through it.
               ...toStopped(chunk, res),
             ]);
+            for (const answer of res.suggestions) {
+              const key = pairKey(answer);
+              if (approved.has(key)) completed.add(key);
+            }
             gotSuggestions.push(...res.suggestions);
             gotSkipped.push(...res.skipped);
             charged += res.charged;
             stopped ??= res.stopped;
             if (typeof res.remainingCredits === "number") remainingCredits = res.remainingCredits;
-            setNotice(t("suggest.progress", { done: gotSuggestions.length, total }));
-            setProgress({ done: gotSuggestions.length, total });
+            setNotice(t("suggest.progress", { done: completed.size, total }));
+            setProgress({ done: completed.size, total });
             // HALT on the first chunk the gate stopped part-way: the balance is exhausted, so
             // every later chunk would stop too. What this chunk bought stays; the summary says so.
             if (res.stopped) break;

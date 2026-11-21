@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 1392, 600],
   "clip": [24, 24, 1392, 600],
-  "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "fold",
     "face": "ohmarchy",
@@ -110,34 +110,6 @@
       "fontVariationSettings": "normal",
       "textTransform": "none",
       "webkitLineClamp": "2",
-      "webkitTextStrokeWidth": "5px",
-      "webkitTextStrokeColor": "oklch(0.27 0.04 241.7)",
-      "webkitLocale": "\"en\""
-    },
-    {
-      "color": "rgb(169, 177, 214)",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "14px",
-      "fontWeight": "500",
-      "fontStyle": "normal",
-      "lineHeight": "17.5px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLineClamp": "10",
-      "webkitLocale": "\"en\""
-    },
-    {
-      "color": "rgb(141, 150, 188)",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "12px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "15.6px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "textOverflow": "ellipsis",
       "webkitLocale": "\"en\""
     },
     {
@@ -172,12 +144,12 @@
       "fontSize": "12px",
       "fontWeight": "400",
       "fontStyle": "normal",
-      "lineHeight": "22px",
+      "lineHeight": "15.6px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
     },
     {
       "color": "rgb(141, 150, 188)",
@@ -225,11 +197,7 @@
     { "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; shapes 1 541a4a0ad8ca" },
     { "backgroundColor": "oklch(0.83 0.085 286.7)" },
     { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(66, 66, 69) 0px 0px 0px 2px" },
-    {
-      "backgroundColor": "rgb(122, 162, 247)",
-      "before.backgroundColor": "rgb(122, 162, 247)",
-      "borderRadius": "1px"
-    }
+    { "backgroundColor": "rgb(122, 162, 247)", "boxShadow": "rgb(26, 27, 38) 0px 0px 0px 2px" }
   ],
   "nodes": [
     {
@@ -402,6 +370,26 @@
       ]
     },
     {
+      "role": "group",
+      "name": "all day",
+      "box": [0, 56, 1392, 28],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "6px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      }
+    },
+    {
       "role": "button",
       "name": "Glaze order #2291 arrives",
       "box": [627.1, 56, 179.7, 22],
@@ -429,7 +417,7 @@
     {
       "role": "button",
       "name": "Studio Monday",
-      "box": [58, 389, 181.7, 28],
+      "box": [58, 448, 181.7, 28],
       "drawn": {
         "color": "rgb(169, 177, 214)",
         "backgroundColor": "oklch(0.27 0.04 151.7)",
@@ -447,16 +435,16 @@
       },
       "text": [{ "said": "Studio Monday", "type": 5 }],
       "surfaces": [
-        { "box": [58, 389, 181.7, 28], "paint": 3 },
-        { "box": [64, 397.8, 8, 8], "paint": 4 },
-        { "box": [220.7, 393.8, 13, 13], "paint": 5 },
-        { "box": [221.7, 393.8, 13, 13], "paint": 6 }
+        { "box": [58, 448, 181.7, 28], "paint": 3 },
+        { "box": [64, 456.8, 8, 8], "paint": 4 },
+        { "box": [220.7, 452.8, 13, 13], "paint": 5 },
+        { "box": [221.7, 452.8, 13, 13], "paint": 6 }
       ]
     },
     {
       "role": "button",
       "name": "Invoices, new template",
-      "box": [247.7, 389, 165.7, 58],
+      "box": [247.7, 448, 165.7, 58],
       "drawn": {
         "color": "rgb(169, 177, 214)",
         "backgroundColor": "oklch(0.27 0.04 241.7)",
@@ -474,14 +462,14 @@
       },
       "text": [{ "said": "Invoices, new template", "type": 6 }],
       "surfaces": [
-        { "box": [247.7, 389, 165.7, 58], "paint": 7 },
-        { "box": [253.7, 396, 8, 8], "paint": 8 }
+        { "box": [247.7, 448, 165.7, 58], "paint": 7 },
+        { "box": [253.7, 455, 8, 8], "paint": 8 }
       ]
     },
     {
       "role": "button",
       "name": "Resurface · Domain renewal: lichtgrat.example expires 30 November",
-      "box": [413.4, 379, 20, 20],
+      "box": [413.4, 438, 20, 20],
       "drawn": {
         "color": "rgb(141, 150, 188)",
         "backgroundColor": "rgb(26, 27, 38)",
@@ -498,42 +486,14 @@
         "borderColor": "rgb(141, 150, 188)"
       },
       "surfaces": [
-        { "box": [413.4, 379, 20, 20], "paint": 9 },
-        { "box": [416.4, 382, 14, 14], "paint": 10 }
-      ]
-    },
-    {
-      "role": "button",
-      "name": "Kiln technician Kiln room",
-      "box": [437.4, 329, 165.7, 238],
-      "drawn": {
-        "color": "rgb(169, 177, 214)",
-        "backgroundColor": "oklch(0.27 0.04 151.7)",
-        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-        "fontSize": "14px",
-        "fontWeight": "400",
-        "lineHeight": "17.5px",
-        "letterSpacing": "normal",
-        "borderRadius": "0px",
-        "paddingTop": "4px",
-        "paddingRight": "6px",
-        "paddingBottom": "4px",
-        "paddingLeft": "6px",
-        "borderColor": "rgb(169, 177, 214)"
-      },
-      "text": [
-        { "said": "Kiln technician", "type": 7 },
-        { "said": "Kiln room", "type": 8 }
-      ],
-      "surfaces": [
-        { "box": [437.4, 329, 165.7, 238], "paint": 3 },
-        { "box": [443.4, 336, 8, 8], "paint": 4 }
+        { "box": [413.4, 438, 20, 20], "paint": 9 },
+        { "box": [416.4, 441, 14, 14], "paint": 10 }
       ]
     },
     {
       "role": "button",
       "name": "Send later · Re: Would you teach the December glaze evening?",
-      "box": [603.1, 319, 20, 20],
+      "box": [603.1, 378, 20, 20],
       "drawn": {
         "color": "rgb(141, 150, 188)",
         "backgroundColor": "rgb(26, 27, 38)",
@@ -550,14 +510,14 @@
         "borderColor": "rgb(141, 150, 188)"
       },
       "surfaces": [
-        { "box": [603.1, 319, 20, 20], "paint": 9 },
-        { "box": [606.1, 322, 14, 14], "paint": 11 }
+        { "box": [603.1, 378, 20, 20], "paint": 9 },
+        { "box": [606.1, 381, 14, 14], "paint": 11 }
       ]
     },
     {
       "role": "button",
       "name": "Run with Reto",
-      "box": [627.1, 269, 181.7, 43],
+      "box": [627.1, 328, 181.7, 43],
       "drawn": {
         "color": "rgb(169, 177, 214)",
         "backgroundColor": "oklch(0.27 0.04 241.7)",
@@ -573,18 +533,18 @@
         "paddingLeft": "6px",
         "borderColor": "rgb(169, 177, 214)"
       },
-      "text": [{ "said": "Run with Reto", "type": 9 }],
+      "text": [{ "said": "Run with Reto", "type": 7 }],
       "surfaces": [
-        { "box": [627.1, 269, 181.7, 43], "paint": 7 },
-        { "box": [633.1, 277, 8, 8], "paint": 8 },
-        { "box": [789.8, 273, 13, 13], "paint": 5 },
-        { "box": [790.8, 273, 13, 13], "paint": 6 }
+        { "box": [627.1, 328, 181.7, 43], "paint": 7 },
+        { "box": [633.1, 336, 8, 8], "paint": 8 },
+        { "box": [789.8, 332, 13, 13], "paint": 5 },
+        { "box": [790.8, 332, 13, 13], "paint": 6 }
       ]
     },
     {
       "role": "button",
       "name": "Dentist",
-      "box": [627.1, 419, 181.7, 73],
+      "box": [627.1, 478, 181.7, 73],
       "drawn": {
         "color": "rgb(169, 177, 214)",
         "backgroundColor": "oklch(0.27 0.04 241.7)",
@@ -600,16 +560,16 @@
         "paddingLeft": "6px",
         "borderColor": "rgb(169, 177, 214)"
       },
-      "text": [{ "said": "Dentist", "type": 9 }],
+      "text": [{ "said": "Dentist", "type": 7 }],
       "surfaces": [
-        { "box": [627.1, 419, 181.7, 73], "paint": 7 },
-        { "box": [633.1, 426, 8, 8], "paint": 8 }
+        { "box": [627.1, 478, 181.7, 73], "paint": 7 },
+        { "box": [633.1, 485, 8, 8], "paint": 8 }
       ]
     },
     {
       "role": "button",
       "name": "Glaze evening, planning call",
-      "box": [652.6, 449, 156.3, 28],
+      "box": [652.6, 508, 156.3, 28],
       "drawn": {
         "color": "rgb(169, 177, 214)",
         "backgroundColor": "oklch(0.27 0.04 241.7)",
@@ -627,15 +587,15 @@
       },
       "text": [{ "said": "Glaze evening, planning call", "type": 5 }],
       "surfaces": [
-        { "box": [652.6, 449, 156.3, 28], "paint": 7 },
-        { "box": [658.6, 457.3, 8, 8], "paint": 8 },
-        { "box": [794.8, 459, 8, 8], "paint": 0 }
+        { "box": [652.6, 508, 156.3, 28], "paint": 7 },
+        { "box": [658.6, 516.3, 8, 8], "paint": 8 },
+        { "box": [794.8, 518, 8, 8], "paint": 0 }
       ]
     },
     {
       "role": "button",
       "name": "Train to Lugano Winterthur → Lugano",
-      "box": [1006.6, 331, 181.7, 200],
+      "box": [1006.6, 390, 181.7, 200],
       "drawn": {
         "color": "rgb(169, 177, 214)",
         "backgroundColor": "rgb(26, 27, 38)",
@@ -652,12 +612,12 @@
         "borderColor": "rgb(169, 177, 214)"
       },
       "text": [
-        { "said": "Train to Lugano", "type": 10 },
-        { "said": "Winterthur → Lugano", "type": 8 }
+        { "said": "Train to Lugano", "type": 8 },
+        { "said": "Winterthur → Lugano", "type": 9 }
       ],
       "surfaces": [
-        { "box": [1006.6, 331, 181.7, 200], "paint": 1 },
-        { "box": [1011.6, 336.8, 14, 14], "paint": 2 }
+        { "box": [1006.6, 390, 181.7, 200], "paint": 1 },
+        { "box": [1011.6, 395.8, 14, 14], "paint": 2 }
       ]
     },
     {
@@ -766,8 +726,8 @@
     },
     {
       "role": "button",
-      "name": "Later: 15:00 Glaze test review, 18:00 Pizza, wood oven",
-      "box": [946.6, 571, 50, 24],
+      "name": "Later: 12:15 Lunch with Anna, 15:00 Glaze test review, 18:00 Pizza, wood oven",
+      "box": [934.6, 571, 62, 24],
       "drawn": {
         "color": "rgb(141, 150, 188)",
         "backgroundColor": "rgb(26, 27, 38)",
@@ -784,22 +744,47 @@
         "borderColor": "rgb(141, 150, 188)"
       },
       "surfaces": [
-        { "box": [946.6, 571, 50, 24], "paint": 12 },
-        { "box": [951.6, 576, 14, 14], "paint": 13 },
+        { "box": [934.6, 571, 62, 24], "paint": 12 },
+        { "box": [939.6, 576, 14, 14], "paint": 13 },
+        { "box": [955.6, 579, 8, 8], "paint": 8 },
         { "box": [967.6, 579, 8, 8], "paint": 8 },
         { "box": [979.6, 579, 8, 8], "paint": 4 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 12:00 Monte Brè with Reto",
+      "box": [1148.3, 571, 38, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgb(26, 27, 38)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "9px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "surfaces": [
+        { "box": [1148.3, 571, 38, 24], "paint": 12 },
+        { "box": [1153.3, 576, 14, 14], "paint": 13 },
+        { "box": [1169.3, 579, 8, 8], "paint": 8 }
       ]
     }
   ],
   "loose": {
     "text": [
-      { "said": "all day", "type": 11 },
-      { "said": "04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00 12:00", "type": 12 },
-      { "said": "09:24", "type": 13 }
+      { "said": "03:00 04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00", "type": 10 },
+      { "said": "09:24", "type": 11 }
     ],
     "surfaces": [
       { "box": [0, 0, 1392, 600], "paint": 15 },
-      { "box": [240.7, 412, 192.7, 2], "paint": 16, "parts": { "before": [0, -4, 10, 10] } }
+      { "box": [240.7, 467, 10, 10], "paint": 16 }
     ]
   }
 }

@@ -85,6 +85,10 @@ async function mount(initial: EngineMessage[], autoSuggest = false) {
       const reply = Response.json({
         dryRun: dryRun === true, requested: senders.length, quoted: senders.length,
         quotedCredits: senders.length, charged: dryRun ? 0 : senders.length, skipped: [],
+        ...(dryRun ? { quoteGrant: {
+          proof: "fixture-quote",
+          pairs: senders.map((sender, i) => ({ sender, messageId: "m-" + i })),
+        } } : {}),
         suggestions: dryRun ? [] : senders.map((sender) => ({
           sender, messageId: mail.find(({ from }) => from.address === sender)!.id,
           decision: "yes", confidence: 0.9, rationale: "r",

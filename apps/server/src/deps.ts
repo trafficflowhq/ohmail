@@ -611,6 +611,7 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
   // to apply organization. Suggestions are generated only on `POST /screener/suggest` over an
   // explicit, priced sender set; `list` cannot reach the classifier.
   put(bag, "screener", () => makeScreenerService({
+    quoteKeys: keyProvider,
     /* A request a host ends admits a sender's purchase only while there is time to finish the
        model call and the write after it; the window means nothing without the door's number. */
     ...(door.invocationBudgetMs !== null ? { invocationBudgetMs: door.invocationBudgetMs } : {}),

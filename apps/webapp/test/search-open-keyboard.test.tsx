@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/react";
 import { TextProvider } from "@ohmail/app/text";
 import { prepareSearchWindow, SearchSeat } from "./_search-mount";
-import { enterSearchRoute, RegisteredSearch, searchField, typeSearch } from "./search-registered-fixture";
+import { enterSearchRoute, findSearchField, RegisteredSearch, searchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -254,6 +254,7 @@ describe("a search result opens from the keyboard", () => {
     const engine = await engineWith(CORPUS);
     leaveSearch = enterSearchRoute();
     await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+    await findSearchField(host);
     await act(async () => { typeSearch(host, "invoice"); });
     await within(host).findByRole("button", { name: /Invoice 078/ });
     await key("?");

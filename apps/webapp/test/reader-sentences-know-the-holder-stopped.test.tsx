@@ -303,7 +303,7 @@ describe("the sender sheet's organizer line", () => {
   }
 
   async function subjectSheet(sheet: ReturnType<typeof within>, copy: typeof en) {
-    await act(async () => { sheet.getByRole("button", { name: copy.screening.subjectRuleOpen }).click(); });
+    await act(async () => { sheet.getByRole("menuitem", { name: copy.screening.cardSubject }).click(); });
     return within(document.body).getByRole("dialog", {
       name: copy.screening.subjectAria.replace("{who}", HELD.from.address),
     });

@@ -85,8 +85,6 @@ async function render(rows: EngineMessage[], o: {
   const reader = within(frame.getByRole("region", { name: messages.frame.landmark.reading }));
   await clickMounted(reader.getByRole("button", { name: (name) => name.startsWith(ADDR) }));
   const page = within(document.body);
-  const contact = within(page.getByRole("dialog", { name: messages.message.contactAria.replace("{who}", ADDR) }));
-  await clickMounted(contact.getByRole("menuitem", { name: messages.screening.action }));
   const sheet = page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", ADDR) });
   await tick(200);
   const lines = [...sheet.querySelectorAll<HTMLElement>(".sm-stayed-line")].map((line) => ({
@@ -101,8 +99,9 @@ async function render(rows: EngineMessage[], o: {
   const toast = v.key === "none" ? null : t(verdictKeyOf(v), verdictArgs(v, {
     sender: ADDR, place: "Ohbox", history: t("placeHistory"), label: placeLabel, domain: (d) => d,
   }));
-  const chips = [...sheet.querySelectorAll(".sm-scope small")].map((e) => e.textContent!);
-  return { now: sheet.querySelector(".sm-now")?.textContent ?? null, lines, v, toast, action: verdictAction(v, { scope: "sender", address: ADDR }), chips };
+  const scope = within(sheet).queryByRole("radiogroup", { name: messages.screening.scopeAria });
+  const chips = [...(scope?.querySelectorAll("small") ?? [])].map((e) => e.textContent!);
+  return { now: sheet.querySelector(".oh-contactcard-line")?.getAttribute("aria-description") ?? null, lines, v, toast, action: verdictAction(v, { scope: "sender", address: ADDR }), chips };
 }
 
 describe("H1: one place named with its rows, several named as several", () => {
@@ -167,8 +166,12 @@ describe("L6: a folder place is its mailbox and path", () => {
   });
 
   it("the same path in two mailboxes is two counts, each named with its mailbox's label", async () => {
-    const r = await render([...five, msg("a-1", "Fixture", { mailbox: "mb" }), msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" })],
-      { labels: { mb: "Work", "mb-2": "Home" } });
+    const r = await render([
+      ...five,
+      msg("a-1", "Fixture", { mailbox: "mb" }),
+      msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" }),
+      { ...msg("foreign-letter", "Another account's folder"), accountId: "another-account" },
+    ], { labels: { mb: "Work", "mb-2": "Home" } });
     expect(r.now).toBe("7 messages — Ohbox 5 · Fixture (Work) 1 · Fixture (Home) 1");
     expect(r.lines.map((l) => l.text)).toEqual([
       "1 stays in Fixture (Work): filed in another mail app.", "1 stays in Fixture (Home): filed in another mail app.",

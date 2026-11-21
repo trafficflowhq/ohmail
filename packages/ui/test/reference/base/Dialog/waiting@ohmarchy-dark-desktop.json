@@ -5,7 +5,7 @@
   "place": "window",
   "target": [440, 211.6094, 560, 476.7813],
   "clip": [440, 211, 560, 478],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",

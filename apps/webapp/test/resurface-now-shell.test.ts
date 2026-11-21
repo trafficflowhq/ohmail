@@ -8,7 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
-import { barVerb, menuItem } from "./ohbox/_finders.js";
+import { barVerb, menuItem, ohboxRows } from "./ohbox/_finders.js";
 
 /**
  * "RESURFACE NOW", DRIVEN THROUGH THE SHELL.
@@ -75,7 +75,7 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
   // The Ohbox selects nothing by itself — land the cursor on the first row.
   await key("j");
 }

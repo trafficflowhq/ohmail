@@ -10,20 +10,17 @@ import { measureStream, bottomOf } from "./stream-measure.js";
 export { measureStream, streamReadView } from "./stream-measure.js";
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { documentHidden } from "../session/document-hidden.js";
-import {
-  STREAM_REST_MS,
-  createStreamReadRule,
-  type StreamHand,
-  type StreamLook,
-  type StreamReadRule,
-} from "./read-rule.js";
+import { createStreamReadRule, type StreamHand, type StreamLook, type StreamReadRule } from "./read-rule.js";
 import type { StreamLeaveState } from "./leave.js";
+import { watchPreviewDwell, watchStreamRest } from "./stream-read-dwell.js";
 import {
   STREAM_LANDING_QUIET_MS,
   listenStreamControls,
   ownStreamScroll,
   streamScrollJudgement,
+  watchStreamBand,
   watchStreamContent,
+  watchStreamFocus,
 } from "./stream-scroll-input.js";
 
 export { STREAM_LANDING_QUIET_MS } from "./stream-scroll-input.js";
@@ -51,6 +48,7 @@ export interface StreamReadDomOptions {
   readonly onLanded?: () => void;
   readonly onJudged?: () => void;
   readonly readingBlocked?: () => boolean;
+  readonly pendingShift?: () => number;
   /** The clock; the page's by default. */
   readonly now?: () => number;
 }
@@ -71,6 +69,8 @@ export interface StreamReadDom {
   leaveState(): StreamLeaveState;
   /** A jump to an end is in flight: from its key until the scroller has rested. */
   flying(): boolean;
+  /** The host scroller is following its own native End or Home. */
+  edgeFlight(): boolean;
   judging(): boolean;
   readonly rule: StreamReadRule;
 }
@@ -99,53 +99,6 @@ function flightOf(flag: { current: boolean }, landed: () => void) {
   };
 }
 
-/** Run the pending-body clock only while the viewport can be attended. */
-function watchPreviewDwell(
-  doc: Document,
-  measure: () => StreamLook,
-  now: () => number,
-  rule: StreamReadRule,
-  flying: () => boolean,
-  write: (ids: readonly string[]) => void,
-) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const attended = (): boolean => !documentHidden() && doc.hasFocus() && !flying();
-  const clear = (): void => {
-    clearTimeout(timer);
-    rule.previewDwell(null);
-  };
-  const arm = (): void => {
-    clearTimeout(timer);
-    const due = rule.previewDue;
-    if (due === null) return;
-    timer = setTimeout(
-      () => {
-        write(rule.previewDwell(attended() ? measure() : null));
-        arm();
-      },
-      Math.max(1, Math.ceil(due - now())),
-    );
-  };
-  const visibility = (): void => {
-    if (!attended()) clear();
-  };
-  doc.addEventListener("visibilitychange", visibility);
-  doc.defaultView?.addEventListener("blur", clear);
-  return {
-    attended,
-    observe(look: StreamLook): void {
-      write(rule.previewDwell(attended() ? look : null));
-      arm();
-    },
-    clear,
-    stop(): void {
-      clear();
-      doc.removeEventListener("visibilitychange", visibility);
-      doc.defaultView?.removeEventListener("blur", clear);
-    },
-  };
-}
-
 export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
   const ruleRef = useRef<StreamReadRule | null>(null);
   ruleRef.current ??= createStreamReadRule(o.receipts);
@@ -156,11 +109,12 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
   useEffect(() => {
     if (o.openId !== undefined) rule.selectionChanged(o.openId);
   }, [o.openId, rule]);
-  const arm = useRef<(() => void) | null>(null);
+  const arm = useRef<((entered?: boolean) => void) | null>(null);
   const refresh = useRef<((settled?: boolean) => void) | null>(null);
   const ownScroll = useRef<((scroll: () => void) => void) | null>(null);
   const cancelPending = useRef<(() => void) | null>(null);
   const flyingRef = useRef(false);
+  const letterFlight = useRef(false);
   const judgingRef = useRef(false);
   const appMovedAt = useRef(Number.NEGATIVE_INFINITY);
   const handCount = useRef(0);
@@ -176,6 +130,7 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
       ownScroll,
       cancelPending,
       flyingRef,
+      letterFlight,
       judgingRef,
       appMovedAt,
       handCount,
@@ -197,7 +152,7 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
   const enter = useCallback(
     (letter?: string, viewport?: boolean) => {
       rule.enter(now(), letter, viewport);
-      arm.current?.();
+      arm.current?.(true);
     },
     [rule],
   );
@@ -220,6 +175,7 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
     };
   }, [rule]);
   const flying = useCallback(() => flyingRef.current, []);
+  const edgeFlight = useCallback(() => flyingRef.current && !letterFlight.current, []);
   const hands = useCallback(() => handCount.current, []);
   const judging = useCallback(() => judgingRef.current, []);
   return {
@@ -233,6 +189,7 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
     keepUnread,
     leaveState,
     flying,
+    edgeFlight,
     judging,
     rule,
   };
@@ -241,14 +198,51 @@ export function useStreamRead(o: StreamReadDomOptions): StreamReadDom {
 export interface StreamReadRefs {
   opts: RefObject<StreamReadDomOptions>;
   bottomRef: RefObject<string | null>;
-  arm: RefObject<(() => void) | null>;
+  arm: RefObject<((entered?: boolean) => void) | null>;
   refresh: RefObject<((settled?: boolean) => void) | null>;
   ownScroll: RefObject<((scroll: () => void) => void) | null>;
   cancelPending: RefObject<(() => void) | null>;
   flyingRef: RefObject<boolean>;
+  letterFlight: RefObject<boolean>;
   judgingRef: RefObject<boolean>;
   appMovedAt: RefObject<number>;
   handCount: RefObject<number>;
+}
+
+function watchReadTimers(
+  el: HTMLElement,
+  rule: StreamReadRule,
+  now: () => number,
+  { opts, bottomRef, flyingRef }: StreamReadRefs,
+  judgement: ReturnType<typeof streamScrollJudgement>,
+) {
+  const measure = (at = now()): StreamLook => measureStream(el, opts.current.factsOf, at);
+  const write = (ids: readonly string[]): void => {
+    if (ids.length > 0) opts.current.write(ids);
+  };
+  const unstable = () => opts.current.readingBlocked?.() === true;
+  const blocked = () => flyingRef.current || unstable();
+  const pending = watchPreviewDwell(el.ownerDocument, measure, now, rule, {
+    blocked,
+    judgement,
+    correction: () => opts.current.pendingShift?.() ?? 0,
+    flying: () => flyingRef.current,
+    write,
+  });
+  const receiptAttended = () => opts.current.receipts && pending.attended();
+  const band = watchStreamBand(
+    el,
+    unstable,
+    () => documentHidden() || judgement.phase() !== null || flyingRef.current,
+    () => write(rule.band(measure())),
+  );
+  const rest = watchStreamRest((snippet) => {
+    if (documentHidden() || blocked() || judgement.phase() !== null) return;
+    const l = measure();
+    bottomRef.current = bottomOf(l);
+    write(rule.rest(l, null, opts.current.openId, snippet));
+  });
+  return { measure, write, blocked, pending, band, rest, receiptAttended };
 }
 
 function bindReadScroller(
@@ -258,67 +252,56 @@ function bindReadScroller(
   refs: StreamReadRefs,
 ): () => void {
   const { opts, bottomRef, arm, refresh, ownScroll, cancelPending, flyingRef, judgingRef } = refs;
-  let restTimer: ReturnType<typeof setTimeout> | undefined;
-  const measure = (at = now()): StreamLook => measureStream(el, opts.current.factsOf, at);
-  const write = (ids: readonly string[]): void => {
-    if (ids.length > 0) opts.current.write(ids);
-  };
-  const unstable = () => opts.current.readingBlocked?.() === true;
-  const blocked = () => flyingRef.current || unstable();
-  const pending = watchPreviewDwell(el.ownerDocument, measure, now, rule, blocked, write);
-  const receiptAttended = () => opts.current.receipts && pending.attended();
-  let lastScroll: StreamLook | null = null;
+  const judgement = streamScrollJudgement(el, rule, now, refs, (): void => pending.observe());
+  const { measure, write, blocked, pending, band, rest, receiptAttended } = watchReadTimers(
+    el,
+    rule,
+    now,
+    refs,
+    judgement,
+  );
   const flight = flightOf(flyingRef, () => {
     opts.current.onLanded?.();
-    if (blocked()) return;
-    const settled = measure();
-    if (lastScroll && lastScroll.scrollTop === settled.scrollTop) pending.observe(lastScroll);
-    rule.settled(settled);
-    pending.observe(settled);
+    band.read();
+    pending.observe();
+    rest.arm();
   });
-  const rest = (): void => {
-    if (documentHidden() || blocked()) return;
-    const l = measure();
-    bottomRef.current = bottomOf(l);
-    write(rule.rest(l, null, opts.current.openId));
+  arm.current = (entered) => {
+    if (entered) {
+      if (judgement.phase() !== null) pending.clear();
+      judgement.cancel();
+      pending.entered();
+    }
+    rest.arm();
+    pending.observe();
   };
-  const armRest = (): void => {
-    clearTimeout(restTimer);
-    restTimer = setTimeout(rest, STREAM_REST_MS);
-  };
-  const observe = () => !blocked() && pending.observe(measure());
-  arm.current = () => {
-    armRest();
-    observe();
-  };
-  const judgement = streamScrollJudgement(el, rule, now, refs);
-  cancelPending.current = () => {
+  const clear = (): void => {
     judgement.cancel();
-    clearTimeout(restTimer);
+    rest.clear();
     pending.clear();
     flight.stop();
-    lastScroll = null;
     bottomRef.current = null;
   };
+  cancelPending.current = clear;
   const scrollOwnership = ownStreamScroll(el);
   ownScroll.current = scrollOwnership.run;
   const onScroll = (): void => {
     const own = scrollOwnership.heard();
     if (!own) flight.moved();
     const l = measure();
-    if (!own && !blocked()) judgement.scroll(l.at, controls.isolatedLetterFocused);
-    if (!own) lastScroll = unstable() ? null : l;
     const inFlight = blocked();
+    const judged = judgement.scroll(l.at, l.scrollTop, own, inFlight, controls.isolatedLetterFocused);
+    if (judged === "judged") pending.entered();
+    else if (judged === "interrupted") pending.clear();
     if (inFlight && !flyingRef.current) {
       rule.look(l, false, true);
-      pending.clear();
+      pending.observe(l);
       return;
     }
     bottomRef.current = bottomOf(l);
-    const attended = !documentHidden();
-    write(rule.look(l, attended, own || inFlight || judgingRef.current, receiptAttended()));
+    write(rule.look(l, !documentHidden(), own || inFlight || judgingRef.current, receiptAttended()));
     pending.observe(l);
-    armRest();
+    rest.arm();
   };
   refresh.current = (settled) => {
     if (blocked()) return;
@@ -326,36 +309,43 @@ function bindReadScroller(
     if (settled) rule.settled(l);
     bottomRef.current = bottomOf(l);
     pending.observe(l);
-    if (settled) armRest();
+    if (settled) rest.arm();
   };
   const still = (by: StreamHand): void => {
     if (documentHidden() || blocked()) return;
     const l = measure();
     write(rule.still(l, by));
     pending.observe(l);
-    armRest();
+    rest.arm();
+  };
+  const hand = (): void => {
+    if (judgement.phase() !== null) pending.clear();
+    judgement.hand();
+    pending.entered();
   };
   const onWheel = (e: WheelEvent): void => {
     if (e.deltaY === 0) return;
-    judgement.hand();
+    hand();
     rule.hand("wheel", now());
     still("wheel");
   };
-  const stopWatching = watchStreamContent(el, rule, observe);
+  const enter = (): void => {
+    rule.enter(now());
+    arm.current?.(true);
+  };
+  const stopFocus = watchStreamFocus(el, enter, pending.blurred);
+  const stopWatching = watchStreamContent(el, rule, () => pending.observe());
   const controls = listenStreamControls(el, rule, now, {
     onScroll,
     onWheel,
     still,
-    hand: judgement.hand,
-    onEnd: () => {
-      lastScroll = null;
+    hand,
+    onEnd: (insideLetter) => {
+      refs.letterFlight.current = insideLetter;
       pending.clear();
       flight.start();
     },
-    onEnter: () => {
-      rule.enter(now());
-      observe();
-    },
+    onEnter: enter,
   });
   seedStreamLook(measure(), rule, bottomRef, receiptAttended);
   return () => {
@@ -363,11 +353,11 @@ function bindReadScroller(
     refresh.current = null;
     ownScroll.current = null;
     cancelPending.current = null;
-    clearTimeout(restTimer);
-    judgement.cancel();
+    clear();
+    stopFocus();
     pending.stop();
-    flight.stop();
     stopWatching();
+    band.stop();
     controls.stop();
   };
 }

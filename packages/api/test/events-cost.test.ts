@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type SseConfig } from "@trafficflow/api";
+import { users } from "@trafficflow/db";
 import { resetSseCounters, sseLiveCounts } from "../src/routes/events.js";
 import { SSE_DISABLED_REFUSAL } from "@trafficflow/db/cloud";
 import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
@@ -118,7 +119,11 @@ describe("SSE concurrency caps", () => {
 function pollOn(db: object, onPoll: () => Promise<Array<{ max: string | null; live?: boolean }>>): void {
   Object.defineProperty(db, "select", {
     configurable: true, writable: true,
-    value: () => ({ from: () => ({ where: () => onPoll() }) }),
+    value: () => ({
+      from: (table: unknown) => ({
+        where: () => table === users ? { limit: async () => [{ emailVerifiedAt: FIXED_NOW }] } : onPoll(),
+      }),
+    }),
   });
 }
 
@@ -129,14 +134,6 @@ const PRESET_SESSION: ApiDeps["session"] = {
   lastTwofaAt: null,
   scope: "full",
   via: "bearer",
-  // `GET /events` is `cost: "connection"`, so `withSpendGate` refuses an unproven address
-  // on it. This session is FABRICATED, so it asserts nothing about how it was obtained and it
-  // must not accidentally assert something about verification either: the subject here is the
-  // poll loop. Omitting the field made every case in this file 403 — and the compiler did not
-  // say so, because `ResolvedSession.emailVerifiedAt` is required and NO test file in this
-  // repository is typechecked. The gate itself is proven in `spend-gate.test.ts`,
-  // which drives this very route with an unverified session and asserts the 403.
-  emailVerifiedAt: FIXED_NOW,
 };
 
 /** `app.handle` with a session already resolved (no token ⇒ `withSession` leaves it alone). */

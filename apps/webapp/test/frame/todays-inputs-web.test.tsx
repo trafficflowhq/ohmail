@@ -161,7 +161,7 @@ describe("the web's host, read back as today's inputs", () => {
     const draft = await import("../../app/(product)/mailbox/draft-reply-wire");
     const { browserNotificationHost } = await import("../../app/shell/notification-settings");
     const { browserNoticePage, webNoticeEmitter } = await import("../../app/shell/notice-emitter");
-    const { forgetOwner, markSignedOutPending, readOwner, rememberOwner } =
+    const { forgetOwner, markSignedOutPending, rememberOwner } =
       await import("@ohmail/app-logic/storage/owner-cookie");
     const { liveBodyOverApi } = await import("../../app/(product)/mailbox/web-supplies");
     const { SEND_SURFACE } = await import("../../app/(product)/mailbox/CloudShell");
@@ -181,16 +181,16 @@ describe("the web's host, read back as today's inputs", () => {
     const pageEmitter = webNoticeEmitter(browserNoticePage, () => { throw new Error("nothing is drawn here"); });
     expect(inputs.notificationHost).toEqual({
       ...browserNotificationHost,
-      liveNoticeScope: readOwner,
+      liveNoticeScope: expect.any(Function),
       emitter: { ...pageEmitter, post: expect.any(Function), takeBack: expect.any(Function) },
     });
-    // The same host can still be mounted after another tab switches accounts or signs out.
+    // This host can announce notices only while the browser still names its account.
     const liveNoticeScope = inputs.notificationHost?.liveNoticeScope;
     try {
       rememberOwner("acct-1");
       expect(liveNoticeScope?.()).toBe("acct-1");
       rememberOwner("acct-2");
-      expect(liveNoticeScope?.()).toBe("acct-2");
+      expect(liveNoticeScope?.()).toBeNull();
       markSignedOutPending();
       expect(liveNoticeScope?.()).toBeNull();
     } finally {

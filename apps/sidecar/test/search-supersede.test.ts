@@ -139,7 +139,7 @@ function parkingOn(s: Sidecar, q: string): { ran: string[]; hook: (e: Sent) => v
   let armed: boolean | null = false;
   let release: (() => Promise<void>) | null = null;
   const ran = statements(s, (text) => {
-    if (armed !== true || !/^select "sessions"\./.test(text)) return;
+    if (armed !== true || !/ from "sessions" where \("sessions"\."access_token_hash" = /.test(text)) return;
     armed = null;
     void park(s).then((r) => { release = r; });
   });

@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { bindDb, carryBinding, rebindTx, sessions, users } from "@trafficflow/db";
+import { bindDb, sessions } from "@trafficflow/db";
 import { hashToken } from "./crypto.js";
-import type { Db, UnboundDb } from "../context.js";
+import type { UnboundDb } from "../context.js";
 
 /**
  * A session's privilege scope. `'full'` is a completed
@@ -27,13 +27,6 @@ export interface ResolvedSessionCore {
   lastTwofaAt: Date | null;
   scope: SessionScope;
   /**
-   * When this user's address was proven (`users.email_verified_at`, migration 0023), or
-   * `null` for an unproven one. Read by `withVerifiedEmail` in `packages/api`.
-   *
-   * It rides on session resolution so admission checks share the same account-scoped user read.
-   */
-  emailVerifiedAt: Date | null;
-  /**
    * When this session's `/sync` last reached the horizon (`sessions.last_synced_at`, mail 0070),
    * read from the same row. Bookkeeping only: `GET /sync` skips a stamp that is not due yet. Never
    * a privilege input, never in a DTO. Absent means unknown, and the stamp then runs as before.
@@ -45,15 +38,13 @@ export interface ResolvedSessionCore {
  * Resolve an opaque session/bearer access token to its live session row, or `null`. Usable iff
  * `accessTokenHash` equals `hashToken(token)` (tokens are only stored hashed), not revoked, and
  * the access window has not elapsed. Cookie and bearer auth share this lookup.
- * The digest names a single session before the account is known. The user read runs in the
- * same transaction after binding the session's account, and a missing user denies admission.
+ * The digest keys the binder's single statement before the account is known. The foreign key
+ * from `sessions.user_id` guarantees the session's user exists.
  */
 export async function resolveSession(db: UnboundDb, token: string, now: Date): Promise<ResolvedSessionCore | null> {
   const digest = hashToken(token);
-  const door = bindDb(db, { account: null, key: digest });
-  return door.transaction(async (handle) => {
-    const tx = carryBinding(door, handle);
-    const [row] = await tx.select({
+  const [row] = await bindDb(db, { account: null, key: digest })
+    .select({
       id: sessions.id,
       familyId: sessions.familyId,
       accountId: sessions.accountId,
@@ -61,26 +52,22 @@ export async function resolveSession(db: UnboundDb, token: string, now: Date): P
       lastTwofaAt: sessions.lastTwofaAt,
       scope: sessions.scope,
       lastSyncedAt: sessions.lastSyncedAt,
-    }).from(sessions).where(and(
+    })
+    .from(sessions)
+    .where(and(
       eq(sessions.accessTokenHash, digest),
       isNull(sessions.revokedAt),
       gt(sessions.accessExpiresAt, now),
-    )).limit(1);
-    if (!row) return null;
-
-    const scoped = await rebindTx<Db>(tx, { account: row.accountId });
-    const [user] = await scoped.select({ emailVerifiedAt: users.emailVerifiedAt })
-      .from(users).where(and(eq(users.id, row.userId), eq(users.accountId, row.accountId))).limit(1);
-    if (!user) return null;
-    return {
-      accountId: row.accountId,
-      userId: row.userId,
-      sessionId: row.id,
-      familyId: row.familyId,
-      lastTwofaAt: row.lastTwofaAt,
-      scope: row.scope === "enrollment" ? "enrollment" : "full",
-      emailVerifiedAt: user.emailVerifiedAt,
-      lastSyncedAt: row.lastSyncedAt,
-    };
-  }, { accessMode: "read only" });
+    ))
+    .limit(1);
+  if (!row) return null;
+  return {
+    accountId: row.accountId,
+    userId: row.userId,
+    sessionId: row.id,
+    familyId: row.familyId,
+    lastTwofaAt: row.lastTwofaAt,
+    scope: row.scope === "enrollment" ? "enrollment" : "full",
+    lastSyncedAt: row.lastSyncedAt,
+  };
 }

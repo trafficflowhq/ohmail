@@ -21,7 +21,14 @@ import { useDiscardReport, useDraftRestore } from "./draft-undo.js";
 import { DraftTimeNotice } from "./DraftTimeNotice.js";
 import { DraftFields } from "./DraftFields.js";
 import { DraftInvitation, useDraftInvitation } from "./DraftInvitation.js";
-import { draftTimes, fieldsOfDraft, previewOfDraft, startDraft, type EventDraft } from "./event-draft.js";
+import {
+  draftCalendars,
+  draftTimes,
+  fieldsOfDraft,
+  previewOfDraft,
+  startDraft,
+  type EventDraft,
+} from "./event-draft.js";
 
 import type { CalendarTones } from "./tones.js";
 import type { CalendarEventFace } from "./faces.js";
@@ -53,7 +60,7 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
     const day = dayOfIso(route.sub) ?? clock.day;
     return startDraft(isoOfDay(day), clock.minutes, route.words.slot);
   });
-  const choices = calendars.filter((c) => c.shown && !viewOnlyOf(c, connections.get(c.connectionId)));
+  const choices = draftCalendars(calendars, connections);
   const proposed = newEventsCalendarOf(preferred ?? null, choices);
   const [chosen, choose] = useState<string | null>(null);
   const discardReport = useDiscardReport(port);

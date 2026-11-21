@@ -99,7 +99,8 @@ export const StreamItem = memo(function StreamItem(props: StreamItemProps) {
       onClick={(e) => {
         if (inControl(e.target)) return;
         if (!phone && !whole) fold();
-        open(m.id, false, true);
+        // A heading press reads here, while opening from the list or body can land the letter.
+        open(m.id, false, true, !phone && e.target instanceof Element && e.target.closest("h2") !== null);
       }}
     >
       {(whole || conversation !== undefined) && reader !== NONE && reader.OpenCard ? (

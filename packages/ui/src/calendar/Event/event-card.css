@@ -121,9 +121,9 @@
     background: var(--oh-ecard-glass);
     line-height: var(--oh-lh);
   }
-  .oh-ecard-why-ico {
-    width: 14px;
-    height: 14px;
+  .oh-ecard-lock {
+    width: var(--cal-lock-size);
+    height: var(--cal-lock-size);
   }
   .oh-ecard-title {
     padding-right: var(--s6);

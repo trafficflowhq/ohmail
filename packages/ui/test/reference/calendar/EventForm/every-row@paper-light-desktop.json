@@ -5,7 +5,7 @@
   "place": "block",
   "target": [556, 516, 580, 344],
   "clip": [556, 516, 580, 344],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -129,6 +129,18 @@
       "fontWeight": "600",
       "fontStyle": "normal",
       "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
@@ -557,7 +569,7 @@
       "surfaces": [{ "box": [562, 117, 14, 14], "paint": 6 }]
     },
     {
-      "role": "textbox",
+      "role": "combobox",
       "name": "Place",
       "box": [32, 146, 441, 28],
       "drawn": {
@@ -575,6 +587,7 @@
         "paddingLeft": "4px",
         "borderColor": "rgb(18, 16, 14)"
       },
+      "state": ["collapsed"],
       "text": [{ "said": "Kino Seeblick", "type": 7, "shown": true }],
       "surfaces": [{ "box": [32, 146, 441, 28], "paint": 2 }]
     },
@@ -745,6 +758,27 @@
     },
     {
       "role": "button",
+      "name": "Cancel",
+      "box": [420.6, 312, 74.3, 32],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Cancel", "type": 9 }]
+    },
+    {
+      "role": "button",
       "name": "Add ↵",
       "box": [498.9, 312, 81.1, 32],
       "drawn": {
@@ -763,16 +797,16 @@
         "borderColor": "rgb(255, 255, 255)"
       },
       "text": [
-        { "said": "Add", "type": 9 },
-        { "said": "↵", "type": 10 }
+        { "said": "Add", "type": 10 },
+        { "said": "↵", "type": 11 }
       ],
       "surfaces": [{ "box": [548, 318, 20, 20], "paint": 11 }]
     }
   ],
   "loose": {
     "text": [
-      { "said": "to All day", "type": 11 },
-      { "said": "meet.google.com/kuk-pokm-ptb", "type": 12 }
+      { "said": "to All day", "type": 12 },
+      { "said": "meet.google.com/kuk-pokm-ptb", "type": 13 }
     ],
     "surfaces": [
       { "box": [1, 7, 18, 18], "paint": 12 },

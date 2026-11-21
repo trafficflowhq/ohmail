@@ -5,7 +5,7 @@
   "place": "block",
   "target": [529, 648, 620, 224],
   "clip": [529, 648, 620, 224],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -131,6 +131,18 @@
       "fontWeight": "500",
       "fontStyle": "normal",
       "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
@@ -628,6 +640,27 @@
     },
     {
       "role": "button",
+      "name": "Cancel",
+      "box": [467.8, 184, 62.8, 28],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "Cancel", "type": 9 }]
+    },
+    {
+      "role": "button",
       "name": "Add ↵",
       "box": [534.6, 184, 69.4, 28],
       "drawn": {
@@ -646,8 +679,8 @@
         "borderColor": "rgb(255, 252, 240)"
       },
       "text": [
-        { "said": "Add", "type": 9 },
-        { "said": "↵", "type": 10 }
+        { "said": "Add", "type": 10 },
+        { "said": "↵", "type": 11 }
       ],
       "surfaces": [{ "box": [576, 189, 18, 18], "paint": 22 }]
     }

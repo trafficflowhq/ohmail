@@ -154,7 +154,7 @@ export function panelVerbs(
   ];
 }
 
-export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean, canAnswer: boolean) {
+export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean) {
   const mod = useModGlyph();
   const reply = useBinding(REPLY_KEY);
   const replyAll = useBinding("shift+r");
@@ -173,9 +173,9 @@ export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean, canA
           shortcut: ariaShortcut(binding.chord, mod),
         };
   return {
-    reply: canAnswer ? hint(reply) : {},
-    replyAll: canAnswer ? hint(replyAll) : {},
-    forward: canAnswer ? hint(forward) : {},
+    reply: hint(reply),
+    replyAll: hint(replyAll),
+    forward: hint(forward),
     later: hint(later),
     aside: hint(aside),
     resurface: hint(resurface),

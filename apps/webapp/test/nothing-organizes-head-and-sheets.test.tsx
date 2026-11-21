@@ -52,7 +52,6 @@ async function senderSheet(
   await tick(4000);
   const t = (locale === "en" ? en : de).screening;
   await click(shell.getByRole("button", { name: /^Heron / }));
-  await click(shell.getByRole("menuitem", { name: t.action }));
   return within(document.body).getByRole("dialog", { name: t.aria.replace("{sender}", SENDER) });
 }
 
@@ -64,7 +63,8 @@ describe("the sender sheet over a mailbox nothing organizes", () => {
   it("a hand-back says nothing organizes it in place of the filing promise, en and de", async () => {
     const english = await senderSheet(true, letters);
     expect(english.querySelector(".sm-org")?.textContent).toBe(en.screening.orgNobody);
-    expect(english.querySelector(".sm-foot"), "the foot promised filing nothing performs").toBeNull();
+    expect(within(english).getByRole("radio", { name: en.place.ohbox }).getAttribute("aria-description"),
+      "the destination promised filing nothing performs").toBeNull();
     for (const promise of PROMISES) expect(english.textContent).not.toContain(promise);
 
     await teardownScreeningWeb();
@@ -75,14 +75,14 @@ describe("the sender sheet over a mailbox nothing organizes", () => {
   it("CONTROL: where this install organizes it the foot says what a press files", async () => {
     const sheet = await senderSheet(false, letters);
     expect(sheet.querySelector(".sm-org")).toBeNull();
-    expect(sheet.querySelector(".sm-foot")?.textContent ?? "").not.toBe("");
+    expect(within(sheet).getByRole("radio", { name: en.place.ohbox }).getAttribute("aria-description") ?? "").not.toBe("");
   });
 });
 
 describe("the subject-rule sheet over a mailbox nothing organizes", () => {
   async function subjectSheet(handedBack: boolean): Promise<HTMLElement> {
     const sender = await senderSheet(handedBack, [letter("m1", "Invoice 12"), letter("m2", "Invoice 13")]);
-    await click(within(sender).getByRole("button", { name: en.screening.subjectRuleOpen }));
+    await click(within(sender).getByRole("menuitem", { name: en.screening.cardSubject }));
     return within(document.body).getByRole("dialog", {
       name: en.screening.subjectAria.replace("{who}", SENDER),
     });

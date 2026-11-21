@@ -191,12 +191,15 @@ async function mountCard(): Promise<(seq: number) => Promise<void>> {
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
+  await (await import("@ohmail/app/mail")).prepareWriting();
   await act(async () => {
     root.render(
       <DesktopLocale><ThemeProvider><ToastHost><DesktopFrame {...props} /></ToastHost></ThemeProvider></DesktopLocale>,
     );
   });
-  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  for (let turn = 0; turn < 20 && !hostEl.querySelector("section[aria-label]"); turn += 1) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
   return async (seq) => {
     changes = [marker(seq)];
     await act(async () => { await engine.syncOnce(); });

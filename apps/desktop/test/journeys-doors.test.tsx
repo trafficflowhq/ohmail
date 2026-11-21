@@ -57,7 +57,8 @@ const SEEN: Record<keyof typeof DOORS, string[]> = {
     "settings.tags", "settings.signatures.nav", "desktopDoor.paneLabel", "settings.devices", "settings.about", "settings.help",
   ],
   "D-m": SIGNED_IN,
-  "D-s": SIGNED_IN,
+  // The self-hosted Account page needs server confirmation, which this fixture does not reach.
+  "D-s": SIGNED_IN.filter((key) => key !== "settings.account"),
   "D-p": [
     "settings.general", "settings.notifications", "settings.mailboxes", "settings.screener", "settings.away", "settings.rules",
     "settings.tags", "settings.signatures.nav", "desktopDoor.paneLabel", "settings.about", "settings.help",

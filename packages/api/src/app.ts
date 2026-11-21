@@ -35,9 +35,9 @@ const FULL_PIPELINE: Middleware[] = [
 // `withStepUp`: `raw` is a response-shape decision, not an authorization one, and the costliest
 // routes in the product are raw — a `stepUp` or gate flag on a route whose chain omits the
 // middleware that reads it is worse than no flag, because it reads as a control.
-// `raw-pipeline-parity.test.ts` asserts the membership rather than trusting this comment. Safe
-// without `withErrorEnvelope`: both middlewares RETURN an `errorResponse` and never throw, so
-// there is nothing for the absent envelope to catch.
+// `raw-pipeline-parity.test.ts` asserts this membership. A database fault or account binding
+// mismatch can make `withSpendGate` throw. In either case the request fails closed before the
+// route handler runs.
 const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withSession, withStepUp, withSpendGate];
 
 // `anonymous` routes: no session resolution at all (`/health`). `withSession` resolves any

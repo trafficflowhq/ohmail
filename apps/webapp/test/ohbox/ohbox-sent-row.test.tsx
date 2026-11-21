@@ -301,6 +301,7 @@ describe("a reply saved to a Sent folder made after connecting", () => {
    * runs, the clock is held), and the answer makes the copy the person's own.
    */
   async function sendAndLand(folder: string) {
+    await (await import("@ohmail/app/mail")).prepareWriting();
     vi.useFakeTimers();
     setViewport();
     globalThis.fetch = (async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;

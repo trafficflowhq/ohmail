@@ -657,11 +657,15 @@ describe("the Screener: the newest letter clears the decision bar, the first row
     try {
       const before = await reading(page).evaluate(readHeads);
       expect(belowBar(before), "premise: the mounted landing clears the head").toBe(true);
-      await reading(page).locator("[data-reading-scroll]").evaluate((port, offset) => {
+      const offset = before.line.top - before.bar.bottom + 14;
+      const moved = await reading(page).locator("[data-reading-scroll]").evaluate((port, offset) => {
+        const before = port.scrollTop;
         port.style.overflowAnchor = "none";
-        port.style.paddingBottom = `${offset * 2}px`;
-        port.scrollTop += offset;
-      }, before.line.top - before.bar.bottom + 14);
+        port.style.paddingBottom = `calc(${getComputedStyle(port).paddingBottom} + ${offset * 2}px)`;
+        port.scrollTop = before + offset;
+        return port.scrollTop - before;
+      }, offset);
+      expect(moved, "premise: the port scrolled by the offset").toBeGreaterThanOrEqual(offset - 1);
       expect(belowBar(await reading(page).evaluate(readHeads)), "the same measurement detects the overlap").toBe(false);
     } finally {
       await page.close();

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Seg, hueStyle } from "@ohmail/ui/base";
-import { design } from "@ohmail/tokens/design";
+import { Button, Seg, design, hueStyle } from "@ohmail/ui/base";
 import {
   LookPicture,
   SettingLine,

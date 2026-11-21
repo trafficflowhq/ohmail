@@ -1,4 +1,4 @@
-import { MailGround, mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { MailGround, mailSettings, NO_PANE_PARTS, prepareWriting } from "@ohmail/app/mail";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { NextIntlClientProvider } from "next-intl";
 import type en from "../../messages/en.json";
@@ -8,6 +8,8 @@ import { MailFrame } from "../../app/shell/browser-mail";
 import { fakeMail } from "../../../../packages/app/test/reader/support/mail.js";
 import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
 import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
+
+await prepareWriting();
 
 export function screeningSettingsFrame() {
   const account = "screening-settings-fixture";

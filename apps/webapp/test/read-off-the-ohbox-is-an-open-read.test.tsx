@@ -358,15 +358,15 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
   it("Answer Later: ↓ rested on reads as a glance, writes no triage and the letter stays in its pile", async () => {
     window.location.hash = "#/triage";
     await mountThread([later("a1", 20), later("a2", 10)]);
-    const [, second] = order();
+    const [first] = order();
     await keyAsBrowser("ArrowDown");
-    expect(panel(second!), "↓ shows the second letter").not.toBeNull();
+    expect(panel(first!), "↓ shows the first letter: a bare Answer Later address rests on its list").not.toBeNull();
     await rest();
-    expect(patches).toEqual([{ ids: [second], unread: false, via: "glance" }]);
+    expect(patches).toEqual([{ ids: [first], unread: false, via: "glance" }]);
     const sent = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
       .map(([, init]) => String((init as RequestInit | undefined)?.body ?? ""));
     expect(sent.some((b) => b.includes("triage")), "no triage write").toBe(false);
-    expect(order(), "still in Answer Later").toContain(second);
+    expect(order(), "still in Answer Later").toContain(first);
   }, 30_000);
 
   it("a folder holds the row the cursor is on in its group: ↓ walks New though each rested row reads", async () => {

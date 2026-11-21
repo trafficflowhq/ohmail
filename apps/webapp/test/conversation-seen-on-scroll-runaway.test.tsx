@@ -87,7 +87,8 @@ describe("nothing but a person's act enters a visit, and nothing is read before 
 
   it("a visit entered in one conversation does not carry into the next one previewed", async () => {
     const host = await mountThread([
-      ...SIX.map((id, i) => msg(id, 100 + i * 10)),
+      // The thread opens at its first unread letter.
+      ...SIX.map((id, i) => msg(id, 100 + i * 10, i < 5 ? { unread: false } : {})),
       ...["q1", "q2", "q3"].map((id, i) => msg(id, i, { threadId: "U" })),
     ]);
     await openTheRow(host);

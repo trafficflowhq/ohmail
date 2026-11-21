@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 360, 250],
   "clip": [24, 24, 360, 250],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -91,7 +91,7 @@
     }
   ],
   "loose": {
-    "text": [{ "said": "03:00 04:00 05:00 06:00 07:00", "type": 1 }],
+    "text": [{ "said": "03:00 04:00 05:00 06:00", "type": 1 }],
     "surfaces": [{ "box": [0, 0, 360, 250], "paint": 4 }]
   }
 }

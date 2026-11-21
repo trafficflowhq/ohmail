@@ -280,7 +280,7 @@ export function applyCode(editor: Editor): void {
 }
 
 export function applyParagraphStyle(editor: Editor, style: ParagraphStyle): boolean {
-  const chain = editor.chain().focus();
+  const chain = editor.chain().focus(null, { scrollIntoView: false });
   if (style === 0) return chain.command(restoreParagraphLines).run();
   return chain.command(({ state, tr }) => splitTargetLines(state, tr, "heading"))
     .setHeading({ level: style }).run();
@@ -312,7 +312,7 @@ function restoreParagraphLines({ tr }: { tr: Transaction }): boolean {
 }
 
 export function applyDivider(editor: Editor): void {
-  editor.chain().focus()
+  editor.chain().focus(null, { scrollIntoView: false })
     .command(({ state, tr }) => splitTargetLines(state, tr, false))
     .command(({ tr }) => {
       const { $to } = tr.selection;

@@ -329,6 +329,8 @@ const notifications = (): Omit<RowProps, "entry"> => ({
 const bell = <Doorbell count="6" label="6 waiting, Screener" keyHint="g s" />;
 const listMenu = <Button kind="quiet" icon="more" label="List" />;
 
+const paperPhone = (look: Look): boolean => look.face === "paper" && look.device === "phone";
+
 export const lists: KitSubject[] = [
   /* The way through History's time: years and the months of the year on show with a pointer, years alone under a finger. */
   {
@@ -490,21 +492,40 @@ export const lists: KitSubject[] = [
   {
     key: "GroupHeading/hot",
     place: "window",
-    /* In the list's column, on its sheet. */
-    on: "sheet",
+    on: (look) => (paperPhone(look) ? "ground" : "sheet"),
     target: ".oh-groupheading",
-    render: (look) => (
-      <div style={{ position: "fixed", ...listCorner(look), width: listWidth(look) }}>
+    render: (look) => {
+      const { left, top } = listCorner(look);
+      const heading = (
         <GroupHeading count="1" hot>
           Resurfaced
         </GroupHeading>
-      </div>
-    ),
+      );
+      return (
+        <div
+          style={{
+            position: "fixed",
+            left,
+            top: paperPhone(look) ? `calc(${top}px - var(--s1))` : top,
+            width: listWidth(look),
+          }}
+        >
+          {paperPhone(look) ? (
+            <Sheet kind="list" phoneListPadding="top" flushBottom>
+              {heading}
+            </Sheet>
+          ) : (
+            heading
+          )}
+        </div>
+      );
+    },
   },
   {
     key: "ListTail/rest",
     place: "block",
     width: 420,
+    on: "sheet",
     render: () => <ListTail way={{ label: "History" }}>Older mail</ListTail>,
   },
   lineUnder("ListLine/busy", <ListLine busy>Looking further back…</ListLine>),
@@ -524,6 +545,7 @@ export const lists: KitSubject[] = [
   {
     ...rows("Row/waiting", waiting, { target: ".oh-row-slot" }),
     width: undefined,
+    on: (look) => (look.device === "phone" ? "sheet" : "ground"),
     /* Beside its letters the first sender is the open one; in one column nobody is open. */
     render: (look) => (
       <div data-list="">
@@ -535,6 +557,7 @@ export const lists: KitSubject[] = [
     key: "SelectionBar/three",
     place: "block",
     width: 404,
+    on: (look) => (look.face === "paper" && look.scheme === "light" ? "sheet" : "ground"),
     target: ".oh-actionpanel-bar",
     render: () => (
       <SelectionBar

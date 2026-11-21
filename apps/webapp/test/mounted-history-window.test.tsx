@@ -81,7 +81,7 @@ describe("History is the store's timeline, rendered as a window", () => {
     expect(idx).not.toContain(0);
     expect(idx.length).toBe(ROWS_MOUNTED);
     const nodes = [...m.host.querySelectorAll('[role="listbox"] > *')];
-    expect(nodes.filter((n) => n.getAttribute("role") === "option").length).toBe(ROWS_MOUNTED);
+    expect(nodes.filter((n) => n.getAttribute("role") === "option" || n.querySelector(':scope > [role="option"]') !== null).length).toBe(ROWS_MOUNTED);
     // The page cache is the one bound on page rows, whatever was walked to get here.
     expect(engine.storePageCacheRows()).toBeLessThanOrEqual(150);
   });

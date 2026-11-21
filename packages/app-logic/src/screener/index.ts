@@ -37,7 +37,7 @@ export {
   type ScreenerViewInput,
   type ViewRow,
 } from "./view.js";
-export { refused } from "./view-parts.js";
+export { refused, unsubscribeSeenKey } from "./view-parts.js";
 export {
   junkKey,
   junkLabelOf,

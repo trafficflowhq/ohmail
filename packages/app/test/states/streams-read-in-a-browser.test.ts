@@ -96,7 +96,8 @@ describe("the stream's read rule in a real browser", () => {
     expect(await earned(page)).toEqual([]);
     const at = await geometry(page);
     await page.mouse.move(at.x, at.y);
-    await page.mouse.wheel(0, 900);
+    // Stop at 700 px so the third card’s first lines enter the reading band.
+    await page.mouse.wheel(0, 700);
     await settled(page);
     const after = await geometry(page);
     expect(after.scrollTop).toBeGreaterThan(400);

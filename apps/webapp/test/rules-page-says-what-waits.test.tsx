@@ -80,6 +80,7 @@ async function open(
       children: h(ThemeProvider, { children: h(ToastHost, { children: h(MailFrame, { host: rulesHost }) }) }),
     }));
   });
+  await within(host).findByRole("list", { name: words.settings.rules }, { timeout: 5000 });
 }
 
 const ruleRows = () => within(within(host).getByRole("list", { name: words.settings.rules })).getAllByRole("listitem");

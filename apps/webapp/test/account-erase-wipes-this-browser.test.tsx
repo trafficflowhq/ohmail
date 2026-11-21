@@ -181,12 +181,14 @@ async function plantPreferences(owner: string): Promise<string[]> {
   localStorage.setItem(mailOriginalKey(owner), JSON.stringify(["m1"]));
   // The Screener's impersonation mark (#777), by name until its builder is on main.
   localStorage.setItem(`ohmail.screener.impersonationSeen.${owner}`, "2026-09-26T15:00:00.000Z");
+  const { unsubscribeSeenKey } = await import("@ohmail/app-logic/screener");
+  localStorage.setItem(unsubscribeSeenKey(owner), "1");
   sessionStorage.setItem(dismissKey({ kind: "trialEnding", deadline: "2026-09-28T00:00:00.000Z" }, owner), "1");
   sessionStorage.setItem(resumeOnceKey(owner), JSON.stringify({ at: 0, answer: "resumed", reloads: 0 }));
   // The catch-up note's builder is private to the API client.
   sessionStorage.setItem(`ohmail.lifecycle.${owner}.caughtUp`, "2026-09-20T00:00:00.000Z");
   const planted = [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => !before.has(k));
-  expect(planted, "a builder wrote nothing").toHaveLength(10);
+  expect(planted, "a builder wrote nothing").toHaveLength(11);
   return planted.sort();
 }
 

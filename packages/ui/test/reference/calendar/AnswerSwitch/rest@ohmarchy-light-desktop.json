@@ -3,9 +3,9 @@
   "state": "rest",
   "look": "ohmarchy-light-desktop",
   "place": "cell",
-  "target": [802.8438, 510.25, 348, 68],
-  "clip": [802, 510, 349, 69],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [802.8438, 520.75, 348, 68],
+  "clip": [802, 520, 349, 69],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -68,7 +68,7 @@
     {
       "role": "group",
       "name": "Answer",
-      "box": [0, 0.1, 348, 68],
+      "box": [0, 0, 348, 68],
       "drawn": {
         "color": "rgb(16, 15, 15)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -84,7 +84,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "surfaces": [{ "box": [0, 0.1, 239.3, 32], "paint": 0 }]
+      "surfaces": [{ "box": [0, 0, 239.3, 32], "paint": 0 }]
     },
     {
       "role": "button",

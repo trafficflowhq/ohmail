@@ -3,9 +3,9 @@
   "state": "beside",
   "look": "ohmarchy-light-desktop",
   "place": "window",
-  "target": [763.84, 219, 10, 32],
-  "clip": [763, 219, 11, 32],
-  "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a",
+  "target": [762, 254, 30, 32],
+  "clip": [762, 254, 30, 32],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",

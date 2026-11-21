@@ -10,6 +10,7 @@ import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { Notice, RefusalLine } from "@ohmail/ui/base";
 import {
   addDays,
+  clockOf,
   isoOfDay,
   readerZones,
   type CalendarPort,
@@ -18,6 +19,8 @@ import {
   type RangeActs,
   type RangeInput,
 } from "@ohmail/app-logic/calendar";
+import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
+import { EventChip } from "@ohmail/ui/calendar";
 import { fragmentOf } from "../frame/route.js";
 import { useEventBrowse } from "./use-event-browse.js";
 import { useGridKeys } from "./use-grid-keys.js";
@@ -35,7 +38,7 @@ import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
 import { CalendarFirstStep, useCalendarFirstStep } from "./CalendarFirstStep.js";
 import { useNewEvent, useNewEventKey } from "./use-new-event.js";
 import { useSlotDraft } from "./use-slot-draft.js";
-import { DRAFT_EVENT } from "./event-draft.js";
+import { DRAFT_EVENT, draftCalendars } from "./event-draft.js";
 import type { CalendarViewProps } from "./view.js";
 import { NewEvent, type DraftPreview } from "./NewEvent.js";
 import { OpenEvent } from "./OpenEvent.js";
@@ -262,11 +265,24 @@ function CalendarSurface(props: CalendarSurfaceProps) {
 }
 
 function useCalendarCanvas(
-  { route, port, zones, where, found, zone, settings, plan, panelOn, cursor, create }: CalendarSurfaceProps,
+  {
+    route,
+    port,
+    zones,
+    where,
+    found,
+    zone,
+    settings,
+    plan,
+    panelOn,
+    cursor,
+    create,
+    sources,
+  }: CalendarSurfaceProps,
   commands: FrameCommands,
 ) {
   const actions = useEventActions(port, zones);
-  const startSlot = useSlotDraft(
+  const { startSlot, preview: slot } = useSlotDraft(
     route.open === null && route.words.panel !== "new" ? create : null,
     fragmentOf(route),
   );
@@ -312,6 +328,27 @@ function useCalendarCanvas(
           if (face && (route.open === null || route.open === face.id)) drag(face, press, undefined, segment);
         }
       : undefined;
+  const target =
+    slot &&
+    newEventsCalendarOf(
+      settings.newEventsCalendarId ?? null,
+      draftCalendars(sources.calendars, sources.connections),
+    );
+  const dragPreview = slot
+    ? {
+        day: slot.day,
+        chip: (
+          <EventChip
+            size="block"
+            state="draft"
+            drag="copy"
+            title={`${clockOf(slot.from)}–${clockOf(slot.to % (24 * 60))}`}
+            tone={target ? (sources.tones.get(target.id) ?? "neutral") : null}
+            place={{ top: slot.from * slot.scale, height: (slot.to - slot.from) * slot.scale }}
+          />
+        ),
+      }
+    : dragged;
   const timeProps: CalendarViewProps = {
     anchor: anchorDay,
     events,
@@ -337,7 +374,7 @@ function useCalendarCanvas(
           }
         : undefined,
     ...(onDrag ? { onDrag } : {}),
-    ...(dragged ? { dragPreview: dragged } : {}),
+    ...(dragPreview ? { dragPreview } : {}),
     onDay: (day: PlainDate) => go({ place: "day", sub: isoOfDay(day) }),
   };
   return { actions, suppressClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps };

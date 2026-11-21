@@ -122,15 +122,40 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
       const letters = [0, 1, 2].map((i) => stocked(i, make));
       const { address, mail } = mountStreamFrame({ at: `#/${route}`, letters });
       const list = within(screen.getByRole("region", { name }));
+      const stream = screen.getByRole("region", { name: `${name} stream` });
+      const reading = within(stream);
+      const scroller = stream.querySelector<HTMLElement>(".oh-sheet-scroll")!;
+      // Give the scroll spy a real viewport and let the anchor absorb the inserted card.
+      const cardHeight = 200;
+      const cards = () => [...scroller.querySelectorAll("[data-stream-item]")];
+      vi.spyOn(scroller, "clientHeight", "get").mockReturnValue(240);
+      vi.spyOn(scroller, "scrollHeight", "get").mockImplementation(() => cards().length * cardHeight);
+      vi.spyOn(scroller, "scrollTo").mockImplementation((leftOrOptions?: number | ScrollToOptions, top?: number) => {
+        const nextTop = typeof leftOrOptions === "number" ? top : leftOrOptions?.top;
+        scroller.scrollTop = nextTop ?? scroller.scrollTop;
+        fireEvent.scroll(scroller);
+      });
+      const rect = Element.prototype.getBoundingClientRect;
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        if (this === scroller) return new DOMRect(0, 0, 400, scroller.clientHeight);
+        const index = cards().indexOf(this);
+        if (index !== -1) return new DOMRect(0, index * cardHeight - scroller.scrollTop, 400, cardHeight);
+        return rect.call(this);
+      });
+      const paint = () => act(async () => {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      });
+      await paint();
       const cursor = () => list.queryByRole("option", { selected: true })?.dataset.id;
       expect.soft(cursor()).toBe("m0");
       const fresh = new Date(Date.parse(ISO) + 1000).toISOString();
       const newLetter = { ...stocked(9, make, true), date: fresh, arrivedAt: fresh };
       await act(async () => { mail.add(newLetter); });
+      await paint();
       expect(list.getAllByRole("option")[0]?.dataset.id).toBe("m9");
+      expect(scroller.scrollTop).toBe(cardHeight);
       expect(cursor()).toBe("m0");
       expect(address.read()).toBe(`#/${route}`);
-      const reading = within(screen.getByRole("region", { name: `${name} stream` }));
       expect(reading.queryByRole("button", { name: "Collapse" })).toBeNull();
       expect(mail.bodyAsks).toEqual([]);
       expect(mail.mutations).toEqual([]);

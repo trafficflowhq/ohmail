@@ -213,6 +213,57 @@ describe("the unsubscribe question", () => {
     expect(asked.decided).toEqual([{ id: "lena", dest: "spam", read: false, scope: "sender" }]);
   });
 
+  it("explains the first confirmed unsubscribe per account, across mounts and senders", () => {
+    const mountAccount = (accountScope: string, waiting = QUEUE) =>
+      mountPlace(modelOf(asked, { accountScope, waiting, waitingCount: waiting.length, ...sends }));
+    const question = (key: "n" | "x", name: string) => {
+      press(key);
+      return within(screen.getByRole("dialog", { name }));
+    };
+    let account = mountAccount("account-one");
+    const first = question("x", "Mark spam and unsubscribe");
+    expect(first.getByText(/Later mail from them follows this rule/)).toBeTruthy();
+    fireEvent.click(first.getByRole("button", { name: "Cancel" }));
+    expect(asked.decided).toBeUndefined();
+    const second = question("x", "Mark spam and unsubscribe");
+    expect(second.getByText(/Later mail from them follows this rule/)).toBeTruthy();
+    fireEvent.click(second.getByRole("button", { name: "Mark spam and unsubscribe" }));
+    account.view.unmount();
+
+    account = mountAccount("account-one", [MARCO]);
+    const repeat = question("n", "Screen out and unsubscribe");
+    expect(repeat.queryByText(/Later mail from them follows this rule/)).toBeNull();
+    expect(repeat.getByText("Once sent, it cannot be undone.")).toBeTruthy();
+    fireEvent.click(repeat.getByRole("button", { name: "Continue" }));
+    expect(asked.decided).toEqual([
+      { id: "lena", dest: "spam", read: false, scope: "sender" },
+      { id: "marco", dest: "screened", read: false, scope: "sender" },
+    ]);
+    account.view.unmount();
+
+    mountAccount("account-two", [MARCO]);
+    expect(
+      question("n", "Screen out and unsubscribe").getByText(/Later mail from them follows this rule/),
+    ).toBeTruthy();
+  });
+
+  it("names the domain when a repeated confirmation can unsubscribe multiple senders", () => {
+    const accountScope = "account-one";
+    const first = mountPlace(modelOf(asked, { accountScope, waiting: QUEUE, waitingCount: 2, ...sends }));
+    press("n");
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Screen out and unsubscribe" }),
+    );
+    first.view.unmount();
+
+    const domainSender = sender("marco", "Marco Pine", { scope: "domain" });
+    mountPlace(modelOf(asked, { accountScope, waiting: [domainSender], waitingCount: 1, ...sends }));
+    press("x");
+    const confirm = within(screen.getByRole("dialog", { name: /Mark .+ as spam and unsubscribe/ }));
+    expect(confirm.getByRole("button", { name: "Continue" })).toBeTruthy();
+    expect(confirm.getByText("Once sent, it cannot be undone.")).toBeTruthy();
+  });
+
   it("a place that sends none is decided at once", () => {
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2, ...sends }));
     press("o");
@@ -266,6 +317,88 @@ describe("the queue's tools", () => {
     fireEvent.click(within(ask).getByRole("button", { name: "Suggest for 2 senders" }));
     expect(calls).toEqual(["open", "confirm"]);
   });
+
+  it.each([
+    {
+      lang: "en",
+      open: "Suggest again…",
+      title: "Suggest again",
+      empty: "No senders need a new suggestion.",
+      action: [
+        "Suggest again for 1 sender",
+        "Suggest again for the first 2 senders",
+        "Suggest again for all 4 senders",
+      ],
+    },
+    {
+      lang: "de",
+      open: "Neu vorschlagen …",
+      title: "Neu vorschlagen",
+      empty: "Kein Absender braucht einen neuen Vorschlag.",
+      action: [
+        "Für 1 Absender neu vorschlagen",
+        "Für die ersten 2 Absender neu vorschlagen",
+        "Für alle 4 Absender neu vorschlagen",
+      ],
+    },
+  ] as const)(
+    "$lang names the actual re-ask and gives an empty quote no purchase control",
+    ({ lang, open, title, empty, action }) => {
+      let phase: ScreenerSuggestControl["phase"] = "closed";
+      let size = 4;
+      let quote = 0;
+      let confirmed = 0;
+      const control: ScreenerSuggestControl = {
+        available: 0,
+        resuggestable: 4,
+        pool: 4,
+        sizes: [2, 4],
+        get size() {
+          return size;
+        },
+        get phase() {
+          return phase;
+        },
+        get quote() {
+          return { senders: quote, credits: quote };
+        },
+        get notice() {
+          return quote === 0 ? empty : null;
+        },
+        progress: null,
+        open: () => {},
+        openAgain: () => {
+          phase = "ready";
+        },
+        choose: () => {},
+        confirm: () => {
+          confirmed++;
+        },
+        cancel: () => {},
+      };
+      const model = modelOf(asked, { waiting: QUEUE, waitingCount: 2 });
+      const world = mountPlace(model, {
+        lang,
+        beside: {
+          ...BESIDE,
+          suggest: { priced: true, control, noAdvice: NO_RUN },
+        },
+      });
+      fireEvent.click(screen.getByRole("button", { name: open }));
+      world.again({ ...model });
+      const ask = within(screen.getByRole("dialog"));
+      expect(ask.getByText(title, { exact: true })).toBeTruthy();
+      expect(ask.getByText(empty)).toBeTruthy();
+      expect(ask.queryAllByRole("button")).toEqual([]);
+      for (const [index, count] of [1, 2, 4].entries()) {
+        quote = count;
+        size = count === 2 ? 2 : 4;
+        world.again({ ...model });
+        fireEvent.click(ask.getByRole("button", { name: action[index]! }));
+      }
+      expect(confirmed).toBe(3);
+    },
+  );
 
   it("no run handed, no Suggest; Apply files every real suggestion", () => {
     let applied = 0;

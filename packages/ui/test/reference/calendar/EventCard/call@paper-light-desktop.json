@@ -5,7 +5,7 @@
   "place": "block",
   "target": [629.7031, 338, 344, 465.5156],
   "clip": [629, 338, 345, 466],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -208,6 +208,7 @@
   "paints": [
     {
       "boxShadow": "oklch(0.6 0.14 288) 0px 0px 0px 1.5px, rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
+      "clipPath": "path(evenodd, \"M -4000 -4000 H 8000 V 8000 H -4000 Z M -148.86 176 H -22 A 12 12 0 0 1 -10 188 V 195.75 A 12 12 0 0 1 -22 207.75 H -148.86 A 12 12 0 0 1 -160.86 195.75 V 188 A 12 12 0 0 1 -148.86 176 Z\")",
       "borderRadius": "20px"
     },
     { "backgroundColor": "oklch(0.6 0.14 288)", "borderRadius": "2px" },

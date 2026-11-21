@@ -56,7 +56,7 @@ export function listenToKeys(
   el: HTMLElement,
   rule: StreamReadRule,
   now: () => number,
-  startFlight: () => void,
+  startFlight: (insideLetter: boolean) => void,
   still: (by: StreamHand) => void,
   onWheel: (event: WheelEvent) => void,
   onLetterEnter: () => void,
@@ -74,7 +74,7 @@ export function listenToKeys(
     if (jumpsToAnEnd(e)) {
       /* A scroll key drives the leave, and its scroll is no hand's: nothing it carries past is read. */
       countHand();
-      startFlight();
+      startFlight((e.target as Node | null)?.ownerDocument !== el.ownerDocument);
       rule.scrollKey(now());
       return;
     }

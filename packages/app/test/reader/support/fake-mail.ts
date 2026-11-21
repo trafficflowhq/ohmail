@@ -106,6 +106,10 @@ export function fakeMail(
     verbRead: () => reader,
     /* Nothing of this world waits on the outbox. */
     queuedChanges: () => NO_QUEUED,
+    queuedRuleWrites: () => [],
+    appliedRuleRequests: () => [],
+    unsettledRulePresses: () => [],
+    waitingOnOrganizer: () => [],
     subscribe: (l: () => void) => {
       listeners.add(l);
       return () => {

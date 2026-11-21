@@ -5,7 +5,7 @@
   "place": "block",
   "target": [400, 12, 307, 504.375],
   "clip": [400, 12, 307, 505],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": { "device": "fold", "face": "paper", "scheme": "dark", "width": 719, "height": 781, "scale": 2 },
   "reader": 7,
   "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
@@ -27,6 +27,20 @@
       "textTransform": "none",
       "textOverflow": "ellipsis",
       "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
     },
     {
       "color": "rgb(184, 175, 163)",
@@ -107,20 +121,6 @@
     {
       "color": "rgb(184, 175, 163)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "18.2px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "fontVariantNumeric": "tabular-nums",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(184, 175, 163)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
       "fontWeight": "600",
       "fontStyle": "normal",
@@ -184,7 +184,28 @@
       "surfaces": [{ "box": [75.2, 34, 173.9, 24], "paint": 0 }]
     },
     {
-      "role": "textbox",
+      "role": "status",
+      "name": "",
+      "box": [257.1, 36.9, 29.9, 18.2],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "text": [{ "said": "Draft", "type": 1 }]
+    },
+    {
+      "role": "combobox",
       "name": "To",
       "box": [75.2, 72, 133.6, 36],
       "drawn": {
@@ -201,7 +222,8 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(246, 241, 233)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
       "role": "button",
@@ -222,7 +244,7 @@
         "paddingLeft": "12px",
         "borderColor": "rgb(184, 175, 163)"
       },
-      "text": [{ "said": "Cc Bcc", "type": 1 }]
+      "text": [{ "said": "Cc Bcc", "type": 2 }]
     },
     {
       "role": "textbox",
@@ -244,7 +266,7 @@
         "borderColor": "rgb(246, 241, 233)"
       },
       "state": ["shows its hint"],
-      "text": [{ "said": "Subject", "type": 2, "shown": true }],
+      "text": [{ "said": "Subject", "type": 3, "shown": true }],
       "surfaces": [{ "box": [20, 128, 267, 44], "paint": 1 }]
     },
     {
@@ -287,7 +309,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(184, 175, 163)"
       },
-      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 3 }]
+      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 4 }]
     },
     {
       "role": "button",
@@ -371,7 +393,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(184, 175, 163)"
       },
-      "text": [{ "said": "Aa", "type": 4 }]
+      "text": [{ "said": "Aa", "type": 5 }]
     },
     {
       "role": "button",
@@ -414,14 +436,13 @@
         "borderColor": "rgb(184, 175, 163)"
       },
       "state": ["disabled"],
-      "text": [{ "said": "Draft from your text", "type": 5 }],
+      "text": [{ "said": "Draft from your text", "type": 6 }],
       "surfaces": [{ "box": [99.4, 441.4, 18, 18], "paint": 7 }]
     }
   ],
   "loose": {
     "text": [
-      { "said": "From", "type": 6 },
-      { "said": "Draft", "type": 7 },
+      { "said": "From", "type": 7 },
       { "said": "To", "type": 8 }
     ],
     "surfaces": [

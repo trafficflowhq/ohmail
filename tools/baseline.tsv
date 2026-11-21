@@ -392,12 +392,8 @@ apps/webapp/app/components/AttachmentPreview.tsx	eslint:unused-directive	1	remov
 apps/webapp/app/components/ComposeAttach.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/error-report.ts	eslint:unused-directive	1	removals
 apps/webapp/app/shell/ThreadMarks.tsx	eslint:unused-directive	1	removals
-apps/webapp/app/shell/ThreadStrip.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/shell/engine-config.ts	ohmail/package-borders:testing	1	removals
 apps/webapp/app/shell/face-mirror.ts	ohmail/owner-lookup	1	ruling:scope-switch-settings
-apps/webapp/app/shell/stream-bar.ts	eslint:unused-directive	1	removals
-apps/webapp/app/views/ReadsView.tsx	eslint:unused-directive	3	removals
-apps/webapp/app/views/ReceiptsView.tsx	eslint:unused-directive	3	removals
 apps/webapp/test/api-rewrite.test.ts	ohmail/package-borders:apps/api-vercel	1	lift-a
 apps/webapp/test/cross-surface-convergence.test.tsx	ohmail/package-borders:apps/mobile	3	lift-a
 apps/webapp/test/editor-feel/intl-shim.mjs	ohmail/declared-dependency	2	lift-a

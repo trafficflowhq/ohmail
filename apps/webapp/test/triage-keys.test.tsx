@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { listSeat } from "../../../packages/app/test/places/list-seat.js";
@@ -27,6 +27,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let roots: Root[] = [];
 
 beforeEach(() => {
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   window.location.hash = "";
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -125,7 +127,8 @@ const forwardEditor = () => screen.queryByRole("textbox", { name: "Forward body"
 async function openLater(): Promise<void> {
   await shell();
   await screen.findByRole("listbox", { name: "Answer Later" });
-  await screen.findByRole("region", { name: "Reading" });
+  fireEvent.click(laterRows()[0]!);
+  await screen.findByRole("region", { name: "Open message" });
 }
 
 describe("TRI-F4 — a/e/b act INSIDE the Triage view", () => {

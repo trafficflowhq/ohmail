@@ -40,6 +40,7 @@ export async function prepareMailPage(routes: Parameters<typeof serve>[0] = {}) 
   sessionStorage.clear();
   document.cookie = `tf_owner=${ACCOUNT}; Path=/`;
   history.replaceState(null, "", "#/ohbox");
+  await (await import("@ohmail/app/mail")).prepareWriting();
   vi.useFakeTimers();
   vi.setSystemTime(new Date(ISO));
   vi.stubGlobal("matchMedia", (media: string) => ({

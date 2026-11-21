@@ -5,7 +5,7 @@
   "place": "block",
   "target": [268, 808.8125, 396, 67.1875],
   "clip": [268, 808, 396, 68],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -59,7 +59,7 @@
   "nodes": [
     {
       "role": "status",
-      "name": "",
+      "name": "Nothing changed ohmail Cloud organizes this mailbox, so piles and returns are set there.",
       "box": [0, 0, 396, 67.2],
       "drawn": {
         "color": "rgb(18, 16, 14)",

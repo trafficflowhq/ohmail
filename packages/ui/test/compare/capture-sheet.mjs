@@ -54,9 +54,19 @@ const SHEET = "site/system",
 const FEEDBACK_TOOL = /\/feedback\.js$/;
 const TRIES = 4;
 /** Raised when the way a picture is taken changes: every picture is then taken again. */
-const TAKING = 5;
-const sourceHash = (/** @type {unknown} */ source) =>
-  sha256(JSON.stringify([TAKING, source ?? null])).slice(0, 16);
+const TAKING = 6;
+const sourceHash = (
+  /** @type {unknown} */ source,
+  /** @type {{ component: string, state: string }} */ row,
+) => {
+  const staged =
+    (row.component === "WaitRow" && row.state === "refused") ||
+    (row.component === "Report" && row.state === "why") ||
+    (row.component === "Page" && row.state === "refused");
+  return sha256(
+    JSON.stringify(staged ? [TAKING, source ?? null, "screen-stage"] : [TAKING, source ?? null]),
+  ).slice(0, 16);
+};
 /** A specimen stands in a page as wide as the sheet's own; a screen in its device's window. */
 const SHEET_WINDOW = [1440, 900];
 const WINDOWS = { desktop: [1440, 900], phone: [390, 844], fold: [719, 781], foldl: [841, 673] };
@@ -190,8 +200,49 @@ export async function captureState(browser, base, row, source, look, studioCommi
           .catch(() => {
             throw new Error("the reference did not draw the state bare");
           });
+        if (device === "phone")
+          await page.addStyleTag({
+            content:
+              ".ob-acts { background: transparent !important; } .ob-acts::before { display: none !important; }",
+          });
         if (source.press) await page.locator(source.press).first().click();
         await page.locator(source.part).first().waitFor({ state: "visible", timeout: 5000 });
+        if (row.component === "WaitRow" && row.state === "refused") {
+          await page.evaluate((selector) => {
+            const part = document.querySelector(selector);
+            for (const sibling of [...(part?.parentElement?.children ?? [])]) {
+              if (sibling !== part) sibling.remove();
+            }
+          }, source.part);
+        }
+        if (row.component === "Report" && row.state === "why") {
+          await page.addStyleTag({
+            content:
+              'body *{visibility:hidden}#report,#report *{visibility:visible}#report{isolation:isolate}#report::before{content:"";position:fixed;inset:0;background:var(--ground);z-index:-1}',
+          });
+        }
+        if (
+          row.component === "Page" &&
+          row.state === "refused" &&
+          face === "ohmarchy" &&
+          device !== "phone"
+        ) {
+          await page.evaluate((selector) => {
+            const part = document.querySelector(selector);
+            const frame = part?.parentElement;
+            if (!(part instanceof HTMLElement) || !frame) throw new Error("the page window is missing");
+            const a = part.getBoundingClientRect();
+            const b = frame.getBoundingClientRect();
+            if (
+              [a.x - b.x, a.y - b.y, a.width - b.width, a.height - b.height].some((n) => Math.abs(n) > 0.05)
+            )
+              throw new Error("the page and its window do not share bounds");
+            const ring = getComputedStyle(frame).boxShadow;
+            if (ring === "none") throw new Error("the page window has no ring");
+            part.style.boxShadow = ring;
+            frame.style.boxShadow = "none";
+          }, source.part);
+        }
         await page.evaluate(settled);
         own = await stillBoxes(page, { root: "body", selector: source.part });
         target = await page.evaluate(boxIn, { root: "body", selector: source.part });
@@ -360,7 +411,7 @@ async function main() {
           had &&
           had.studioCommit === commit &&
           had.stateHash === stateHash(row) &&
-          had.source === sourceHash(source) &&
+          had.source === sourceHash(source, row) &&
           existsSync(picture) &&
           existsSync(dataFile) &&
           sha256(readFileSync(picture)) === had.png.sha256
@@ -403,7 +454,7 @@ async function main() {
           png: { sha256: sha256(shot.png), w: width, h: height, scale: shot.data.variant.scale },
           scene: { sha256: sha256(text) },
           stateHash: stateHash(row),
-          source: sourceHash(source),
+          source: sourceHash(source, row),
           studioCommit: commit,
         });
         if (shot.said.length) problems.push({ key, said: shot.said });

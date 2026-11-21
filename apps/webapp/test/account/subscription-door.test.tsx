@@ -10,6 +10,7 @@ import { fillOver, TextProvider, type Messages } from "@ohmail/app/text";
 import { useSubscription } from "../../../../packages/app/src/account/subscription/index.js";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
 import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 import ownDe from "../../../../packages/app/messages/account-subscription.de.json";
@@ -66,10 +67,6 @@ async function mounted(withdraw: () => void = () => {}) {
     import("../../app/(product)/mailbox/pane-parts"),
     import("../../app/(product)/mailbox/SubscriptionSection"),
   ]);
-  function ModelProbe() {
-    drawnModel = useSubscription(useSubscriptionDoor(null, withdraw));
-    return null;
-  }
   await published();
   server.forget();
   const { host } = fakeHost({
@@ -82,16 +79,23 @@ async function mounted(withdraw: () => void = () => {}) {
       subscription: { name: "subscription", render: () => <SubscriptionSection onNowhere={withdraw} /> },
     },
   });
-  return render(
+  function SubscriptionFrame() {
+    const consent = useConsentState(false, host.session.scope, NONE);
+    drawnModel = useSubscription(useSubscriptionDoor(null, withdraw));
+    return <ConsentContext.Provider value={consent}><MailFrame host={host} /></ConsentContext.Provider>;
+  }
+  await (await import("@ohmail/app/mail")).prepareWriting();
+  const view = render(
     <Words>
       <ThemeProvider>
         <ToastHost>
-          <ModelProbe />
-          <MailFrame host={host} />
+          <SubscriptionFrame />
         </ToastHost>
       </ThemeProvider>
     </Words>,
   );
+  await screen.findByRole("button", { name: en.settings.subscriptionManage });
+  return view;
 }
 const press = async () => {
   await act(async () => {

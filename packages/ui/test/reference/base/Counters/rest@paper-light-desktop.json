@@ -3,9 +3,9 @@
   "state": "rest",
   "look": "paper-light-desktop",
   "place": "block",
-  "target": [160, 264, 476, 140],
-  "clip": [160, 264, 476, 140],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [160, 288, 476, 140],
+  "clip": [160, 288, 476, 140],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -54,11 +54,11 @@
   "nodes": [],
   "loose": {
     "text": [
-      { "said": "610", "type": 0 },
+      { "said": "607", "type": 0 },
       { "said": "screened", "type": 1 },
-      { "said": "3,858", "type": 0 },
+      { "said": "3,842", "type": 0 },
       { "said": "in History", "type": 1 },
-      { "said": "4,938", "type": 0 },
+      { "said": "4,957", "type": 0 },
       { "said": "to read", "type": 1 }
     ],
     "surfaces": [

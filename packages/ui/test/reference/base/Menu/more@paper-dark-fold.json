@@ -5,7 +5,7 @@
   "place": "block",
   "target": [455, 214, 232, 483],
   "clip": [455, 214, 232, 483],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": { "device": "fold", "face": "paper", "scheme": "dark", "width": 719, "height": 781, "scale": 2 },
   "reader": 7,
   "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },

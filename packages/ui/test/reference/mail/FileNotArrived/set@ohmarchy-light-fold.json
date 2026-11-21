@@ -3,9 +3,9 @@
   "state": "set",
   "look": "ohmarchy-light-fold",
   "place": "block",
-  "target": [418, 488.75, 271, 223.1719],
-  "clip": [418, 488, 271, 224],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [418, 484.75, 271, 223.1719],
+  "clip": [418, 484, 271, 224],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "fold",
     "face": "ohmarchy",

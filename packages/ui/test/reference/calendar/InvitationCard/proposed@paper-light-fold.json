@@ -3,9 +3,9 @@
   "state": "proposed",
   "look": "paper-light-fold",
   "place": "block",
-  "target": [420, 344.875, 267, 429.7031],
-  "clip": [420, 344, 267, 431],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [420, 340.875, 267, 429.7031],
+  "clip": [420, 340, 267, 431],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "fold",
     "face": "paper",

@@ -129,7 +129,7 @@ export interface SuggestWire {
   list: (opts: { limit?: number }) => Promise<ScreenerPage>;
   suggest: (
     senders: string[],
-    opts?: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; automatic?: boolean },
+    opts?: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; quoteGrant?: string; automatic?: boolean },
   ) => Promise<ScreenerSuggested>;
   messageFor: (err: unknown, fallback: string) => string;
   aiAvailable?: () => Promise<boolean | null>;

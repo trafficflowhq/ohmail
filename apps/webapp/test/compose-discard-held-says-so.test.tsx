@@ -135,7 +135,9 @@ describe("Discard, pressed in the composer on a message whose send is not confir
     await goto("#/");
     await goto("#/compose");
 
-    await press(letter().getByRole("button", { name: "Discard" }));
+    await press(
+      within(letter().getByRole("toolbar", { name: messages.write.verbs })).getByRole("button", { name: "Discard" }),
+    );
     await settle(10);
     expect(notices(), "the composer closed over a kept draft without a word").toContain(compose.discardHeld);
     expect(sent.filter((m) => m.kind === "draft_discard"), "a held draft was deleted").toEqual([]);
@@ -148,7 +150,9 @@ describe("Discard, pressed in the composer on a message whose send is not confir
     await mountShell();
     const id = await makeADraft();
 
-    await press(letter().getByRole("button", { name: "Discard" }));
+    await press(
+      within(letter().getByRole("toolbar", { name: messages.write.verbs })).getByRole("button", { name: "Discard" }),
+    );
     await settle(10);
     expect(notices()).not.toContain(compose.discardHeld);
     expect(within(host!).getByRole("button", { name: "Undo" })).toBeTruthy();

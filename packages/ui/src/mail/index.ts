@@ -102,7 +102,7 @@ export { Attach } from "./Editor/Attach.js";
 export type { AttachProps } from "./Editor/Attach.js";
 export { AttachRoom } from "./Editor/AttachRoom.js";
 export type { AttachRoomProps } from "./Editor/AttachRoom.js";
-export { AfterComposerText } from "./Editor/AfterComposerText.js";
+export { useAfterComposerTextTarget } from "./Editor/AfterComposerText.js";
 export { Composer } from "./Editor/Composer.js";
 export type { ComposerProps } from "./Editor/Composer.js";
 export { ComposerMarks, type ComposerMark, type ComposerMarksProps } from "./Editor/ComposerMarks.js";

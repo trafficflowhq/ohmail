@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 
 const Slot = createContext<HTMLDivElement | null | undefined>(undefined);
 
@@ -13,9 +12,7 @@ export function AfterComposerTextSlot({ children }: { children: ReactNode }) {
   );
 }
 
-/** Controls owned by the editor, laid out after its body and before the signature. */
-export function AfterComposerText({ children }: { children: ReactNode }) {
-  const target = useContext(Slot);
-  if (target === undefined) return children;
-  return target === null ? null : createPortal(children, target);
+/** The slot after the editor body and before the signature. */
+export function useAfterComposerTextTarget(): HTMLDivElement | null | undefined {
+  return useContext(Slot);
 }

@@ -103,7 +103,7 @@ describe("Deleting a draft this browser holds a send record for", () => {
     const commit = sliceOfDeclaration(shell, "discardDraftRow");
     expect(commit).toContain("const decision = decideDraftDiscard(draftId);");
     expect(commit).toMatch(
-      /res\.status === "rolled_back" && res\.error\?\.code === "send_recorded"\) \{\s*return \{ kind: "blocked", why: "still-sending" \};/,
+      /res\.status === "rolled_back" && res\.error\?\.code === "send_recorded"\) \{\s*releaseRefusedCompose\(\);\s*return \{ kind: "blocked", why: "still-sending" \};/,
     );
     const report = sliceOfDeclaration(shell, "discardDraft");
     expect(report).toMatch(/case "blocked": setDiscardRefusal\(\{ draftId: listed, why: v\.why, at: Date\.now\(\) \}\)/);

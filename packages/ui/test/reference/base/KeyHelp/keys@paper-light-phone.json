@@ -5,7 +5,7 @@
   "place": "window",
   "target": [16, 16, 358, 812],
   "clip": [16, 16, 358, 812],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "phone",
     "face": "paper",
@@ -22,45 +22,6 @@
     { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
   ],
   "types": [
-    {
-      "color": "rgb(18, 16, 14)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "16px",
-      "fontWeight": "600",
-      "fontStyle": "normal",
-      "lineHeight": "22.4px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "700",
-      "fontStyle": "normal",
-      "lineHeight": "13px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "18.2px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
     {
       "color": "rgb(18, 16, 14)",
       "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
@@ -93,7 +54,6 @@
       "boxShadow": "rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
       "borderRadius": "20px"
     },
-    { "backgroundColor": "rgb(240, 235, 227)", "borderRadius": "999px" },
     { "backgroundColor": "rgb(18, 16, 14)", "borderRadius": "999px" },
     { "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 1 447c0f4542bb" }
   ],
@@ -117,101 +77,7 @@
         "paddingLeft": "24px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "text": [
-        { "said": "Next", "type": 0 },
-        { "said": "j", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "↓", "type": 1 },
-        { "said": "Previous", "type": 0 },
-        { "said": "k", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "↑", "type": 1 },
-        { "said": "Ohbox", "type": 0 },
-        { "said": "g o", "type": 1 },
-        { "said": "News", "type": 0 },
-        { "said": "g r", "type": 1 },
-        { "said": "Receipts", "type": 0 },
-        { "said": "g e", "type": 1 },
-        { "said": "Screener", "type": 0 },
-        { "said": "g s", "type": 1 },
-        { "said": "Answer Later", "type": 0 },
-        { "said": "g l", "type": 1 },
-        { "said": "Parked", "type": 0 },
-        { "said": "g p", "type": 1 },
-        { "said": "Resurface", "type": 0 },
-        { "said": "g b", "type": 1 },
-        { "said": "Drafts", "type": 0 },
-        { "said": "g d", "type": 1 },
-        { "said": "History", "type": 0 },
-        { "said": "g h", "type": 1 },
-        { "said": "Trash", "type": 0 },
-        { "said": "g t", "type": 1 },
-        { "said": "Settings", "type": 0 },
-        { "said": "g ,", "type": 1 },
-        { "said": "The first seven places", "type": 0 },
-        { "said": "1 … 7", "type": 1 },
-        { "said": "Search", "type": 0 },
-        { "said": "/", "type": 1 },
-        { "said": "Back to top", "type": 0 },
-        { "said": "g g", "type": 1 },
-        { "said": "Calendar", "type": 0 },
-        { "said": "g c", "type": 1 },
-        { "said": "Menu, list", "type": 0 },
-        { "said": "←", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "h", "type": 1 },
-        { "said": "List, open message", "type": 0 },
-        { "said": "→", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "l", "type": 1 },
-        { "said": "Open", "type": 0 },
-        { "said": "↵", "type": 1 },
-        { "said": "Select", "type": 0 },
-        { "said": "x", "type": 1 }
-      ],
-      "surfaces": [
-        { "box": [16, 16, 358, 812], "paint": 0 },
-        { "box": [297.7, 130, 20, 20], "paint": 1 },
-        { "box": [330, 130, 20, 20], "paint": 1 },
-        { "box": [297.7, 162, 20, 20], "paint": 1 },
-        { "box": [330, 162, 20, 20], "paint": 1 },
-        { "box": [307, 194, 20, 20], "paint": 1 },
-        { "box": [330, 194, 20, 20], "paint": 1 },
-        { "box": [307, 226, 20, 20], "paint": 1 },
-        { "box": [330, 226, 20, 20], "paint": 1 },
-        { "box": [307, 258, 20, 20], "paint": 1 },
-        { "box": [330, 258, 20, 20], "paint": 1 },
-        { "box": [307, 290, 20, 20], "paint": 1 },
-        { "box": [330, 290, 20, 20], "paint": 1 },
-        { "box": [307, 322, 20, 20], "paint": 1 },
-        { "box": [330, 322, 20, 20], "paint": 1 },
-        { "box": [307, 354, 20, 20], "paint": 1 },
-        { "box": [330, 354, 20, 20], "paint": 1 },
-        { "box": [307, 386, 20, 20], "paint": 1 },
-        { "box": [330, 386, 20, 20], "paint": 1 },
-        { "box": [307, 418, 20, 20], "paint": 1 },
-        { "box": [330, 418, 20, 20], "paint": 1 },
-        { "box": [307, 450, 20, 20], "paint": 1 },
-        { "box": [330, 450, 20, 20], "paint": 1 },
-        { "box": [307, 482, 20, 20], "paint": 1 },
-        { "box": [330, 482, 20, 20], "paint": 1 },
-        { "box": [307, 514, 20, 20], "paint": 1 },
-        { "box": [330, 514, 20, 20], "paint": 1 },
-        { "box": [284, 546, 20, 20], "paint": 1 },
-        { "box": [307, 546, 20, 20], "paint": 1 },
-        { "box": [330, 546, 20, 20], "paint": 1 },
-        { "box": [330, 578, 20, 20], "paint": 1 },
-        { "box": [307, 610, 20, 20], "paint": 1 },
-        { "box": [330, 610, 20, 20], "paint": 1 },
-        { "box": [307, 642, 20, 20], "paint": 1 },
-        { "box": [330, 642, 20, 20], "paint": 1 },
-        { "box": [294.7, 674, 23, 20], "paint": 1 },
-        { "box": [330, 674, 20, 20], "paint": 1 },
-        { "box": [294.7, 706, 23, 20], "paint": 1 },
-        { "box": [330, 706, 20, 20], "paint": 1 },
-        { "box": [330, 786, 20, 20], "paint": 1 },
-        { "box": [330, 818, 20, 20], "paint": 1 }
-      ]
+      "surfaces": [{ "box": [16, 16, 358, 812], "paint": 0 }]
     },
     {
       "role": "banner",
@@ -252,9 +118,9 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "level": 1,
-      "text": [{ "said": "Keys", "type": 3 }],
-      "surfaces": [{ "box": [92.5, 53.3, 7.5, 7.5], "paint": 2 }]
+      "level": 2,
+      "text": [{ "said": "Keys", "type": 0 }],
+      "surfaces": [{ "box": [92.5, 53.3, 7.5, 7.5], "paint": 1 }]
     },
     {
       "role": "button",
@@ -275,7 +141,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "surfaces": [{ "box": [318, 44, 20, 20], "paint": 3 }]
+      "surfaces": [{ "box": [318, 44, 20, 20], "paint": 2 }]
     },
     {
       "role": "heading",
@@ -296,9 +162,9 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "level": 2,
-      "text": [{ "said": "Move around", "type": 4 }],
-      "surfaces": [{ "box": [140.3, 106.6, 5.4, 5.4], "paint": 2 }]
+      "level": 3,
+      "text": [{ "said": "Move around", "type": 1 }],
+      "surfaces": [{ "box": [140.3, 106.6, 5.4, 5.4], "paint": 1 }]
     },
     {
       "role": "heading",
@@ -319,9 +185,9 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "level": 2,
-      "text": [{ "said": "This message", "type": 4 }],
-      "surfaces": [{ "box": [143.3, 762.6, 5.4, 5.4], "paint": 2 }]
+      "level": 3,
+      "text": [{ "said": "This message", "type": 1 }],
+      "surfaces": [{ "box": [143.3, 762.6, 5.4, 5.4], "paint": 1 }]
     }
   ],
   "loose": { "text": [], "surfaces": [] }

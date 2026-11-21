@@ -5,7 +5,7 @@
   "place": "window",
   "target": [16, 16, 358, 812],
   "clip": [16, 16, 358, 812],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "phone",
     "face": "ohmarchy",
@@ -22,45 +22,6 @@
     { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
   ],
   "types": [
-    {
-      "color": "rgb(169, 177, 214)",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "14px",
-      "fontWeight": "500",
-      "fontStyle": "normal",
-      "lineHeight": "19.6px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(141, 150, 188)",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "12px",
-      "fontWeight": "600",
-      "fontStyle": "normal",
-      "lineHeight": "12px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(141, 150, 188)",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "12px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "16.8px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
     {
       "color": "rgb(169, 177, 214)",
       "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
@@ -90,7 +51,6 @@
   ],
   "paints": [
     { "boxShadow": "rgb(122, 162, 247) 0px 0px 0px 2px" },
-    { "backgroundColor": "rgb(19, 20, 28)" },
     { "backgroundColor": "rgb(169, 177, 214)" },
     { "ink": "stroke rgb(169, 177, 214) 1.6px square miter 4; shapes 1 447c0f4542bb" }
   ],
@@ -114,101 +74,7 @@
         "paddingLeft": "24px",
         "borderColor": "rgb(169, 177, 214)"
       },
-      "text": [
-        { "said": "Next", "type": 0 },
-        { "said": "j", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "↓", "type": 1 },
-        { "said": "Previous", "type": 0 },
-        { "said": "k", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "↑", "type": 1 },
-        { "said": "Ohbox", "type": 0 },
-        { "said": "g o", "type": 1 },
-        { "said": "News", "type": 0 },
-        { "said": "g r", "type": 1 },
-        { "said": "Receipts", "type": 0 },
-        { "said": "g e", "type": 1 },
-        { "said": "Screener", "type": 0 },
-        { "said": "g s", "type": 1 },
-        { "said": "Answer Later", "type": 0 },
-        { "said": "g l", "type": 1 },
-        { "said": "Parked", "type": 0 },
-        { "said": "g p", "type": 1 },
-        { "said": "Resurface", "type": 0 },
-        { "said": "g b", "type": 1 },
-        { "said": "Drafts", "type": 0 },
-        { "said": "g d", "type": 1 },
-        { "said": "History", "type": 0 },
-        { "said": "g h", "type": 1 },
-        { "said": "Trash", "type": 0 },
-        { "said": "g t", "type": 1 },
-        { "said": "Settings", "type": 0 },
-        { "said": "g ,", "type": 1 },
-        { "said": "The first seven places", "type": 0 },
-        { "said": "1 … 7", "type": 1 },
-        { "said": "Search", "type": 0 },
-        { "said": "/", "type": 1 },
-        { "said": "Back to top", "type": 0 },
-        { "said": "g g", "type": 1 },
-        { "said": "Calendar", "type": 0 },
-        { "said": "g c", "type": 1 },
-        { "said": "Menu, list", "type": 0 },
-        { "said": "←", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "h", "type": 1 },
-        { "said": "List, open message", "type": 0 },
-        { "said": "→", "type": 1 },
-        { "said": "·", "type": 2 },
-        { "said": "l", "type": 1 },
-        { "said": "Open", "type": 0 },
-        { "said": "↵", "type": 1 },
-        { "said": "Select", "type": 0 },
-        { "said": "x", "type": 1 }
-      ],
-      "surfaces": [
-        { "box": [16, 16, 358, 812], "paint": 0 },
-        { "box": [294.8, 127, 20, 20], "paint": 1 },
-        { "box": [330, 127, 20, 20], "paint": 1 },
-        { "box": [294.8, 159, 20, 20], "paint": 1 },
-        { "box": [330, 159, 20, 20], "paint": 1 },
-        { "box": [307, 191, 20, 20], "paint": 1 },
-        { "box": [330, 191, 20, 20], "paint": 1 },
-        { "box": [307, 223, 20, 20], "paint": 1 },
-        { "box": [330, 223, 20, 20], "paint": 1 },
-        { "box": [307, 255, 20, 20], "paint": 1 },
-        { "box": [330, 255, 20, 20], "paint": 1 },
-        { "box": [307, 287, 20, 20], "paint": 1 },
-        { "box": [330, 287, 20, 20], "paint": 1 },
-        { "box": [307, 319, 20, 20], "paint": 1 },
-        { "box": [330, 319, 20, 20], "paint": 1 },
-        { "box": [307, 351, 20, 20], "paint": 1 },
-        { "box": [330, 351, 20, 20], "paint": 1 },
-        { "box": [307, 383, 20, 20], "paint": 1 },
-        { "box": [330, 383, 20, 20], "paint": 1 },
-        { "box": [307, 415, 20, 20], "paint": 1 },
-        { "box": [330, 415, 20, 20], "paint": 1 },
-        { "box": [307, 447, 20, 20], "paint": 1 },
-        { "box": [330, 447, 20, 20], "paint": 1 },
-        { "box": [307, 479, 20, 20], "paint": 1 },
-        { "box": [330, 479, 20, 20], "paint": 1 },
-        { "box": [307, 511, 20, 20], "paint": 1 },
-        { "box": [330, 511, 20, 20], "paint": 1 },
-        { "box": [284, 543, 20, 20], "paint": 1 },
-        { "box": [307, 543, 20, 20], "paint": 1 },
-        { "box": [330, 543, 20, 20], "paint": 1 },
-        { "box": [330, 575, 20, 20], "paint": 1 },
-        { "box": [307, 607, 20, 20], "paint": 1 },
-        { "box": [330, 607, 20, 20], "paint": 1 },
-        { "box": [307, 639, 20, 20], "paint": 1 },
-        { "box": [330, 639, 20, 20], "paint": 1 },
-        { "box": [294.8, 671, 20, 20], "paint": 1 },
-        { "box": [330, 671, 20, 20], "paint": 1 },
-        { "box": [294.8, 703, 20, 20], "paint": 1 },
-        { "box": [330, 703, 20, 20], "paint": 1 },
-        { "box": [330, 780, 20, 20], "paint": 1 },
-        { "box": [330, 812, 20, 20], "paint": 1 }
-      ]
+      "surfaces": [{ "box": [16, 16, 358, 812], "paint": 0 }]
     },
     {
       "role": "banner",
@@ -249,9 +115,9 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(169, 177, 214)"
       },
-      "level": 1,
-      "text": [{ "said": "Keys", "type": 3 }],
-      "surfaces": [{ "box": [81.5, 51.7, 7.1, 7.1], "paint": 2 }]
+      "level": 2,
+      "text": [{ "said": "Keys", "type": 0 }],
+      "surfaces": [{ "box": [81.5, 51.7, 7.1, 7.1], "paint": 1 }]
     },
     {
       "role": "button",
@@ -272,7 +138,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(169, 177, 214)"
       },
-      "surfaces": [{ "box": [318, 44, 20, 20], "paint": 3 }]
+      "surfaces": [{ "box": [318, 44, 20, 20], "paint": 2 }]
     },
     {
       "role": "heading",
@@ -293,9 +159,9 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(169, 177, 214)"
       },
-      "level": 2,
-      "text": [{ "said": "Move around", "type": 4 }],
-      "surfaces": [{ "box": [125.4, 105.5, 5.5, 5.5], "paint": 2 }]
+      "level": 3,
+      "text": [{ "said": "Move around", "type": 1 }],
+      "surfaces": [{ "box": [125.4, 105.5, 5.5, 5.5], "paint": 1 }]
     },
     {
       "role": "heading",
@@ -316,9 +182,9 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(169, 177, 214)"
       },
-      "level": 2,
-      "text": [{ "said": "This message", "type": 4 }],
-      "surfaces": [{ "box": [133.1, 758.5, 5.5, 5.5], "paint": 2 }]
+      "level": 3,
+      "text": [{ "said": "This message", "type": 1 }],
+      "surfaces": [{ "box": [133.1, 758.5, 5.5, 5.5], "paint": 1 }]
     }
   ],
   "loose": { "text": [], "surfaces": [] }

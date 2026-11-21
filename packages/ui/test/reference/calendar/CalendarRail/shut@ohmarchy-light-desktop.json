@@ -5,7 +5,7 @@
   "place": "block",
   "target": [12, 12, 224, 876],
   "clip": [12, 12, 224, 876],
-  "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -254,6 +254,14 @@
     { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 bdfce0cf5a3c" },
     { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 45966c78dd89" },
     { "before.backgroundColor": "rgb(233, 230, 219)" },
+    {
+      "backgroundColor": "oklab(0.59 -0.0783311 0.0605412 / 0.08)",
+      "borderTop": "3px solid oklch(0.59 0.099 142.3)"
+    },
+    {
+      "backgroundColor": "oklab(0.59 -0.0605412 -0.0783311 / 0.08)",
+      "borderTop": "3px solid oklch(0.59 0.099 232.3)"
+    },
     {
       "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; stroke rgb(16, 15, 15) 2.2px square miter 4; shapes 5 07b1aee6eff5"
     },
@@ -996,7 +1004,8 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "text": [{ "said": "20", "type": 9 }]
+      "text": [{ "said": "20", "type": 9 }],
+      "surfaces": [{ "box": [131.6, 233, 22.4, 21], "paint": 12 }]
     },
     {
       "role": "button",
@@ -1017,7 +1026,8 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "text": [{ "said": "21", "type": 9 }]
+      "text": [{ "said": "21", "type": 9 }],
+      "surfaces": [{ "box": [154, 233, 28, 21], "paint": 12 }]
     },
     {
       "role": "button",
@@ -1038,7 +1048,8 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "text": [{ "said": "22", "type": 9 }]
+      "text": [{ "said": "22", "type": 9 }],
+      "surfaces": [{ "box": [182, 233, 22.4, 21], "paint": 12 }]
     },
     {
       "role": "button",
@@ -1059,7 +1070,8 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "text": [{ "said": "23", "type": 8 }]
+      "text": [{ "said": "23", "type": 8 }],
+      "surfaces": [{ "box": [19.6, 259, 22.4, 21], "paint": 13 }]
     },
     {
       "role": "button",
@@ -1080,7 +1092,8 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "text": [{ "said": "24", "type": 9 }]
+      "text": [{ "said": "24", "type": 9 }],
+      "surfaces": [{ "box": [42, 259, 28, 21], "paint": 13 }]
     },
     {
       "role": "button",
@@ -1101,7 +1114,8 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "text": [{ "said": "25", "type": 9 }]
+      "text": [{ "said": "25", "type": 9 }],
+      "surfaces": [{ "box": [70, 259, 22.4, 21], "paint": 13 }]
     },
     {
       "role": "button",
@@ -1357,7 +1371,7 @@
         { "said": "Invitations", "type": 11 },
         { "said": "3", "type": 12 }
       ],
-      "surfaces": [{ "box": [26, 330, 20, 20], "paint": 12 }]
+      "surfaces": [{ "box": [26, 330, 20, 20], "paint": 14 }]
     },
     {
       "role": "button",
@@ -1382,7 +1396,7 @@
         { "said": "From mail", "type": 11 },
         { "said": "5", "type": 12 }
       ],
-      "surfaces": [{ "box": [26, 362, 20, 20], "paint": 13 }]
+      "surfaces": [{ "box": [26, 362, 20, 20], "paint": 15 }]
     },
     {
       "role": "button",
@@ -1408,7 +1422,7 @@
         { "said": "Calendars", "type": 11 },
         { "said": "11 of 12", "type": 12 }
       ],
-      "surfaces": [{ "box": [28, 410, 16, 16], "paint": 14 }]
+      "surfaces": [{ "box": [28, 410, 16, 16], "paint": 16 }]
     },
     {
       "role": "button",
@@ -1430,7 +1444,7 @@
         "borderColor": "rgb(16, 15, 15)"
       },
       "text": [{ "said": "Settings", "type": 11 }],
-      "surfaces": [{ "box": [26, 454, 20, 20], "paint": 15 }]
+      "surfaces": [{ "box": [26, 454, 20, 20], "paint": 17 }]
     },
     {
       "role": "button",
@@ -1452,7 +1466,7 @@
         "borderColor": "rgb(56, 54, 53)"
       },
       "text": [{ "said": "Check now", "type": 13 }],
-      "surfaces": [{ "box": [26, 796.8, 20, 20], "paint": 16 }]
+      "surfaces": [{ "box": [26, 796.8, 20, 20], "paint": 18 }]
     },
     {
       "role": "button",
@@ -1478,7 +1492,7 @@
         { "said": "Mila Brunner", "type": 15 },
         { "said": "8 calendars", "type": 16 }
       ],
-      "surfaces": [{ "box": [22, 833.4, 26, 26], "paint": 17 }]
+      "surfaces": [{ "box": [22, 833.4, 26, 26], "paint": 19 }]
     },
     {
       "role": "button",
@@ -1499,7 +1513,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [162, 836.4, 20, 20], "paint": 18 }]
+      "surfaces": [{ "box": [162, 836.4, 20, 20], "paint": 20 }]
     },
     {
       "role": "button",
@@ -1520,7 +1534,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "surfaces": [{ "box": [190, 836.4, 20, 20], "paint": 19 }]
+      "surfaces": [{ "box": [190, 836.4, 20, 20], "paint": 21 }]
     }
   ],
   "loose": { "text": [], "surfaces": [] }

@@ -92,6 +92,7 @@ export interface StreamModel {
   readonly addressedId: string | null;
   /** Did the mounted stream itself ask for this address? */
   openedLocally(id: string): boolean;
+  openedInPlace(id: string): boolean;
   /** A row's stamp in the list's own form, as the seat hands it. */
   readonly stamp: (iso: string) => string;
   /** The stream's scroller once mounted, and the ref that mounts it (the reading sheet's `scroller`). */
@@ -103,7 +104,7 @@ export interface StreamModel {
   /** The item under the reading line, as the scroll last found it (a step's origin). */
   readonly current: string | null;
   /** A press on a row: the item opens and the stream is driven. */
-  open(id: string, byKeyboard?: boolean, viewport?: boolean): void;
+  open(id: string, byKeyboard?: boolean, viewport?: boolean, inPlace?: boolean): void;
   /** A keyboard step keeps a narrow stream in place and opens the address beside a wide stream. */
   stepTo(id: string): void;
   /** Leave the narrow stream's local selection. */

@@ -561,7 +561,7 @@
     --oh-avatar-fg: var(--ink);
   }
 
-  /* The value and detail of a Settings entry share one line, with the pointer-paper separator. */
+  /* The value and the detail stand apart by a dot; on touch and in ohmarchy they stand on two lines and need none. */
   .oh-row[data-entry] .oh-row-sep {
     font-style: normal;
   }
@@ -569,16 +569,6 @@
   :root[data-touch="1"] .oh-row[data-entry] .oh-row-sep,
   :root[data-face="ohmarchy"] .oh-row[data-entry] .oh-row-sep {
     display: none;
-  }
-
-  :root:is([data-touch="1"], [data-face="ohmarchy"]) .oh-row[data-entry] .oh-row-second {
-    display: block;
-  }
-
-  :root:is([data-touch="1"], [data-face="ohmarchy"])
-    .oh-row[data-entry]
-    :is(.oh-row-subject, .oh-row-preview) {
-    display: inline;
   }
 
   /* The verb under the pointer or the keys: it stands at the end of the last line, over a fade of what it covers. */

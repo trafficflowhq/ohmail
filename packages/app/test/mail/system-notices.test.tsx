@@ -338,9 +338,11 @@ it("withdraws calendar reminders from the shared mail frame when this device's c
     expect(sets.at(-1)).toEqual({ scope: "acct-1", alerts: [] });
     allowed = true;
     liveScope = "acct-2";
+    const before = takenBack;
     act(() => choicesVersion.set(3));
     expect(sets.at(-1)).toEqual({ scope: "acct-1", alerts: [] });
-    expect(sets).toHaveLength(4);
+    expect(sets).toHaveLength(3);
+    expect(takenBack - before, "the other account's reminders were not taken back").toBe(1);
   } finally {
     page.unmount();
     now.mockRestore();

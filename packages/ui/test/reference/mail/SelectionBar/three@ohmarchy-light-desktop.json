@@ -5,7 +5,7 @@
   "place": "block",
   "target": [270.75, 836, 378.5, 40],
   "clip": [270, 836, 380, 40],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",

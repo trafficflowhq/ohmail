@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -158,6 +158,10 @@ describe("the per-message editor meta — the reopen scratch the subject and the
  * strike its button "Remove signature", what the block reports the composition's `sig`. Where no letter can stand (no
  * mailbox to name one), Write's own model answers (`writeBesideOf(...).signature`, what the block draws from).
  */
+beforeAll(async () => {
+  await (await import("../../../packages/app/src/mail/write-entry.js")).prepareWriting();
+});
+
 afterEach(async () => {
   await unmountWritings();
   resetComposerForTest();
@@ -171,7 +175,7 @@ const blockDrawn = (): HTMLElement | null => blockText() ?? screen.queryByRole("
 describe("SignatureBlock — a distinct, removable, editable block", () => {
   it("shows the resolved sender's text; × reports the strike; typing reports the edit", async () => {
     const w = await mountWriting({ view: true, signatures: { mb1: "Best regards\nAnna" } });
-    const text = blockText();
+    const text = await screen.findByRole("textbox", { name: SIG.label });
     expect(text, "no block for a sender with a stored signature").not.toBeNull();
     expect(text!.textContent).toBe("Best regards\nAnna");
 
@@ -182,7 +186,7 @@ describe("SignatureBlock — a distinct, removable, editable block", () => {
 
     // The edit, on a block standing again (the strike above took this one away).
     const again = await mountWriting({ view: true, signatures: { mb1: "Best regards\nAnna" } });
-    const typed = blockText()!;
+    const typed = await screen.findByRole("textbox", { name: SIG.label });
     await act(async () => {
       typed.focus();
       typed.textContent = "Best regards\nAnna B.";
@@ -195,12 +199,14 @@ describe("SignatureBlock — a distinct, removable, editable block", () => {
 
   it("renders NOTHING when struck, when the sender stores nothing, and when nothing can name one", async () => {
     await mountWriting({ view: true, signatures: { mb1: "Best regards\nAnna" } });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: SIG.remove })); });
+    const remove = await screen.findByRole("button", { name: SIG.remove });
+    await act(async () => { fireEvent.click(remove); });
     await rounds(2);
     expect(blockDrawn()).toBeNull();
     await unmountWritings();
 
     await mountWriting({ view: true, signatures: { "mb-none": "someone else's" } });
+    await screen.findByRole("textbox", { name: "Message" });
     expect(blockDrawn()).toBeNull();
     await unmountWritings();
 

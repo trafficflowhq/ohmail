@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { fireEvent, within } from "@testing-library/react";
 import type { EngineMutation } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -38,6 +38,12 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let roots: Root[] = [];
+
+beforeAll(async () => {
+  const { prepareWriting } = await import("@ohmail/app/mail");
+  await prepareWriting();
+  await import("./_mail-shell.js");
+});
 
 beforeEach(() => {
   window.location.hash = "";

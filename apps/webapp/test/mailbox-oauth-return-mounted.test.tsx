@@ -102,7 +102,7 @@ async function returned() {
 
   const host = await mountCloudShell();
   await tick(3000);
-  const pane = within(within(host).getByRole("region", { name: messages.settings.mailboxes }));
+  const pane = within(await vi.waitFor(() => within(host).getByRole("region", { name: messages.settings.mailboxes })));
   return { callback, completions, historyLength, pane, release };
 }
 

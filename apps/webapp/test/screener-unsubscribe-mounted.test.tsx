@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineMessage, UnsubscribeHeaderState } from "@ohmail/wire";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import messages from "../messages/en.json";
@@ -24,6 +24,7 @@ async function cleanMount(): Promise<void> {
   await teardownShellEnv();
   vi.unstubAllGlobals();
 }
+beforeEach(() => localStorage.clear());
 afterEach(cleanMount);
 
 async function mount({ held, width, autoUnsubscribe, providerConfirms }: {
@@ -119,6 +120,25 @@ describe("the press, and how far its Undo reaches", () => {
     expect(decisions).toEqual(confirmed);
     await tick(COMMIT_MS + 1);
     expect(decisions).toEqual(confirmed);
+  });
+
+  it("on the same account, a compact confirmation sends only for the newly selected sender", async () => {
+    const first = await mount({ held: [{ id: "f2", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
+    await confirmScreenOut(first.shell);
+    expect(first.decisions.map(({ id }) => id)).toEqual(["f2"]);
+    await cleanMount();
+
+    const second = await mount({ held: [{ id: "f3", from: "news@another-list.example", posture: "one_click", verdict: "pass" }], width: 1280 });
+    await click(screenOut(second.shell));
+    const ask = within(document.body).getByRole("dialog", { name: confirmedLabel });
+    expect(ask.textContent).not.toContain(copy.place.unsub.service);
+    await tick(COMMIT_MS + 1);
+    expect(second.decisions).toEqual([]);
+    await click(within(ask).getByRole("button", { name: "Continue" }));
+    expect(within(document.body).queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(second.decisions).toEqual([{
+      id: "f3", body: { decision: "no", dest: "ohmail/Screened", scope: "sender", applyRetro: false, unsubscribeIds: ["f3"] },
+    }]);
   });
 
   it("a sender whose held letter offers none: the toast still names the request as the sender-level condition", async () => {

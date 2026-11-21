@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/react";
-import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
+import { enterSearchRoute, findSearchField, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -126,6 +126,7 @@ async function render(engine: OhmailEngine, query: string, _version = 1): Promis
   await act(async () => {
     root.render(h(RegisteredSearch, { engine, now: NOW, catalogue: intlMessages }));
   });
+  await findSearchField(host);
   await act(async () => { typeSearch(host, query); });
 }
 

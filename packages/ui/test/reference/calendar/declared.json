@@ -839,5 +839,29 @@
     "question": "boxes",
     "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
     "since": "2026-11-15"
+  },
+  {
+    "key": "TodayList/today",
+    "question": "boxes",
+    "reason": "The design system sheet resets the Today heading's padding. The app's heading keeps its padding, which shifts the date and the rows below.",
+    "since": "2026-11-21"
+  },
+  {
+    "key": "TodayList/today",
+    "question": "drawn",
+    "reason": "The design system sheet resets the Today heading's padding. The app's heading keeps its padding, which shifts the date and the rows below.",
+    "since": "2026-11-21"
+  },
+  {
+    "key": "TodayList/today",
+    "question": "picture",
+    "reason": "The design system sheet resets the Today heading's padding. The app's heading keeps its padding, which shifts the date and the rows below.",
+    "since": "2026-11-21"
+  },
+  {
+    "key": "EventChip/block-from-mail-focus@paper-light-desktop",
+    "question": "drawn",
+    "reason": "The kit draws a solid 2 px keyboard focus ring on the found event. The specimen keeps the dashed outline it uses at rest.",
+    "since": "2026-11-21"
   }
 ]

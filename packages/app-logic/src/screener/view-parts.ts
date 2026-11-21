@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { BODY_FETCH_TIMEOUT_MS, domainOfAddress, senderKey } from "@ohmail/client-engine";
 import { useEngineOrNull } from "../engine/context.js";
 import { isNothingOrganizes, type OrganizerRefusal } from "../press/organizer-refusal.js";
+import { localStorageDoor } from "../storage/durable.js";
+import { scopeMayMount, type StorageScope } from "../storage/scope.js";
 import type { DecisionDestination, DecisionScope } from "./decision.js";
 import type { KeySegment } from "./keys.js";
 import { nextAfterDecision } from "./next-sender.js";
@@ -198,6 +200,7 @@ export function useShown(openId: string | null, segment: KeySegment) {
 }
 
 export interface DecideInput {
+  readonly disclosureOwner?: string | null;
   readonly state: ScreenerState;
   readonly segment: KeySegment;
   readonly openId: string | null;
@@ -214,6 +217,13 @@ export interface DecideInput {
   readonly closeShown: () => void;
 }
 
+const unsubscribeDisclosures = localStorageDoor("screener.unsubscribeSeen");
+
+export function unsubscribeSeenKey(scope: StorageScope): string {
+  if (!scopeMayMount(scope)) throw new Error("Unsubscribe disclosure has no owner");
+  return "ohmail.screener.unsubscribeSeen." + scope;
+}
+
 /**
  * THE ONE WAY A DECISION LEAVES: the model's `decide`, once any question before it has its yes. Screen out and Spam
  * that would send a one-click unsubscribe ask first: no request leaves before its yes. A refused press (a reader's
@@ -225,8 +235,14 @@ export function useDecide(input: DecideInput) {
   const [unsub, setUnsub] = useState<Extract<ScreenerAsk, { kind: "unsub" }> | null>(null);
   const engine = useEngineOrNull();
   const account = state.accountScope;
+  const disclosureOwner = input.disclosureOwner ?? account;
+  const seenKey =
+    disclosureOwner !== undefined && scopeMayMount(disclosureOwner)
+      ? unsubscribeSeenKey(disclosureOwner)
+      : null;
+  const seenInView = useRef<string | null>(null);
   const openSender = openWaiting === null ? null : senderKey(openWaiting.from.address);
-  useEffect(() => setUnsub(null), [input.segment, openSender, engine, account]);
+  useEffect(() => setUnsub(null), [input.segment, openSender, engine, account, disclosureOwner]);
   /* `stay`: a row's own press on a sender that is not the open one leaves the selection where it is. */
   const leave = (
     sender: ScreenerSenderDTO,
@@ -280,6 +296,8 @@ export function useDecide(input: DecideInput) {
       applyRetro,
       claim,
       unsubscribeIds,
+      explain:
+        seenKey === null || (seenInView.current !== seenKey && unsubscribeDisclosures.get(seenKey) !== "1"),
       senders: rows.length,
     });
     return true;
@@ -299,6 +317,10 @@ export function useDecide(input: DecideInput) {
     const asked = unsub;
     setUnsub(null);
     if (yes && asked !== null) {
+      if (asked.explain && seenKey !== null) {
+        seenInView.current = seenKey;
+        unsubscribeDisclosures.set(seenKey, "1");
+      }
       leave(
         asked.sender,
         asked.dest,

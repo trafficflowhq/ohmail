@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/react";
-import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
+import messages from "../messages/en.json";
+import { enterSearchRoute, searchField, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -87,6 +88,7 @@ afterEach(async () => {
 
 async function render(engine: OhmailEngine, query: string): Promise<void> {
   await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await vi.waitFor(() => searchField(host), { timeout: 5000 });
   await act(async () => { typeSearch(host, query); });
 }
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
@@ -96,7 +98,7 @@ const text = (): string => host.textContent ?? "";
 
 const SENTENCES = {
   searching: "Searching your whole mailbox…",
-  matched: /Searched your whole mailbox — (at least |about )?[\d,]+ matched/,
+  matched: /Searched your whole mailbox — [\d,]+ matched|(At least|About) [\d,]+ matched in your whole mailbox\./,
   nothing: "Searched your whole mailbox — nothing matched",
   unanswered: "Your server did not answer — showing the recent mail this device holds.",
   failed: "Your server could not run this search — showing the recent mail this device holds.",
@@ -198,10 +200,10 @@ describe("the whole-mailbox verdict always renders", () => {
     await render(engine, "axa");
     await advance(SETTLED);
     expect(asked).toEqual(["page", "estimate"]);
-    expect(text()).toContain("Searched your whole mailbox — at least 212 matched · ");
+    expect(text()).toContain(messages.search.saidAtLeast.replace("{total}", "212"));
     await act(async () => { estimate!({ items: [], total: 212, totalExact: false, totalEstimate: 7_874, ms: 9 }); });
     expect(asked).toEqual(["page", "estimate", "summary"]);
-    expect(text()).toContain("Searched your whole mailbox — about 7,874 matched · ");
+    expect(text()).toContain(messages.search.saidAbout.replace("{total}", "7,874"));
     expect(verdicts()).toEqual(["matched"]);
     await act(async () => { count!({ items: [], total: 7_901, totalExact: true, ms: 40 }); });
     expect(text()).toContain("Searched your whole mailbox — 7,901 matched · ");
@@ -253,7 +255,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(SETTLED);
     // An estimate with no `totalEstimate` says nothing about how many: the lower bound stands.
     expect(asked).toEqual(["exact:page", "exact:estimate", "cut:page", "cut:estimate", "cut:summary"]);
-    expect(text()).toContain("Searched your whole mailbox — at least 250 matched · ");
+    expect(text()).toContain(messages.search.saidAtLeast.replace("{total}", "250"));
   });
 
   it("a pass that NEVER settles ends at the ceiling in the not-answered verdict", async () => {

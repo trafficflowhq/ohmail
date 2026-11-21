@@ -113,6 +113,10 @@ beforeAll(async () => {
   // The window reads its language once, at module load, the way a launch does: an empty install.
   window.localStorage.clear();
   ({ DesktopLocale } = await import("../src/DesktopLocale.js"));
+  const { prepareWriting } = await import("@ohmail/app/mail");
+  await prepareWriting();
+  await import("../../../packages/app/src/settings/place.js");
+  await import("../../../packages/app/src/settings/SettingsReading.js");
 });
 
 beforeEach(() => {
