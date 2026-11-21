@@ -43,6 +43,8 @@ export function useHoldForReply(
 
 export function useStreamViewport(model: StreamModel) {
   const root = useRef<HTMLDivElement | null>(null);
+  const positions = useContext(StreamVisits)?.positions;
+  const [restores] = useState(() => model.addressedId !== null || positions?.has(model.place) === true);
   /* The cards share the column width. Subsequent changes come from layout, never from individual cards. */
   const column = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -109,7 +111,7 @@ export function useStreamViewport(model: StreamModel) {
       observer.disconnect();
     };
   }, [model.scroller, model.place, armed, onApproach, prefetch, engine, mountedKey]);
-  return { attach, column, width, ids, start, end, padTopPx, padBottomPx, ensure, near, armed };
+  return { attach, column, width, ids, start, end, padTopPx, padBottomPx, ensure, near, armed, restores };
 }
 
 type Viewport = Pick<ReturnType<typeof useStreamViewport>, "ids" | "start" | "end" | "ensure" | "armed">;

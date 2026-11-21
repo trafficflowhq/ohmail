@@ -168,7 +168,8 @@ export function SideRail({
   switcher,
   phoneMore = false,
 }: Omit<RailHostProps, "plan"> & { readonly phoneMore?: boolean }) {
-  const { host } = useFrame();
+  const { host, plan } = useFrame();
+  const drawer = phoneMore && plan.device === "phone";
   const model = useSignal(feed);
   /* The way to write prints its key, and says it to a screen reader, while something binds it (the mail's own `c`). */
   const mod = useModGlyph();
@@ -245,7 +246,7 @@ export function SideRail({
   );
   const rail = (
     <Rail
-      switcher={switcher}
+      switcher={drawer ? undefined : switcher}
       /* While today's rail is fed, the landmark keeps today's name: what a screen reader finds it by. */
       label={t(model ? "landmark.fedRail" : "landmark.places")}
       write={
@@ -259,7 +260,7 @@ export function SideRail({
               onPress: () => commands.write(),
             }
       }
-      groups={groups}
+      groups={drawer && switcher ? [switcher, ...groups] : groups}
       foot={foot}
     />
   );

@@ -10,6 +10,8 @@ interface FieldShared {
   hint?: string;
   /** The refusal: one line that names the fix. */
   refusal?: string;
+  /** Announce a refusal immediately when it appears. */
+  refusalAlert?: boolean;
   /** Off while what it holds is being saved: it takes no keys, and a screen reader hears that it is unavailable. */
   disabled?: boolean;
   /** In a menu: one line, the label beside the field. */
@@ -86,6 +88,7 @@ export function Field({
   placeholder,
   hint,
   refusal,
+  refusalAlert,
   lines,
   disabled,
   row,
@@ -164,7 +167,7 @@ export function Field({
         />
       )}
       {refusal ? (
-        <p id={said} className="oh-text oh-field-refusal">
+        <p id={said} className="oh-text oh-field-refusal" role={refusalAlert ? "alert" : undefined}>
           <Icon name="warn" size={18} />
           <span>{refusal}</span>
         </p>

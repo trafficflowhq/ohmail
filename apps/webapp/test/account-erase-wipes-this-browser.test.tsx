@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -17,7 +18,7 @@ import { formalAddress } from "./_formal-address";
  * Measured on 0.25.1 and 0.25.2: `DELETE /account` answered 200 and the page showed no receipt, only
  * "This browser has lost the name of the account this window is for", with the mirror and the
  * account's keys still there after a reload. At 0.25.3's base the receipt was back and the wipe took
- * EVERY account's copy in the browser. Driven here through the real pane, the step-up prompt, the
+ * EVERY account's copy in the browser. Driven here through the live delete page, the step-up dialog, the
  * real client and the real wipe; only `fetch` and the IndexedDB factory are stand-ins.
  */
 (globalThis as unknown as { React: unknown }).React = React;
@@ -58,7 +59,7 @@ const json = (body: unknown, status = 200, account: string | null = OWNER): Resp
   });
 
 /**
- * `erase` answers each DELETE in turn; the first is a closed step-up window, as it nearly always is.
+ * `erase` answers DELETE after verification; a write that leaves before verification is refused.
  * `purges`: the cache clears asked for (`x-ohmail-clear: cache`), never answered here.
  */
 interface Rig { erase: () => Response; asked: string[]; windowClosed: boolean; purges: number }
@@ -169,7 +170,7 @@ async function plantPreferences(owner: string): Promise<string[]> {
   const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
   const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
   const { writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
-  const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
+  const { imageQualityKeyFor } = await import("@ohmail/app-logic/write/image-quality");
   const { dismissKey } = await import("../app/(product)/mailbox/LifecycleBanner.js");
   const { resumeOnceKey } = await import("../app/(product)/resume/use-resume-door.js");
   localStorage.setItem(searchSortKey(owner), "oldest");
@@ -197,9 +198,38 @@ async function mirrorsLeft(): Promise<string[]> {
   return all.map((d) => d.name ?? "").filter((n) => n.startsWith("ohmail-mirror")).sort();
 }
 
-/** Mount the pane, press Delete, and verify one code at the prompt a closed window opens. */
-async function eraseThroughThePane(locale: "en" | "de" = "en"): Promise<HTMLElement> {
-  const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
+const addressField = (c: HTMLElement): HTMLInputElement | null =>
+  [...c.querySelectorAll<HTMLInputElement>("input")].find((input) => input.closest('[role="dialog"]') === null) ?? null;
+
+const factorField = (c: HTMLElement): HTMLInputElement | null =>
+  c.querySelector('[role="dialog"] input[autocomplete="one-time-code"]');
+
+const erases = () => rig.asked.filter((ask) => ask === "DELETE /api/account").length;
+const factors = () => rig.asked.filter((ask) => ask === "POST /api/auth/step-up/totp").length;
+
+async function openEraseDialog(c: HTMLElement, locale: "en" | "de" = "en") {
+  const deletesBefore = erases();
+  const factorsBefore = factors();
+  const catalog = locale === "de" ? de : en;
+  await act(async () => within(c).getByRole("button", { name: catalog.deleteAccount.begin }).click());
+  await waitFor(() => factorField(c) !== null, "the verification dialog");
+  expect(erases(), "the erase left before verification").toBe(deletesBefore);
+  expect(factors(), "the factor was sent before it was entered").toBe(factorsBefore);
+}
+
+async function verifyErase(c: HTMLElement): Promise<void> {
+  const field = factorField(c)!;
+  const deletesBefore = erases();
+  const factorsBefore = factors();
+  await type(field, "123456");
+  await submit(field.closest("form")!);
+  await waitFor(() => erases() === deletesBefore + 1, "the verified erase");
+  expect(factors()).toBe(factorsBefore + 1);
+}
+
+/** The live delete page asks for a factor before each erase. */
+async function eraseThroughThePage(locale: "en" | "de" = "en"): Promise<HTMLElement> {
+  const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -208,17 +238,14 @@ async function eraseThroughThePane(locale: "en" | "de" = "en"): Promise<HTMLElem
     root.render(h(NextIntlClientProvider, {
       locale, messages: (locale === "de" ? fillFrom(en as never, de as never) : en) as never,
       timeZone: "UTC", now: new Date("2026-09-26T16:00:00.000Z"),
-      children: h(AccountSection),
+      children: h(DeleteAccountRoute),
     }));
   });
-  await waitFor(() => container.querySelector("#acct-typed") != null, "the facts step");
-  await type(container.querySelector<HTMLInputElement>("#acct-typed")!, EMAIL);
-  await submit(container.querySelector("form.acct-confirm")!);
-  await waitFor(() => container.querySelector("#stepup-code") != null, "the step-up prompt");
-  expect(rig.purges, "a cache clear after the step-up refusal").toBe(0);
-  await type(container.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
-  await submit(container.querySelector("#stepup-code")!.closest("form")!);
-  await waitFor(() => rig.asked.filter((a) => a === "DELETE /api/account").length === 2, "the parked erase");
+  await waitFor(() => addressField(container) !== null, "the facts step");
+  await type(addressField(container)!, EMAIL);
+  await openEraseDialog(container, locale);
+  expect(rig.purges, "the browser cache was cleared before verification").toBe(0);
+  await verifyErase(container);
   return container;
 }
 
@@ -252,14 +279,14 @@ const keysNaming = (owner: string): string[] =>
 
 const held = (key: string): boolean => localStorage.getItem(key) !== null || sessionStorage.getItem(key) !== null;
 
-const receiptShown = (c: HTMLElement): boolean => c.textContent!.includes(en.account.doneTitle);
+const receiptShown = (c: HTMLElement): boolean => c.textContent!.includes(en.deleteAccount.doneTitle.replace(/\.$/, ""));
 
 describe("Delete your account wipes this browser's copy of that account", () => {
-  it("the receipt, no lost-name sentence, and no sign-in: the step-up re-runs the erase on the session it had", async () => {
+  it("the verified erase shows its receipt and clears this account without signing in again", async () => {
     const seeded = await seedThisBrowser();
     expect(await mirrorsLeft()).toEqual([`ohmail-mirror:${OWNER}`]);
 
-    const c = await eraseThroughThePane();
+    const c = await eraseThroughThePage();
     await waitFor(() => receiptShown(c) || c.querySelector("[role=alert]") != null, "a receipt or a refusal");
 
     expect(c.querySelector("[role=alert]")?.textContent ?? null, "the page refused a completed erasure").toBeNull();
@@ -298,7 +325,7 @@ describe("Delete your account wipes this browser's copy of that account", () => 
     expect(await refresh.resumeSession()).toBe("unavailable");
     expect(await renewalNames(), "the control: the renewal's name is in IndexedDB").toHaveLength(1);
 
-    const c = await eraseThroughThePane();
+    const c = await eraseThroughThePage();
     await waitFor(() => receiptShown(c), "the receipt");
 
     expect(await renewalNames(), "the erased session's renewal name survived").toEqual([]);
@@ -312,7 +339,7 @@ describe("Delete your account wipes this browser's copy of that account", () => 
 
   it("after the erase this tab asks nothing more, and never says it lost the account's name", async () => {
     await seedThisBrowser();
-    const c = await eraseThroughThePane();
+    const c = await eraseThroughThePage();
     await waitFor(() => receiptShown(c), "the receipt");
 
     const client = await import("../app/api-client.js");
@@ -332,11 +359,11 @@ describe("Delete your account wipes this browser's copy of that account", () => 
       req.onerror = () => no(req.error);
     });
 
-    const c = await eraseThroughThePane();
+    const c = await eraseThroughThePage();
     await waitFor(() => receiptShown(c) || c.querySelector("[role=alert]") != null, "a receipt or a refusal");
 
     expect(receiptShown(c), "a blocked wipe must not hide a completed erasure").toBe(true);
-    expect(c.textContent).toContain(en.account.erasedMirrorBlocked);
+    expect(c.textContent).toContain(en.deleteAccount.erasedMirrorBlocked);
     // The registry record of the mirror still on disk stays, so a later wipe can name it; nothing else.
     expect(keysNaming(OWNER)).toEqual([`ohmail.mirror.ohmail-mirror:${OWNER}`]);
     other.close();
@@ -349,36 +376,38 @@ describe("Delete your account wipes this browser's copy of that account", () => 
       req.onsuccess = () => ok(req.result);
       req.onerror = () => no(req.error);
     });
-    const c = await eraseThroughThePane("de");
-    await waitFor(() => c.textContent!.includes(de.account.erasedMirrorBlocked), "the German blocked receipt");
+    const c = await eraseThroughThePage("de");
+    await waitFor(() => c.textContent!.includes(de.deleteAccount.erasedMirrorBlocked), "the German blocked receipt");
     expect(formalAddress(c), "the receipt says Sie").toEqual([]);
     other.close();
   }, 30_000);
 });
 
 describe("a refused erase says so, and the next press can erase", () => {
-  it("a server refusal: our sentence, back to the top with the address kept, nothing wiped; the next press erases", async () => {
+  it("a server refusal keeps the address and the browser copy until a verified retry", async () => {
     const seeded = await seedThisBrowser();
     rig.erase = () => json({ error: { code: "internal", message: "internal error" } }, 500);
 
-    const c = await eraseThroughThePane();
+    const c = await eraseThroughThePage();
     await waitFor(() => c.querySelector("[role=alert]") != null, "the refusal");
 
     expect(c.querySelector("[role=alert]")!.textContent).toBe(en.account.eraseRefused);
     expect(c.textContent, "the server's own words reached the person").not.toContain("internal error");
-    expect(c.querySelector("#stepup-code"), "left on a prompt for a window that is open").toBeNull();
-    expect(c.querySelector<HTMLInputElement>("#acct-typed")?.value, "not back at the top, address kept").toBe(EMAIL);
+    expect(c.querySelector('[role="dialog"] input[autocomplete="one-time-code"]'), "left on a prompt for a window that is open").toBeNull();
+    expect(addressField(c)?.value, "not back at the top, address kept").toBe(EMAIL);
     // The account still exists, so this browser keeps it, and its cache.
     expect(await mirrorsLeft()).toEqual([`ohmail-mirror:${OWNER}`]);
     expect([...seeded.keys, ...seeded.prefs].filter((k) => !held(k))).toEqual([]);
     expect(rig.purges, "a cache clear after a refused erase").toBe(0);
 
-    // The window the factor opened is still open: the next press erases with no prompt and no sign-in.
+    // The page asks again even while the previous factor window is open.
     rig.erase = () => { clearReadableCookies(); return json(RECEIPT); };
-    await submit(c.querySelector("form.acct-confirm")!);
+    await openEraseDialog(c);
+    await verifyErase(c);
     await waitFor(() => receiptShown(c), "the receipt after the retry");
     expect(rig.asked.filter((a) => a === "POST /api/auth/login")).toEqual([]);
-    expect(rig.asked.filter((a) => a === "POST /api/auth/step-up/totp")).toHaveLength(1);
+    expect(factors()).toBe(2);
+    expect(erases()).toBe(2);
     expect(await mirrorsLeft()).toEqual([]);
     expect(rig.purges, "the erase that went through asks for the cache clear once").toBe(1);
     seeded.close();
@@ -388,13 +417,13 @@ describe("a refused erase says so, and the next press can erase", () => {
     await seedThisBrowser();
     rig.erase = () => { throw new TypeError("network down"); };
 
-    const c = await eraseThroughThePane();
+    const c = await eraseThroughThePage();
     await waitFor(() => c.querySelector("[role=alert]") != null, "the refusal");
 
     const said = c.querySelector("[role=alert]")!.textContent!;
     expect(said, "an unanswered request must not claim nothing was deleted").not.toBe(en.account.eraseRefused);
     expect(said).toContain("We could not reach ohmail");
-    expect(c.querySelector("#acct-typed"), "back at the top").not.toBeNull();
+    expect(addressField(c), "back at the top").not.toBeNull();
     expect(rig.purges, "a cache clear after an erase nobody answered").toBe(0);
   }, 30_000);
 
@@ -404,12 +433,12 @@ describe("a refused erase says so, and the next press can erase", () => {
       status: 504, headers: { "content-type": "text/html" },
     });
 
-    const c = await eraseThroughThePane();
+    const c = await eraseThroughThePage();
     await waitFor(() => c.querySelector("[role=alert]") != null, "the refusal");
 
     const said = c.querySelector("[role=alert]")!.textContent!;
     expect(said, "an outcome nobody confirmed").toBe(en.account.eraseUnconfirmed);
-    expect(c.querySelector("#acct-typed"), "back at the top").not.toBeNull();
+    expect(addressField(c), "back at the top").not.toBeNull();
     // Nothing proves the account is gone, so this browser keeps its copy, and its cache.
     expect(await mirrorsLeft()).toEqual([`ohmail-mirror:${OWNER}`]);
     expect(rig.purges, "a cache clear after an unconfirmed erase").toBe(0);

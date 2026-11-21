@@ -3255,9 +3255,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   gap: 7px;
   align-items: center;
 }
-/* The tag row: the folded pill (present only when the message carries a mark) and the add-tag
-   affordance, which stays OUT of the fold and always reachable — see MessagePane for why `addRef`
-   must not sit inside a collapsed `<details>`. */
+/* Keep the add-tag control outside the folded pill so it is always reachable. */
 .tag-chrome {
   display: flex;
   align-items: baseline;
@@ -6647,31 +6645,6 @@ input.set-tag-input {
   box-shadow: var(--lift-2);
 }
 
-/* ================= the conversation =============================
-   The thread as a COLUMN OF PANELS. `.conv` is the wrapper `MessagePane` renders instead of a
-   `ReadingPane` article when a conversation exists: every message is its own full-width,
-   full-body panel (`.pm`) on the canvas, oldest first — no peek rows, no counts, nothing
-   standing in for mail. The `.read-col` drops its panel skin for this case and stays the one
-   scroller (`packages/ui` message.css); the panels are separated by the canvas itself.
-
-   NO INNER SCROLLER, ANYWHERE. `.read-col` and `.reader` already
-   scroll; nesting a second scroller inside them is a trap on a phone and for a keyboard, and
-   the conversation is not a sidebar — it IS the message you are reading. The one exception
-   used to be the reply editor's own 190px `.reply-context`, which existed so the editor could
-   stay reachable below a deep chain. That copy of the conversation is gone — a reply must not
-   repeat the message that is already on screen — and the editor scrolls itself
-   into view on open instead — see `InlineReply`. So the rule has no exceptions left.
-
-   FLUSH AT BOTH ENDS, EDGE-TO-EDGE IN BETWEEN. The wrapper carries no vertical padding of its
-   own — the scroller's scroll-internal 16px (`.read-col:has(> .conv)`, packages/ui message.css)
-   is the whole vertical spacing — so at rest the lede tops out on the columns' shared top line
-   and, scrolled to the end, the column bottoms out on the same baseline the neighbouring panels
-   end on; mid-scroll the panels run past those lines to the viewport's own edges, the way the
-   reading stream's cards do. The sub-pixel remainder engines would leave at
-   the maximum scroll offset is absorbed as ≤1px of padding inside the LAST panel, by the same
-   anchor effect that opens the thread at its opened message (`MessagePane`). Flush, sticky and
-   the opening scroll are LIVE-ONLY facts — jsdom applies no layout, so the live pass is the
-   acceptance for this block, not the unit suite. */
 .conv {
   display: flex;
   flex-direction: column;
@@ -7524,8 +7497,7 @@ input.set-tag-input {
    ── BOUNDED BY THE VIEWPORT, NEVER TALLER ────────────────────────────────────────────────
    `min-height` is the resting posture (roomy on a desk, backing off on a short window);
    `max-height` is the hard bound that keeps every control reachable — a panel taller than the
-   viewport is chrome nobody can reach. The user's own height (the grip → an inline style,
-   clamped in `InlineReply.clampReplyHeight`) lives between the drag floor and the same bound.
+   viewport would hide controls.
    Each pair states `vh` first and `dvh` over it, so a browser without dynamic units keeps a
    correct, slightly conservative bound.
 
@@ -7619,10 +7591,6 @@ input.set-tag-input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* THE HEAD IS A BUTTON NOW — pressing the audience opens it for editing (`InlineReply`).
-   It keeps the head's exact anatomy (the class rides along), sheds the UA button chrome, and
-   says what pressing does in a quiet trailing hint rather than by looking like a control:
-   the sentence is still the content, the affordance is the cursor, the hint and focus. */
 .reply-head-btn {
   border: 0;
   background: none;

@@ -74,12 +74,14 @@ function installSubscribedBrowser(unsubscribed: { value: boolean }, beforeRead?:
     getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(7).buffer,
     unsubscribe: () => { unsubscribed.value = true; return Promise.resolve(true); },
   };
+  const registration = {
+    pushManager: { getSubscription: async () => { await beforeRead?.(); return sub; } },
+  };
   Object.defineProperty(navigator, "serviceWorker", {
     configurable: true,
     value: {
-      register: () => Promise.resolve({
-        pushManager: { getSubscription: async () => { await beforeRead?.(); return sub; } },
-      }),
+      register: () => Promise.resolve(registration),
+      getRegistration: () => Promise.resolve(registration),
     },
   });
 }
@@ -164,7 +166,7 @@ describe("revokeWakeRegistration", () => {
     await revokeWakeRegistration({ signingOutOf: "acct_A" });
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
-      value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(null) } }) },
+      value: { getRegistration: () => Promise.resolve(undefined) },
     });
     window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-left");
     await revokeWakeRegistration({ signingOutOf: "acct_A" });
@@ -183,8 +185,10 @@ describe("revokeWakeRegistration", () => {
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: {
-        register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(null) } }),
-        getRegistration: () => Promise.resolve({ getNotifications: () => Promise.resolve([n1, n2]) }),
+        getRegistration: () => Promise.resolve({
+          getNotifications: () => Promise.resolve([n1, n2]),
+          pushManager: { getSubscription: () => Promise.resolve(null) },
+        }),
       },
     });
 
@@ -394,14 +398,18 @@ describe("revokeWakeRegistration", () => {
       unsubscribe: async () => { removed.push(label); return true; },
     });
     let lookups = 0;
+    const registration = { pushManager: { getSubscription: async () => {
+      if (++lookups !== 1) return subscription("replacement");
+      reading.resolve();
+      await release.promise;
+      return subscription("old");
+    } } };
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
-      value: { register: async () => ({ pushManager: { getSubscription: async () => {
-        if (++lookups !== 1) return subscription("replacement");
-        reading.resolve();
-        await release.promise;
-        return subscription("old");
-      } } }) },
+      value: {
+        register: async () => registration,
+        getRegistration: async () => registration,
+      },
     });
     localStorage.setItem(SUBSCRIPTION_ID_KEY, "old-row");
 

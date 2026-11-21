@@ -382,10 +382,15 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
   };
 
   /** The radio whose label reads `text`, in the provider choice list. */
-  const choiceSaying = (el: HTMLElement, text: RegExp): HTMLInputElement | undefined =>
-    [...el.querySelectorAll<HTMLLabelElement>(".set-choice label")]
-      .find((l) => text.test(l.querySelector("b")?.textContent ?? ""))
-      ?.querySelector("input") as HTMLInputElement | undefined;
+  const chooseProvider = async (el: HTMLElement, text: RegExp) => {
+    const select = el.querySelector<HTMLSelectElement>("#ai-provider")!;
+    const option = [...select.options].find((candidate) => text.test(candidate.textContent ?? ""));
+    expect(option, "the provider is offered by the model selector").toBeDefined();
+    await act(async () => {
+      select.value = option!.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
 
   const typeKey = async (el: HTMLElement, key: string): Promise<HTMLInputElement> => {
     const field = el.querySelector("#ai-key") as HTMLInputElement;
@@ -423,13 +428,13 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
   it("carries no key at all on a vendor change, and empties the field", async () => {
     const { el, asked } = await paneWith(UNSET);
 
-    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await chooseProvider(el, /Anthropic/);
     await settle();
     await typeKey(el, KEY);
 
     asked.length = 0;
     // …and now change your mind, without clearing the field yourself.
-    await act(async () => { choiceSaying(el, /OpenAI/)!.click(); });
+    await chooseProvider(el, /OpenAI/);
     await settle();
 
     const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
@@ -443,7 +448,7 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
 
   it("sends a typed key only to the vendor whose field it was typed in", async () => {
     const { el, asked } = await paneWith(UNSET);
-    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await chooseProvider(el, /Anthropic/);
     await settle();
     await typeKey(el, KEY);
 
@@ -495,18 +500,18 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
    * The old pane cleared the key field on every `onChange`, including the segment already
    * selected — so pasting a key and re-pressing the vendor you were already on silently emptied
    * the field, after which Save omitted the key and kept whatever was stored. A guard that
-   * discards a credential nobody asked it to discard is its own defect. Real radios do not fire a
-   * change for the checked member, and the form guards it a second time (`next === choice`), so
+   * discards a credential nobody asked it to discard is its own defect. Native selects do not fire a
+   * change for the current option, and the form guards it a second time (`next === choice`), so
    * the press is not a write and nothing typed is lost.
    */
   it("writes nothing when the already-chosen vendor is pressed again", async () => {
     const { el, asked } = await paneWith(UNSET);
-    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await chooseProvider(el, /Anthropic/);
     await settle();
     const field = await typeKey(el, KEY);
 
     asked.length = 0;
-    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await chooseProvider(el, /Anthropic/);
     await settle();
 
     expect(asked.filter((a) => a.command === "engine_request"), "a re-press wrote").toEqual([]);

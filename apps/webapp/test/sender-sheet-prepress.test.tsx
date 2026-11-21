@@ -2,7 +2,7 @@
 import type { EngineMessage, Folder, UnsubscribeHeaderState } from "@ohmail/wire";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import { within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import messages from "../messages/en.json";
 import { act, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
 import { screenerReport, screenerRow } from "./fixtures/live-screener";
@@ -13,6 +13,7 @@ async function pressControl(control: HTMLElement): Promise<void> {
 }
 
 describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
+  beforeEach(() => localStorage.clear());
   afterEach(teardownShellEnv);
 
   const address = "waiting@bulk.example";

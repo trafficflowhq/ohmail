@@ -1,0 +1,73 @@
+{
+  "component": "NativeSelect",
+  "state": "rest",
+  "look": "paper-dark-fold",
+  "place": "cell",
+  "target": [25, 25, 135.5469, 24.5781],
+  "clip": [25, 25, 136, 25],
+  "studioCommit": null,
+  "kitCommit": "fb49d823f4631edece85985237308d4a814e0e44",
+  "variant": {
+    "device": "fold",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 719,
+    "height": 781,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    {
+      "boxDecorationBreak": "clone",
+      "appearance": "auto",
+      "colorScheme": "dark",
+      "borderRadius": "6.4px"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "combobox",
+      "name": "Host mode",
+      "box": [0, 0, 135.5, 24.6],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "oklch(0.959816 0.0119464 none / 0.08)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "normal",
+        "letterSpacing": "normal",
+        "borderRadius": "6.4px",
+        "paddingTop": "0.32px",
+        "paddingRight": "4.8px",
+        "paddingBottom": "1.28px",
+        "paddingLeft": "5.76px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Same network", "type": 0, "shown": true }],
+      "surfaces": [{ "box": [0, 0, 135.5, 24.6], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

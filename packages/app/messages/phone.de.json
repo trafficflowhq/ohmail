@@ -316,6 +316,7 @@
     "bootLocalEngineOffOrigin": "ohmail sollte das Postfach auf diesem Handy und zugleich einen Server öffnen und hat deshalb keines von beiden geöffnet.",
     "bootMirrorFailed": "Die Kopie deiner Mails auf diesem Handy ließ sich nicht öffnen: {0}",
     "bootNeedsCredential": "Eine Anmeldung und eine Account-ID werden beide gebraucht.",
+    "calendarCopyRemains": "Der Kalender, den dieses Handy kopiert hat, ließ sich noch nicht entfernen. ohmail versucht es beim nächsten Start erneut.",
     "composeEarlierWent": "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
     "composeKept": "In den Entwürfen behalten.",
     "composeKeptChangedElsewhere": "Dieser Entwurf wurde auf einem anderen Gerät geändert. Was du hier geschrieben hast, ist als neuer Entwurf gesichert.",

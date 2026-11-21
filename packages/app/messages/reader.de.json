@@ -1,5 +1,6 @@
 {
   "reader": {
+    "actions": { "addToCalendar": "Zum Kalender hinzufügen" },
     "gone": "Diese Nachricht wurde anderswo verschoben oder gelöscht.",
     "goneTrash": "Im Papierkorb nachsehen",
     "trashAsk": "In den Papierkorb verschieben",
@@ -246,7 +247,7 @@
     "faultOffline": "ohmail war nicht erreichbar — prüf deine Verbindung",
     "faultSignedOut": "Deine Sitzung ist beendet — melde dich neu an",
     "faultRetry": "versuch es nochmal",
-    "faultRetrying": "wird gleich nochmal versucht",
+    "faultRetrying": "Ohmail versucht es gleich noch einmal. {reason}.",
     "tooLarge": "{size} · zu groß, um sie zu holen",
     "listFailed": "Die Dateien dieser Nachricht ließen sich nicht laden.",
     "listOffline": "ohmail war nicht erreichbar — prüf deine Verbindung.",
@@ -294,7 +295,7 @@
     "pdfErrorDetail": "Lad es herunter, um es in einer anderen App zu öffnen.",
     "textTruncated": "— Vorschau gekürzt. Zum Weiterlesen herunterladen.",
     "textTruncatedHere": "— Vorschau gekürzt.",
-    "textTooLargeDetail": "Speichere sie stattdessen.",
+    "textTooLargeDetail": "Diese Datei ist zu groß für die Vorschau in ohmail. Lade sie stattdessen herunter.",
     "count": "{index} von {total}",
     "page": "{page} / {total}",
     "prevAttachment": "Vorheriger Anhang",

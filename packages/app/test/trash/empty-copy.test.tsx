@@ -10,9 +10,9 @@ import { LIST_WORDS, listFrame } from "../places/list-seat.js";
 afterEach(cleanup);
 
 it.each([
-  ["en", trashEn],
-  ["de", trashDe],
-] as const)("explains what can be restored from the settled empty Trash in %s", async (locale, messages) => {
+  ["en", trashEn, "What you delete in ohmail lands here and can be put back."],
+  ["de", trashDe, "Was du in ohmail löschst, landet hier und lässt sich zurücklegen."],
+] as const)("shows the concise empty Trash in %s", async (locale, messages, oldCopy) => {
   const { host } = listFrame({
     first: "#/trash",
     letters: [],
@@ -26,7 +26,12 @@ it.each([
       <Frame host={host} />
     </TextProvider>,
   );
-  expect(await screen.findByText(messages.trash.empty)).toBeTruthy();
+  await screen.findByText(
+    (_, node) =>
+      node?.classList.contains("oh-empty-label") === true && node.textContent === messages.trash.emptyTitle,
+  );
+  expect(screen.queryByText(oldCopy)).toBeNull();
+  expect(screen.queryByText(messages.trash.foot)).toBeNull();
   expect(screen.getAllByRole("paragraph").map((paragraph) => paragraph.textContent)).toContain(
     messages.trash.emptyTitle,
   );

@@ -30,17 +30,16 @@ import { securityPane, type SecurityPaneParts } from "../account/security/pane.j
 import { storagePane, type StoragePaneParts } from "../account/storage/pane.js";
 import type { PlaceEntry, PlaceRail } from "../frame/contract.js";
 import { useFrame } from "../frame/index.js";
-import { NONE, type HostContract, type None } from "../host/index.js";
+import { NONE, type None } from "../host/index.js";
 import { mailboxesPane, type MailboxesParts } from "../mailboxes/pane/pane.js";
 import { useProfileImportState } from "../profile-import/ground.js";
 import { SavedProfileSettings } from "../profile-import/SavedProfileSettings.js";
-import { PANE_IDS } from "../settings/contract.js";
-import type { PaneId, SettingsBeside, SettingsPane, SettingsPanes } from "../settings/contract.js";
+import type { SettingsBeside, SettingsPane, SettingsPanes } from "../settings/contract.js";
 import { paneOf } from "../settings/facts.js";
 import { useFoldersSummary, useSignaturesSummary } from "../settings/consent-summary.js";
 import { useAwaySummary } from "../settings/away/summary.js";
 import { useRulesSummary } from "../settings/rules/summary.js";
-import { menuOf } from "../settings/menu.js";
+import { rememberSettingsMenu } from "../settings/menu.js";
 import { lazyView } from "../frame/lazy-view.js";
 import { settingsPlaceWith, type SettingsAbove } from "../settings/place-with.js";
 
@@ -165,8 +164,6 @@ const RAIL: PlaceRail = {
   keyLabel: "goSettings",
 };
 
-/** The sections each Settings place made here was made over, by the place itself: what its menu can list. */
-const MADE = new WeakMap<PlaceEntry, SettingsPanes>();
 const SAVED_MAILBOXES = { ...paneOf("mailboxes", { Body: SavedProfileSettings }), listed: () => true };
 
 /** The mail's Settings place over one host's parts, or `none` where no section is registered. Once per mount. */
@@ -187,21 +184,6 @@ export function mailSettings(parts: MailPaneParts, Above?: SettingsAbove): Place
     ...settingsPlaceWith(sections, useSettingsBeside, Above, SettingsList, SettingsReading),
     rail: RAIL,
   };
-  MADE.set(place, panes);
+  rememberSettingsMenu(place, panes);
   return place;
-}
-
-/**
- * WHERE A WAY INTO SETTINGS LEADS ON THIS HOST, for a part of the ground that names a section (the rail's foot names
- * Mailboxes): that section where the host's menu lists it, else the first section the menu does list, so a press
- * never opens a section that is not there or a Settings with nothing drawn. Null where the host hands no Settings,
- * or one that was not made here: nothing is known of its sections then.
- */
-export function settingsSection(host: HostContract, asked: PaneId): PaneId | null {
-  const place = host.features.places.settings;
-  const panes = place === NONE ? undefined : MADE.get(place);
-  if (panes === undefined) return null;
-  const menu = menuOf(host, panes);
-  const selected = (menu.find((pane) => pane.id === asked) ?? menu[0])?.id;
-  return PANE_IDS.find((id) => id === selected) ?? null;
 }

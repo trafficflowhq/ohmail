@@ -55,6 +55,7 @@ export interface LetterKeyDoors {
   readonly canAnswerKey?: (id: string) => boolean;
   readonly screeningLabel?: string;
   readonly tagLabel?: string;
+  readonly calendarAction?: { label: string; onPress: () => void };
 }
 
 export type DeleteKeyTarget = Pick<LetterKeyDoors, "letter" | "verbs"> & {
@@ -173,6 +174,7 @@ export function letterKeys(ts: Text, open: LetterKeyDoors | null): KeyBinding[] 
     verb("b", ts("key.resurface"), booked ? show("resurface") : act("resurface")),
     ...(open?.tagLabel ? [verb("t", open.tagLabel, show("tag"))] : []),
     ...(open?.screeningLabel ? [verb("s", open.screeningLabel, show("screening"))] : []),
+    ...(open?.calendarAction ? [verb("v", open.calendarAction.label, open.calendarAction.onPress)] : []),
     verb("m", ts("key.move"), show("move"), open === null ? {} : { disabled: open.verbs.moves.length === 0 }),
     /* A held key is one press: auto-repeat never walks the ask. */
     verb("d", ts("key.deleteAsk"), show("cardDelete"), { when: isCardDeleteKey }),

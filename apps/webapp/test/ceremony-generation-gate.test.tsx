@@ -289,15 +289,17 @@ describe("MailboxSection: a factor landing after Cancel removes no mailbox", () 
 
 // ── 2. The desktop-link screen: a cancelled step-up mints nothing ───────────────────────────
 
+const dialogButton = (el: HTMLElement, label: string): HTMLElement => {
+  const found = [...el.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
+    [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === label);
+  expect(found, `exactly one "${label}" button in the dialog`).toHaveLength(1);
+  return found[0]!;
+};
+
 describe("LinkDesktopRoute: a factor landing after Cancel mints no code", () => {
   /** The one step-up dialog's code field, and one of its buttons by its label (its key hint aside). */
   const codeField = (el: HTMLElement): HTMLInputElement | null => el.querySelector<HTMLInputElement>('[role="dialog"] input');
-  const dialogButton = (el: HTMLElement, label: string): HTMLElement => {
-    const found = [...el.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
-      [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === label);
-    expect(found, `exactly one "${label}" button in the dialog`).toHaveLength(1);
-    return found[0]!;
-  };
+
 
   async function toTheFactorInFlight(): Promise<HTMLElement> {
     const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
@@ -393,17 +395,17 @@ describe("StepUpPrompt: the gate is the generation, not the host dropping the pa
     await waitFor(() => byText(el, dev.addAction!) != null, "the add-a-device verb");
     await click(byText(el, dev.addAction!)!);
     await waitFor(
-      () => el.querySelector('[data-testid="step-up-prompt"]') != null,
-      "the inline factor prompt",
+      () => el.querySelector('[role="dialog"]') != null,
+      "the factor dialog",
     );
 
-    await typeInto(el.querySelector("#stepup-code"), "123456");
-    await submit(el.querySelector("#stepup-code")!.closest("form"));
+    await typeInto(el.querySelector('[role="dialog"] input[autocomplete="one-time-code"]'), "123456");
+    await submit(el.querySelector('[role="dialog"] input[autocomplete="one-time-code"]')!.closest("form"));
     await waitFor(() => rig.settle != null, "the step-up to be in flight");
     rig.calls = [];
 
-    await click(byText(el, dev.cancel!)!);
-    expect(el.querySelector('[data-testid="step-up-prompt"]'), "the host dropped the prompt").toBeNull();
+    await click(dialogButton(el, en.stepUp.cancel));
+    expect(el.querySelector('[role="dialog"]'), "the host dropped the prompt").toBeNull();
     await landTheVerify();
 
     expect(rig.calls, "the parked verb must not run after Cancel").not.toContain("pair.mintDevice");

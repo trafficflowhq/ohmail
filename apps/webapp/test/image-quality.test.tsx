@@ -3,12 +3,7 @@ import type { ComposeAttachment } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import de from "../messages/de.json";
-import { ComposeAttach } from "../app/components/ComposeAttach";
-import { Scoped } from "@ohmail/app/frame";
-import { setActiveCatalog } from "../app/shell/locale";
+import { WriteFilesFixture } from "./fixtures/write-files";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,
   IMAGE_QUALITY_LEVELS,
@@ -21,7 +16,7 @@ import {
   readImageQualityLevel,
   compressImage,
   writeImageQualityLevel,
-} from "../app/components/image-quality";
+} from "@ohmail/app-logic/write/image-quality";
 
 /**
  * SHRINKING A PICTURE ON THE WAY INTO A MESSAGE.
@@ -807,31 +802,14 @@ let handed: ComposeAttachment[] = [];
 
 async function mount(maxTotalBytes: number, locale: "en" | "de" = "en"): Promise<void> {
   handed = [];
-  /* Drawn in a shell, as the composer always is: the level is read under the shell's scope. */
-  const view = h(Scoped, { scope: "acc-quality" }, h(ComposeAttach as never, {
-    attachments: [],
-    onChange: (next: ComposeAttachment[]) => {
-      handed = next;
-    },
-    maxTotalBytes,
-  } as never));
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  // The register and the provider together, which is `LocaleShell`'s own contract: the SENTENCE
-  // comes from the provider and the NUMBER in it from `activeFormatLocale()`.
-  setActiveCatalog(locale, (locale === "de" ? de : messages) as never);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale,
-        messages: locale === "de" ? de : messages,
-        timeZone: "UTC",
-        now: new Date("2026-08-11T09:00:00.000Z"),
-        children: view,
-      }),
-    );
-  });
+  await act(async () => root!.render(h(WriteFilesFixture, {
+    cap: maxTotalBytes,
+    locale,
+    onChange: (next) => { handed = next; },
+  })));
 }
 
 async function pickFiles(files: File[]): Promise<void> {
@@ -859,7 +837,6 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
-  setActiveCatalog("en", null);
 });
 
 describe("the compression runs BEFORE the cap check", () => {
@@ -875,15 +852,15 @@ describe("the compression runs BEFORE the cap check", () => {
     expect(handed).toHaveLength(1);
     expect(handed[0]!.filename).toBe("photo.jpg");
     expect(handed[0]!.contentType).toBe("image/jpeg");
-    expect(text(".compose-attach-error")).toBe("");
+    expect(text('[role="status"]')).toBe("");
   });
 
   it("says what it did, quietly and in both catalogues", async () => {
     await mount(ONE_MB);
     await pickFiles([photo()]);
-    expect(text(".compose-attach-saved")).toBe("Pictures compressed: 2.5 MB → 645 KB");
+    expect(text(".oh-attachroom-weight")).toBe("Pictures compressed: 2.5 MB → 645 KB");
     // Not the refusal's live region — nothing went wrong.
-    expect(host!.querySelector(".compose-attach-saved")!.getAttribute("role")).toBeNull();
+    expect(host!.querySelector(".oh-attachroom-weight")!.getAttribute("role")).toBeNull();
 
     await act(async () => root!.unmount());
     host!.remove();
@@ -894,14 +871,14 @@ describe("the compression runs BEFORE the cap check", () => {
     // said so in its own comment: the sizes went through `toFixed`, which knows no locale, and a
     // decimal point in German is a thousands separator. The shared formatter takes the locale, so
     // the guard that was written to fail on the day somebody made that change now pins the change.
-    expect(text(".compose-attach-saved")).toBe("Bilder komprimiert: 2,5 MB → 645 KB");
+    expect(text(".oh-attachroom-weight")).toBe("Bilder komprimiert: 2,5 MB → 645 KB");
   });
 
   it("no note when nothing was compressed", async () => {
     await mount(ONE_MB);
     await pickFiles([gif()]);
     expect(handed).toHaveLength(1);
-    expect(host!.querySelector(".compose-attach-saved")).toBeNull();
+    expect(host!.querySelector(".oh-attachroom-weight")).toBeNull();
   });
 
   it("the cap still bites — on the SHRUNK size, which is the number that will be sent", async () => {
@@ -910,7 +887,7 @@ describe("the compression runs BEFORE the cap check", () => {
     await mount(100 * 1024);
     await pickFiles([photo()]);
     expect(handed).toHaveLength(0);
-    expect(text(".compose-attach-error")).toContain("102 KB");
+    expect(text('[role="status"]')).toContain("102 KB");
   });
 
   it("at quality Original the same photo is refused — the setting reaches the attach control", async () => {
@@ -919,7 +896,7 @@ describe("the compression runs BEFORE the cap check", () => {
     await pickFiles([photo()]);
     expect(handed).toHaveLength(0);
     expect(decodeCalls).toHaveLength(0);
-    expect(text(".compose-attach-error")).not.toBe("");
+    expect(text('[role="status"]')).not.toBe("");
   });
 
   it("the running total counts compressed bytes, so a second picture still fits", async () => {
@@ -939,7 +916,7 @@ describe("the compression runs BEFORE the cap check", () => {
     await mount(2 * ONE_MB);
     await pickFiles([photo(), second]);
     expect(handed).toHaveLength(2);
-    expect(text(".compose-attach-error")).toBe("");
-    expect(text(".compose-attach-saved")).toBe("Pictures compressed: 5 MB → 1.3 MB");
+    expect(text('[role="status"]')).toBe("");
+    expect(text(".oh-attachroom-weight")).toBe("Pictures compressed: 5 MB → 1.3 MB");
   });
 });

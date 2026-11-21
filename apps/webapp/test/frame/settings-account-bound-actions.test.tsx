@@ -5,8 +5,9 @@ import { useMemo } from "react";
 import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
-import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
+import { MailGround, mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
 import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 import { bindApiOwner, pendApiOwner } from "../../app/api-client";
 import * as renewal from "../../app/session-refresh";
@@ -26,10 +27,10 @@ const awayRow = {
 const settings = mailSettings({ ...NO_PANE_PARTS, ai: WEB_PANE_PARTS.ai, away: WEB_PANE_PARTS.away });
 
 function SettingsFrame({ scope, pane, account }: { scope: string; pane: "ai" | "away"; account: string | null }) {
-  const engine = useMemo(() => registerSyncGate(Object.create(NO_ENGINE), createSyncGate(scope)), [scope]);
+  const engine = useMemo(() => registerSyncGate(fakeMail([]).engine, createSyncGate(scope)), [scope]);
   const { host } = useMemo(() => fakeHost({
     scope, account, engine, service: "self",
-    address: fakeAddress(`#/settings/${pane}`), places: { settings },
+    address: fakeAddress(`#/settings/${pane}`), places: { settings }, above: MailGround,
     features: { ai: { name: "ai", render: () => null } },
   }), [scope, engine, pane, account]);
   const web = useCloudMailHost(engine, {

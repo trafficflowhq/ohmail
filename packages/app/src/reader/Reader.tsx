@@ -9,10 +9,13 @@ import type { EngineMessage } from "@ohmail/wire";
 import { memo, useEffect, useRef, type MutableRefObject, type WheelEvent } from "react";
 import { JumpBack } from "@ohmail/ui/base";
 import { Sheet } from "@ohmail/ui/mail";
-import { baseSubject, isForwardedByUs, type ThreadWalk } from "@ohmail/app-logic/reader";
+import { baseSubject, isForwardedByUs, isProtected, type ThreadWalk } from "@ohmail/app-logic/reader";
 import { scrollByHand } from "@ohmail/app-logic/session/programmatic-scroll";
 import type { PaneProps, Route } from "../frame/contract.js";
 import { useText } from "../text/index.js";
+import { useNewEvent } from "../calendar/use-new-event.js";
+import { NONE } from "../host/index.js";
+import { useOwnAddresses } from "../frame/room.js";
 import { ActionBar, type PanelRoom } from "./actions/ActionBar.js";
 import { RunReadingHead } from "./actions/ReplyRun.js";
 import { Blank, GoneLetter, type ReadingBack } from "./blank/Blank.js";
@@ -87,13 +90,11 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
   const {
     commands,
     host,
-    shown,
+    shown: { messages, presentedIds, subject: shownSubject },
     opened,
     state,
     offMirrorRow,
     storeBody,
-    messages,
-    presentedIds,
     visit,
     column,
     reply,
@@ -114,9 +115,8 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     scroller,
     under,
   } = useConversationColumn(route, openId, keysHere, keyboard, phone);
-  const back: ReadingBack = phone
-    ? { word: from || undefined, label: from || t("back"), onPress: () => commands.open(null) }
-    : undefined;
+  const back = phone ? readerBack(from, t("back"), () => commands.open(null)) : undefined;
+  const calendarAction = useCalendarAction(opened, host.features.calendar !== NONE);
   /* Only a letter the engine tombstoned is said to be gone; one not here yet is a sheet with nothing said. */
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
   if (opened === null) return <Sheet kind="reading" label={t("pane")} back={back} />;
@@ -126,8 +126,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     ) : null;
   const latest = phone && messages.length > 1 ? messages.at(-1) : undefined;
   const eachSubject = readSubjectDisplay(host.session.scope) === "each";
-  const subject = baseSubject(shown.subject);
-  const dialog = canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined;
+  const subject = baseSubject(shownSubject);
   return (
     <div
       className="rd-column"
@@ -151,7 +150,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
           <RunReadingHead
             run={step}
             under={under}
-            subject={eachSubject ? undefined : shown.subject}
+            subject={eachSubject ? undefined : shownSubject}
             {...facesOf(messages.length > 1 ? people : [])}
             tags={opened.labels.length > 0 ? <Tags labels={opened.labels} /> : undefined}
             mailbox={mailboxWord(opened.mailboxId) ?? undefined}
@@ -168,7 +167,10 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             run={step}
             onScreen={canScreen ? screenSender : undefined}
             onScreenKey={canScreen ? screenByKey : undefined}
-            screeningDialog={dialog}
+            screeningDialog={
+              canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined
+            }
+            onCalendar={calendarAction}
           />
         }
         jump={messages.length > 1 ? <WayToLatest walk={walk} last={messages.length - 1} /> : undefined}
@@ -186,7 +188,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             opened={m.id === openId}
             previewSelection={`${route.place}:${openId}`}
             unread={m.id === openId && visit !== null ? visit.unread : m.unread}
-            subject={m === latest ? m.subject || shown.subject : undefined}
+            subject={m === latest ? m.subject || shownSubject : undefined}
             look={column.wiring?.look ?? "dot"}
             reading={!column.wiring?.previewing}
             presented={presentedIds.has(m.id)}
@@ -200,6 +202,35 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
       <Contact person={person} onClose={closeCard} />
     </div>
   );
+}
+
+function readerBack(from: string, fallback: string, onPress: () => void): ReadingBack {
+  return { word: from || undefined, label: from || fallback, onPress };
+}
+
+function useCalendarAction(letter: EngineMessage | null, enabled: boolean) {
+  const own = useOwnAddresses();
+  const allowed =
+    enabled && letter !== null && letter.sensitivity?.sensitive !== true && !isProtected(letter);
+  const create = useNewEvent(
+    allowed
+      ? {
+          title: letter.subject,
+          guests: letterGuests(letter, own),
+        }
+      : undefined,
+  );
+  return allowed && create ? () => create() : undefined;
+}
+
+function letterGuests(letter: EngineMessage, own: readonly string[]) {
+  const seen = new Set(own.map((address) => address.toLowerCase()));
+  return [letter.from, ...letter.to, ...letter.cc].flatMap(({ address, name }) => {
+    const key = address.trim().toLowerCase();
+    if (!key.includes("@") || seen.has(key)) return [];
+    seen.add(key);
+    return [{ address: address.trim(), name: name ?? null }];
+  });
 }
 
 /** The way back to a conversation's latest message, standing while the column is far above it. */

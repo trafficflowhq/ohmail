@@ -2,15 +2,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import de from "../messages/de.json";
+import { WriteFilesFixture } from "./fixtures/write-files";
 import {
-  ComposeAttach, composeAttachBudgetFor, composeAttachCap, COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  composeAttachBudgetFor, composeAttachCap, COMPOSE_ATTACH_MAX_TOTAL_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,
-} from "../app/components/ComposeAttach";
+} from "@ohmail/client-engine";
 import { optionsFromFacts, optionsFromMirror, resolveComposeFrom } from "@ohmail/app-logic/writing/compose-from";
-import { setActiveCatalog } from "../app/shell/locale";
 
 /**
  * THE NUMBER ON SCREEN IS THE NUMBER THAT WILL BE ENFORCED.
@@ -38,29 +35,16 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 async function render(maxTotalBytes: number | undefined, locale: "en" | "de" = "en"): Promise<void> {
-  const view = h(ComposeAttach as never, {
-    attachments: [], onChange: () => {},
-    ...(maxTotalBytes === undefined ? {} : { maxTotalBytes }),
-  } as never);
-  // The register and the provider are built together, which is `LocaleShell`'s own contract:
-  // the SENTENCE comes from the provider and the NUMBER in it from `activeFormatLocale()`, so a
-  // harness that set only one measured a German sentence with an English decimal point.
-  setActiveCatalog(locale, locale === "de" ? (de as never) : (messages as never));
-  const el = h(NextIntlClientProvider, {
-    locale, messages: locale === "de" ? de : messages, timeZone: "UTC",
-    now: new Date("2026-08-11T09:00:00.000Z"),
-    children: view,
-  });
+  const el = h(WriteFilesFixture, { cap: maxTotalBytes, locale });
   if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
   await act(async () => { root!.render(el); });
 }
 
-const capText = (): string => host!.querySelector<HTMLElement>(".compose-attach-cap")!.textContent ?? "";
+const capText = (): string => host!.querySelector<HTMLButtonElement>(".oh-attach button")!.title ?? "";
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove(); root = null; host = null;
-  setActiveCatalog("en", null);
 });
 
 describe("composeAttachCap — the client mirror of the server's min()", () => {
@@ -187,6 +171,6 @@ describe("the copy renders the prop's number", () => {
     // the reader's language: a decimal point in a German pane is a thousands separator.
     expect(capText()).toContain("2,1 MB");
     expect(capText()).not.toContain("2.1 MB");
-    expect(capText()).toMatch(/Bis zu/);
+    expect(capText()).toMatch(/höchstens/);
   });
 });

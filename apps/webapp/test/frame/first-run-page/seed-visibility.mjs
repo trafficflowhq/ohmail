@@ -19,9 +19,9 @@ async function checkSeedReviewVisibility() {
     await build({
       entryPoints: [join(root, "apps/webapp/test/frame/first-run-page/entry.tsx")],
       bundle: true,
-      format: "iife",
+      format: "esm",
       platform: "browser",
-      target: ["es2020"],
+      target: ["es2022"],
       jsx: "automatic",
       outdir: output,
       entryNames: "page",
@@ -82,7 +82,7 @@ async function checkSeedReviewVisibility() {
               contentType: "text/html",
               body: `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
                 <link rel="stylesheet" href="/page.css"><body class="mo-canvas app-body today">
-                <div id="app" style="display:contents"></div><script src="/page.js"></script></body>`,
+                <div id="app" style="display:contents"></div><script type="module" src="/page.js"></script></body>`,
             });
           });
           await page.goto(ORIGIN + "/?seed-review#/ohbox");

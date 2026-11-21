@@ -393,6 +393,15 @@
     "retry": "Try again"
   },
   "host": {
+    "copyOrigin": "Copy",
+    "thisComputer": "This computer",
+    "hostOff": "Off",
+    "hostServing": "Serving",
+    "hostNotServing": "Not serving",
+    "hostStarting": "Starting",
+    "reachAt": "Your devices reach it at",
+    "servingDetail": "While this computer is awake.",
+    "lanServingDetail": "For apps on your network, while this computer is awake. If a device can't reach it, check that this computer's firewall allows port {port}.",
     "title": "Devices",
     "lead": "Turn this computer into your own mail server. Your other devices connect to it directly — nothing goes through the cloud.",
     "story": "It works over Tailscale, a private tunnel between your own devices. Nothing is opened to the internet.",
@@ -1147,12 +1156,7 @@
     "readerMoveRefusedUnknown": "Nothing moved — the install that organizes this mailbox is where mail is moved.",
     "readerMoveRefusedNobody": "Nothing moved — nothing organizes this mailbox. Settings → Mailboxes has the button to organize it here.",
     "moveBarTitle": "This computer does not move this mailbox's mail",
-    "moveBarWhy": "{name} organizes it, so releasing and rescuing mail happen where it runs. This computer reads, searches, marks read and sends. Settings → Mailboxes has the button to organize the mailbox here instead.",
-    "moveBarWhyUnknown": "Releasing and rescuing mail happen where the organizer runs. This computer reads, searches, marks read and sends. Settings → Mailboxes has the button to organize the mailbox here instead.",
-    "moveBarWhyNobody": "Nothing organizes it, so nothing releases or rescues mail. This computer reads, searches, marks read and sends. Settings → Mailboxes has the button to organize the mailbox here.",
     "readerBarTitle": "This computer does not screen this mailbox",
-    "readerBarWhy": "{name} organizes it. You can read, search, mark read and send here; deciding where mail belongs happens where the organizer runs. Settings → Mailboxes has the button to take it over.",
-    "readerBarWhyUnknown": "Another ohmail organizer has it. You can read, search, mark read and send here; deciding where mail belongs happens where the organizer runs. Settings → Mailboxes has the button to take it over.",
     "readerBarNoneTitle": "Nothing organizes this mailbox",
     "readerBarNoneWhy": "No install is filing it, so nothing decided here would be carried out. Settings → Mailboxes has the button to organize it from this computer.",
     "oauthDecideElsewhere": "For a mailbox signed in with OAuth, decisions can only be made on the install that organizes it.",
@@ -1389,7 +1393,6 @@
   "trash": {
     "listMenu": "List",
     "emptyTitle": "Nothing deleted",
-    "empty": "What you delete in ohmail lands here and can be put back.",
     "foot": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
     "footLive": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.",
     "deletedAt": "Deleted {when}",
@@ -2290,6 +2293,7 @@
     "yourMail": "What happens to your mail"
   },
   "reader": {
+    "actions": { "addToCalendar": "Add to calendar" },
     "gone": "This message was moved or deleted elsewhere.",
     "goneTrash": "Look in Trash",
     "trashAsk": "Move to Trash",
@@ -3501,6 +3505,7 @@
     "removeReconnect": "You can connect this mailbox again later.",
     "removeConfirm": "Remove mailbox",
     "removeCancel": "Keep it",
+    "removeCancelKey": "Esc",
     "removeWorking": "Removing…",
     "factorBodyRemove": "Removing a mailbox deletes the password stored for it, so your account asks for a fresh second factor first.",
     "removeKeepChoice": "Remove, and keep ohmail's copy of its mail",
@@ -4529,6 +4534,7 @@
     "search": "Search by sender or domain",
     "searchLabel": "Search rules",
     "facetLabel": "Show rules that file into",
+    "facetKey": "Files into",
     "facetAll": "All",
     "noMatch": "No rules match.",
     "bulkRevoke": "Revoke {count, plural, one {the matching rule} other {all # matching}}",
@@ -4690,7 +4696,7 @@
     "faultOffline": "Couldn't reach ohmail — check your connection",
     "faultSignedOut": "Your session ended — sign in again",
     "faultRetry": "try again",
-    "faultRetrying": "trying again shortly",
+    "faultRetrying": "{reason}. Ohmail will try again shortly.",
     "tooLarge": "{size} · too large to fetch",
     "listFailed": "Couldn't load this message's files.",
     "listOffline": "Couldn't reach ohmail — check your connection.",
@@ -4738,7 +4744,7 @@
     "pdfErrorDetail": "Download it to open in another app.",
     "textTruncated": "— preview truncated. Download to read the rest.",
     "textTruncatedHere": "— preview truncated.",
-    "textTooLargeDetail": "Save it instead.",
+    "textTooLargeDetail": "This file is larger than ohmail fetches to show, so download it instead.",
     "count": "{index} of {total}",
     "page": "{page} / {total}",
     "prevAttachment": "Previous attachment",
@@ -5616,6 +5622,7 @@
     "bootLocalEngineOffOrigin": "ohmail was asked to open the mailbox on this phone and a server at once, so it opened neither.",
     "bootMirrorFailed": "The copy of your mail on this phone could not be opened: {0}",
     "bootNeedsCredential": "A credential and an account id are both required.",
+    "calendarCopyRemains": "The calendar this phone copied could not be removed yet. ohmail will try again the next time it starts.",
     "composeEarlierWent": "This message had already been sent. Your newer text was not sent as a second copy.",
     "composeKept": "Kept in Drafts.",
     "composeKeptChangedElsewhere": "This draft was changed on another device. What you typed here is kept as a new draft.",
@@ -6067,6 +6074,9 @@
   },
   "mailboxFilings": {
     "title": "Waiting to be filed · {mailbox}",
+    "waiting": "Waiting to be filed",
+    "waitingValue": "{count} for {folder}",
+    "waitingSince": "Waiting since {since}.",
     "group": "{count, plural, one {1 message waits} other {# messages wait}} to be filed into {folder} since {since}",
     "why": "Why: {reasons}",
     "reasonCounted": "{reason} ({count})",
@@ -6519,6 +6529,7 @@
     "span": "{from}–{to}",
     "count": "{count, number}",
     "top": "Back to top",
+    "answerLater": "Answer Later",
     "month": "Month"
   },
   "calsearch": {
@@ -6741,6 +6752,8 @@
     "inviteGuest": "Invite {name}",
     "confirmGuest": "Send an invitation to {name}?",
     "cancelGuest": "Cancel",
+    "confirmGuests": "Send invitations to {name}?",
+    "sendGuests": "Send invitations",
     "sendGuest": "Send invitation",
     "removeGuest": "Remove guest",
     "comingHeading": "Coming up",
@@ -6759,6 +6772,7 @@
   "calendar": {
     "connect": "Connect a calendar",
     "actions": {
+      "openLetter": "Open the letter",
       "resizeTimeStart": "Resize start",
       "resizeTimeEnd": "Resize end",
       "resizeStart": "Change first day",
@@ -6826,6 +6840,19 @@
       "keepTheirs": "Keep theirs",
       "discard": "Discard changes"
     },
+    "call": {
+      "label": "Call",
+      "join": "Join",
+      "copy": "Copy",
+      "copied": "Copied"
+    },
+    "location": {
+      "own": "Your places",
+      "suggestions": "Place suggestions",
+      "credit": "© OpenStreetMap contributors",
+      "maps": "Open in Maps",
+      "mapsTitle": "Opens openstreetmap.org"
+    },
     "create": {
       "endDate": "End date",
       "nextDay": "next day",
@@ -6856,6 +6883,7 @@
     "placeCount": "{place}, {count}",
     "fromMail": "From mail",
     "more": "More",
+    "letters": "Letters",
     "people": "People",
     "atTime": "{day}, {time}",
     "interval": "{first} – {last}",

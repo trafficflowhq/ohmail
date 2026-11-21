@@ -18,20 +18,34 @@ export function faceMirrorOwner(cookie: string): string | null {
  * `door`, with the face mirror's writes naming the account the jar names. The name goes first and is written
  * last, so a write that stops partway leaves a mirror naming nobody, never the wrong account.
  */
-export function faceMirrorDoor(door: StorageDoor): StorageDoor {
+function faceMirrorDoor(door: StorageDoor, expectedOwner?: string | null): StorageDoor {
   return {
     get: (key) => door.get(key),
     set(key, value) {
       if (key !== FACE_ACCOUNT_KEY) return door.set(key, value);
-      door.remove(FACE_ACCOUNT_OWNER_KEY);
-      const out = door.set(key, value);
       const owner = readOwner();
-      if (out === "stored" && owner !== null) door.set(FACE_ACCOUNT_OWNER_KEY, owner);
-      return out;
+      if (expectedOwner !== undefined && (expectedOwner === null || owner !== expectedOwner)) return "lost";
+      if (door.remove(FACE_ACCOUNT_OWNER_KEY) !== "stored") return "lost";
+      const out = door.set(key, value);
+      if (out !== "stored" || owner === null) return out;
+      if (readOwner() !== owner) {
+        door.remove(FACE_ACCOUNT_OWNER_KEY);
+        return "lost";
+      }
+      const stamped = door.set(FACE_ACCOUNT_OWNER_KEY, owner);
+      if (stamped === "stored" && (door.get(FACE_ACCOUNT_KEY) !== value || readOwner() !== owner)) {
+        door.remove(FACE_ACCOUNT_OWNER_KEY);
+        return "lost";
+      }
+      return stamped;
     },
     remove(key) {
       if (key !== FACE_ACCOUNT_KEY) return door.remove(key);
-      door.remove(FACE_ACCOUNT_OWNER_KEY);
+      if (expectedOwner !== undefined) {
+        if (expectedOwner === null || readOwner() !== expectedOwner) return "lost";
+        if (door.get(FACE_ACCOUNT_OWNER_KEY) !== expectedOwner) return "stored";
+      }
+      if (door.remove(FACE_ACCOUNT_OWNER_KEY) !== "stored") return "lost";
       return door.remove(key);
     },
   };
@@ -40,15 +54,16 @@ export function faceMirrorDoor(door: StorageDoor): StorageDoor {
 let themeStorage: StorageDoor | undefined;
 
 function themeDoor(): StorageDoor {
-  return (themeStorage ??= faceMirrorDoor(localStorageDoor("theme")));
+  return (themeStorage ??= localStorageDoor("theme"));
 }
 
 /** The browser opens the storage door on use. The server only reads the request's owner. */
-export const THEME_DOOR: StorageDoor = {
+const THEME_STORAGE: StorageDoor = {
   get: (key) => themeDoor().get(key),
   set: (key, value) => themeDoor().set(key, value),
   remove: (key) => themeDoor().remove(key),
 };
+export const THEME_DOOR = faceMirrorDoor(THEME_STORAGE);
 
 export function currentFaceOwner(): string | null {
   return readOwner();
@@ -57,11 +72,11 @@ export function currentFaceOwner(): string | null {
 /** Only the account confirmed for this document can initialize its face from storage. */
 export function accountThemeDoor(confirmedOwner: string | null): StorageDoor {
   return {
-    ...THEME_DOOR,
+    ...faceMirrorDoor(THEME_STORAGE, confirmedOwner),
     get(key) {
       if (key === FACE_ACCOUNT_KEY && (confirmedOwner === null || readOwner() !== confirmedOwner
-        || THEME_DOOR.get(FACE_ACCOUNT_OWNER_KEY) !== confirmedOwner)) return null;
-      return THEME_DOOR.get(key);
+        || THEME_STORAGE.get(FACE_ACCOUNT_OWNER_KEY) !== confirmedOwner)) return null;
+      return THEME_STORAGE.get(key);
     },
   };
 }

@@ -77,6 +77,11 @@ export interface CalendarGuest {
   readonly name: string | null;
 }
 
+export interface CalendarDraftSeed {
+  readonly title?: string;
+  readonly guests: readonly CalendarGuest[];
+}
+
 export interface ReaderPosition {
   readonly address: string;
   readonly top: number;
@@ -94,7 +99,7 @@ export interface FrameInner {
   readonly connection: Feed<ConnectionFeed>;
   /** A letter handed to `write`, taken once by the place that writes. */
   readonly draft: { current: LinkedDraft | null };
-  readonly calendarGuest: { current: CalendarGuest | null };
+  readonly calendarDraftSeed: { current: CalendarDraftSeed | null };
   /** The letter a `go` named as entered, until the place that lists it takes the word or the address moves on. */
   readonly entered: Feed<EnteredTarget | null>;
   readonly readerPosition: { current: ReaderPosition | null };
@@ -145,8 +150,8 @@ export function useSearchQuery() {
   return useInner().searchQuery;
 }
 
-export function useCalendarGuest(): FrameInner["calendarGuest"] {
-  return useInner().calendarGuest;
+export function useCalendarDraftSeed(): FrameInner["calendarDraftSeed"] {
+  return useInner().calendarDraftSeed;
 }
 
 export function useFrame(): FrameApi {

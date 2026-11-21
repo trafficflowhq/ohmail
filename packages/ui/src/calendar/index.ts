@@ -8,6 +8,7 @@ import "./Grids/today-pulse.css";
 export { toneOf, toneStyle, type CalendarTone } from "./tone.js";
 export { CalendarSquare, type CalendarSquareProps } from "./Grids/CalendarSquare.js";
 export {
+  DraftChipArrival,
   EventChip,
   type EventChipProps,
   type EventChipState,

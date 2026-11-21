@@ -77,7 +77,7 @@ import {
 } from "@ohmail/app-logic/mail-state/mail-state";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
-import { useEngineOrNull } from "../../shell/engine";
+import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale } from "../../shell/locale";
 /* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`

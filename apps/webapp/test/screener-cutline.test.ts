@@ -2,10 +2,12 @@
 import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  ISO, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv,
+  ISO, LIVE_ACCOUNT, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv,
   tick,
 } from "./fixtures/live-walk-shell";
-import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
+import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * THE SCREENER IS THE CONSENT CUTLINE'S OWN SURFACE, AND IT WAS THE ONE THAT IGNORED IT.
@@ -271,9 +273,8 @@ describe("the Screener queue is partitioned by consent, not by folder", () => {
    * merely failed.
    */
   it("a tab whose /consent never answers partitions NOTHING", async () => {
-    // An account this browser holds no answer for. The cases above were answered for the account the
-    // harness hands where a test names none, and a remembered answer is a known window, not a silence.
-    setStorageOwner("acct_never_answered");
+    // Give the fixture account a cold visit, with no remembered answer to fall back on.
+    localStorage.removeItem(bootCacheKey(CONSENT_BOOT_SCOPE, LIVE_ACCOUNT));
     // The fixture answers `/consent` properly on purpose (see `installShellEnv`); this replaces
     // that one answer with a failure and leaves `/sync` alone.
     const inner = globalThis.fetch;

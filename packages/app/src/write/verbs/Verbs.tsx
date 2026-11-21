@@ -12,7 +12,7 @@ import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
 import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
 import { SEND_IN_FLIGHT_PHASES, type SendPhase, type SendState } from "@ohmail/app-logic/writing/mail-send";
 import { useText } from "../../text/index.js";
-import "./verbs.css";
+import "./verb-style.css";
 
 export function Verbs({
   canSend,

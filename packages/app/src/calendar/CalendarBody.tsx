@@ -21,6 +21,7 @@ import {
 } from "@ohmail/app-logic/calendar";
 import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
 import { EventChip } from "@ohmail/ui/calendar";
+import { useInvitationAnswer } from "../invitations/EventAnswers.js";
 import { fragmentOf } from "../frame/route.js";
 import { useEventBrowse } from "./use-event-browse.js";
 import { useGridKeys } from "./use-grid-keys.js";
@@ -46,6 +47,7 @@ import { EventActionQuestion } from "./EventActionQuestion.js";
 import { useEventActions } from "./use-event-actions.js";
 import { useEventDrag } from "./use-event-drag.js";
 import { useTodayPulse, type TodayVisit } from "./use-today-pulse.js";
+import { WeekMenus } from "./use-event-card-actions.js";
 import "./placement.css";
 
 export function CalendarBody(pane: PaneProps) {
@@ -183,6 +185,8 @@ function CalendarSurface(props: CalendarSurfaceProps) {
   const { commands } = useFrame();
   const t = useText("calendar");
   const { anchor, today, now, place } = where;
+  const editNext = useRef<string | null>(null);
+  const reply = useInvitationAnswer(port);
   const body = useRef<HTMLElement>(null);
   const view = useRef<HTMLDivElement>(null);
   useTodayPulse(
@@ -220,17 +224,24 @@ function CalendarSurface(props: CalendarSurfaceProps) {
       {port.hasOwedWrites?.() && <Notice place="bar" title={t("waiting.device")} />}
       <div className="cal-body-views">
         <div ref={view} className="cal-body-view" onClickCapture={suppressClick}>
-          <CurrentView
-            key={monthRun ? undefined : todayVisit?.id}
-            where={where}
-            monthRun={monthRun}
-            route={route}
-            keysHere={keysHere}
-            timeProps={timeProps}
-            input={input}
-            acts={acts}
-            edge={edge}
-          />
+          <WeekMenus
+            {...{ actions, reply, zones, editNext }}
+            events={found.events}
+            create={props.create}
+            onDay={(day) => go({ place: "day", sub: day })}
+          >
+            <CurrentView
+              key={monthRun ? undefined : todayVisit?.id}
+              where={where}
+              monthRun={monthRun}
+              route={route}
+              keysHere={keysHere}
+              timeProps={timeProps}
+              input={input}
+              acts={acts}
+              edge={edge}
+            />
+          </WeekMenus>
           {rangePreview}
           {route.words.panel === "new" && (
             <NewEvent
@@ -244,7 +255,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
             />
           )}
           {opened && (
-            <OpenEvent key={opened.id} event={opened} zones={zones} today={today} actions={actions} />
+            <OpenEvent key={opened.id} event={opened} {...{ zones, today, actions, editNext, reply }} />
           )}
           <EventActionQuestion actions={actions} />
         </div>

@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MutationRejectedError, OhmailEngine, PART_REASK_DELAYS_MS, REASK_MAX, type EngineAdapter, threadOf } from "@ohmail/client-engine";
-import { AttachmentStrip } from "../app/components/AttachmentStrip.js";
-import { useMessageAttachments } from "../app/shell/attachments.js";
+import { ReaderFilesFixture } from "./fixtures/reader-files";
+import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
 import { POLL_MS, startSyncScheduler } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
@@ -46,11 +46,8 @@ function engineOver(listAttachments: EngineAdapter["listAttachments"]): OhmailEn
 }
 
 function Harness({ engine }: { engine: OhmailEngine }) {
-  const a = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
-  return a ? h(AttachmentStrip, {
-    items: a.itemsOf("m1"), onOpen: (id: string) => a.open("m1", id),
-    onDownloadAll: () => a.downloadAll("m1"), downloadingAll: a.downloadingAll("m1"),
-  }) : null;
+  const a = useMessageAttachments(engine, null, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  return a ? h(ReaderFilesFixture, { files: a, messageId: "m1" }) : null;
 }
 
 async function mount(engine: OhmailEngine): Promise<void> {
@@ -113,13 +110,13 @@ describe("an embedded picture the mail server did not serve", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     const Strip = () => {
-      const a = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
-      return a ? h(AttachmentStrip, { items: a.itemsOf("m1", { includeInlineParts: true }), onOpen: () => {}, onDownloadAll: () => {}, downloadingAll: false }) : null;
+      const a = useMessageAttachments(engine, null, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+      return a ? h(ReaderFilesFixture, { files: a, messageId: "m1" }) : null;
     };
     await act(async () => root!.render(h(Strip)));
     await act(async () => { await engine.loadInlineImages("m1", ["logo@corp"]); });
     for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-    expect(host.textContent).toContain("Your mail server didn't answer — trying again shortly");
+    expect(host.textContent).toContain("Your mail server didn't answer. Ohmail will try again shortly.");
     engine.releaseAllAttachments();
   });
 

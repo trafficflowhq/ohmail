@@ -13,6 +13,7 @@ const price: Awaited<ReturnType<SuggestWire["suggest"]>> = {
   requested: 1,
   quoted: 1,
   quotedCredits: 1,
+  quoteGrant: { proof: "fixture-quote", pairs: [{ sender, messageId: "m-1" }] },
   charged: 0,
   suggestions: [],
   skipped: [],

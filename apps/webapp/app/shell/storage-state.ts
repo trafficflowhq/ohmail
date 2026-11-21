@@ -10,6 +10,8 @@
 import { firstImportsOf } from "@ohmail/app-logic/press/consent-options";
 
 /** The card atop the Ohbox: near the cap, at it, or above the plan's own lower limit. */
+export const STORAGE_PANE_HREF = "#/settings/storage";
+
 export type StorageCard = "near" | "full" | "drop";
 
 /** Why the cap is what it is: the plan's own limit, the trial's room above it, or a lower limit held. */

@@ -18,7 +18,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Spinner } from "@ohmail/ui";
+import { ActivityLine } from "@ohmail/ui/base";
 import { useTranslations } from "next-intl";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
@@ -958,12 +958,9 @@ function SessionScreen({ status }: { status: "resolving" | "unauthenticated" }) 
   if (status === "resolving") {
     return (
       <div className="gate" aria-busy="true" aria-live="polite">
-        {/* `.mbx-wait` — the spinner-plus-one-muted-line pairing the Settings rows and the
-            sync strip already use. Nothing new is styled for a frame that is normally never
-            seen, and the ring's `prefers-reduced-motion` rule comes with it. */}
         {slow ? (
           <span className="mbx-wait">
-            <Spinner className="mbx-spin" />
+            <ActivityLine />
             {t("opening")}
           </span>
         ) : null}

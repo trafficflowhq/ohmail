@@ -25,7 +25,19 @@ function queryOf(b: object): { sql: string; params: unknown[] } {
 
 const isObject = (v: unknown): v is object => v !== null && typeof v === "object" && !(v instanceof Promise);
 
-export function statementSeam<D extends object>(handle: D, at: (text: string, params: unknown[]) => StatementAct | null): D {
+type At = (text: string, params: unknown[]) => StatementAct | null;
+/** Each seam and the handle it wraps, so a binding the service names on it binds that handle and keeps the seam. */
+const seams = new WeakMap<object, { handle: object; at: At }>();
+
+/** `bindDb` as the services call it, except that a seam is bound through: its own handle is bound and the view wears the same seam. */
+export function bindThroughSeams<F extends (db: never, to: never) => unknown>(bind: F): F {
+  return ((db: object, to: unknown) => {
+    const seam = seams.get(db);
+    return seam ? statementSeam(bind(seam.handle as never, to as never) as object, seam.at) : bind(db as never, to as never);
+  }) as unknown as F;
+}
+
+export function statementSeam<D extends object>(handle: D, at: At): D {
   const statement = (b: object): object => new Proxy(b, {
     get(t, p) {
       const v = Reflect.get(t, p) as unknown;
@@ -68,5 +80,7 @@ export function statementSeam<D extends object>(handle: D, at: (text: string, pa
       };
     },
   });
-  return wrap(handle) as D;
+  const seam = wrap(handle);
+  seams.set(seam, { handle, at });
+  return seam as D;
 }

@@ -119,7 +119,7 @@ async function press(container: HTMLElement): Promise<void> {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await act(async () => {
-    container.querySelector("form.acct-confirm")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    container.querySelector("form:has(#acct-typed)")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
   await waitFor(() => rig.presses === before + 1, "the erase to be sent");
   await waitFor(() => container.querySelector("#acct-typed") != null

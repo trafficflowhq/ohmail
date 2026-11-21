@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { Avatar, Dot, EndDot, Sign } from "../../base/index.js";
 import type { IconName } from "../../icons/Icon.js";
 import { Sheet } from "../Shell/Sheet.js";
@@ -7,6 +7,8 @@ import "./settings-sheet.css";
 export interface SettingsSheetProps {
   /** What the sheet is about. Left out: the sheet has no head, its lines speak for it. */
   title?: string;
+  /** Focus target for a link that leads directly to this sheet. */
+  headRef?: Ref<HTMLHeadingElement>;
   /** A sheet about one person or mailbox: its circle leads the head. */
   person?: { name: string; address: string };
   /** A sheet about a thing: its sign leads the head. */
@@ -26,6 +28,7 @@ export interface SettingsSheetProps {
 /** A sheet of settings: a head when it needs one, what it wants when it wants something, then its lines. */
 export function SettingsSheet({
   title,
+  headRef,
   person,
   sign,
   hot,
@@ -48,7 +51,9 @@ export function SettingsSheet({
         {title ? (
           <header className="oh-settingssheet-head">
             {lead}
-            <h2 className="oh-text oh-settingssheet-title">{title}</h2>
+            <h2 className="oh-text oh-settingssheet-title" ref={headRef} tabIndex={headRef ? -1 : undefined}>
+              {title}
+            </h2>
             {aside ? <span className="oh-settingssheet-aside">{aside}</span> : null}
           </header>
         ) : null}

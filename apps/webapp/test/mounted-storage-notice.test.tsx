@@ -1,18 +1,10 @@
 /** @vitest-environment jsdom */
-import { within } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { json } from "./account/account-harness";
+import { json, session } from "./account/account-harness";
 import { NEAR } from "./account/storage-fixtures";
 import { act, closeMailPage, mountMailPage, prepareMailPage, tick } from "./fixtures/mounted-mail-page";
-
-const rig = vi.hoisted(() => ({ onVerified: null as null | (() => void) }));
-vi.mock("../app/(product)/mailbox/StepUpPrompt", () => ({
-  StepUpPrompt(props: { onVerified: () => void }) {
-    rig.onVerified = props.onVerified;
-    return null;
-  },
-}));
 
 const manage = "https://pay.example.com/manage/t";
 const open = (storage: unknown) => ({
@@ -30,12 +22,15 @@ beforeEach(async () => {
   access = open(NEAR);
   changeAnswers = [];
   left = [];
-  rig.onVerified = null;
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
     left.push(this.href);
   });
   server = await prepareMailPage({
     "GET /api/account/access": () => json(access),
+    "GET /api/auth/session": () => json(session({
+      twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: false },
+    })),
+    "POST /api/auth/step-up/totp": () => json({ ok: true }),
     "POST /api/account/manage-link/change": () => changeAnswers.shift() ?? json({ url: manage }),
     "PATCH /api/account/storage": () => { access = open({ ...NEAR, card: null }); return json({}); },
   });
@@ -93,10 +88,19 @@ describe("storage in the signed-in Ohbox", () => {
     page = await mountMailPage();
     await press(en.settings.storageAddStorage);
     expect(left).toEqual([]);
-    expect(rig.onVerified, "no step-up prompt").not.toBeNull();
-    await act(async () => { rig.onVerified!(); });
+    expect(server.on("POST /api/account/manage-link/change")).toHaveLength(1);
+    const dialog = within(page.getByRole("dialog"));
+    const factor = String(100_000 + 23_456);
+    await act(async () => {
+      fireEvent.change(dialog.getByRole("textbox"), { target: { value: factor } });
+    });
+    await act(async () => { dialog.getByRole("button", { name: en.stepUp.verify }).click(); });
     await tick(0);
-    expect(server.on("POST /api/account/manage-link/change")).toHaveLength(2);
+    expect(server.on("POST /api/auth/step-up/totp").map((request) => request.body)).toEqual([{ code: factor }]);
+    expect(server.on("POST /api/account/manage-link/change").map((request) => request.body)).toEqual([
+      { lang: "en" }, { lang: "en" },
+    ]);
+    expect(page.queryByRole("dialog")).toBeNull();
     expect(left).toEqual([manage]);
   });
 });

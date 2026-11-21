@@ -128,10 +128,10 @@ describe("the client may turn the demo ON, never OFF", () => {
     // cannot ask open a mailbox on a cookie alone — and the third gate is what keeps the whole
     // decision off the hydration render.
     expect(src).toMatch(
-      /if \(browserPass && binding\.status === "resolving" && !desired && !provided && resolveOwner\) \{/,
+      /if \(browserPass && drawMail !== "confirmed" && binding\.status === "resolving" && !desired && !provided && resolveOwner\) \{/,
     );
     expect(src).toMatch(/const remembered = readOwner\(\);/);
-    expect(src).toMatch(/if \(remembered !== null\) \{/);
+    expect(src).toMatch(/if \(remembered !== null && !accountCleanupOwed\(remembered\)\) \{/);
     // The confirmation still runs, and it still covers the un-remembered path — and it now
     // also drives the retry ladder, so `checking` has to be in the same guard. All three
     // named, so dropping any one of them is red rather than merely slower.
@@ -142,7 +142,8 @@ describe("the client may turn the demo ON, never OFF", () => {
     // for the account the server just named BEFORE the binding changes — see
     // `confirmSyncOwner`. The claim is unchanged: a live engine is only ever constructed from
     // a server-named owner.
-    expect(src).toMatch(/createEngine\(false, undefined, owner\)/);
+    const build = "const built = createEngine(false, undefined, owner, isolatedScope);";
+    expect(src).toContain(build);
     /*
      * THE ORDER, NOT THE ADJACENCY — and the difference is why this was rewritten.
      *
@@ -155,7 +156,7 @@ describe("the client may turn the demo ON, never OFF", () => {
      * So: both calls exist in the cold arm, and `confirmSyncOwner` comes first, with nothing
      * between them that could publish a binding.
      */
-    const cold = src.slice(src.indexOf("const built = createEngine(false, undefined, owner);"));
+    const cold = src.slice(src.indexOf(build));
     const arm = cold.slice(0, cold.indexOf("\n      })"));
     const opensAt = arm.indexOf("confirmSyncOwner(built, owner);");
     const bindsAt = arm.indexOf('setBinding({ status: "ready"');

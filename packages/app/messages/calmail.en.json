@@ -3,6 +3,8 @@
     "inviteGuest": "Invite {name}",
     "confirmGuest": "Send an invitation to {name}?",
     "cancelGuest": "Cancel",
+    "confirmGuests": "Send invitations to {name}?",
+    "sendGuests": "Send invitations",
     "sendGuest": "Send invitation",
     "removeGuest": "Remove guest",
     "comingHeading": "Coming up",

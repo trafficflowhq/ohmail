@@ -166,7 +166,6 @@ function SenderRowsWindow({
   const t = useText("screener");
   const { rows, openId } = view;
   const decided = view.segment === "waiting" ? view.decided : NO_DECISIONS;
-  useMovingRows(scroller, JSON.stringify([rows.map(viewRowId), decided.map(({ sender }) => sender.id)]));
   const size = rows.length + decided.length;
   const pendingStart = rows.length + 1;
   const win = useListWindow({ scrollerRef: scroller, count: size + Number(decided.length > 0) });
@@ -239,6 +238,16 @@ function SenderRowsWindow({
   );
 }
 
+function useQueueMotion(view: ScreenerView, scroller?: RefObject<HTMLDivElement | null>) {
+  const waiting = view.segment === "waiting";
+  const rowIds = view.rows.map(viewRowId);
+  useMovingRows(
+    scroller,
+    JSON.stringify([rowIds, waiting ? view.decided.map(({ sender }) => sender.id) : []]),
+    waiting ? { scope: view.filter.active, ids: rowIds } : undefined,
+  );
+}
+
 export function Rows({
   view,
   label,
@@ -256,6 +265,7 @@ export function Rows({
   const model = useScreener();
   const { mailboxWord } = useScreenerBeside();
   const waiting = view.segment === "waiting";
+  useQueueMotion(view, scroller);
   const failed = waiting ? (model.failedAtGate ?? []) : [];
   /* A right click opens that sender with its menu where the pointer is; only a sender this install may decide. */
   const [menuAt, setMenuAt] = useState<Point | RefObject<Element | null> | null>(null);

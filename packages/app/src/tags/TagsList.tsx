@@ -9,7 +9,7 @@ import { Empty } from "@ohmail/ui/base";
 import { GroupHeading, ListHead } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { useFrame } from "../frame/index.js";
-import { LetterRows, ListColumn, ListMenu } from "../place-list/index.js";
+import { LetterRows, ListColumn, ListMenu, usePlaceLabel } from "../place-list/index.js";
 import { useText, type Text } from "../text/index.js";
 import { TagDelete, TagRename } from "./TagAsks.js";
 
@@ -37,6 +37,7 @@ function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel
   });
   const { commands } = useFrame();
   const t = useText("tags");
+  const newTag = useText("rail")("tagNew");
   const [asked, setAsked] = useState<"rename" | "delete" | null>(null);
   const menuAt = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -57,6 +58,7 @@ function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel
         <ListMenu
           label={t("list.menu")}
           anchorRef={menuAt}
+          mail={tag === null}
           items={
             tag !== null
               ? [
@@ -68,7 +70,14 @@ function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel
                   },
                   { label: t("menu.delete"), icon: "trash", onPress: () => setAsked("delete") },
                 ]
-              : []
+              : [
+                  {
+                    label: newTag,
+                    icon: "plus",
+                    apart: true,
+                    onPress: () => commands.go({ place: "settings", sub: "tags" }),
+                  },
+                ]
           }
         />
       }
@@ -135,6 +144,7 @@ function OneTag({
 }
 
 function EveryTag({ model, t, selection, contact }: TagRowsProps) {
+  const place = usePlaceLabel();
   return (
     <>
       {model.groups.map((g) => (
@@ -152,6 +162,7 @@ function EveryTag({ model, t, selection, contact }: TagRowsProps) {
               contact={contact}
               label={g.tag.name}
               rows={g.rows}
+              where={(message) => place(message.physicalFolder ?? message.folder)}
               cursor={model.list.cursor}
               press={model.list.press}
               stamp={model.stamp}

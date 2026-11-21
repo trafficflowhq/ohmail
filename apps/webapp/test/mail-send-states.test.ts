@@ -1668,7 +1668,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
    * surface a reader goes to and had nothing but a refused Send. Same component on both doors, so
    * the words and the outcomes cannot fall apart.
    *
-   * Mutation: drop the `heldResolve` block from `InlineReply`. Real failure text:
+   * Mutation: remove the held-reply actions from the shared Write reply. Real failure text:
    *   AssertionError: a held reply's editor offers no way to answer the question its own sentence
    *   asks: expected null not to be null
    */

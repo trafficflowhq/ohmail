@@ -296,8 +296,8 @@ export interface ScreenerState {
   /** Ask the store for the queue's first page again — the Screener calls it when it opens. */
   rereadWaiting: () => void;
   /**
-   * Has the queue's FIRST derivation run? False for the paint renders — the cold pass is
-   * deferred to idle — and, on a door that reads the queue from the store, until the store's
+   * Has the queue's FIRST derivation run? The cold pass can wait for idle, and on a door
+   * that reads the queue from the store the flag also waits for the store's
    * first answer (or a kept page) is in; true for ever after. While false the three segments are WITHHELD
    * (empty by fiat, not by derivation), so an empty-state sentence gated on this cannot call
    * an unknown queue empty, and the suggestion engine classifies the settle's delivery as the
@@ -690,6 +690,7 @@ export function useScreenerState(
   releaseWindow?: ScreenerReleaseWindow,
   decisionVerdict?: DecisionVerdict,
   hostMirrorAccount?: string,
+  drawKeptFirst = false,
 ): ScreenerState {
   const owner = useRef(usePinnedScope(scope));
   const mirrorAccount = hostMirrorAccount ?? mirrorOwnerOf(engine) ?? owner.current;
@@ -779,16 +780,14 @@ export function useScreenerState(
      than leaving yesterday's stamps in English until the next mutation; the zone is resolved once
      per session and is not a dependency. */
   const locale = text.locale;
-  /* THE FIRST DERIVATION WAITS FOR IDLE; every one after it is synchronous in its own render.
-     The cold pass over a warm mirror is the one long task the /mailbox paint still carried
-     (132 ms at 10k held, measured 2026-09-19), and nothing at first paint reads these rows —
-     so until the flip the queue is WITHHELD ({@link ScreenerState.queueSettled}), never
-     derived-empty: the Screener's empty sentence and the suggestion engine's gain counter both
-     key on that distinction (an unknown queue read as empty is the lie this withholds). */
   /* The store's queue page as the mirror holds it, read by the settle below and the onward walk. */
   const firstPage = useMemo(() => screenerWaitingOf(reader), [reader, version]);
-  const [firstDerived, setFirstDerived] = useState(false);
-  useEffect(() => scheduleFirstDerivation(() => setFirstDerived(true)), []);
+  /* Only the Screener's own first frame needs the kept queue now. The other places can defer
+     the derivation until idle, and an unknown queue still can't be called empty. */
+  const [firstDerived, setFirstDerived] = useState(drawKeptFirst && firstPage !== null);
+  useEffect(() => {
+    if (!firstDerived) return scheduleFirstDerivation(() => setFirstDerived(true));
+  }, [firstDerived]);
   /* …AND FOR THE STORE, where the door reads the queue there: a mirror rebuilt at launch (the
      desktop window) holds no page, and its own derivation lists senders the store does not (a
      contact, a sender decided elsewhere), which flashed "7 waiting" at every start. A page kept

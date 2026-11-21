@@ -316,20 +316,17 @@ describe("the conversation's bodies", () => {
   });
 });
 
-/** A file door whose lists stand ready only for the letters somebody holds, as the shell's does. */
+/** A file door with a ready list, recording the holds and releases of the drawn letter. */
 function fileDoor(items: readonly ReaderFile[]) {
-  const holds = new Map<string, number>();
   const calls: string[] = [];
   const door: ReaderFiles = {
     hold: (id) => {
-      holds.set(id, (holds.get(id) ?? 0) + 1);
       calls.push(`hold ${id}`);
       return () => {
-        holds.set(id, (holds.get(id) ?? 1) - 1);
         calls.push(`release ${id}`);
       };
     },
-    itemsOf: (id) => ((holds.get(id) ?? 0) > 0 ? { state: "ready", items } : { state: "loading" }),
+    itemsOf: () => ({ state: "ready", items }),
     open: (m, a) => calls.push(`save ${m} ${a}`),
     ensure: (m, a, o) => calls.push(`ensure ${m} ${a}${o?.retry ? " retry" : ""}`),
     downloadAll: (m) => calls.push(`all ${m}`),
@@ -349,6 +346,13 @@ const file = (id: string, over: Partial<ReaderFile> = {}): ReaderFile => ({
   ...over,
 });
 
+function mountReaderFiles(options: Parameters<typeof mountReader>[0]) {
+  const mounted = mountReader(options);
+  // The real door notifies the mount after the hold. This fixture lacks that subscription, so re-read its answer.
+  mounted.replaceEngine(mounted.mail.engine);
+  return mounted;
+}
+
 describe("a letter's files", () => {
   it("the reader holds the list it draws, and lets it go once when the letter leaves", () => {
     const { door, calls } = fileDoor([
@@ -356,7 +360,7 @@ describe("a letter's files", () => {
       file("notes", { filename: "notes.txt", mimeType: "text/plain" }),
     ]);
     const looks: string[] = [];
-    const { view } = mountReader({
+    const { view } = mountReaderFiles({
       letters: [letter("m1")],
       open: "m1",
       parts: { files: door, look: (m, a) => looks.push(`${m} ${a}`) },
@@ -378,7 +382,7 @@ describe("a letter's files", () => {
       file("page", { filename: "page.pdf", mimeType: "text/html" }),
     ]);
     const looks: string[] = [];
-    mountReader({
+    mountReaderFiles({
       letters: [letter("m1")],
       open: "m1",
       parts: { files: door, look: (m, a) => looks.push(`${m} ${a}`) },
@@ -394,7 +398,7 @@ describe("a letter's files", () => {
       file("table", { filename: "ledger", mimeType: "text/csv" }),
       file("note", { filename: "note.csv", mimeType: "text/plain" }),
     ]);
-    mountReader({ letters: [letter("m1")], open: "m1", parts: { files: door } });
+    mountReaderFiles({ letters: [letter("m1")], open: "m1", parts: { files: door } });
     expect(screen.getByText("CSV")).toBeTruthy();
     expect(screen.getByText("TXT")).toBeTruthy();
   });
@@ -403,7 +407,7 @@ describe("a letter's files", () => {
     const { door, calls } = fileDoor([
       file("big", { state: "failed", code: "unreachable", retryable: true }),
     ]);
-    mountReader({ letters: [letter("m1")], open: "m1", parts: { files: door } });
+    mountReaderFiles({ letters: [letter("m1")], open: "m1", parts: { files: door } });
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(calls).toContain("ensure m1 big retry");
   });

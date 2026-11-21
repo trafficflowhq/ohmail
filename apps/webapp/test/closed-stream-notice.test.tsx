@@ -42,7 +42,7 @@ it.each([
   await engine.start();
   const { address, el } = await mountCheckedStream(engine, `#/${route}`);
   const region = within(within(el).getByRole("region", { name: `${name} stream` }));
-  expect(region.getAllByRole("heading")).toHaveLength(10);
+  expect(region.getAllByRole("heading").filter((heading) => heading.closest("[data-stream-item]"))).toHaveLength(10);
   const notices = region.getAllByRole("button", { name: /(?:tracker|images|stylesheet) blocked/i });
   expect(notices).toHaveLength(10);
   expect(region.getAllByRole("button", { name: /stylesheet blocked/i })).toHaveLength(3);
@@ -105,7 +105,6 @@ it("a body fetched on approach stays invisible until the person opens the News c
   await engine.start();
   const { el, address } = await mountCheckedStream(engine, "#/reads");
   const stream = screen.getByRole("region", { name: "News stream" });
-  const preview = stream.textContent;
   const row = screen.getByRole("option", { name: /Issue 20/ });
   expect(within(stream).getByText("The original preview")).toBeTruthy();
   expect(approach).toBeDefined();
@@ -113,8 +112,11 @@ it("a body fetched on approach stays invisible until the person opens the News c
   await waitFor(() => expect(engine.read().get("message_body", id)).toMatchObject({ state: "ready" }));
   await act(async () => approach?.());
   expect(fetchBody.mock.calls).toEqual([[id]]);
-  expect(stream.textContent).toBe(preview);
-  expect(el.querySelector("iframe, img[src*='images.example.test']")).toBeNull();
+  // The closed card draws the fetched letter's preview in its shut clip, its pictures held back.
+  const shutFrame = (region: Element) => region.querySelector<HTMLIFrameElement>(".oh-message-clip[data-shut] iframe");
+  expect(shutFrame(stream)?.srcdoc).toContain("The full letter");
+  expect(shutFrame(stream)?.srcdoc).toContain("img-src data: blob:");
+  expect(el.querySelector("img[src*='images.example.test']")).toBeNull();
   expect(row.getAttribute("data-unseen")).not.toBeNull();
   expect(mutate).not.toHaveBeenCalled();
   expect(address.read()).toBe("#/reads");
@@ -122,9 +124,9 @@ it("a body fetched on approach stays invisible until the person opens the News c
   act(() => address.visit("#/receipts"));
   act(() => address.visit("#/reads"));
   const returned = screen.getByRole("region", { name: "News stream" });
-  expect(returned.textContent).toBe(preview);
+  expect(shutFrame(returned)?.srcdoc).toContain("The full letter");
   expect(mutate).not.toHaveBeenCalled();
   fireEvent.click(within(returned).getByRole("button", { name: "Expand" }));
-  await waitFor(() => expect(returned.querySelector("iframe")).not.toBeNull());
+  await waitFor(() => expect(returned.querySelector(".oh-message-clip:not([data-shut]) iframe")).not.toBeNull());
   expect(fetchBody.mock.calls).toEqual([[id]]);
 });

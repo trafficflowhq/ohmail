@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -11,6 +11,14 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { AuthService, dbFor, deleteAccount, hashToken, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
 import { statementSeam } from "./helpers/statement-seam.js";
+
+// The service binds the request's handle again for a credential's look-up: through a seam, that binds the seam's own handle.
+vi.mock("@trafficflow/db", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@trafficflow/db")>();
+  const { bindThroughSeams } = await import("./helpers/statement-seam.js");
+  return { ...real, bindDb: bindThroughSeams(real.bindDb) };
+});
+
 
 /*
  * AN ERASURE RACING A RENEWAL OF THE SAME ACCOUNT ERASES IT, whichever waits first. A renewal locks

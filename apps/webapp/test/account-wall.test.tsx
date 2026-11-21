@@ -556,7 +556,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     observer = new MutationObserver(() => {
       const t = document.body.textContent ?? "";
       if (frames[frames.length - 1] !== t) frames.push(t);
-      if (document.querySelector("main.gate[aria-busy=true] .gate-card .mbx-spin")) sawGateCard = true;
+      if (document.querySelector("main.gate[aria-busy=true] .gate-card .oh-activity-line")) sawGateCard = true;
       if (!(document.body.textContent ?? "").includes(wallTitle) && document.querySelector(".fr-root")) sawShellBeforeWall = true;
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });

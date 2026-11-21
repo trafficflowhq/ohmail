@@ -304,6 +304,8 @@ export function installShellEnv(): void {
 export async function teardownShellEnv(): Promise<void> {
   for (const root of roots) await act(() => root.unmount());
   roots = [];
+  /* Let every animation frame still owed run on the fake clock before it is uninstalled. */
+  if (vi.isFakeTimers()) await act(async () => { await vi.runOnlyPendingTimersAsync(); });
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
   if (readOwner() === LIVE_ACCOUNT) forgetOwner();

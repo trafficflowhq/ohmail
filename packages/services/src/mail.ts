@@ -358,7 +358,7 @@ export {
 export { DEFAULT_AUTH_CONFIG, makeAuthConfig } from "./auth/config.js";
 // The keyed hash a throttle slot names an address by: the add-time probe keys its slots with it.
 export { throttleKeysFor, type ThrottleKeys } from "./auth/throttle-keys.js";
-export { resolveSession, type ResolvedSessionCore, type SessionScope } from "./auth/resolve-session.js";
+export { resolveSession, sessionEmailVerifiedAt, type ResolvedSessionCore, type SessionScope } from "./auth/resolve-session.js";
 export {
   allowedOrigins, assertOriginConfig, defaultOrigin, isAllowedOrigin,
   normalizeOrigin, tryNormalizeOrigin, resolveCeremonyOrigin,

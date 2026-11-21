@@ -152,7 +152,7 @@ describe("a Resurfaced conversation whose newest member is the account's own out
     expect(restingSentence(host), "the click left the reading column resting").toBeNull();
     expect(openSubjects(host).join(" | ")).toContain(ORIGINAL_SUBJECT);
     // The route reflects the message the column shows — the original.
-    expect(window.location.hash).toBe("#/ohbox/m/orig");
+    expect(window.location.hash).toBe("#/ohbox/t/orig");
   });
 
   /**

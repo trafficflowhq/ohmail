@@ -78,7 +78,7 @@ describe("the mounted stream's paint at the window edge", () => {
 
 describe("inline conversation geometry", () => {
   for (const width of [1024, 1440]) for (const scheme of ["light", "dark"]) {
-    it(`${width}px in ${scheme} keeps the squares and ring inside the stream without moving its cards sideways`, async () => {
+    it(`${width}px in ${scheme} aligns a single letter with its neighbors and keeps the conversation squares inside the stream`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
       try {
         await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
@@ -104,7 +104,8 @@ describe("inline conversation geometry", () => {
         expect(rail.x).toBeGreaterThanOrEqual(port.x - 0.5);
         expect(rail.x + rail.width).toBeLessThanOrEqual(paper.x);
         expect(paper.x + paper.width + 2).toBeLessThanOrEqual(port.x + port.width + 0.5);
-        expect(paper.x).toBeCloseTo(paperBefore!.x, 1);
+        expect(paperBefore!.x, "the single letter starts at the folded card's edge").toBeCloseTo(before!.x, 1);
+        expect(paperBefore!.width, "the single letter uses the folded card's width").toBeCloseTo(before!.width, 1);
         expect([after.x, after.width]).toEqual([before!.x, before!.width]);
         expect(await scroll.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);

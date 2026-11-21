@@ -994,7 +994,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       },
       switchTo: (profileId) =>
         gate.run(async (stillCurrent) => {
-          if (env.calendar && !await leaveEntered()) return { ok: false, reason: refuse("forgetMailRemains") };
+          if (env.calendar && !await leaveEntered()) return { ok: false, reason: refuse("calendarCopyRemains") };
           try {
             await env.profiles.setActive(profileId);
           } catch (err) {
@@ -1077,7 +1077,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         gate.run(async () => {
           { const at = live.now(); if (at.k === "live") teardown(at.session); }
           const cleared = live.now().k !== "shell" || await leaveEntered();
-          enter(cleared ? { k: "idle" } : { k: "refused", reason: refuse("forgetMailRemains") });
+          enter(cleared ? { k: "idle" } : { k: "refused", reason: refuse("calendarCopyRemains") });
           setSyncError(null);
         }),
       syncNow: (heard) => {

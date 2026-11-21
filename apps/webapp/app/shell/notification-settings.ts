@@ -384,7 +384,7 @@ export type PushSyncOutcome =
   | "subscribed" | "unsubscribed" | "unchanged"
   | "no_server_key"        // this deployment has no VAPID keypair — supported, not an error
   | "unsupported"          // no service worker, or a subscription with no keys
-  | "row_remains"          // the browser is unsubscribed; the server row could not be deleted
+  | "row_remains"          // removal of the server row or browser subscription could not be confirmed
   | "not_registered";      // this browser holds a subscription the server never recorded
 
 const readId = (): string | null => {
@@ -463,7 +463,6 @@ async function syncWebPushNow(
   wanted: boolean, api: PushApi, opts?: PushSyncOptions,
 ): Promise<PushSyncOutcome> {
   if (wanted && opts?.mayRegister?.() === false) return "not_registered";
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return "unsupported";
   const idAtStart = readId();
   const endpointAtStart = readEndpoint();
   const ownerAtStart = readSubscriptionOwner();
@@ -473,14 +472,20 @@ async function syncWebPushNow(
     ...(opts.expectedOwner === undefined ? {} : { expectedOwner: opts.expectedOwner }),
   };
   let reg: ServiceWorkerRegistration | undefined;
-  let existing: PushSubscription | null;
+  let existing: PushSubscription | null = null;
+  let localChecked = false;
   try {
+    const worker = typeof navigator === "undefined" ? undefined : navigator.serviceWorker;
     // Turning notices off only has to inspect a worker that is already installed.
-    reg = wanted ? await navigator.serviceWorker.register("/sw.js") : await navigator.serviceWorker.getRegistration();
-    existing = await reg?.pushManager.getSubscription() ?? null;
+    if (worker !== undefined) {
+      reg = wanted ? await worker.register("/sw.js") : await worker.getRegistration();
+      existing = await reg?.pushManager.getSubscription() ?? null;
+      localChecked = true;
+    }
   } catch {
-    return "unsupported";
+    // A browser lookup failure must still let the saved server row be deleted.
   }
+  if (!localChecked && (wanted || idAtStart === null)) return "unsupported";
 
   if (!wanted) {
     const mayWithdraw = () => opts?.mayWithdraw?.() !== false && readSessionFamily() === familyAtStart &&
@@ -491,7 +496,7 @@ async function syncWebPushNow(
     if (existing === null && idAtStart === null) return "unchanged";
     // A recorded endpoint belongs to the operation that captured it. A browser rotation can leave
     // a different local endpoint behind, which must survive this withdrawal.
-    let localGone = existing === null;
+    let localGone = localChecked && existing === null;
     if (existing !== null && (endpointAtStart === null || existing.endpoint === endpointAtStart)) {
       try { localGone = await existing.unsubscribe(); } catch { /* still try the captured server row */ }
     }

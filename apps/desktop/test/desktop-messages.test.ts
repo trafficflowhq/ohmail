@@ -88,7 +88,6 @@ const MIRROR_SOURCE_DIRS = [
   "apps/webapp/app/components",
   "packages/letter-body/src",
   "apps/webapp/app/shell",
-  "apps/webapp/app/views",
   "packages/app-logic/src",
   // The frame and its text reader (`@ohmail/app/text`): the window draws it, so what it reads ships.
   "packages/app/src",

@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { MIGRATOR_ROLE, ownServersAvailable, startLockGround, type LockGround } from "@trafficflow/db/testing";
 import {
-  AuthService, generateToken, hashToken, makeTestAuthDeps, newTotpSecret, resolveSession, totpNow,
+  AuthService, generateToken, hashToken, makeTestAuthDeps, newTotpSecret, resolveSession, sessionEmailVerifiedAt, totpNow,
   type ServiceContext,
 } from "@trafficflow/services";
 import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
@@ -273,6 +273,19 @@ describe.skipIf(!own)("sign-in under the forced account lock", () => {
       .where(and(eq(users.id, found!.userId), eq(users.accountId, found!.accountId)))
       .limit(1);
     expect(user).toEqual({ emailVerifiedAt: now });
+  });
+
+  it("the verified mark the spend gate reads: the session's own user under its account, never another account's", async () => {
+    const a = await person("A");
+    const b = await person("B");
+    const f = await family(a);
+    const found = (await resolveSession(bindDb(api.db, { account: null }), f.access, now))!;
+    const own = bindDb(api.db, { account: found.accountId });
+    expect(await sessionEmailVerifiedAt(own, found)).toEqual(now);
+    // B's user is verified too: only the lock and the account predicate keep it out.
+    expect(await sessionEmailVerifiedAt(own, { accountId: a.accountId, userId: b.userId })).toBeNull();
+    // The door's handle names no account: refused before any statement.
+    await expect(sessionEmailVerifiedAt(bindDb(api.db, { account: null }), found)).rejects.toMatchObject({ code: "binding_refused" });
   });
 
   it("a resolved bearer’s scope hides the other account’s session", async () => {

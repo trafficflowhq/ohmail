@@ -3,7 +3,7 @@
   .oh-bridge {
     --oh-bridge-edge: var(--oh-cal-mark, var(--ink));
     --oh-bridge-grow: scale(1, 0);
-    --oh-bridge-seen: 1;
+    --oh-bridge-seen: var(--o-pop);
     --oh-bridge-z: 7;
     position: absolute;
     top: 0;
@@ -28,14 +28,18 @@
     animation: none;
   }
   /* With motion reduced it does not grow: it is there as the card is, over the same short time. */
-  :root[data-rm="1"] .oh-bridge {
+  :root[data-rm="1"] .oh-bridge:not([data-still]) {
     --oh-bridge-grow: none;
     --oh-bridge-seen: 0;
+    animation-duration: var(--d-reduced);
+    animation-timing-function: var(--e-std);
   }
   @media (prefers-reduced-motion: reduce) {
-    .oh-bridge {
+    .oh-bridge:not([data-still]) {
       --oh-bridge-grow: none;
       --oh-bridge-seen: 0;
+      animation-duration: var(--d-reduced) !important;
+      animation-timing-function: var(--e-std);
     }
   }
   .oh-bridge-edge-start {

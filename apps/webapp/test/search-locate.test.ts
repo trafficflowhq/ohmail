@@ -245,7 +245,7 @@ describe("the Search arrival wash in the mounted Ohbox", () => {
     await tick(1_000);
     await settle();
     const hit = screen.getAllByRole("listitem").find((item) => item.dataset.hit === "b")!;
-    await click(within(hit).getByRole("button"), "the second hit");
+    await click(within(hit).getByRole("button", { name: /Invoice b/ }), "the second hit");
     expect(window.location.hash).toBe("#/ohbox/m/b");
     expect(rowOf(document, "b")?.hasAttribute("data-located")).toBe(true);
     expect(rowOf(document, "a")?.hasAttribute("data-located")).toBe(false);

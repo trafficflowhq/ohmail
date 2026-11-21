@@ -142,7 +142,7 @@ export function DesktopAccessLock(
   const hasFeedback = browserOnly || check !== "idle" || mintSaid !== null || signOutSaid !== null;
 
   return (
-    <div className="oh-root">
+    <div className="app-root oh-root">
       <Page
         trail={<Mark>ohmail</Mark>}
         line={line}

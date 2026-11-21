@@ -54,4 +54,19 @@
   :root[data-touch="1"] .oh-dialog .oh-button {
     min-height: var(--h-s);
   }
+
+  .oh-dialog-facts {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    overflow-wrap: anywhere;
+    gap: var(--s2);
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+  .oh-dialog-facts .oh-tag {
+    height: auto;
+    min-height: var(--oh-tag-h);
+    white-space: normal;
+  }
 }

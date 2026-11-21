@@ -8,7 +8,7 @@
  *
  * SORTED (the switch's older tests, sorted once): setup is the frame's stage now, one dialog named as the frame names
  * its stage, the step saying itself by its heading; the step's card is its own page, the stage's one main landmark,
- * whose content runs where the step's heading runs. Every expectation as it stood.
+ * whose content runs across the step's text column. Every expectation as it stood.
  */
 import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -39,7 +39,7 @@ beforeAll(async () => {
   dirs.push(out);
   await build({
     entryPoints: [join(ROOT, "apps/webapp/test/frame/first-run-page/entry.tsx")],
-    bundle: true, format: "iife", platform: "browser", target: ["es2020"], jsx: "automatic", outdir: out,
+    bundle: true, format: "esm", platform: "browser", target: ["es2022"], jsx: "automatic", outdir: out,
     entryNames: "page",
     alias: { "next-intl": join(ROOT, "apps/webapp/test/editor-feel/intl-shim.mjs") },
     loader: { ".json": "json", ".css": "css", ".woff2": "dataurl", ".woff": "dataurl", ".svg": "dataurl", ".png": "dataurl", ".webp": "dataurl" },
@@ -70,7 +70,7 @@ async function setup(width: number, height: number, textSize?: number): Promise<
       contentType: "text/html",
       body: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
         <link rel="stylesheet" href="/page.css"><script>${textSizeBootScript()}</script></head>
-        <body class="mo-canvas app-body today"><div id="app" style="display:contents"></div><script src="/page.js"></script></body></html>`,
+        <body class="mo-canvas app-body today"><div id="app" style="display:contents"></div><script type="module" src="/page.js"></script></body></html>`,
     });
   });
   await page.goto(`${ORIGIN}/#/first-run?mailbox=mb1`);
@@ -213,10 +213,9 @@ describe("setup's foot stands inside its card", () => {
           await Promise.all(card.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => undefined)));
           const foot = el.parentElement!;
           foot.scrollIntoView({ block: "end" });
-          /* The card's content box, in the same pixels as its box: where the step's heading runs, from edge to edge (the
-             page holds its padding inside, around the step; a Text size's zoom is in the heading's box already). */
-          const heading = box(card.querySelector("h1"));
-          const inner = { left: heading.left, right: heading.right };
+          /* The text column runs across the Page grid. The heading inside it has its own line-length limit. */
+          const column = box(card.querySelector(".oh-page-say"));
+          const inner = { left: column.left, right: column.right };
           const controls = [...foot.children].filter((c) => c.tagName === "BUTTON").map(box);
           return { card: box(card), inner, foot: box(foot), controls, view: { right: innerWidth, bottom: innerHeight } };
         });

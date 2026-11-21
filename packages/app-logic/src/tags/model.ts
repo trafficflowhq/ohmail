@@ -1,7 +1,7 @@
 /**
  * TAGS' MODEL. With a tag named, the letters carrying it across every place, newest first, read in place, with its
- * Rename and Delete. With none (the place's own address, `#/tag`), every tag as a group that shuts and opens, by
- * name. A tag is ohmail's own row: Delete takes it off its letters, which stay where they are.
+ * Rename and Delete. With none (the place's own address, `#/tag`), every tag as a group that shuts and opens, in
+ * account order. A tag is ohmail's own row: Delete takes it off its letters, which stay where they are.
  */
 import { useStableCallback } from "../press/stable-callback.js";
 import { countWhen, listSurface, saysEmpty } from "@ohmail/client-engine";
@@ -39,7 +39,7 @@ export interface TagsModel {
   readonly tag: TagDTO | null;
   /** The route named a tag that is not there. */
   readonly gone: boolean;
-  /** Every tag, by name, each with its letters; only where no tag is named. */
+  /** Every tag, by name, each with its letters, in account order; only where no tag is named. */
   readonly groups: readonly TagGroup[];
   readonly toggle: (tagId: string) => void;
   readonly count: number | undefined;
@@ -53,10 +53,20 @@ export interface TagsModel {
   readonly remove: (tagId: string) => void;
 }
 
+// Older local rows can lack a creation time. Give them a stable place before dated tags.
+function tagCreatedAt(tag: TagDTO): number {
+  const time = Date.parse(tag.createdAt ?? "");
+  return Number.isNaN(time) ? -Infinity : time;
+}
+
+export function compareTagOrder(a: TagDTO, b: TagDTO): number {
+  return tagCreatedAt(a) - tagCreatedAt(b) || a.id.localeCompare(b.id);
+}
+
 export function useTagsList(input: TagsInput): TagsModel {
   const { tags, messages, tagId, settled, owed } = input;
   const [shut, setShut] = useState<ReadonlySet<string>>(() => new Set());
-  const byName = useMemo(() => [...tags].sort((a, b) => a.name.localeCompare(b.name)), [tags]);
+  const ordered = useMemo(() => [...tags].sort(compareTagOrder), [tags]);
   const tag = tagId === null ? null : (tags.find((x) => x.id === tagId) ?? null);
   const carrying = useMemo(() => {
     const of = new Map<string, EngineMessage[]>();
@@ -73,8 +83,8 @@ export function useTagsList(input: TagsInput): TagsModel {
     () =>
       tagId !== null
         ? []
-        : byName.map((x) => ({ tag: x, rows: carrying.get(x.id) ?? [], shut: shut.has(x.id) })),
-    [tagId, byName, carrying, shut],
+        : ordered.map((x) => ({ tag: x, rows: carrying.get(x.id) ?? [], shut: shut.has(x.id) })),
+    [tagId, ordered, carrying, shut],
   );
   const rows = useMemo(
     () => (tag !== null ? (carrying.get(tag.id) ?? []) : groups.flatMap((g) => (g.shut ? [] : g.rows))),

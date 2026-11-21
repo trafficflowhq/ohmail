@@ -13,7 +13,7 @@ import { useStableCallback } from "../press/stable-callback.js";
 import { usePresented } from "../reading/presented-mirror.js";
 import { useDayClock } from "../session/day-clock.js";
 import { stampOver } from "../text/format.js";
-import { useTagsList, type TagsModel } from "./model.js";
+import { compareTagOrder, useTagsList, type TagsModel } from "./model.js";
 
 /** What only Tags' seat can read. */
 export interface TagsLiveOwn extends PlaceListLiveOwn {
@@ -39,7 +39,7 @@ export function useTagsLive(args: PlaceLiveArgs, own: TagsLiveOwn): TagsModel {
   const cx = { press, t: own.words, tags: feed.tags };
   const model = useTagsList({
     ...feed.list,
-    arrival: "first",
+    arrival: args.route.sub === null ? "rest" : "first",
     tags: feed.tags,
     messages,
     tagId: args.route.sub,
@@ -53,14 +53,8 @@ export function useTagsLive(args: PlaceLiveArgs, own: TagsLiveOwn): TagsModel {
   return model;
 }
 
-// Older local rows can lack a creation time. Give them a stable place before dated tags.
-function tagCreatedAt(tag: TagDTO): number {
-  const time = Date.parse(tag.createdAt);
-  return Number.isNaN(time) ? -Infinity : time;
-}
-
 /**
- * What the rail's Tags group draws for the frame's life, off the ground alone: every tag by name, and how many
+ * What the rail's Tags group draws for the frame's life, off the ground alone: every tag in account order, and how many
  * letters carry each, as the lists present them.
  */
 export function useTagsRailLive(): {
@@ -76,9 +70,7 @@ export function useTagsRailLive(): {
     for (const m of presented.list<EngineMessage>("message"))
       for (const id of m.labels ?? []) carrying.set(id, (carrying.get(id) ?? 0) + 1);
     // Match the account's tag list even when sync or the reopened mirror delivers rows in another order.
-    const tags = [...engine.read().list<TagDTO>("tag")].sort(
-      (a, b) => tagCreatedAt(a) - tagCreatedAt(b) || a.id.localeCompare(b.id),
-    );
+    const tags = [...engine.read().list<TagDTO>("tag")].sort(compareTagOrder);
     return atStamp(derived, { tags: tags.map((tag) => ({ tag, count: carrying.get(tag.id) ?? 0 })) });
   }, [engine, presented, derived]);
 }

@@ -7,6 +7,7 @@ import {
   type EngineAdapter,
   type ListOlderFn,
   type MessageByIdFn,
+  type PlaceSuggestTransport,
   type ListTrashFn,
   type StoreTimeline,
   type WithdrawSendAnswer,
@@ -297,6 +298,7 @@ type GatedAdapter = EngineAdapter & Partial<CalendarHostTransport & CalendarSetu
   timeline?: () => Promise<StoreTimeline | null>;
   /* One message by id, for a link to mail the window evicted. */
   getMessage?: MessageByIdFn;
+  suggestPlaces?: PlaceSuggestTransport["suggestPlaces"];
 };
 
 /**
@@ -769,6 +771,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           : {}),
         ...(adapter.searchPlaces
           ? { searchPlaces: gatedRead(adapter.searchPlaces.bind(adapter), "search folder counts") }
+          : {}),
+        ...(adapter.suggestPlaces
+          ? { suggestPlaces: gatedRead(adapter.suggestPlaces.bind(adapter), "calendar place suggestions") }
           : {}),
 
         /**

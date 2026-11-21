@@ -50,7 +50,8 @@ const SEEN: Record<keyof typeof DOORS, string[]> = {
     "settings.tags", "settings.signatures.nav", "desktopDoor.paneLabel", "settings.devices", "settings.about", "settings.help",
   ],
   "D-m": SIGNED_IN,
-  "D-s": SIGNED_IN,
+  // Self-hosted sign-in omits the managed Account link (host-contract-doors.test.ts).
+  "D-s": SIGNED_IN.filter((key) => key !== "settings.account"),
   "D-p": [
     "settings.general", "settings.notifications", "settings.mailboxes", "settings.screener", "settings.away", "settings.rules",
     "settings.tags", "settings.signatures.nav", "desktopDoor.paneLabel", "settings.about", "settings.help",

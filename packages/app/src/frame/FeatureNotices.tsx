@@ -4,13 +4,8 @@
  * takes its notices with it.
  */
 import { createContext, useContext, useEffect, type ReactNode } from "react";
-import {
-  FEATURE_NAMES,
-  NONE,
-  type FeatureEntry,
-  type FeatureName,
-  type HostFeatures,
-} from "../host/index.js";
+import { NONE } from "../host/contract.js";
+import { FEATURE_NAMES, type FeatureEntry, type FeatureName, type HostFeatures } from "../host/features.js";
 import type { NoticeStore } from "./notice-store.js";
 
 /** The ground's pending question takes the host's optional stage notice's place. */

@@ -371,10 +371,10 @@ export function ThemeProvider({
     setSystem(systemTheme());
   }, [storageKey, defaultPreference]);
 
-  // Post-mount face adoption: the device pin, the account mirror (the previous session's
+  // Before the next paint, adopt the device pin and the account mirror (the previous session's
   // adopted answer — the live one arrives via adoptAccountFace when the host's consent
   // read lands), and the Linux detection. SSR and the first client render stay "paper".
-  useEffect(() => {
+  useFaceStamp(() => {
     if (!faces) return; // the axis is not active on this host — leave storage and state alone
     setDevicePin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins

@@ -9,7 +9,8 @@ import {
   ACCOUNT, ISO, act, installScreeningWeb, mountScreeningWeb, syncScreeningWeb, teardownScreeningWeb, tick,
   warmScreeningWeb,
 } from "./fixtures/screening-web";
-import { OVERLAY_EDGE, OVERLAY_GAP } from "../app/screening/overlay-clamp";
+import { OVERLAY_EDGE } from "../app/screening/overlay-clamp";
+import { EDGE as CARD_EDGE } from "../../../packages/ui/src/base/Overlays/menu-place.js";
 
 /**
  * THE OVERLAYS ARE CLAMPED WHERE A PERSON MEETS THEM.
@@ -18,9 +19,9 @@ import { OVERLAY_EDGE, OVERLAY_GAP } from "../app/screening/overlay-clamp";
  * screening sheets and checks each uses measured height and viewport-bound
  * `max-height` and an inner scroll out. The repository's recurring failure is *built, tested,
  * unreachable*: a clamp that exists as a pure function and is wired to nothing would pass every
- * geometry test while the sheet keeps clipping in production. Unwire `useOverlayClamp` from either
- * sheet — restore `style={{ left: state.x, top: state.y }}` — and its case here
- * goes red.
+ * geometry test while the sheet keeps clipping in production. The sender card uses the shared
+ * Menu placement and the subject sheet uses the Web clamp. Remove the Menu’s measured placement
+ * and the sender card’s flip and clamp cases fail.
  *
  * jsdom lays nothing out, so the measured height is planted on the element (`scrollHeight` is a
  * plain getter override) and the re-measure is driven by a window resize — the same listener a
@@ -64,6 +65,9 @@ afterEach(teardownScreeningWeb);
 async function planted(el: Element, naturalHeight: number, viewport: { w: number; h: number }) {
   Object.defineProperty(el, "scrollHeight", { configurable: true, value: naturalHeight });
   Object.defineProperty(el, "offsetWidth", { configurable: true, value: 252 });
+  if (el.classList.contains("oh-menu")) {
+    vi.spyOn(el.parentElement!, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, viewport.w, viewport.h));
+  }
   vi.stubGlobal("innerWidth", viewport.w);
   vi.stubGlobal("innerHeight", viewport.h);
   await act(async () => {
@@ -110,7 +114,6 @@ async function mountedSender(letters: readonly EngineMessage[], anchor = LOW_ANC
     new DOMRect(anchor.x, anchor.anchorTop, 180, anchor.anchorBottom - anchor.anchorTop),
   );
   await act(async () => { fireEvent.click(trigger); });
-  await act(async () => { fireEvent.click(shell.getByRole("menuitem", { name: messages.screening.action })); });
   const sheet = screen.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", sender) });
   return { sheet, ruleWrites };
 }
@@ -120,14 +123,10 @@ describe("SenderMenu is viewport-clamped", () => {
     const { sheet } = await mountedSender([msg("a", "one@x.example", "Subject a")]);
     await planted(sheet, 583, { w: 1440, h: 900 });
 
-    // The flip: bottom edge on the anchor's top, whole sheet on-screen. With the clamp
-    // unwired the style stays `top: 662px` and the sheet's lower half is past the viewport.
-    expect(sheet.style.top).toBe(`${630 - OVERLAY_GAP - 583}px`);
-    const maxHeight = Number.parseFloat(sheet.style.maxHeight);
-    expect(maxHeight).toBeGreaterThanOrEqual(583);
-    expect(maxHeight).toBeLessThanOrEqual(900 - 2 * OVERLAY_EDGE);
-    // The cap's escape valve: a capped sheet scrolls inside instead of clipping.
-    expect(sheet.style.overflowY).toBe("auto");
+    const top = Number.parseFloat(sheet.style.top);
+    expect(top).toBe(630 - CARD_EDGE - 583);
+    expect(top).toBeGreaterThanOrEqual(CARD_EDGE);
+    expect(sheet.style.maxHeight).toBe("");
   });
 
   it("stands whole, slid up over its anchor, when neither side of the anchor holds it", async () => {
@@ -138,13 +137,11 @@ describe("SenderMenu is viewport-clamped", () => {
       x: 80, anchorTop: 400, anchorBottom: 424,
     });
     await planted(sheet, 583, { w: 390, h: 844 });
-    const maxHeight = Number.parseFloat(sheet.style.maxHeight);
     const top = Number.parseFloat(sheet.style.top);
-    expect(maxHeight).toBeGreaterThanOrEqual(583);
-    expect(top).toBe(844 - OVERLAY_EDGE - 583);
-    expect(top).toBeGreaterThanOrEqual(OVERLAY_EDGE);
-    // And the measured 252px width is clamped for real — not `placePicker`'s 240px guess.
-    expect(Number.parseFloat(sheet.style.left) + 252).toBeLessThanOrEqual(390 - OVERLAY_EDGE);
+    expect(sheet.style.maxHeight).toBe("");
+    expect(top).toBe(844 - CARD_EDGE - 583);
+    expect(top).toBeGreaterThanOrEqual(CARD_EDGE);
+    expect(Number.parseFloat(sheet.style.left) + 252).toBeLessThanOrEqual(390 - CARD_EDGE);
   });
 
   it("scrolls inside only when it is taller than the viewport itself", async () => {
@@ -153,20 +150,29 @@ describe("SenderMenu is viewport-clamped", () => {
     });
     await planted(sheet, 900, { w: 390, h: 844 });
     const maxHeight = Number.parseFloat(sheet.style.maxHeight);
-    expect(Number.parseFloat(sheet.style.top)).toBe(OVERLAY_EDGE);
-    expect(maxHeight).toBe(844 - 2 * OVERLAY_EDGE);
-    expect(sheet.style.overflowY).toBe("auto");
+    expect(Number.parseFloat(sheet.style.top)).toBe(CARD_EDGE);
+    expect(maxHeight).toBe(844 - 2 * CARD_EDGE);
+    const menuCss = readFileSync(resolve("packages/ui/src/base/Overlays/menu.css"), "utf8");
+    expect(menuCss).toMatch(/\.oh-menu\s*\{[^}]*overflow:\s*auto;/);
   });
 
   it("destinations are keyboard-operable: Enter on a focused option commits it", async () => {
     const letter = msg("a", ["one", "x.example"].join("@"), "Subject a");
     const { sheet, ruleWrites } = await mountedSender([letter]);
-    const option = within(sheet).getByRole("option", { name: /^News(?:\s|$)/ });
-    expect(option.getAttribute("tabindex")).toBe("0");
+    const places = within(sheet).getByRole("radiogroup", { name: messages.screening.cardGoesTo });
+    const first = within(places).getByRole("radio", { name: "Ohbox" });
+    const news = within(places).getByRole("radio", { name: "News" });
+    expect(first.getAttribute("tabindex")).toBe("0");
+    await act(async () => {
+      first.focus();
+      fireEvent.keyDown(first, { key: "ArrowRight" });
+    });
+    expect(document.activeElement).toBe(news);
+    expect(news).toBeInstanceOf(HTMLButtonElement);
     expect(ruleWrites).toEqual([]);
     await act(async () => {
-      option.focus();
-      option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      // jsdom does not perform the native button activation that follows an uncancelled Enter.
+      if (fireEvent.keyDown(news, { key: "Enter" })) fireEvent.click(news, { detail: 0 });
     });
     await tick(12000);
     expect(ruleWrites).toEqual([{
@@ -184,7 +190,7 @@ describe("SubjectRuleSheet is viewport-clamped", () => {
     ];
     const { sheet: sender } = await mountedSender(letters);
     await act(async () => {
-      fireEvent.click(within(sender).getByRole("button", { name: messages.screening.subjectRuleOpen }));
+      fireEvent.click(within(sender).getByRole("menuitem", { name: messages.screening.cardSubject }));
     });
     return screen.getByRole("dialog", {
       name: messages.screening.subjectAria.replace("{who}", letters[0]!.from.address),

@@ -12,8 +12,6 @@ import { createStreamBand } from "./stream-band.js";
 
 /** How long a hand scroll or a chosen letter must rest. */
 export const STREAM_REST_MS = 600;
-/** A folded snippet at the cursor needs a longer, deliberate rest. */
-export const STREAM_SNIPPET_REST_MS = 2000;
 /** The first lines of an item that must stand wholly in view for it to count as shown. */
 export const STREAM_FIRST_LINES_PX = 96;
 /** How far past the top (going down) or the foot (going up) an item must be carried. */
@@ -319,7 +317,7 @@ function streamObservation(
       visit.lastHeight = l.physicalHeight ?? l.viewHeight;
       rememberShown(l, shownIds, shownPreviews);
     },
-    rest(l, restingId, openId, snippetRested) {
+    rest(l, restingId, openId) {
       rememberShown(l, shownIds, shownPreviews);
       const target = visit.enteredLetter ?? restingId ?? (visit.handRest ? restingAt(l) : null);
       if (!visit.driven || target === null) return [];
@@ -332,7 +330,6 @@ function streamObservation(
       const lead = item.lines?.lead;
       const previewVisible = lead != null && lead.top >= l.scrollTop && lead.bottom <= foot;
       const preview = visit.handRest && visit.enteredLetter === null && previewVisible && !receipts;
-      if (!item.ready && preview && !snippetRested) return [];
       return reads.readable(item, preview) ? reads.write([item.id]) : [];
     },
     previewDwell(l, judged) {

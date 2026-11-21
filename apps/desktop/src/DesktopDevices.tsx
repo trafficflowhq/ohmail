@@ -29,19 +29,18 @@
  * fingerprint (`GET /local/lan/pin`) at mint time and puts it in the link — a mint with no
  * fingerprint is REFUSED. A phone BROWSER still cannot use the address
  * (`test/host-client-secure-context.test.ts`); opt-in, address CHOSEN from
- * `GET /local/lan/candidates`, and the no-Tailscale path — no tailnet needed. */
+ * `GET /local/lan/candidates`, and the no-Tailscale path — no tailnet needed. The short PIN comparison comes from `@ohmail/client-engine`. */
 
 import type { ToastFn } from "@ohmail/app-logic/press/report";
 import { useReport } from "@ohmail/app/frame";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFormatter, useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
-import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
+import { Button, CodeText, CodeTile, Field, NativeSelect, RefusalLine, Switch, Tag } from "@ohmail/ui/base";
+import { SettingActs, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 
-import { isPairPin, pairLink } from "@ohmail/client-engine";
+import { isPairPin, pairLink, shortPin } from "@ohmail/client-engine";
 /* THE SAME TWELVE CHARACTERS THE JOINING MACHINE SHOWS — one function, or the two ends of
    the comparison would be comparing different substrings of the same key. */
-import { shortPin } from "./DoorChooser.js";
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { DOOR_COPY } from "./door-copy.js";
@@ -312,9 +311,11 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
     if (installKind === null) return null;
     const sandboxed = autostartSentenceKey(installKind);
     if (sandboxed !== null) {
-      return <SettingsRow label={t("autostart")} description={t(sandboxed)} />;
+      return <SettingLine label={t("autostart")} description={t(sandboxed)} />;
     }
-    return <SettingsRow label={t("autostart")} description={description} control={control} />;
+    return <SettingLine label={t("autostart")} description={description}>
+  {control}
+</SettingLine>;
   };
 
   /** The pairing surfaces exist on the stdio door only while armed — never asked otherwise.
@@ -750,29 +751,25 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
      no-Tailscale one), because the choice is the same choice. */
   const lanChooser = (
     <>
-      <SettingsRow
+      <SettingLine
         label={t("lanOption")}
         description={t("lanOptionWhy")}
-        control={<Switch checked={lanDraft} ariaLabel={t("lanOption")} onChange={flipLanDraft} />}
-      />
+      >
+        <Switch on={lanDraft} label={t("lanOption")} onChange={flipLanDraft} />
+      </SettingLine>
       {lanDraft ? (
         lanCandidates === undefined ? (
-          <p className="set-note-inline">{t("checking")}</p>
+          <SettingNote>{t("checking")}</SettingNote>
         ) : lanCandidates === null ? (
-          <p className="acct-warn" role="alert">
-            {t("lanListFailed")}
-          </p>
+          <RefusalLine alert>{t("lanListFailed")}</RefusalLine>
         ) : lanCandidates.length === 0 ? (
-          <p className="acct-warn" role="alert">
-            {t("lanNone")}
-          </p>
+          <RefusalLine alert>{t("lanNone")}</RefusalLine>
         ) : (
-          <SettingsRow
+          <SettingLine
             label={t("lanPick")}
             description={t("lanPickWhy")}
-            control={
-              <select
-                className="join-input set-tag-input"
+          >
+            <NativeSelect
                 aria-label={t("lanPick")}
                 value={lanChoice ?? ""}
                 onChange={(e) => setLanChoice(e.target.value)}
@@ -782,9 +779,8 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
                     {c.name ? `${c.address} (${c.name})` : c.address}
                   </option>
                 ))}
-              </select>
-            }
-          />
+              </NativeSelect>
+          </SettingLine>
         )
       ) : null}
     </>
@@ -815,7 +811,7 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
   if (host === undefined) {
     return (
       <SettingsSheet title={t("title")}>
-        <p className="acct-lead">{t("checking")}</p>
+        <SettingNote>{t("checking")}</SettingNote>
       </SettingsSheet>
     );
   }
@@ -824,8 +820,8 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
   if (host === null) {
     return (
       <SettingsSheet title={t("title")}>
-        <p className="acct-lead">{t("lead")}</p>
-        <p className="set-note-inline">{t("notAvailable")}</p>
+        <SettingNote>{t("lead")}</SettingNote>
+        <SettingNote>{t("notAvailable")}</SettingNote>
       </SettingsSheet>
     );
   }
@@ -845,21 +841,19 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
       host.problem !== null && (!guiding || guideKey(probe.state) !== guideKey(host.problem))
         ? guideKey(host.problem)
         : null;
+    const ready = probe !== undefined && probe !== null && probe.state === "running";
     return (
-      <SettingsSheet title={t("title")}>
-        <p className="acct-lead">{t("lead")}</p>
-        <p className="set-note-inline">{t("story")}</p>
+      <>
+      <SettingsSheet title={t("thisComputer")} sign="desktop" aside={<Tag>{t("hostOff")}</Tag>}>
+        <SettingNote>{t("lead")}</SettingNote>
+        <SettingNote>{t("story")}</SettingNote>
 
         {problem ? (
-          <p className="acct-warn" role="alert">
-            {problem}
-          </p>
+          <RefusalLine alert>{problem}</RefusalLine>
         ) : null}
 
         {offProblem ? (
-          <p className="acct-warn" role="alert">
-            {t(offProblem)}
-          </p>
+          <RefusalLine alert>{t(offProblem)}</RefusalLine>
         ) : null}
 
         {/* THE STAND-DOWN THAT COULD NOT BE RECORDED. Hosting IS off — the shell takes the
@@ -867,46 +861,43 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
             the next start would bring hosting back. The shell composes this one because it
             carries the write's own reason; everything else on this pane is a mapped word. */}
         {host.notice ? (
-          <p className="acct-warn" role="alert">
-            {host.notice}
-          </p>
+          <RefusalLine alert>{host.notice}</RefusalLine>
         ) : null}
 
-        {probe === undefined ? <p className="set-note-inline">{t("checking")}</p> : null}
+        {probe === undefined ? <SettingNote>{t("checking")}</SettingNote> : null}
 
         {probe === null ? (
           /* The shell answered nothing readable about the tailnet — said as a fact about the
              check, with the re-probe right there. Never a dead end. */
           <>
-            <p className="acct-lead">{t("probeFailed")}</p>
-            <div className="acct-actions">
-              <Button onClick={() => void refresh()} disabled={busy !== null}>
+            <SettingNote>{t("probeFailed")}</SettingNote>
+            <SettingActs>
+              <Button kind="two" onPress={() => void refresh()} disabled={busy !== null}>
                 {t("checkAgain")}
               </Button>
-            </div>
+            </SettingActs>
           </>
         ) : null}
 
         {guiding ? (
           <>
-            <p className="acct-lead">{t(guideKey(probe.state))}</p>
-            <div className="acct-actions">
+            <SettingNote>{t(guideKey(probe.state))}</SettingNote>
+            <SettingActs>
               {probe.state === "no-cli" ? (
-                <Button variant="primary" onClick={() => void openTailscaleDownload()}>
+                <Button kind={lanDraft ? "quiet" : "ink"} onPress={() => void openTailscaleDownload()}>
                   {t("getTailscale")}
                 </Button>
               ) : null}
-              <Button onClick={() => void refresh()} disabled={busy !== null}>
+              <Button kind="two" onPress={() => void refresh()} disabled={busy !== null}>
                 {t("checkAgain")}
               </Button>
-            </div>
+            </SettingActs>
             {/* THE NO-TAILSCALE PATH. The guided step above stays the recommendation — it is
                 what gives a phone BROWSER a working, encrypted address — but same-network
                 access does not owe its existence to it, so the option is offered here too,
                 with the honest limitation in its own words (apps only; a browser needs the
                 Tailscale address, because browsers require HTTPS for a network address). */}
-            <SettingsSubhead>{t("lanAlone")}</SettingsSubhead>
-            <p className="set-note-inline">{t("lanAloneWhy")}</p>
+            <SettingLine label={t("lanAlone")} description={t("lanAloneWhy")} />
             {lanChooser}
             {lanDraft ? (
               <>
@@ -915,65 +906,58 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
                     register a login item off a default nobody saw. */}
                 {autostartRow(
                   <Switch
-                    checked={autostartDraft}
-                    ariaLabel={t("autostart")}
+                    on={autostartDraft}
+                    label={t("autostart")}
                     onChange={setAutostartDraft}
                   />,
                   t("autostartWhy"),
                 )}
-                <div className="acct-actions">
-                  <Button variant="primary" onClick={() => void arm(true)} disabled={busy !== null}>
-                    {busy === "arm" ? t("enabling") : t("lanEnable")}
-                  </Button>
-                </div>
               </>
             ) : null}
           </>
         ) : null}
 
-        {probe !== undefined && probe !== null && probe.state === "running" ? (
-          /* READY — the enable ceremony. One reassuring fact, one visible default, one button.
-             The port hides behind "Advanced" because nobody choosing between defaults should
-             have to read about ports to turn their mail on. */
+        {ready ? (
+          /* The port is a fact until Advanced opens its editor. */
           <>
-            <p className="acct-lead">{t("ready", { name: probe.dnsName })}</p>
+            <SettingNote>{t("ready", { name: probe.dnsName })}</SettingNote>
             {autostartRow(
               <Switch
-                checked={autostartDraft}
-                ariaLabel={t("autostart")}
+                on={autostartDraft}
+                label={t("autostart")}
                 onChange={setAutostartDraft}
               />,
               t("autostartWhy"),
             )}
             {lanChooser}
             {advanced ? (
-              <SettingsRow
+              <SettingLine
                 label={t("port")}
                 description={t("portWhy")}
-                control={
-                  <input
-                    className="join-input set-tag-input"
-                    inputMode="numeric"
-                    value={portDraft ?? String(host.port ?? DEFAULT_HOST_PORT)}
-                    aria-label={t("port")}
-                    onChange={(e) => setPortDraft(e.target.value)}
-                  />
-                }
-              />
-            ) : null}
-            <div className="acct-actions">
-              <Button variant="primary" onClick={() => void arm(lanDraft)} disabled={busy !== null}>
-                {busy === "arm" ? t("enabling") : t("enable")}
-              </Button>
-              {!advanced ? (
-                <Button variant="ghost" onClick={() => setAdvanced(true)}>
-                  {t("advanced")}
-                </Button>
-              ) : null}
-            </div>
+              >
+                <Field bare label={t("port")} inputMode="numeric"
+                  value={portDraft ?? String(host.port ?? DEFAULT_HOST_PORT)} onChange={setPortDraft} />
+              </SettingLine>
+            ) : <SettingLine label={t("port")} value={String(host.port ?? DEFAULT_HOST_PORT)} />}
           </>
         ) : null}
       </SettingsSheet>
+      {guiding && lanDraft ? (
+        <SettingActs>
+          <Button kind="ink" onPress={() => void arm(true)} disabled={busy !== null}>
+            {busy === "arm" ? t("enabling") : t("lanEnable")}
+          </Button>
+        </SettingActs>
+      ) : null}
+      {ready ? (
+        <SettingActs>
+          <Button kind="ink" onPress={() => void arm(lanDraft)} disabled={busy !== null}>
+            {busy === "arm" ? t("enabling") : t("enable")}
+          </Button>
+          {!advanced ? <Button kind="quiet" onPress={() => setAdvanced(true)}>{t("advanced")}</Button> : null}
+        </SettingActs>
+      ) : null}
+      </>
     );
   }
 
@@ -992,45 +976,61 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
 
   return (
     <>
-      <SettingsSheet title={t("title")}>
+      <SettingsSheet title={t("thisComputer")} sign="desktop" aside={<Tag>{t(serving ? "hostServing" : "hostNotServing")}</Tag>}>
 
         {problem ? (
-          <p className="acct-warn" role="alert">
-            {problem}
-          </p>
+          <RefusalLine alert>{problem}</RefusalLine>
         ) : null}
 
         {serving ? (
-          <p className="acct-lead">{t("serving", { origin: host.origin ?? "" })}</p>
+          <SettingLine label={t("reachAt")} value={host.origin ?? ""} description={t("servingDetail")}>
+            <Button kind="quiet" size="s" icon="copy" onPress={() => copyLan(host.origin ?? "")}>{t("copyOrigin")}</Button>
+          </SettingLine>
         ) : (
           /* DEGRADED — armed, not serving, one guided sentence for the one thing in the way.
              `guideKey(null)` is the unknown-problem arm: a shell ahead of this bundle degrades to
              generic guidance, never to a raw code (the pane renders no problem name, ever). */
           <>
-            <p className="acct-lead">{t(guideKey(host.problem))}</p>
-            <div className="acct-actions">
+            <SettingNote>{t(guideKey(host.problem))}</SettingNote>
+            <SettingActs>
               {host.problem === "no-cli" ? (
-                <Button variant="primary" onClick={() => void openTailscaleDownload()}>
+                <Button kind={lanOnlyServing ? "quiet" : "ink"} onPress={() => void openTailscaleDownload()}>
                   {t("getTailscale")}
                 </Button>
               ) : null}
-              <Button onClick={() => void refresh()} disabled={busy !== null}>
+              <Button kind="two" onPress={() => void refresh()} disabled={busy !== null}>
                 {t("checkAgain")}
               </Button>
-            </div>
+            </SettingActs>
           </>
         )}
 
+        {/* `autostart: null` is the platform declining to say — a fact, not "off". The row says so
+            instead of drawing an off-position switch over an unknown; the switch stays, because
+            flipping it WRITES a definite state either way. On an install that cannot hold a login
+            item at all there is no switch to draw — `autostartRow` answers that. */}
+        {autostartRow(
+          <Switch
+            on={host.autostart === true}
+            label={t("autostart")}
+            onChange={(v) => void flipAutostart(v)}
+          />,
+          host.autostart === null ? t("autostartUnknown") : t("autostartWhy"),
+        )}
+
+        {host.port !== null ? <SettingLine label={t("port")} value={String(host.port)} /> : null}
+      </SettingsSheet>
+
         {serving || lanOnlyServing ? (
           minted ? (
-            <div className="acct-confirm">
-              <p className="acct-lead">
+            <SettingsSheet>
+              <SettingNote>
                 {serving
                   ? minted.label
                     ? t("mintedLeadFor", { name: minted.label })
                     : t("mintedLead")
                   : t("lanMintedLead")}
-              </p>
+              </SettingNote>
               {/* ── THE QR IS DRAWN IN BOTH MODES NOW, AND LAN-ONLY IS THE CASE THAT NEEDS IT.
                   The old tailnet-only argument ("a camera scan opens a phone browser, and this
                   door refuses browsers") was about the OS camera app; the ohmail app has its
@@ -1040,58 +1040,40 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
                   button hands the link to something that can paste; the QR hands it to the
                   camera — both, or the ceremony has no path ending with a paired phone. The
                   raw link is still printed nowhere. */}
-              <div className="join-qr">
+              <CodeTile>
                 <QrCode value={minted.link} ariaLabel={t("qrAria")} />
-              </div>
-              <div className="acct-actions">
-                <Button variant="primary" onClick={copy}>
+              </CodeTile>
+              <SettingActs>
+                <Button kind="quiet" size="s" icon="copy" onPress={copy}>
                   {t("copyLink")}
                 </Button>
                 {/* Done also re-reads the lists: in the ordinary scan-then-Done sequence the code
                     was just consumed and the paired device just appeared, and this dismissal is
                     the only moment the serving view naturally refreshes. */}
                 <Button
-                  onClick={() => {
+                  kind={confirmOff ? "two" : "ink"}
+                  onPress={() => {
                     setMinted(null);
                     void refreshLists();
                   }}
                 >
                   {t("mintedDone")}
                 </Button>
-              </div>
-              <p className="acct-fine">{t("mintedOnce")}</p>
-            </div>
+              </SettingActs>
+              <SettingNote>{t("mintedOnce")}</SettingNote>
+            </SettingsSheet>
           ) : (
-            <>
+            <SettingsSheet>
               {/* The add-a-device row — the Invites mint's shape: the (optional) name is the one
                   input, the button is the verb, Enter submits. */}
-              <div className="set-row set-tag-edit invites-mint">
-                <input
-                  className="join-input set-tag-input"
-                  value={labelDraft}
-                  placeholder={t("addFor")}
-                  aria-label={t("addFor")}
-                  maxLength={100}
-                  onChange={(e) => setLabelDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      if (busy === null) void mint();
-                    }
-                  }}
-                />
-                <span className="set-tag-acts">
-                  <Button variant="primary" onClick={() => void mint()} disabled={busy === "mint"}>
-                    {busy === "mint" ? t("working") : t("addAction")}
-                  </Button>
-                </span>
-              </div>
-              <p className="set-note-inline">{serving ? t("addHint") : t("lanAddHint")}</p>
-            </>
+              <Field
+                bare label={t("addFor")} placeholder={t("addFor")} value={labelDraft}
+                hint={serving ? t("addHint") : t("lanAddHint")} maxLength={100} onChange={setLabelDraft}
+                onEnter={() => { if (busy === null) void mint(); }}
+              />
+            </SettingsSheet>
           )
         ) : null}
-
-      </SettingsSheet>
 
       {/* SAME-NETWORK ACCESS — rendered whenever it is chosen, independent of the tailnet half:
           a LAN-only install (the no-Tailscale path) is degraded above and serving here, and
@@ -1099,10 +1081,15 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
           the API for apps, the awake qualifier, and the plain reason a phone browser still
           needs the Tailscale address. */}
       {host.lan !== null ? (
-        <SettingsSheet title={t("lanTitle")}>
-          <p className="acct-lead">
+        <SettingsSheet
+          title={t("lanTitle")}
+          aside={<Tag>{t(host.lanState === "serving" ? "hostServing"
+            : host.lanState === "pending" ? "hostStarting" : "hostNotServing")}</Tag>}
+        >
+          <SettingLine label={t("lanOption")} toggle={{ on: true }} off />
+          <SettingNote>
             {host.lanState === "serving" && host.port !== null
-              ? t("lanServing", { address: `https://${host.lan}:${host.port}`, port: host.port })
+              ? t("lanServingDetail", { port: host.port })
               : host.lanState === "blocked" && host.port !== null
                 ? t("lanBlocked", { address: `https://${host.lan}:${host.port}`, port: host.port })
                 : host.lanState === "failed"
@@ -1110,7 +1097,7 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
                   : host.lanState === "invalid"
                     ? t("lanInvalid")
                     : t("lanPending")}
-          </p>
+          </SettingNote>
           {/* THE HONEST-STATE ARM. The engine reached this state by READING the firewall's own
               files — never by probing itself, which on Linux is routed over `lo` and answers
               happily through a closed firewall (see `apps/sidecar/src/host-firewall.ts`). The
@@ -1119,16 +1106,25 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
               has to travel with the state instead of being assumed from it. */}
           {host.lanState === "blocked" && host.port !== null ? (
             <>
-              <p className="acct-warn" role="alert">
-                {t("lanBlockedFix")}
-              </p>
-              <pre className="acct-cmd">{`sudo ufw allow ${host.port}/tcp`}</pre>
-              <div className="acct-actions">
-                <Button onClick={() => void refresh()} disabled={busy !== null}>
+              <RefusalLine alert>{t("lanBlockedFix")}</RefusalLine>
+              <CodeText>{`sudo ufw allow ${host.port}/tcp`}</CodeText>
+              <SettingActs>
+                <Button kind="two" onPress={() => void refresh()} disabled={busy !== null}>
                   {t("checkAgain")}
                 </Button>
-              </div>
+              </SettingActs>
             </>
+          ) : null}
+          {lanUp && host.port !== null ? (
+            <SettingLine
+              label={t("lanPick")}
+              value={`https://${host.lan}:${host.port}`}
+              description={lanKey === null ? t("lanBrowserNote") : undefined}
+            >
+              <Button kind="quiet" size="s" icon="copy" onPress={() => copyLan(`https://${host.lan}:${host.port}`)}>
+                {t("lanCopy")}
+              </Button>
+            </SettingLine>
           ) : null}
           {/* ── THE OTHER HALF OF THE COMPARISON ────────────────────────────────────────
               A device pairing over this network shows twelve characters of this key before it
@@ -1137,21 +1133,11 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
               play — a tailnet origin carries a real certificate and no pin at all, so a key row
               there would invite a comparison against a value nothing shows. */}
           {lanKey !== null ? (
-            <SettingsRow
+            <SettingLine
               label={t("keyLabel")}
-              description={t("keyWhy")}
-              value={<span className="host-key">{shortPin(lanKey)}</span>}
+              value={shortPin(lanKey)}
+              description={lanUp && host.port !== null ? t("keyWhy") + " " + t("lanBrowserNote") : t("keyWhy")}
             />
-          ) : null}
-          {lanUp && host.port !== null ? (
-            <>
-              <p className="set-note-inline">{t("lanBrowserNote")}</p>
-              <div className="acct-actions">
-                <Button onClick={() => copyLan(`https://${host.lan}:${host.port}`)}>
-                  {t("lanCopy")}
-                </Button>
-              </div>
-            </>
           ) : null}
         </SettingsSheet>
       ) : null}
@@ -1167,7 +1153,7 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
               label={m.label || t("codeFallback")}
               description={t("codeMeta", { expires: moment(m.expiresAt) })}
             >
-              <Button onClick={() => void revokeMint(m.id)} disabled={busy === `revoke:${m.id}`}>
+              <Button kind="quiet" size="s" onPress={() => void revokeMint(m.id)} disabled={busy === `revoke:${m.id}`}>
                 {busy === `revoke:${m.id}` ? t("working") : t("revoke")}
               </Button>
             </SettingLine>
@@ -1185,14 +1171,13 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
                 description={t("removeWhat")}
               >
                 <Button
-                  variant="primary"
-                  className="danger"
-                  onClick={() => void removeDevice(d.id)}
+                  kind="ink"
+                  onPress={() => void removeDevice(d.id)}
                   disabled={busy === `remove:${d.id}`}
                 >
                   {busy === `remove:${d.id}` ? t("working") : t("remove")}
                 </Button>
-                <Button variant="ghost" onClick={() => setRemoving(null)}>
+                <Button kind="quiet" onPress={() => setRemoving(null)}>
                   {t("cancel")}
                 </Button>
               </SettingLine>
@@ -1206,59 +1191,35 @@ export function DesktopDevices({ report }: { report: ToastFn }) {
                   seen: day(d.lastSeenAt),
                 })}
               >
-                <Button onClick={() => setRemoving(d.id)}>{t("remove")}</Button>
+                <Button kind="quiet" size="s" onPress={() => setRemoving(d.id)}>{t("remove")}</Button>
               </SettingLine>
             ),
           )}
         </SettingsSheet>
       ) : null}
 
-      <SettingsSheet title={t("runningTitle")}>
-        {/* `autostart: null` is the platform declining to say — a fact, not "off". The row says so
-            instead of drawing an off-position switch over an unknown; the switch stays, because
-            flipping it WRITES a definite state either way. On an install that cannot hold a login
-            item at all there is no switch to draw — `autostartRow` answers that. */}
-        {autostartRow(
-          <Switch
-            checked={host.autostart === true}
-            ariaLabel={t("autostart")}
-            onChange={(v) => void flipAutostart(v)}
-          />,
-          host.autostart === null ? t("autostartUnknown") : t("autostartWhy"),
-        )}
-
-        {confirmOff ? (
-          <SettingsRow
-            label={t("offAsk")}
-            description={t("offWhat")}
-            control={
-              <span className="set-tag-acts">
-                <Button
-                  variant="primary"
-                  className="danger"
-                  onClick={() => void disarm()}
-                  disabled={busy === "disarm"}
-                >
-                  {busy === "disarm" ? t("offing") : t("off")}
-                </Button>
-                <Button variant="ghost" onClick={() => setConfirmOff(false)} disabled={busy === "disarm"}>
-                  {t("cancel")}
-                </Button>
-              </span>
-            }
-          />
-        ) : (
-          <SettingsRow
-            label={t("off")}
-            description={t("offHint")}
-            control={
-              <Button onClick={() => setConfirmOff(true)} disabled={busy === "disarm"}>
-                {t("off")}
-              </Button>
-            }
-          />
-        )}
-      </SettingsSheet>
+      {confirmOff ? (
+        <SettingLine label={t("offAsk")} description={t("offWhat")}>
+          <Button kind="ink" onPress={() => void disarm()} disabled={busy === "disarm"}>
+            {busy === "disarm" ? t("offing") : t("off")}
+          </Button>
+          <Button kind="quiet" onPress={() => setConfirmOff(false)} disabled={busy === "disarm"}>
+            {t("cancel")}
+          </Button>
+        </SettingLine>
+      ) : <p className="oh-text">{t("offHint")}</p>}
+      <SettingActs>
+        {(serving || lanOnlyServing) && !minted ? (
+          <Button kind={confirmOff ? "two" : "ink"} onPress={() => void mint()} disabled={busy === "mint"}>
+            {busy === "mint" ? t("working") : t("addAction")}
+          </Button>
+        ) : null}
+        {!confirmOff ? (
+          <Button kind="two" onPress={() => setConfirmOff(true)} disabled={busy === "disarm"}>
+            {t("off")}
+          </Button>
+        ) : null}
+      </SettingActs>
     </>
   );
 }

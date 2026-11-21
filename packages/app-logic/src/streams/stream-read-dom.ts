@@ -236,11 +236,12 @@ function watchReadTimers(
     () => documentHidden() || judgement.phase() !== null || flyingRef.current,
     () => write(rule.band(measure())),
   );
-  const rest = watchStreamRest((snippet) => {
+  const rest = watchStreamRest((landed) => {
     if (documentHidden() || blocked() || judgement.phase() !== null) return;
     const l = measure();
     bottomRef.current = bottomOf(l);
-    write(rule.rest(l, null, opts.current.openId, snippet));
+    if (landed) write(rule.band(l));
+    write(rule.rest(l, null, opts.current.openId));
   });
   return { measure, write, blocked, pending, band, rest, receiptAttended };
 }
@@ -262,9 +263,8 @@ function bindReadScroller(
   );
   const flight = flightOf(flyingRef, () => {
     opts.current.onLanded?.();
-    band.read();
     pending.observe();
-    rest.arm();
+    rest.arm(true);
   });
   arm.current = (entered) => {
     if (entered) {

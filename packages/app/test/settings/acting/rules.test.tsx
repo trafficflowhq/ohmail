@@ -10,6 +10,9 @@ import {
   type RuleItem,
   type RulesModel,
 } from "../../../src/settings/rules/index.js";
+import { Frame } from "../../../src/frame/Frame.js";
+import { fakeHost, NO_ENGINE } from "../../support/fake-host.js";
+import { fakeWindow } from "../../support/fake-window.js";
 import { drawn, said } from "./words.js";
 
 afterEach(cleanup);
@@ -202,4 +205,33 @@ describe("the Rules pane", () => {
     drawn(<RulesPane model={STATES.empty.model} />, "de");
     expect(seen(r("empty", "de"))).toBe(true);
   });
+});
+
+it.each(["phone", "fold"] as const)("files into a chosen destination from the %s menu", (room) => {
+  const { host } = fakeHost({
+    engine: NO_ENGINE,
+    service: "self",
+    scope: "account",
+    window: fakeWindow(room),
+    places: {
+      ohbox: {
+        id: "ohbox",
+        body: "ohbox",
+        rail: null,
+        panes: { kind: "wide", Wide: () => <RulesPane model={model()} /> },
+      },
+    },
+  });
+  drawn(<Frame host={host} />);
+  const slot = screen.getByRole("button", { name: r("facetLabel") });
+  expect(screen.getByText("Files into")).toBeTruthy();
+  expect(slot.textContent).toBe("All");
+  fireEvent.click(slot);
+  const menu = within(screen.getByRole("menu", { name: r("facetLabel") }));
+  expect(menu.getByText("Files into")).toBeTruthy();
+  fireEvent.click(menu.getByRole("menuitemradio", { name: "News" }));
+  expect(slot.textContent).toBe("News");
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(seen("example.com")).toBe(true);
+  expect(seen("anna@example.org")).toBe(false);
 });

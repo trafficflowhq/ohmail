@@ -10,6 +10,10 @@
   min-width: 0;
   min-height: 0;
 }
+:root[data-face="ohmarchy"] .rd-column {
+  --oh-sheet-run-start: var(--s3);
+}
+
 /* The way to Trash under the gone letter's sentence stands a step below it. */
 .rd-gone-way {
   margin-top: var(--s4);

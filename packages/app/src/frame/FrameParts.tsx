@@ -14,7 +14,7 @@ import {
   type RefObject,
 } from "react";
 import { Overlay } from "@ohmail/ui/base";
-import { NONE, type None } from "../host/index.js";
+import { NONE, type None } from "../host/contract.js";
 import { ProductKeys, ProductSwitch } from "./ProductSwitch.js";
 import { PlaceChords } from "./chords.js";
 import { Columns } from "./Columns.js";
@@ -128,7 +128,10 @@ function Navigation({
   const standing = useSignal(bars);
   const switcher =
     calendar === null || form === "dock" ? undefined : (
-      <ProductSwitch kind={form === "words" ? "pair" : "round"} onRail={form === "icons"} />
+      <ProductSwitch
+        kind={phoneMore && rail.plan.device === "phone" ? "entry" : form === "words" ? "pair" : "round"}
+        onRail={form === "icons"}
+      />
     );
   if (calendar && isCalendarPlace(rail.route.place)) {
     const body = (

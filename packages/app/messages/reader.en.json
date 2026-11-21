@@ -1,5 +1,6 @@
 {
   "reader": {
+    "actions": { "addToCalendar": "Add to calendar" },
     "gone": "This message was moved or deleted elsewhere.",
     "goneTrash": "Look in Trash",
     "trashAsk": "Move to Trash",
@@ -246,7 +247,7 @@
     "faultOffline": "Couldn't reach ohmail — check your connection",
     "faultSignedOut": "Your session ended — sign in again",
     "faultRetry": "try again",
-    "faultRetrying": "trying again shortly",
+    "faultRetrying": "{reason}. Ohmail will try again shortly.",
     "tooLarge": "{size} · too large to fetch",
     "listFailed": "Couldn't load this message's files.",
     "listOffline": "Couldn't reach ohmail — check your connection.",
@@ -294,7 +295,7 @@
     "pdfErrorDetail": "Download it to open in another app.",
     "textTruncated": "— preview truncated. Download to read the rest.",
     "textTruncatedHere": "— preview truncated.",
-    "textTooLargeDetail": "Save it instead.",
+    "textTooLargeDetail": "This file is larger than ohmail fetches to show, so download it instead.",
     "count": "{index} of {total}",
     "page": "{page} / {total}",
     "prevAttachment": "Previous attachment",

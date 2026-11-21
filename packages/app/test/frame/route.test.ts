@@ -180,3 +180,10 @@ describe("the calendar's part of the route", () => {
     expect(eventRefOf(eventRefString(ref), ref.day)).toEqual(ref);
   });
 });
+
+it("opens the Tags overview and round-trips a letter in that overview", () => {
+  expect(routeOf("#/tag")).toEqual({ place: "tags", sub: null, open: null, stage: null, words: {} });
+  expect(fragmentOf(routeOf("#/tag"))).toBe("#/tag");
+  expect(fragmentOf(routeOf("#/tag/m/a1"))).toBe("#/tag/m/a1");
+  expect(fragmentOf(routeOf("#/tag/"))).toBe("#/ohbox");
+});

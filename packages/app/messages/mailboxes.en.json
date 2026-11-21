@@ -310,6 +310,7 @@
     "removeReconnect": "You can connect this mailbox again later.",
     "removeConfirm": "Remove mailbox",
     "removeCancel": "Keep it",
+    "removeCancelKey": "Esc",
     "removeWorking": "Removing…",
     "factorBodyRemove": "Removing a mailbox deletes the password stored for it, so your account asks for a fresh second factor first.",
     "removeKeepChoice": "Remove, and keep ohmail's copy of its mail",
@@ -713,6 +714,9 @@
   },
   "mailboxFilings": {
     "title": "Waiting to be filed · {mailbox}",
+    "waiting": "Waiting to be filed",
+    "waitingValue": "{count} for {folder}",
+    "waitingSince": "Waiting since {since}.",
     "group": "{count, plural, one {1 message waits} other {# messages wait}} to be filed into {folder} since {since}",
     "why": "Why: {reasons}",
     "reasonCounted": "{reason} ({count})",

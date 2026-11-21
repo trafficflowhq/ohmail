@@ -51,6 +51,8 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "PATCH /account/storage": none,
   "PATCH /calendar/calendars/:id": direct,
   "PATCH /calendar/settings": direct,
+  // A receipt's calendar suggestion is dismissed or restored by a direct call. Its row drains from /sync.
+  "PATCH /calendar/suggestions/:id": direct,
   "PATCH /consent/settings": direct,
   "PATCH /contacts/:id": none,
   "PATCH /folders/:id": verbs("folder_rename"),

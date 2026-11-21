@@ -63,6 +63,17 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .oh-settingline-value:has(> .oh-settingline-facts) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .oh-settingline-facts {
+    flex-basis: 100%;
+    color: var(--ink2);
+    overflow-wrap: anywhere;
+  }
+
   .oh-settingline-text {
     overflow: hidden;
     min-width: 0;

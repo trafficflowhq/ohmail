@@ -499,6 +499,21 @@
     font-weight: var(--w-bold);
   }
 
+  @keyframes oh-ev-draft-in {
+    from {
+      transform: var(--x-pop);
+      opacity: var(--o-pop);
+    }
+  }
+  .oh-ev[data-state="draft"][data-born] {
+    animation: oh-ev-draft-in var(--d-pop) var(--e-pop) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-ev[data-state="draft"][data-born] {
+      animation-duration: var(--d-reduced) !important;
+    }
+  }
+
   /* Just set: its dashes close and its tint fills, its square drops in. */
   @keyframes oh-ev-set {
     from {

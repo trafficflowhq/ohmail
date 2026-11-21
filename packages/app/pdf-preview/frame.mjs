@@ -86,6 +86,7 @@ function startPdfFrame(host, workerCode, fonts) {
           disableStream: true,
           isEvalSupported: false,
           useWorkerFetch: false,
+          useSystemFonts: false,
           BinaryDataFactory: StandardFonts,
         });
         documentProxy = await task.promise;

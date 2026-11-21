@@ -147,7 +147,7 @@ export interface WebWords {
  * THE WEB'S HOST, built once per engine and per answer. Every part is memoized on its parts, so a render of the entry
  * with nothing changed hands the frame the same record (`web-host-is-stable.test.tsx`).
  */
-export type WebFeatureCards = Pick<WebSupplies["features"], "account" | "mailboxes" | "subscription" | "storageCard">;
+export type WebFeatureCards = Pick<WebSupplies["features"], "mailboxes" | "subscription" | "storageCard">;
 
 export function useWebHost(
   engine: HostContract["engine"],
@@ -208,6 +208,7 @@ export function useWebHost(
     },
     ai: { name: "ai", render: drawsNothing },
     storage: { name: "storage", render: drawsNothing },
+    account: { name: "account", render: drawsNothing },
     accountStrip: { name: "accountStrip", render: drawsNothing, notice: useAccountNotices },
     invites: { name: "invites", render: drawsNothing },
     security: { name: "security", render: drawsNothing },

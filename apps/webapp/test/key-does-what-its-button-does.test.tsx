@@ -848,9 +848,16 @@ describe("the palette's Move is the m key", () => {
 /* ── four sheet lines that did less than they say ──────────────────────────────────────────── */
 
 describe("the sheet's delete keys, Reply to everyone and Send in the views that list them", () => {
-  it("Answer Later: d asks, d again deletes the letter on screen", async () => {
+  async function openAnswerLaterLetter(): Promise<void> {
     await mountShell("#/triage");
     await tick(2000);
+    const list = queryByRole(host!, "listbox");
+    await click(list && queryAllByRole(list, "option")[0]);
+    await vi.waitFor(() => expect(barButton("More"), "the open letter's actions").toBeTruthy());
+  }
+
+  it("Answer Later: d asks, d again deletes the letter on screen", async () => {
+    await openAnswerLaterLetter();
     sent = [];
     await key("d");
     expect(stripShown("d"), `d asked nothing: ${JSON.stringify(bars())}`).toBe(true);
@@ -861,8 +868,7 @@ describe("the sheet's delete keys, Reply to everyone and Send in the views that 
 
   for (const k of ["Backspace", "Delete"] as const) {
     it(`Answer Later: ${k} moves the letter on screen to Trash`, async () => {
-      await mountShell("#/triage");
-      await tick(2000);
+      await openAnswerLaterLetter();
       sent = [];
       await key(k);
       await tick(30_000);

@@ -1,14 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@ohmail/ui";
+import { ActivityLine } from "@ohmail/ui/base";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "@ohmail/app-logic/doors/app-update";
 import { startBuildWatch } from "@ohmail/app-logic/doors/build-watch";
 import { mirrorOwnerOf, reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
-import { isCalendarFragment } from "@ohmail/app/frame";
+import { isCalendarFragment, routeOf, type AnyPlaceId } from "@ohmail/app/frame";
+import { useLocalCopyPending } from "@ohmail/app-logic/engine/context";
 import { wakeProofHolds } from "../../shell/notification-settings";
 import { MailFrame, useBrowserMail } from "../../shell/browser-mail";
 import { EngineProvider, useEngine, useResolvedDemoMode, useResolvedDemoModeFrom } from "../../shell/engine";
@@ -34,13 +35,14 @@ import { AccountLocale } from "./AccountLocale";
 import { useCloudStorage } from "./storage-change";
 import { PairingDevicesSection } from "./DevicesSection";
 import { useServerWords } from "../../server-words";
-import { useUserInvites } from "./InvitesSection";
-import { useManageOffer } from "./SubscriptionSection";
+import { useUserInvites } from "./use-user-invites";
+import { useManageOffer } from "./use-manage-offer";
 import { beginOAuthReturn, noJoinLanding, oauthLandsInJoin, subscribeOAuthOutcome } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 import { useFirstPaintGate } from "./useFirstPaintGate";
 import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
 import { AccountCleanupContext, AccountCleanupGate, type AccountCleanup } from "./AccountCleanupGate";
+import { ConfirmBrowserFaceOwner } from "../confirm-browser-face-owner";
 
 /**
  * The Microsoft consent return, at module scope — before the router, before
@@ -159,10 +161,12 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
   const [accountCleanup, showAccountCleanup] = useState<AccountCleanup | null>(null);
   /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
   const [account, setAccount] = useState<{ id: string; address: string | null } | null>(null);
+  const confirmFaceOwner = useContext(ConfirmBrowserFaceOwner);
   const onConfirmed = useCallback((accountId: string, address?: string, familyId?: string) => {
     // A sign-out pending on this jar: the tab is leaving, and nothing is bound for this answer.
     if (!listenFor(accountId, familyId)) return;
     bindApiOwner(accountId, familyId);
+    confirmFaceOwner(accountId);
     if (wakeSession && window.location.hash.startsWith("#wake=")) {
       const destination = new URL(window.location.href);
       destination.searchParams.delete("wake");
@@ -170,7 +174,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
       window.history.replaceState(window.history.state, "", destination.href);
     }
     setAccount({ id: accountId, address: address ?? null });
-  }, [listenFor, wakeSession]);
+  }, [confirmFaceOwner, listenFor, wakeSession]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
    * running, and nothing tells open tabs about a deployment. The watch asks `/version` occasionally
@@ -385,11 +389,16 @@ function WebFrame({ words }: { words: WebWords }) {
   );
 }
 
+const LOCAL_LISTS = new Set<AnyPlaceId>(["ohbox", "drafts", "history", "news", "receipts", "screener", "search"]);
+
 function SignedInFrame({ words }: { words: WebWords }) {
   const engine = useEngine();
   /* What every browser host hands the frame for mail: the places, the stages and the ground, over this page's own
      parts, the look of the theme it stands under and its two ways back. */
   const frame = useBrowserMail(webRecover, WEB_MAIL_PARTS);
+  const { address } = frame;
+  const localCopyPending = useLocalCopyPending();
+  const fragment = useSyncExternalStore(localCopyPending ? address.subscribe : noSubscription, address.read, address.read);
   const host = useCloudMailHost(engine, words, frame);
   const { account } = host.session;
   const scope = mirrorOwnerOf(engine);
@@ -400,8 +409,12 @@ function SignedInFrame({ words }: { words: WebWords }) {
     engine.waitingOnOrganizer();
   }, [engine, account, scope]);
   // Keep an incoming Calendar link while the handshake and this mirror's sign-in are being confirmed.
-  if (isCalendarFragment(frame.address.read()) &&
+  if (isCalendarFragment(fragment) &&
       (words.server.calendar === null || (words.server.calendar === true && words.account === null))) return <WaitGate />;
+  if (localCopyPending) {
+    const { place, stage } = routeOf(fragment);
+    if (stage === null && LOCAL_LISTS.has(place)) return <WaitGate />;
+  }
   return <MailFrame host={host} />;
 }
 
@@ -440,7 +453,7 @@ function WaitGate() {
     <main className="gate" aria-busy="true">
       <div className="gate-card">
         <span className="wordmark"><b><em>oh</em>mail</b></span>
-        <Spinner className="mbx-spin" />
+        <ActivityLine />
       </div>
     </main>
   );
@@ -451,6 +464,6 @@ export function useCloudMailHost(
   words: WebWords,
   frame: Parameters<typeof useWebHost>[2],
 ) {
-  const cards = useWebFeatureCards(words.subscriptionPage, words.withdrawManage);
+  const cards = useWebFeatureCards(words.withdrawManage);
   return useWebHost(engine, words, frame, cards, SEND_SURFACE);
 }

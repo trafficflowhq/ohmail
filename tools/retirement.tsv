@@ -620,7 +620,6 @@ apps/webapp/test/app-version.test.ts	source-text	reads source as text (mjs)	laye
 apps/webapp/test/approve-family-owner-absent-census.test.ts	source-text	an import census: reads source as text (ts, tsx)	ohmail/package-borders	tools	
 apps/webapp/test/attachment-list-state.at6.test.ts	source-text	reads source as text (tsx)	layer 2	ohbox	
 apps/webapp/test/attachment-preview-stage-geometry.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
-apps/webapp/test/attachment-preview.test.tsx	source-text	reads source as text (mjs)	layer 2	removals	
 apps/webapp/test/attachments-wired.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
 apps/webapp/test/away-mark.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
 apps/webapp/test/away-notice-wiring.test.ts	source-text	reads Away registration and notice source (css, ts, tsx)	layer 2	notices	
@@ -687,7 +686,7 @@ apps/webapp/test/frame/seam-in-a-browser.test.ts	source-text	reads source as tex
 apps/webapp/test/frame/todays-inputs.test.ts	behaviour	the old frame adapter translates the host answers into its removed inputs	none	frame	gone:apps/webapp/app/shell/todays-inputs.ts
 apps/webapp/test/frame/todays-selection-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the demo's page and the product's sheets, run in Chromium	layer 2	frame	
 apps/webapp/test/freshness-first-frame.test.tsx	behaviour	a copy stale by days says so at the first frame; on a desktop whose host is quiet the host's line speaks instead	layer 1: red with catching up ranked above the host's silence	frame	held:packages/app/test/frame/connection.test.tsx#lets the host's silence quiet the catching up
-apps/webapp/test/header-menu-class-unshared.test.ts	source-text	reads source as text (css, tsx)	layer 2	removals	
+apps/webapp/test/header-menu-class-unshared.test.ts	source-text	reads source as text (css, tsx)	none	removals	gone:apps/webapp/app/shell/MessageCard.tsx
 apps/webapp/test/held-body-one-door.test.ts	source-text	reads the active reader files for the held-letter body lookup	layer 2: held letter opens through the reader	reader	
 apps/webapp/test/held-release-one-door-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	doors	
 apps/webapp/test/held-send-recheck-window.test.ts	source-text	reads source as text (ts)	layer 2	write	
@@ -776,6 +775,7 @@ apps/webapp/test/overlay-viewport.test.tsx	source-text	reads source as text (css
 apps/webapp/test/owner-refusal-renders-once.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/page-body-refused.test.ts	source-text	reads source as text (js)	layer 2	removals	
 apps/webapp/test/password-section.test.tsx	source-text	reads source as text (tsx): the Cloud shell	layer 2	removals	
+apps/webapp/test/pdf-viewer-frame.test.ts	artifact	runs the generated sandboxed PDF viewer and reads the installed worker, font bytes and teardown types	none	removals	
 apps/webapp/test/pdf-worker-version.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	removals	
 apps/webapp/test/phone-holder-sentence.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/phone-width-screener-rules.test.tsx	artifact	builds the browser fixture and measures the rendered controls	layer 2	screener	docs/tool-verdicts/stylelint-declaration-property-value-allowed-list.json

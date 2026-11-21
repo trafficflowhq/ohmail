@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import type { TagEntity } from "@ohmail/wire";
-import { Dialog, Menu, MenuItem } from "@ohmail/ui/base";
+import { Dialog, Menu, MenuItem, MenuRule } from "@ohmail/ui/base";
 import { MovePicker } from "@ohmail/ui/mail";
 import type { useResurfaceTime } from "../../frame/room.js";
 import { useText } from "../../text/index.js";
@@ -21,6 +21,8 @@ interface ActionMenusProps {
   verbs: Verbs;
   behind: readonly Placed[];
   confirm: boolean;
+  calendarAction?: { label: string; onPress: () => void };
+  calendarKeyHint?: string;
 }
 
 export function ActionMenus({
@@ -35,6 +37,8 @@ export function ActionMenus({
   verbs,
   behind,
   confirm,
+  calendarAction,
+  calendarKeyHint,
 }: ActionMenusProps) {
   const t = useText("reader");
   const tp = useText("place");
@@ -99,10 +103,16 @@ export function ActionMenus({
         {read.map((v) => (
           <BehindMore key={v.id} verb={v} close={close} more={anchor} />
         ))}
+        {verbs.draft && (beforeRead.length > 0 || read.length > 0 || verbs.moves.length > 0) ? (
+          <MenuRule />
+        ) : null}
         <DraftReplyItem draft={verbs.draft} close={close} words={words} />
         <MenuItem icon="trash" onPress={confirm ? () => setMenu("confirmDelete") : trash}>
           {words.delete}
         </MenuItem>
+        {calendarAction ? (
+          <CalendarItem action={calendarAction} close={close} keyHint={calendarKeyHint} />
+        ) : null}
       </Menu>
       {confirm ? (
         <Dialog
@@ -115,6 +125,32 @@ export function ActionMenus({
           cancel={{ label: t("resurface.cancel"), keyHint: "Esc" }}
         />
       ) : null}
+    </>
+  );
+}
+
+function CalendarItem({
+  action,
+  close,
+  keyHint,
+}: {
+  action: NonNullable<ActionMenusProps["calendarAction"]>;
+  close: () => void;
+  keyHint?: string;
+}) {
+  return (
+    <>
+      <MenuRule />
+      <MenuItem
+        icon="calendar"
+        keyHint={keyHint}
+        onPress={() => {
+          close();
+          action.onPress();
+        }}
+      >
+        {action.label}
+      </MenuItem>
     </>
   );
 }

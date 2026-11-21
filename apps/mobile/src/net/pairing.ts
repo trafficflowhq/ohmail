@@ -1265,7 +1265,7 @@ export async function forgetProfile(
 
   // The wipe remains owed until native revokes the pairing and confirms cleanup.
   if (env.calendar && !await env.calendar.revoke(profileId).catch(() => false)) {
-    return { kind: "partial", reason: refuse("forgetMailRemains") };
+    return { kind: "partial", reason: refuse("calendarCopyRemains") };
   }
 
   // The server half is awaited and its answer shapes the result: the logout both revokes the

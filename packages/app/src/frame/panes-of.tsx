@@ -3,7 +3,8 @@
  * them, with the shell's reading column where a place names the reader. Pure: the frame's body calls it once a render
  * with the route's place and hands the answer to the columns.
  */
-import { NONE, type None, type ReaderEntry } from "../host/index.js";
+import { NONE, type None } from "../host/contract.js";
+import type { ReaderEntry } from "../host/features.js";
 import type { ColumnsProps, PaneProps, PlaceEntry } from "./contract.js";
 import { boundaryAt, PlaceBoundary } from "./place-boundary.js";
 

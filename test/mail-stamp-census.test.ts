@@ -45,7 +45,7 @@ import { fileURLToPath } from "node:url";
  *
  * A guard that fires on innocent content is the same failure as one that cannot fire, and dearer,
  * because it discards real work. Several files here DISCUSS these APIs: `locale.ts` explains why
- * account dates go through `toLocaleDateString` while mail stamps do not, `RulesView` says its
+ * account dates go through `toLocaleDateString` while mail stamps do not, the rule list (`packages/app-logic/src/press/rule-list.ts`) says its
  * date is "deliberately not `toLocaleDateString`", and `MessageActions` names `toDateString()`
  * with its parentheses as the fallback it uses.
  *
@@ -54,7 +54,7 @@ import { fileURLToPath } from "node:url";
  *
  *  1. **Call-shape anchoring** carries all three of those. Every pattern requires a receiver (`.`
  *     or `Intl.`) and an opening paren, and prose writes these names in backticks with neither.
- *     Counted raw, `RulesView` yields nothing and `MessageActions` yields exactly its two real
+ *     Counted raw, the rule list (`packages/app-logic/src/press/rule-list.ts`) yields nothing and `MessageActions` yields exactly its two real
  *     calls — the `toDateString()` in its comment does not match, because a backtick is not a dot.
  *  2. **{@link stripComments}** carries the case anchoring cannot see: real code that has been
  *     COMMENTED OUT. `// return d.toLocaleDateString(locale);` is a perfect call shape, and a
@@ -340,8 +340,8 @@ describe("nothing outside the rule formats a mail date", () => {
     expect(formattersIn(stripComments(prose))).toEqual([]);
 
     // The real file that provoked it, read as it is on disk, with comments intact.
-    const rules = read("apps/webapp/app/views/RulesView.tsx");
-    expect(formattersIn(rules), "RulesView only MENTIONS a formatter").toEqual([]);
+    const rules = read("packages/app-logic/src/press/rule-list.ts");
+    expect(formattersIn(rules), "the rule list only MENTIONS a formatter").toEqual([]);
     /* A FILE THAT BOTH MENTIONS AND USES THEM, AND WHOSE MENTION HAS PARENTHESES. This was
        `MessageActions` until 0.22 moved its stamps behind the shared rule and left it with no
        formatter at all — a control whose subject lost the property under test, which is the one

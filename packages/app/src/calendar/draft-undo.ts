@@ -83,7 +83,7 @@ export function useDuplicateDraft(port: CalendarPort) {
       words: { panel: "new" },
     };
     const address = host.device.address;
-    const data: Recovery = { kind: "new", draft: { ...draft, invitees: [] }, calendar };
+    const data: Recovery = { kind: "new", draft, calendar };
     const recovery = { data, port, fragment: fragmentOf(target), engine: host.engine };
     pending.set(address, recovery);
     commands.go(target, { history: "open-dialog" });

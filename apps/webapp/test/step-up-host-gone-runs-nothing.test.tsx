@@ -36,8 +36,8 @@ vi.mock("../app/sign-out", async (original) => ({
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));
 
-vi.mock("../app/(product)/mailbox/StepUpPrompt", () => ({
-  StepUpPrompt: (props: { onVerified: () => void }) => {
+vi.mock("../app/(product)/mailbox/StepUp", () => ({
+  StepUp: (props: { onVerified: () => void }) => {
     rig.onVerified = props.onVerified;
     return h("div", { "data-testid": "step-up-prompt" });
   },

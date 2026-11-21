@@ -8,6 +8,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -97,13 +98,14 @@ function Asked(p: {
   t: Text;
   factor: StepUpFactor;
   said: string | null;
+  describedBy: string;
   typed: string;
   type: (typed: string) => void;
   field: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   submit: (e: FormEvent) => void;
 }): ReactNode {
   const { t, factor, said } = p;
-  if (factor === "passkey") return said === null ? null : <RefusalLine>{said}</RefusalLine>;
+  if (factor === "passkey") return said === null ? null : <RefusalLine alert>{said}</RefusalLine>;
   return (
     <form className="way-step-up-form" onSubmit={p.submit}>
       <Field
@@ -115,10 +117,26 @@ function Asked(p: {
         /* As the prompt it replaced: an authenticator's code opens the number pad, and each code has its length. */
         inputMode={factor === "code" ? "numeric" : undefined}
         maxLength={factor === "code" ? 10 : 64}
-        hint={factor === "code" ? t("codeHint") : undefined}
+        aria-describedby={p.describedBy}
         refusal={said ?? undefined}
+        refusalAlert
       />
     </form>
+  );
+}
+
+function FactorDetail({ id, line, hint }: { id: string; line: string; hint?: string }) {
+  return (
+    <>
+      <p id={id} className="oh-text oh-dialog-line">
+        {line}
+      </p>
+      {hint ? (
+        <p id={`${id}-hint`} className="oh-text oh-field-hint">
+          {hint}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -149,28 +167,23 @@ export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: str
   /* Leaving ends it as Cancel does: a factor landing after that runs nothing the place parked. */
   const { end } = ceremony;
   useLayoutEffect(() => () => end(), [end]);
-
   const [factors, setFactors] = useState<StepUpFactors | null>(null);
   /* While the factors are unknown the code field stands, never the passkey button. */
   const [factor, setFactor] = useState<StepUpFactor>("code");
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<StepUpRefusal | null>(null);
+  const detail = useId();
   const field = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
-
   useFactorsOnOpen(door, hands, end, { factors: setFactors, factor: setFactor, refusal: setRefusal });
 
   /* A code's field takes the keys as its way appears; the kit's dialog has put them on its first button by then. */
-  useEffect(() => {
-    if (factor !== "passkey") field.current?.focus();
-  }, [factor]);
-
+  useEffect(() => field.current?.focus(), [factor]);
   /** The one way out: the ceremony ends first, and only then does the place get its page back. */
   const leave = useCallback((): void => {
     end();
     hands.current.onCancel();
   }, [end]);
-
   const ready = factor === "passkey" || typed.trim().length > 0;
   /* One check at a time, whatever the draw has caught up with: a second press while one is on its way sends nothing. */
   const checking = useRef(false);
@@ -216,7 +229,6 @@ export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: str
 
   /* Its sentences are not in the first cut: wordless until they have arrived; the factors are read meanwhile. */
   if (!t.has(TITLE.code)) return <div className="way-live" aria-busy="true" />;
-
   const said = refusal === null ? null : sentenceOf(refusal, t);
   const instead = factors === null ? [] : WAYS.filter((way) => way !== factor && factors[way]);
   return (
@@ -224,9 +236,10 @@ export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: str
       key={factor}
       open
       onClose={leave}
+      inline={props.inline}
+      returnFocus={props.returnFocus}
       title={withoutStop(t(TITLE[factor]))}
       hot
-      line={line ?? t("door")}
       confirm={{
         label: busy ? t("working") : factor === "passkey" ? t("passkey") : t("verify"),
         onPress: press,
@@ -243,12 +256,18 @@ export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: str
           t={t}
           factor={factor}
           said={said}
+          describedBy={factor === "code" ? `${detail} ${detail}-hint` : detail}
           typed={typed}
           type={setTyped}
           field={field}
           submit={submit}
         />
       )}
+      <FactorDetail
+        id={detail}
+        line={line ?? t("door")}
+        hint={factor === "code" ? t("codeHint") : undefined}
+      />
     </Dialog>
   );
 }

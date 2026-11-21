@@ -158,7 +158,7 @@ describe("Row", () => {
     render(<Row {...base} onMenu={onMenu} />);
     const shown = fireEvent.contextMenu(row(), { clientX: 40, clientY: 12 });
     expect(shown).toBe(false);
-    expect(onMenu).toHaveBeenCalledWith({ x: 40, y: 12 });
+    expect(onMenu).toHaveBeenCalledWith({ x: 40, y: 12 }, expect.any(HTMLElement));
   });
 
   it("names the people of a conversation and the file it carries", () => {

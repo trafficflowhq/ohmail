@@ -15,7 +15,7 @@ import { useEditLeave } from "./use-edit-leave.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { DraftFields } from "./DraftFields.js";
 import { useDiscardReport, useDuplicateDraft } from "./draft-undo.js";
-import { draftOfRecord, draftTimeChanged, eventChanges } from "./edit-draft.js";
+import { draftForDuplicate, draftOfRecord, draftTimeChanged, eventChanges } from "./edit-draft.js";
 import { draftTimes, type EventDraft } from "./event-draft.js";
 import { DraftTimeNotice } from "./DraftTimeNotice.js";
 import type { CalendarEventFace } from "./faces.js";
@@ -95,7 +95,7 @@ export function EditEvent({
     <EditorActionBar
       items={actionItems}
       close={() => commands.event(null)}
-      duplicate={() => duplicate(draftOfRecord(original, zone).draft, calendar.id)}
+      duplicate={() => duplicate(draftForDuplicate(original, face, zone), calendar.id)}
       blocked={blocked}
       timeZone={
         initial.timeEditable && !original.repeat && !draft.allDay

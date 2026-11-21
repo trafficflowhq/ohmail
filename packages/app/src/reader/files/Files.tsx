@@ -77,7 +77,9 @@ function Tile({
         : fault.way === "signIn" && recover !== NONE
           ? { label: tb("signIn"), onPress: () => recover("signIn") }
           : undefined;
-    return <FileNotArrived state="failed" kind={kind} name={item.filename} line={t(fault.key)} way={way} />;
+    const reason = t(fault.key);
+    const line = item.reasking ? t("faultRetrying", { reason }) : reason;
+    return <FileNotArrived state="failed" kind={kind} name={item.filename} line={line} way={way} />;
   }
   const thumb = thumbnailOf(item);
   const look = fileLookOf(item.mimeType) !== "other" ? preview : null;

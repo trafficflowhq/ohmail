@@ -168,41 +168,40 @@ describe("the desktop window's Ohbox", () => {
     expect(marks()).toEqual([false, true, false]);
   });
 
-  /**
-   * A conversation opens on its newest, also when opened again (the c3 design): the
-   * fixture's three unread letters threaded into one row. The first open reads the newest; after
-   * another row, the reopen opens the newest again and reads none of the older members, which stay
-   * unread (it opened the newest unread and read it).
-   */
-  it("a reopened conversation lands on its newest and reads nothing it did not show", async () => {
-    // The demo world has no threads: three of its unread letters get one, in the world itself.
+  /** A conversation opens on its first unread letter, and a reopen advances to its next unread letter. */
+  it("a reopened conversation lands on its first unread and reads nothing it did not show", async () => {
+    // The demo world has no threads: three of its unread letters get one, in chronological order.
+    const members = ["ben", "petra", "giulia"];
+    const [firstUnread, nextUnread, newest] = members;
     type ToMessage = { toMessage: (...a: unknown[]) => { id: string; threadId: string | null } };
     const proto = FixturesAdapter.prototype as unknown as ToMessage;
     const toMessage = proto.toMessage;
     vi.spyOn(proto, "toMessage").mockImplementation(function (this: unknown, ...a: unknown[]) {
       const m = toMessage.apply(this, a);
-      return ["giulia", "petra", "ben"].includes(m.id) ? { ...m, threadId: "T" } : m;
+      return members.includes(m.id) ? { ...m, threadId: "T" } : m;
     });
     const sync = FixturesAdapter.prototype.sync;
     vi.spyOn(FixturesAdapter.prototype, "sync").mockImplementation(async function (this: FixturesAdapter, params) {
       const page = await sync.call(this, params);
       const creates: SyncChange[] = [...page.changes.creates];
-      const lead = creates.find((c) => c.type === "message" && c.id === "giulia");
+      const lead = creates.find((c) => c.type === "message" && c.id === newest);
       if (lead) {
         const m = lead.entity as { accountId: string; subject: string; date: string };
         creates.push({ ...lead, type: "thread", id: "T", entity: {
           id: "T", accountId: m.accountId, rootMessageIdHeader: null, subject: m.subject,
-          messageIds: ["ben", "petra", "giulia"], lastMessageAt: m.date, participants: [], updatedAt: lead.updatedAt,
+          messageIds: members, lastMessageAt: m.date, participants: [], updatedAt: lead.updatedAt,
         } });
       }
       return { ...page, changes: { ...page.changes, creates } };
     });
     await mountWindow(new LaterTaskDisk());
+    // Each of the two openings puts only one message's top on screen.
+    layout.heights[firstUnread] = layout.viewport;
+    layout.heights[nextUnread] = layout.viewport;
     const group = [...host!.querySelectorAll<HTMLElement>('[role=option][data-unseen="1"][data-ids]')]
       .find((r) => (r.dataset.ids ?? "").split(" ").length >= 2);
     expect(group, "the fixture Ohbox shows no unread conversation").toBeTruthy();
-    const newest = group!.dataset.id!;
-    const older = group!.dataset.ids!.split(" ").filter((id) => id !== newest);
+    expect(group!.dataset.id, "the row stands for its newest").toBe(newest);
     const holding = (): HTMLElement => host!.querySelector<HTMLElement>(`[role=option][data-ids~="${newest}"]`)!;
     const reads = () => wire.filter((w) => w.kind === "mark_seen").flatMap((w) => w.ids);
     /* The letter the reader is on: the ring in the conversation's squares beside the letters, by its place. */
@@ -216,8 +215,8 @@ describe("the desktop window's Ohbox", () => {
     await act(async () => { holding().click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     await layout.passDwell();
-    expect(focused(), "the first open").toBe(newest);
-    expect(reads(), "the first open reads the newest").toEqual([newest]);
+    expect(focused(), "the first open lands on the first unread member").toBe(firstUnread);
+    expect(reads(), "the first open reads only that member").toEqual([firstUnread]);
     const other = [...host!.querySelectorAll<HTMLElement>("[role=option][data-id]")].find((r) => !(r.dataset.ids ?? r.dataset.id!).split(" ").includes(newest));
     expect(other, "the fixture Ohbox shows one row only").toBeTruthy();
     await act(async () => { other!.click(); });
@@ -228,7 +227,7 @@ describe("the desktop window's Ohbox", () => {
     await act(async () => { holding().click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     await layout.passDwell();
-    expect(focused(), "the reopen lands on the newest").toBe(newest);
-    expect(reads().slice(before.length).filter((id) => older.includes(id)), "the reopen read an older member unseen").toEqual([]);
+    expect(focused(), "the reopen lands on the next unread member").toBe(nextUnread);
+    expect(reads().slice(before.length), "the reopen reads only the member it showed").toEqual([nextUnread]);
   });
 });

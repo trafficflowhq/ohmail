@@ -102,7 +102,7 @@ async function surface(engine: OhmailEngine) {
       },
       reply: async (b) => { await act(async () => { send(replyTo(b)); }); },
       forward: async (b) => { await act(async () => { send(forwardOf(b), { surface: "inline" }); }); },
-      // The dock's state as the shell hands it to `InlineReply` (`replySendState`).
+      // The send phase for the inline editor in shared Write.
       dockPhase: (lane) => replyDockState(engine as never, mail.stateOf(lane), lane).phase,
       // The dock's Cancel, as `closeReply` presses it.
       withdraw: async (lane) => { let said = ""; await act(async () => { said = await mail.withdraw(lane); }); return said; },
@@ -261,7 +261,7 @@ describe("RESTORED-DOCK-CLEAR: a restored reply's dock is held while its send wa
       await act(async () => { await e2.start(); });
       await settle(30);
       const dockWhileWaiting = s2.dockPhase(lane);
-      /* The person tries to rewrite the dock. `InlineReply` makes its editor editable only when the
+      /* The person tries to rewrite the draft. Shared Write makes the reply editable only when the
          phase is neither sending nor queued, and its scratch is written per edit. */
       const editable = dockWhileWaiting !== "sending" && dockWhileWaiting !== "queued";
       const REWRITE = "Second thought: can we talk Monday?";

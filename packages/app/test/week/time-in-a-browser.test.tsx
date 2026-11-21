@@ -123,21 +123,24 @@ describe("German at text size 1.5", () => {
   }
 });
 
-let calendarHtml: string | undefined;
+const calendarHtml = new Map<boolean, string>();
 
-async function dayHours(page: Page, view: string, name = /Tuesday.*10/) {
+async function dayHours(page: Page, view: string, name = /Tuesday.*10/, legacy = true) {
   // Bundle in Node because the layout cases in this file draw their markup in jsdom.
-  calendarHtml ??= execFileSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      'import { statesPage } from "./packages/app/test/states/build-states.mjs"; process.stdout.write(await statesPage("packages/app/test/states/calrest-page.tsx"));',
-    ],
-    { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
-  );
+  const html =
+    calendarHtml.get(legacy) ??
+    execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import { statesPage } from "./packages/app/test/states/build-states.mjs"; process.stdout.write(await statesPage("packages/app/test/states/calrest-page.tsx", { legacy: ${legacy} }));`,
+      ],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+    );
+  calendarHtml.set(legacy, html);
   const url = `http://calrest.test/?screen=${view}`;
-  await page.route(url, (route) => route.fulfill({ contentType: "text/html", body: calendarHtml }));
+  await page.route(url, (route) => route.fulfill({ contentType: "text/html", body: html }));
   await page.goto(url);
   const day = page.getByRole("group", { name });
   const box = await day.boundingBox();
@@ -391,3 +394,143 @@ it("uses the editor's midnight time in a live draft ending at the next day", asy
     await page.close();
   }
 }, 60_000);
+
+describe("calendar arrival motion", () => {
+  it("fades the connector as it opens along the event's edge", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await dayHours(page, "week", undefined, false);
+      await page.evaluate(() => document.documentElement.removeAttribute("data-rm"));
+      await page.getByRole("button", { name: /Dentist.*09:30/ }).click();
+      const frame = await page.locator(".oh-bridge").evaluate((element) => {
+        const effect = element.getAnimations().find((animation) => animation instanceof CSSAnimation)
+          ?.effect as KeyframeEffect | undefined;
+        return effect?.getKeyframes().at(0);
+      });
+      expect(frame?.transform).toMatch(/^scale\((1, 0|0, 1)\)$/);
+      expect(frame?.opacity).toBe("0");
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("does not replay the draft chip arrival after a drag or a date change", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      const { x, y, editor } = await dayHours(page, "week");
+      await page.evaluate(() => {
+        document.documentElement.removeAttribute("data-rm");
+        document.body.dataset.draftArrivals = "0";
+        document.addEventListener("animationstart", (event) => {
+          if (event.animationName === "oh-ev-draft-in") {
+            document.body.dataset.draftArrivals = String(Number(document.body.dataset.draftArrivals) + 1);
+          }
+        });
+      });
+      await page.mouse.click(x, y(812));
+      await editor.getByRole("switch", { name: "All day" }).click();
+      const chip = page.getByRole("button", { name: "New event, all day" });
+      await chip.evaluate((element) =>
+        Promise.all(element.getAnimations().map((animation) => animation.finished)),
+      );
+      const start = (await chip.boundingBox())!;
+      const next = (await page.getByRole("button", { name: /Wednesday, November 11/ }).boundingBox())!;
+      await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(next.x + next.width / 2, start.y + start.height / 2, { steps: 8 });
+      await page.mouse.up();
+      await editor.getByRole("button", { name: "Event date" }).getByText(/11/).waitFor();
+      await expectDraftStill(chip);
+      await editor.getByRole("button", { name: "Event date" }).click();
+      await page
+        .getByRole("dialog", { name: "Event date" })
+        .getByRole("gridcell", { name: /Thursday.*November.*12/ })
+        .click();
+      await editor.getByRole("button", { name: "Event date" }).getByText(/12/).waitFor();
+      await expectDraftStill(chip);
+      expect(await page.locator("body").getAttribute("data-draft-arrivals")).toBe("1");
+    } finally {
+      await page.close();
+    }
+  }, 20_000);
+
+  it.each(["no-preference", "reduce"] as const)(
+    "opens the event card with the %s motion preference",
+    async (reducedMotion) => {
+      const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion });
+      try {
+        await dayHours(page, "week");
+        if (reducedMotion === "no-preference") {
+          await page.evaluate(() => document.documentElement.removeAttribute("data-rm"));
+        }
+        await page.getByRole("button", { name: /Dentist.*09:30/ }).click();
+        const card = page.getByRole("dialog", { name: "Dentist" });
+        const arrival = await card.evaluate((element) => {
+          const effect = element.getAnimations().find((animation) => animation instanceof CSSAnimation)
+            ?.effect as KeyframeEffect | undefined;
+          return (
+            effect && {
+              duration: effect.getTiming().duration,
+              transform: effect.getKeyframes().at(0)?.transform,
+              opacity: effect.getKeyframes().at(0)?.opacity,
+            }
+          );
+        });
+        expect(arrival).toEqual(
+          reducedMotion === "reduce"
+            ? { duration: 150, transform: undefined, opacity: "0" }
+            : { duration: 160, transform: "scale(0.9)", opacity: "0" },
+        );
+      } finally {
+        await page.close();
+      }
+    },
+  );
+
+  it.each(["no-preference", "reduce"] as const)(
+    "animates the new draft chip with the %s motion preference",
+    async (reducedMotion) => {
+      const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion });
+      try {
+        const { day, x, y } = await dayHours(page, "week");
+        if (reducedMotion === "no-preference") {
+          await page.evaluate(() => document.documentElement.removeAttribute("data-rm"));
+        }
+        await page.mouse.click(x, y(812));
+        const draft = day.getByRole("button", { name: /New event, 13:30/ });
+        const arrival = await draft.evaluate((element) => {
+          const effect = element.getAnimations().find((animation) => animation instanceof CSSAnimation)
+            ?.effect as KeyframeEffect | undefined;
+          return (
+            effect && {
+              duration: effect.getTiming().duration,
+              transform: effect.getKeyframes().at(0)?.transform,
+              opacity: effect.getKeyframes().at(0)?.opacity,
+            }
+          );
+        });
+        expect(arrival).toEqual(
+          reducedMotion === "reduce"
+            ? { duration: 150, transform: "none", opacity: "0" }
+            : { duration: 160, transform: "scale(0.96) translateY(4px)", opacity: "0" },
+        );
+      } finally {
+        await page.close();
+      }
+    },
+  );
+});
+
+async function expectDraftStill(chip: ReturnType<Page["getByRole"]>) {
+  const arrival = await chip.evaluate((element) =>
+    element
+      .getAnimations()
+      .some(
+        (animation) =>
+          animation instanceof CSSAnimation &&
+          animation.animationName === "oh-ev-draft-in" &&
+          animation.playState === "running",
+      ),
+  );
+  expect(arrival).toBe(false);
+}

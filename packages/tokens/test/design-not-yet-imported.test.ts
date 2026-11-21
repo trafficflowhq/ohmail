@@ -45,13 +45,12 @@ const SEAM_ROOTS = [
   "apps/webapp/app/(product)/mailbox/page.tsx",
 ];
 /** Who reaches the old stylesheets and the new: the roots, the shells they mount, and the adapter that feeds the frame. */
-const FRAME_MEETS = [
-  ...SEAM_ROOTS,
+const MAY_MEET = [
   "apps/desktop/src/DesktopFrame.tsx",
   "apps/desktop/src/DesktopGate.tsx",
+  "apps/desktop/src/main.tsx",
   "apps/paired-page/src/HostGate.tsx",
-  "apps/webapp/app/(product)/demo/DemoShell.tsx",
-  "apps/webapp/app/(product)/mailbox/CloudShell.tsx",
+  "apps/paired-page/src/main.tsx",
 ];
 
 /**
@@ -86,23 +85,8 @@ const DOOR_PAGES = ["account/delete", "approve", "authorize-desktop", "join", "j
   .map((door) => `${PRODUCT}/${door}/page.tsx`);
 /** A door's ceremony: its own hook, the web's step-up door, and the step-up dialog's mount over it. */
 const CEREMONY = /\/use-[a-z-]+-door\.ts$|\/mailbox\/(web-step-up\.ts|StepUp\.tsx)$/;
-/** The parts of today's design a door's route draws, each with the task that rebuilds it. */
-const DRAWN: Record<string, string[]> = {
-  // `account`: the wall's password change is today's Settings pane, drawn in place of the wall with today's button.
-  [`${PRODUCT}/mailbox/WallRoute.tsx`]: [`${PRODUCT}/mailbox/PasswordSection.tsx`, "packages/ui/src/index.ts"],
-};
-/**
- * The doors' modules that still reach both designs. Every door's route and page stays in the lists above, which the
- * two guards below walk; of them only these still reach the old stylesheets since the sending module left the old
- * shell. This list only falls, nothing joins it: a name leaves with the task that ends its reach, the one DRAWN names
- * (`account`) and `removals`. The join's route and page left with `mailboxes`: its mailbox step is the one connect form.
- */
-const DOOR_MEETS = [
-  `${PRODUCT}/account/delete/DeleteAccountRoute.tsx`,
-  `${PRODUCT}/account/delete/page.tsx`,
-  `${PRODUCT}/mailbox/WallRoute.tsx`,
-];
-const MAY_MEET = [...FRAME_MEETS, ...DOOR_MEETS].sort();
+/** No door draws a part that reaches the old stylesheets. */
+const DRAWN: Record<string, string[]> = {};
 /** The frame sheet is required. The retired adapter sheet must never be reintroduced by a host. */
 const SEAM_SHEETS = [/^packages\/app\/src\/frame\/seam\.generated\.css$/, /^apps\/webapp\/app\/shell\/today-tokens\.generated\.css$/];
 
@@ -228,7 +212,7 @@ describe("the old stylesheets and the new meet only where listed", () => {
   });
 
   it("a listed module that reaches the new design no longer is found, so the list falls", () => {
-    const file = `${PRODUCT}/mailbox/CloudShell.tsx`;
+    const file = "apps/desktop/src/DesktopFrame.tsx";
     const files = planted({ [file]: "export {};\n" });
     const both = reachBoth(files);
     expect(MAY_MEET.filter((file) => !both.includes(file))).toContain(file);

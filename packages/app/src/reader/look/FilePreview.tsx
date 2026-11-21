@@ -1,5 +1,5 @@
 import { createContext, useEffect, useState, type ReactNode } from "react";
-import { Button } from "@ohmail/ui/base";
+import { Button, Empty } from "@ohmail/ui/base";
 import { QuickLook } from "@ohmail/ui/mail";
 import { faultOf, fileLookOf, isHeldUrl } from "@ohmail/app-logic/reader";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
@@ -73,7 +73,13 @@ function PreviewContent({ item, blob, retry, download }: PreviewProps) {
   const attachment = useText("attachments");
   const kind = fileLookOf(item.mimeType);
   if (kind === "other") return <p role="status">{t("noPreviewTitle")}</p>;
-  if (item.state === "too_large" || item.previewTooLarge) return <p role="status">{t("tooLargeTitle")}</p>;
+  if (item.state === "too_large" || item.previewTooLarge) {
+    return (
+      <div role="status">
+        <Empty label={t("tooLargeTitle")} line={t("textTooLargeDetail")} />
+      </div>
+    );
+  }
   if (item.state === "failed") {
     return (
       <div>

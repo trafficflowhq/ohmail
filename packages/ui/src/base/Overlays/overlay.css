@@ -39,6 +39,7 @@
     background: var(--scrim);
   }
   .oh-scrim[data-place="start"] {
+    --oh-drawer-scrim: 1;
     background: none;
   }
   .oh-scrim[data-place="start"]::before {

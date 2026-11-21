@@ -68,6 +68,73 @@ function open(record: CalendarEventRecord) {
   const mounted = mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: calmail });
   return { world, ...mounted };
 }
+it("opens the event selected from the Week context menu", () => {
+  const world = eventWorld(meeting());
+  mountFrame("#/cal/week/2026-11-16", world, NONE);
+  const event = screen.getByRole("button", { name: /Kiln check/ });
+  fireEvent.contextMenu(event, { clientX: 200, clientY: 180 });
+  const menu = within(screen.getByRole("menu", { name: "Event actions" }));
+  fireEvent.click(menu.getByRole("menuitem", { name: "Open event" }));
+  expect(screen.getByRole("dialog", { name: "Kiln check" })).toBeTruthy();
+});
+
+it("opens the Week event menu from the keyboard and returns focus to the event on Escape", () => {
+  const world = eventWorld(meeting());
+  mountFrame("#/cal/week/2026-11-16", world, NONE);
+  const event = screen.getByRole("button", { name: /Kiln check/ });
+  event.focus();
+  fireEvent.keyDown(event, { key: "F10", shiftKey: true });
+  const menu = within(screen.getByRole("menu", { name: "Event actions" }));
+  const first = menu.getByRole("menuitem", { name: "Open event" });
+  expect(document.activeElement).toBe(first);
+  fireEvent.keyDown(first, { key: "Escape" });
+  expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
+  expect(document.activeElement).toBe(event);
+});
+
+it("opens the same editor directly from the Week event context menu", () => {
+  const world = eventWorld(meeting());
+  mountFrame("#/cal/week/2026-11-16", world, NONE);
+  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+  const editor = within(screen.getByRole("dialog", { name: "Edit event" }));
+  expect(editor.getByRole("textbox", { name: "Event title" })).toHaveProperty("value", "Kiln check");
+});
+
+it("duplicates the event from its Week context menu without saving the copy", () => {
+  const world = eventWorld(meeting());
+  const press = vi.fn();
+  world.port.press = press;
+  mountFrame("#/cal/week/2026-11-16", world, NONE);
+  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+  const draft = within(screen.getByRole("dialog", { name: "New event" }));
+  expect(draft.getByRole("textbox", { name: "Event title" })).toHaveProperty("value", "Kiln check");
+  expect(press).not.toHaveBeenCalled();
+});
+
+it("uses the selected grid half hour for a new event", () => {
+  const world = eventWorld(meeting());
+  mountFrame("#/cal/week/2026-11-16", world, NONE);
+  const tuesday = screen.getByRole("group", { name: /Tuesday, November 17/ });
+  vi.spyOn(tuesday, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 90, 1440));
+  fireEvent.contextMenu(tuesday, { clientX: 45, clientY: 687 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "New event" }));
+  const editor = within(screen.getByRole("dialog", { name: "New event" }));
+  expect(editor.getByLabelText("Start time")).toHaveProperty("value", "09:30");
+  expect(editor.getByLabelText("End time")).toHaveProperty("value", "10:30");
+});
+
+it("goes to the day selected from the Week grid context menu", () => {
+  const world = eventWorld(meeting());
+  const { address } = mountFrame("#/cal/week/2026-11-16", world, NONE);
+  const friday = screen.getByRole("group", { name: /Friday, November 20/ });
+  vi.spyOn(friday, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 90, 1440));
+  fireEvent.contextMenu(friday, { clientX: 45, clientY: 687 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Day" }));
+  expect(address.read()).toBe("#/cal/day/2026-11-20");
+});
+
 function openWithMailboxes(
   record: CalendarEventRecord,
   mailboxes: () => Promise<unknown[]>,
@@ -1205,7 +1272,7 @@ it("leaves a padded stored title untouched on Enter and when saving another fiel
   fireEvent.keyDown(editor.getByRole("textbox", { name: "Event title" }), { key: "Enter" });
   expect(press).not.toHaveBeenCalled();
 
-  fireEvent.change(editor.getByRole("textbox", { name: "Place" }), { target: { value: "Studio" } });
+  fireEvent.change(editor.getByRole("combobox", { name: "Place" }), { target: { value: "Studio" } });
   fireEvent.click(save);
   expect(press.mock.calls).toEqual([[expect.objectContaining({ change: { place: "Studio" } })]]);
   await act(async () => {});
@@ -1418,6 +1485,77 @@ it("only invites a new guest after explicit confirmation and sends the chosen al
     }),
   );
 });
+
+const occurrenceCopies = [
+  ["menu", "whole-day"],
+  ["editor", "whole-day"],
+  ["menu", "timed"],
+  ["editor", "timed"],
+] as const;
+
+it.each(occurrenceCopies)(
+  "duplicates a later occurrence from the %s into an unsent %s draft",
+  async (source, kind) => {
+    const timed = kind === "timed";
+    const zoned = (value: string) => ({ kind: "zoned" as const, value, zone: ZURICH });
+    const record = meeting({
+      start: timed ? zoned("20261020T093000") : { kind: "date", value: "20261116" },
+      end: timed ? zoned("20261020T103000") : { kind: "date", value: "20261117" },
+      startsAt: timed ? "2026-10-20T07:30:00Z" : "2026-11-16T00:00:00Z",
+      personalSeries: true,
+      repeat: { rules: ["FREQ=WEEKLY;COUNT=4"], added: [], excluded: [] },
+      alarms: [{ method: "notice", minutesBefore: 15 }],
+    });
+    const w = eventWorld(record);
+    w.put("calendar_connection", "conn-1", connectionRecord({ provider: "caldav" }));
+    Object.assign(w.engine.store, {
+      get: (kind: string, id: string) =>
+        w.engine.store.entries<{ id: string }>(kind).find(({ entity }) => entity.id === id)?.entity,
+    });
+    const press = vi.fn(async () => ({ key: "create" }));
+    w.port.press = press;
+    mountFrame(timed ? "#/cal/week/2026-11-10" : "#/cal/week/2026-11-30", w, NONE);
+    const chip = screen.getByRole("button", {
+      name: timed ? /Kiln check, 09:30 to 10:30/ : /Kiln check, all day/,
+    });
+    if (source === "menu") {
+      fireEvent.contextMenu(chip);
+      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+    } else {
+      fireEvent.click(chip);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      fireEvent.click(
+        within(screen.getByRole("toolbar", { name: "Event actions" })).getByRole("button", {
+          name: "Duplicate",
+        }),
+      );
+    }
+    const draft = within(await screen.findByRole("dialog", { name: "New event" }));
+    expect(draft.getByRole("button", { name: "Event date" }).textContent).toContain(
+      timed ? "10 Nov" : "30 Nov",
+    );
+    if (timed) {
+      expect(draft.getByLabelText("Start time")).toHaveProperty("value", "09:30");
+      expect(draft.getByLabelText("End time")).toHaveProperty("value", "10:30");
+    }
+    expect(draft.getByDisplayValue("Kiln check")).toBeTruthy();
+    expect(draft.getByDisplayValue("Workshop")).toBeTruthy();
+    expect(draft.getByText("15 minutes before")).toBeTruthy();
+    expect(press).not.toHaveBeenCalled();
+    fireEvent.click(draft.getByRole("button", { name: "Add" }));
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          start: timed ? zoned("20261110T093000") : { kind: "date", value: "20261130" },
+          end: timed ? zoned("20261110T103000") : { kind: "date", value: "20261201" },
+          invitees: [],
+          repeat: null,
+        }),
+      }),
+    );
+    await act(async () => {});
+  },
+);
 
 it("duplicates into an unsent draft from the editor actions", async () => {
   open(meeting());

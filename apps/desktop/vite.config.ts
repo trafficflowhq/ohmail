@@ -264,7 +264,7 @@ const BASE_MESSAGE_NAMESPACES = [
   "write",
   // `trash` is the Trash view's own namespace — the list's empty and scope sentences, the
   // Restore verb, its four toasts and the "ohmail never erases mail" line the disabled delete
-  // keys carry. Shared shell code reads it (`views/TrashView.tsx` and `MessagePane`'s bar), so
+  // keys carry. The shared mail and reading surfaces read it, so
   // BOTH bundles need it. Whether the desktop can REACH the view is a different question and
   // deliberately not the one this array answers: the guard compares this list against what the
   // sources READ, and omitting it would put `trash.empty` in the binary where a sentence

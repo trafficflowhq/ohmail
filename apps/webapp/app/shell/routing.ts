@@ -642,7 +642,7 @@ export function reflectMessage(route: Route, messageId: string | null): void {
   /* THE OPEN MARK STARTS HERE, because this is the shell's ONE writer of the `m/<id>` tail: a
      click, `j` down a pile, a search hit and a deep link all arrive through it, and instrumenting
      the controls instead would have counted some opens and not others. It ends when THAT
-     message's body is painted (`MessagePane`); closing a reading abandons it. */
+     message's body is painted; closing a reading abandons it. */
   if (messageId !== null && messageId !== route.messageId) beginOpen(messageId);
   else if (messageId === null) abandonOpen();
   if (messageId !== null && route.messageId === null) {

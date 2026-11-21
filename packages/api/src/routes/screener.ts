@@ -344,9 +344,9 @@ export const screenerRoutes: Route[] = [
       const body = await readBody<SuggestBody>(req);
       const result = await screener(deps).suggest(serviceContext(deps, req), body, {
         idempotency: deps.idempotency ?? null,
-        requireQuoteGrant: true,
         // Where a refund this press owes is written down, composed beside the gate as for drafts.
         ...(refundObligationsOf(deps) ? { obligations: refundObligationsOf(deps)! } : {}),
+        requireQuoteGrant: true,
       });
       return jsonResponse(result);
     },

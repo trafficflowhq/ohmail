@@ -1,5 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import {
+  calendarInviteeSuggestions,
   dayOfIso,
   isoOfDay,
   nowIn,
@@ -14,13 +24,14 @@ import {
 import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
 import { QuickAdd } from "@ohmail/ui/calendar";
 import { RefusalLine } from "@ohmail/ui/base";
-import { useCalendarGuest, useFrame, useReport, type CalendarGuest } from "../frame/commands.js";
+import { useCalendarDraftSeed, useFrame, useReport, type CalendarGuest } from "../frame/commands.js";
+import { useOwnAddresses } from "../frame/room.js";
 import { fragmentOf, routeOf } from "../frame/route.js";
 import { useText, useTimeZone } from "../text/index.js";
 import { useDiscardReport, useDraftRestore } from "./draft-undo.js";
 import { DraftTimeNotice } from "./DraftTimeNotice.js";
-import { DraftFields } from "./DraftFields.js";
-import { DraftInvitation, useDraftInvitation } from "./DraftInvitation.js";
+import { DraftFields, readDraftEntry, type NewEventDraft } from "./DraftFields.js";
+import { DraftInvitation, useDraftInvitation, useGuestConfirmation } from "./DraftInvitation.js";
 import {
   draftCalendars,
   draftTimes,
@@ -49,17 +60,23 @@ export type DraftPreview = {
 };
 
 export function NewEvent({ port, now, calendars, tones, connections, preferred, onPreview }: Props) {
-  const { host, route, commands } = useFrame();
+  const { route, commands } = useFrame();
   const t = useText("calendar");
   const e = useText("event");
   const zone = useTimeZone();
-  const contact = useCalendarGuest();
-  const invitation = useDraftInvitation(contact?.current ?? null);
-  const [draft, setDraft] = useState(() => {
+  const seed = useCalendarDraftSeed();
+  const invitation = useDraftInvitation(seed.current?.guests ?? []);
+  const [written, setDraft] = useState<NewEventDraft>(() => {
     const clock = nowIn(Date.now(), zone, readerZones()) ?? now;
     const day = dayOfIso(route.sub) ?? clock.day;
-    return startDraft(isoOfDay(day), clock.minutes, route.words.slot);
+    return {
+      ...startDraft(isoOfDay(day), clock.minutes, route.words.slot),
+      title: seed.current?.title ?? "",
+    };
   });
+  const today = isoOfDay(now.day);
+  const parsed = useMemo(() => readDraftEntry(written, today), [written, today]);
+  const draft = parsed?.draft ?? written;
   const choices = draftCalendars(calendars, connections);
   const proposed = newEventsCalendarOf(preferred ?? null, choices);
   const [chosen, choose] = useState<string | null>(null);
@@ -77,45 +94,35 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
       (calendar.id === unavailable || choices.length === 0) &&
       viewOnlyOf(calendar, connections.get(calendar.connectionId)),
   );
-  const { create, request, committed, busy, failure, setFailure } = useCreateEvent(
-    port,
-    invitation.needsConfirmation,
-  );
-  const untitled = t("create.title");
-  useEffect(() => {
-    const face = target && previewOfDraft(draft, target, draft.zone ?? zone, untitled, tone);
-    onPreview(
-      face
-        ? {
-            face,
-            moveRange: (day, last) => {
-              if (!request.current)
-                setDraft((current) => ({ ...current, day, endDay: last === day ? null : last }));
-            },
-          }
-        : null,
-    );
-    return () => onPreview(null);
-  }, [draft, target, zone, untitled, tone, onPreview, request]);
-  const input = useRef<HTMLInputElement>(null);
-  useLayoutEffect(() => {
-    if (contact) contact.current = null;
-    input.current?.focus();
-    return () => {
-      request.current = null;
-    };
-  }, [host.engine, port, contact, request]);
+  const { create, request, committed, busy, failure, setFailure } = useCreateEvent(port);
+  const input = useNewDraftPreview(port, draft, target, zone, tone, request, onPreview, setDraft);
   const selectCalendar = (id: string) => {
     choose(id);
     setFailure(null);
   };
-  const change = (edit: Partial<EventDraft>) => {
+  const change = (edit: Partial<NewEventDraft>) => {
     if (chosen === null && target) choose(target.id);
-    setDraft((was) => ({ ...was, ...edit }));
+    const override = Object.keys(edit).some((key) => QUICK_FIELDS.has(key));
+    setDraft({ ...(override ? { ...draft, typed: undefined } : written), ...edit });
     setFailure(null);
   };
-  const add = () => void create(draft, target);
-  useNewDraftDeparture(draft, chosen ?? target?.id ?? null, discardReport, busy, request, committed);
+  const proposedGuest = useQuickGuest(parsed?.guest, draft, invitation.selected, change);
+  const formDraft =
+    target && draft.alarms === undefined
+      ? { ...draft, alarms: target.defaultAlarms.map((alarm) => alarm.minutesBefore) }
+      : draft;
+  const provider = target && connections.get(target.connectionId)?.provider;
+  const extraAlert = (formDraft.alarms?.length ?? 0) > 1;
+  const tooManyAlerts = provider === "microsoft" && (draft.alarms?.length ?? 0) > 1;
+  const ready = !!target && !tooManyAlerts && !!fieldsOfDraft(draft, target, draft.zone ?? zone);
+  const { add, confirmation } = useGuestConfirmation(
+    draft,
+    invitation.selected,
+    () => ready && !request.current,
+    (confirmedDraft) => void create(confirmedDraft, target),
+  );
+  const refusal = failure ?? (tooManyAlerts ? e("fault.notAllowed") : null);
+  useNewDraftDeparture(written, chosen ?? target?.id ?? null, discardReport, busy, request, committed);
   const close = () => {
     if (!request.current) commands.go({ place: route.place, sub: route.sub }, { history: "dismiss-dialog" });
   };
@@ -127,8 +134,9 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
       line={{
         label: t("create.name"),
         placeholder: t("create.name"),
-        value: draft.title,
-        onChange: (title) => change({ title }),
+        value: written.title,
+        found: parsed?.marks,
+        onChange: (title) => change({ title, typed: true }),
         ref: input,
       }}
       close={{
@@ -137,11 +145,17 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
       }}
       onAdd={add}
     >
-      <DraftInvitation invitation={invitation} onConfirm={(guest) => void create(draft, target, guest)} />
+      <DraftInvitation invitation={invitation} />
       <DraftTimeNotice issue={draftTimes(draft, draft.zone ?? zone).issue} />
       <DraftFields
-        draft={draft}
-        today={isoOfDay(now.day)}
+        draft={formDraft}
+        proposedGuest={proposedGuest}
+        edit={{
+          canInvite: true,
+          canAddAlert: target !== undefined,
+          canAddSecondAlert: extraAlert || (provider !== "microsoft" && !draft.allDay),
+        }}
+        today={today}
         calendar={target}
         tone={tone}
         choices={choices}
@@ -152,18 +166,90 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
         submit={{
           label: t("create.add"),
           keyHint: "↵",
-          disabled: busy || !target || !fieldsOfDraft(draft, target, draft.zone ?? zone),
+          disabled: busy || !ready,
           onPress: add,
         }}
       />
-      {failure || readOnly || !choices.length ? (
-        <RefusalLine>{failure ?? (readOnly ? e("refusal.readOnly") : t("create.noCalendar"))}</RefusalLine>
+      {confirmation}
+      {refusal || readOnly || !choices.length ? (
+        <RefusalLine>{refusal ?? (readOnly ? e("refusal.readOnly") : t("create.noCalendar"))}</RefusalLine>
       ) : null}
     </QuickAdd>
   );
 }
 
-function useCreateEvent(port: CalendarPort, needsConfirmation: (guest?: CalendarGuest) => boolean) {
+const QUICK_FIELDS = new Set(["day", "endDay", "from", "to", "allDay", "place", "zone", "alarms"]);
+
+function useQuickGuest(
+  name: string | undefined,
+  draft: EventDraft,
+  selected: readonly CalendarGuest[],
+  change: (edit: Partial<EventDraft>) => void,
+) {
+  const { host } = useFrame();
+  const own = useOwnAddresses();
+  if (!name) return undefined;
+  const guests = draft.invitees ?? [];
+  const exclude = [...own, ...[...guests, ...selected].map(({ address }) => address)].map((address) =>
+    address.toLowerCase(),
+  );
+  const person = calendarInviteeSuggestions(host.engine.read(), name, exclude).find(
+    ({ name: display }) => display.split(/\s+/)[0]?.toLowerCase() === name.toLowerCase(),
+  );
+  return (
+    person && {
+      name: person.name || person.address,
+      take: () =>
+        change({
+          invitees: [
+            ...guests,
+            { address: person.address, name: person.name || null, role: "required", answer: "none" },
+          ],
+        }),
+    }
+  );
+}
+
+function useNewDraftPreview(
+  port: CalendarPort,
+  draft: NewEventDraft,
+  target: CalendarRecord | undefined,
+  zone: string,
+  tone: CalendarEventFace["tone"],
+  request: RefObject<symbol | null>,
+  onPreview: Props["onPreview"],
+  setDraft: Dispatch<SetStateAction<NewEventDraft>>,
+) {
+  const { host } = useFrame();
+  const seed = useCalendarDraftSeed();
+  const untitled = useText("calendar")("create.title");
+  useEffect(() => {
+    const face = target && previewOfDraft(draft, target, draft.zone ?? zone, untitled, tone);
+    onPreview(
+      face
+        ? {
+            face,
+            moveRange: (day, last) => {
+              if (!request.current)
+                setDraft({ ...draft, typed: undefined, day, endDay: last === day ? null : last });
+            },
+          }
+        : null,
+    );
+    return () => onPreview(null);
+  }, [draft, target, zone, untitled, tone, onPreview, request, setDraft]);
+  const input = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    seed.current = null;
+    input.current?.focus();
+    return () => {
+      request.current = null;
+    };
+  }, [host.engine, port, seed, request]);
+  return input;
+}
+
+function useCreateEvent(port: CalendarPort) {
   const { host, commands, route } = useFrame();
   const e = useText("event");
   const report = useReport();
@@ -172,21 +258,21 @@ function useCreateEvent(port: CalendarPort, needsConfirmation: (guest?: Calendar
   const committed = useRef(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const create = async (draft: EventDraft, target?: CalendarRecord, guest?: CalendarGuest) => {
+  const create = async (draft: NewEventDraft, target?: CalendarRecord) => {
     if (request.current || !target) return;
     const actual = host.engine.store.get<CalendarRecord>("calendar", target.id);
-    if (
-      !actual?.shown ||
-      viewOnlyOf(
-        actual,
-        host.engine.store.get<CalendarConnectionRecord>("calendar_connection", actual.connectionId),
-      )
-    ) {
+    const connection =
+      actual && host.engine.store.get<CalendarConnectionRecord>("calendar_connection", actual.connectionId);
+    if (!actual?.shown || viewOnlyOf(actual, connection)) {
       setFailure(e("refusal.readOnly"));
       return;
     }
     const event = fieldsOfDraft(draft, actual, draft.zone ?? zone);
-    if (!event || needsConfirmation(guest)) return;
+    if (!event) return;
+    if (connection?.provider === "microsoft" && (draft.alarms?.length ?? 0) > 1) {
+      setFailure(e("fault.notAllowed"));
+      return;
+    }
     const ticket = Symbol();
     request.current = ticket;
     setBusy(true);
@@ -195,7 +281,12 @@ function useCreateEvent(port: CalendarPort, needsConfirmation: (guest?: Calendar
         kind: "calendar_event_create",
         eventId: port.newId(),
         calendarId: actual.id,
-        event: guest ? { ...event, invitees: [{ ...guest, role: "required" }] } : event,
+        event: {
+          ...event,
+          invitees: (draft.invitees ?? []).flatMap(({ address, name, role }) =>
+            role === "required" || role === "optional" ? [{ address, name, role }] : [],
+          ),
+        },
       });
       if (request.current !== ticket) return;
       if (heard.verdict?.kind === "refused") {
@@ -230,7 +321,13 @@ function useNewDraftDeparture(
   const { host, route } = useFrame();
   const address = host.device.address;
   const at = fragmentOf(route);
-  const hasWords = Boolean(draft.title.trim() || draft.place?.trim() || draft.notes?.trim());
+  const hasWords = Boolean(
+    draft.title.trim() ||
+    draft.place?.trim() ||
+    draft.notes?.trim() ||
+    draft.invitees?.length ||
+    draft.alarms !== undefined,
+  );
   const departure = useRef(() => {});
   departure.current = () => {
     if (hasWords && !committed.current) report({ kind: "new", draft, calendar });

@@ -1,9 +1,7 @@
 import type { ReactNode } from "react";
-import { Switch } from "@ohmail/ui/base";
+import { CheckLine, Switch } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import type { ConsentLine } from "@ohmail/app-logic/mailboxes/connect/consents";
-import type { ConnectForm } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
-import type { Text } from "../../text/index.js";
 
 const PLAIN = {
   imap: "insecureConsentLabel",
@@ -16,34 +14,47 @@ const TRUST = {
   both: "trustCertificateLabelBoth",
 } as const;
 
-/**
- * THE TWO CONSENTS, one markup for every mount, so the words a person consents over cannot differ between them. A
- * line stands only because the server refused this form's own press for that server, and it stands unticked: a
- * consent is a press. A certificate's line names the fingerprint to compare, whole, as words. Each is a line of the
- * form's stack of fields, under the fields of the server it is about.
- */
-export function Consents({ form, words }: { form: ConnectForm; words: Text }): ReactNode {
-  const { lines } = form;
+type Word =
+  | (typeof PLAIN)[keyof typeof PLAIN]
+  | (typeof TRUST)[keyof typeof TRUST]
+  | "insecureConsentWarning"
+  | "trustCertificateNote";
+
+interface ConsentsProps {
+  lines: readonly ConsentLine[];
+  tick(line: ConsentLine, on: boolean): void;
+  words(key: Word, values?: { fingerprint: string }): string;
+  /** The existing inline sign-in form uses native checkboxes. The connect sheet uses switches. */
+  checkboxId?: (line: ConsentLine) => string;
+}
+
+/** The inline choices drawn under the connection fields that received the offer. */
+export function Consents({ lines, tick, words, checkboxId }: ConsentsProps): ReactNode {
   if (lines.length === 0) return null;
   const label = (line: ConsentLine): string =>
     line.kind === "plain" ? words(PLAIN[line.legs]) : words(TRUST[line.legs], { fingerprint: line.sha256 });
+  const plain = lines.filter((line) => line.kind === "plain");
+  const cert = lines.filter((line) => line.kind === "certificate");
+  const renderLine = (line: ConsentLine) => {
+    const key = `${line.kind}-${line.legs}`;
+    return checkboxId ? (
+      <CheckLine key={key} id={checkboxId(line)} checked={line.on} onChange={(on) => tick(line, on)}>
+        {label(line)}
+      </CheckLine>
+    ) : (
+      <Switch key={key} label={label(line)} labelled on={line.on} onChange={(on) => tick(line, on)} />
+    );
+  };
   return (
     <>
-      {lines.map((line) => (
-        <Switch
-          key={`${line.kind}-${line.legs}`}
-          label={label(line)}
-          labelled
-          on={line.on}
-          onChange={(on) => form.tick(line, on)}
-        />
-      ))}
-      {lines.some((line) => line.kind === "plain") ? (
-        <SettingNote warn>{words("insecureConsentWarning")}</SettingNote>
+      {plain.map(renderLine)}
+      {plain.length > 0 ? (
+        <SettingNote warn silent={checkboxId !== undefined}>
+          {words("insecureConsentWarning")}
+        </SettingNote>
       ) : null}
-      {lines.some((line) => line.kind === "certificate") ? (
-        <SettingNote>{words("trustCertificateNote")}</SettingNote>
-      ) : null}
+      {cert.map(renderLine)}
+      {cert.length > 0 ? <SettingNote>{words("trustCertificateNote")}</SettingNote> : null}
     </>
   );
 }

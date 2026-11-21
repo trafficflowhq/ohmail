@@ -1,0 +1,28 @@
+@layer oh {
+  .oh-checkline {
+    padding-block: var(--s2);
+  }
+
+  .oh-checkline-control {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+  }
+
+  .oh-checkline-input {
+    position: absolute;
+    inset: 0;
+    inline-size: 100%;
+    block-size: 100%;
+    opacity: 0;
+  }
+
+  .oh-checkline-control:has(.oh-checkline-input:focus-visible) .oh-switch {
+    outline: var(--oh-focus) solid var(--focus);
+    outline-offset: var(--oh-focus);
+  }
+
+  :root[data-face="ohmarchy"] .oh-checkline-control:has(.oh-checkline-input:focus-visible) .oh-switch {
+    outline-offset: 0;
+  }
+}

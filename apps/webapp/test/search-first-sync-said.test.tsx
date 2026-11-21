@@ -105,10 +105,12 @@ const syncing = (): string | null => spoken(REST);
  * says under that heading before the rows. Nothing outside the section counts.
  */
 function similarSection(): string[] {
-  const heading = within(host).queryByRole("heading", { name: messages.search.similarHead });
-  expect(heading, "no Similar heading").not.toBeNull();
+  const heading = within(host).queryByRole("heading", { name: new RegExp(`^${messages.search.similarHead} [\\d,]+$`) });
+  expect(heading, "no Similar heading with its count").not.toBeNull();
   const line = (heading as HTMLElement).parentElement ?? (heading as HTMLElement);
-  const said: string[] = [(heading as HTMLElement).textContent?.trim() ?? ""];
+  /* The heading's word; its count stands beside it in its own element. */
+  const word = (heading as HTMLElement).firstElementChild?.textContent?.trim() ?? "";
+  const said: string[] = [word];
   for (let sib = line.nextElementSibling; sib !== null && sib.getAttribute("role") !== "list"; sib = sib.nextElementSibling) {
     const words = (sib.textContent ?? "").trim();
     if (words !== "") said.push(words);
@@ -173,10 +175,10 @@ const MIRROR = { page: { ...CUT.page, answeredFrom: "mirror" }, estimate: { ...C
 
 describe("a count at its cap is grouped as every other count", () => {
   it.each([
-    ["en whole", "en", CUT, false, "Searched your whole mailbox — at least 2,000 matched · "],
+    ["en whole", "en", CUT, false, messages.search.saidAtLeast.replace("{total}", "2,000")],
     ["en synced", "en", CUT, true, "Searched the mail synced so far — at least 2,000 matched · "],
     ["en mirror", "en", MIRROR, false, "Search covers the mail on this computer while ohmail Cloud is unreachable — at least 2,000 matched · "],
-    ["de whole", "de", CUT, false, "Dein ganzes Postfach wurde durchsucht — mindestens 2.000 gefunden · "],
+    ["de whole", "de", CUT, false, de.search.saidAtLeast.replace("{total}", "2.000")],
     ["de synced", "de", CUT, true, "Bisher synchronisierte Mails durchsucht: mindestens 2.000 gefunden · "],
     ["de mirror", "de", MIRROR, false, "Durchsucht werden die Mails auf diesem Computer, solange ohmail Cloud nicht erreichbar ist: mindestens 2.000 gefunden · "],
   ] as const)("%s", async (_arm, locale, parts, importing, line) => {

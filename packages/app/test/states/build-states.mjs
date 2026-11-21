@@ -64,7 +64,7 @@ async function faces() {
     .join("\n");
 }
 
-export async function statesPage(page = "packages/app/test/states/states-page.tsx") {
+export async function statesPage(page = "packages/app/test/states/states-page.tsx", { legacy = true } = {}) {
   const result = await build({
     absWorkingDir: ROOT,
     entryPoints: [page],
@@ -87,7 +87,7 @@ export async function statesPage(page = "packages/app/test/states/states-page.ts
   const old = OLD.map((file) => readFileSync(join(ROOT, file), "utf8")).join("\n");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>${await faces()}</style><style>${old}</style><style>${text(".css")}</style><style>${TODAY().map(sheet).join("\n")}</style>
+<style>${await faces()}</style><style>${old}</style><style>${text(".css")}</style><style>${legacy ? TODAY().map(sheet).join("\n") : ""}</style>
 <style>html,body,#root{margin:0;height:100%}.st-pane{flex:1;min-height:0;border-radius:var(--r-sheet);background:var(--sheet)}.st-fill{flex:1;min-height:0}.st-column{flex:1;min-height:0;overflow:auto;border-radius:0 0 var(--r-sheet) var(--r-sheet)}.st-phone{flex:1;min-height:0;margin-top:64px;border-radius:var(--r-sheet) var(--r-sheet) 0 0;background:var(--sheet);overflow-y:auto;scrollbar-width:none}.st-rows{height:calc(100% + 1px)}</style>
 </head><body class="today"><div id="root"></div><script type="module">${text(".js").replace(/<\/script/g, "<\\/script")}</script></body></html>`;
 }

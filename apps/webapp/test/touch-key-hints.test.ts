@@ -48,7 +48,7 @@ import { launch } from "../../../test/compare/render.mjs";
 /** Read from the repo root — vitest's `root`, and the one path shape that survives jsdom. */
 const read = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
 /* Comments carry no braces, so a naive scan folds them into the selector before them. */
-const css = read("packages/app/src/keys/touch-keys.css").replace(/\/\*[\s\S]*?\*\//g, "");
+const css = read("packages/app/src/frame/touch-keys.css").replace(/\/\*[\s\S]*?\*\//g, "");
 
 /**
  * The body of the one `@media (pointer: coarse)` block, or the empty string.
@@ -130,7 +130,7 @@ describe("the rules exist, and they are the ones the audit asked for", () => {
     // is the frame's own now (`OwnKeys` of `Frame.tsx`, mounted by every host's frame): the
     // stylesheet rides with it there, as it rode with today's `KeymapProvider`.
     const keymap = read("packages/app/src/frame/Frame.tsx");
-    expect(keymap).toContain('import "../keys/touch-keys.css"');
+    expect(keymap).toContain('import "./touch-keys.css"');
   });
 });
 
@@ -194,7 +194,7 @@ describe("the floating capsule is gone, and so is everything that referred to it
       "packages/ui/src/primitives/toast.css",
       "apps/webapp/app/app.css",
       "apps/webapp/app/shell/action-bar.css",
-      "packages/app/src/keys/touch-keys.css",
+      "packages/app/src/frame/touch-keys.css",
     ]) {
       expect(bare(p), `${p} still styles a component that no longer exists`)
         .not.toMatch(/\.dock[\s.,:>{[]|\.dock$/m);

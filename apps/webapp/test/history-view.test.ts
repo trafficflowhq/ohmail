@@ -292,7 +292,9 @@ describe("History", () => {
     expect(readingColumn(c), "no reading column beside the list").not.toBeNull();
     expect(within(c).queryByRole("dialog", { name: "Reading" })).toBeNull();
     expect(within(c).queryByRole("button", { name: /^Split$/ })).toBeNull();
-    expect(within(c).queryByRole("button", { name: /^List$/ })).toBeNull();
+    /* The head's one "List" button is the list's own menu (its verbs), never a layout mode. */
+    const lists = within(c).queryAllByRole("button", { name: /^List$/ });
+    expect(lists.filter((b) => b.getAttribute("aria-haspopup") !== "menu"), "no List mode beside Split").toEqual([]);
   });
 
   it("reads a message IN THE COLUMN, in place — never a navigation, never a sheet-only", async () => {

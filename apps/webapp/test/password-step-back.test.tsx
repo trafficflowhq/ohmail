@@ -288,20 +288,28 @@ describe("MailboxSection: Cancel during the step-up of an edit", () => {
   }, 20000);
 });
 
+/** The dialog's own Cancel, by its label (its key hint aside). */
+const cancelOf = (el: HTMLElement): HTMLButtonElement => {
+  const found = [...el.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter((b) =>
+    [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === en.stepUp.cancel);
+  expect(found, "exactly one Cancel in the dialog").toHaveLength(1);
+  return found[0]!;
+};
+
 describe("AccountSection: Cancel during the step-up of the erase", () => {
   async function toTheFactorInFlight(): Promise<HTMLElement> {
     const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
     const el = await render(h(AccountSection));
     await waitFor(() => el.querySelector("#acct-typed") != null, "the facts step");
     await typeInto(el.querySelector("#acct-typed"), "person@example.test");
-    await submit(el.querySelector("form.acct-confirm"));
+    await submit(el.querySelector("form:has(#acct-typed)"));
     await factorInFlight(el);
     return el;
   }
 
   it("Cancel, then the factor lands: DELETE /account is never sent, and the pane says nothing was erased", async () => {
     const el = await toTheFactorInFlight();
-    await click(buttonNamed(el, dev.cancel!));
+    await click(cancelOf(el));
     await landTheFactor();
     expect(rig.calls, "the parked erase ran after Cancel").not.toContain("account.erase");
     expect(el.textContent).not.toContain(account.doneTitle);
@@ -317,13 +325,7 @@ describe("AccountSection: Cancel during the step-up of the erase", () => {
 });
 
 describe("LinkDesktopRoute: Cancel during the step-up of the mint", () => {
-  /** The dialog's own Cancel, by its label (its key hint aside). */
-  const cancelOf = (el: HTMLElement): HTMLButtonElement => {
-    const found = [...el.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter((b) =>
-      [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === en.stepUp.cancel);
-    expect(found, "exactly one Cancel in the dialog").toHaveLength(1);
-    return found[0]!;
-  };
+
 
   async function toTheFactorInFlight(): Promise<HTMLElement> {
     const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
