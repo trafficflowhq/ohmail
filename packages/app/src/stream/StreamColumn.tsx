@@ -216,6 +216,12 @@ function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: b
   );
   const { start, end } = viewport;
   const { scroll, read, toolbar } = model;
+  const cardsMounted = viewport.armed && model.items.length > 0;
+  const settleRead = read.settled;
+  useLayoutEffect(() => {
+    // Seed the read rule once the opening cards replace the empty scroller.
+    if (cardsMounted) settleRead();
+  }, [cardsMounted, settleRead]);
   const lastWindow = useRef({ start, end });
   const refreshRead = read.windowChanged;
   useEffect(() => {

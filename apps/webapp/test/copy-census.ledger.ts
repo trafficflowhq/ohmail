@@ -97,8 +97,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
   ],
   "packages/ui/src/theme/ThemeProvider.tsx": [
     { text: "(prefers-color-scheme: dark)", why: "a media query the browser evaluates" },
-    { text: "var f=null;try{f=localStorage.getItem({})}catch(e){}", why: "the pre-paint theme script — JavaScript, emitted as text" },
-    { text: "if(f!==\"paper\"&&f!==\"ohmarchy\"){try{f=localStorage.getItem({})}catch(e){}}", why: "the same script, the account-face read" },
     { text: "if(f!==\"paper\"&&f!==\"ohmarchy\")f=(/Linux/.test(navigator.platform||\"\")&&!/Android|CrOS/.test(navigator.userAgent||\"\"))?\"ohmarchy\":\"paper\";", why: "the same script, the platform default" },
     { text: "if(f===\"ohmarchy\")try{document.documentElement.dataset.face=\"ohmarchy\"}catch(e){}", why: "the same script, the face stamp" },
     { text: "var l=null;try{l=localStorage.getItem({})}catch(e){}", why: "the same script, the layout read" },
@@ -134,6 +132,15 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "packages/ui/src/base/Primitives/Dot.tsx": [
     { text: "--oh-dot-light", why: "a CSS custom property's name — an app's own colour in the light scheme, set as the dot's style" },
     { text: "--oh-dot-dark", why: "the same property in the dark scheme" },
+  ],
+  "packages/ui/src/mail/Lists/ReadSquares.tsx": [
+    { text: "--oh-square-y", why: "a CSS custom property's name, set as a slot's style" },
+    { text: "--oh-readsquares-k", why: "a CSS custom property's name, set as a slot's style" },
+  ],
+  "packages/ui/src/calendar/Grids/EventChip.tsx": [
+    { text: "Alt+Shift+ArrowUp Alt+Shift+ArrowDown", why: "keycap chords in aria-keyshortcuts syntax" },
+    { text: "Alt+ArrowUp Alt+ArrowDown", why: "keycap chords in aria-keyshortcuts syntax" },
+    { text: "ArrowUp ArrowDown", why: "keycap chords in aria-keyshortcuts syntax" },
   ],
   "packages/ui/src/calendar/Event/EventCard.tsx": [
     { text: ".oh-ecard-grab", why: "a CSS selector — `Element.closest` asks whether a pull started on the card's grab handle" },

@@ -3,7 +3,7 @@
  * first), Suggest (where the shell hands a run: the price before the spend, nothing bought before the confirm), and
  * Apply, which files every sender with a real suggestion where it says, and names those places on its button.
  */
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
   PILE_KEY,
   refused,
@@ -103,17 +103,17 @@ function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswer
   const t = useText("screener");
   const buyAnchor = useRef<HTMLButtonElement | null>(null);
   const reaskAnchor = useRef<HTMLButtonElement | null>(null);
+  const reaskContent = useRef<HTMLDivElement | null>(null);
   const c = suggest.control;
   const open = c.phase !== "closed";
   const [again, setAgain] = useState(false);
   if (!open && c.available === 0 && c.resuggestable === 0) return null;
   const price =
-    c.quote === null
+    c.quote === null || again
       ? undefined
       : suggest.priced
         ? t("suggest.price", { senders: c.quote.senders, credits: c.quote.credits })
         : t("suggest.priceUnmetered", { senders: c.quote.senders });
-  const n = c.quote?.senders ?? c.size;
   return (
     <>
       {!open && c.available === 0 && allAnswered ? (
@@ -167,25 +167,62 @@ function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswer
         anchor={again ? reaskAnchor : buyAnchor}
         label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
         kind="ask"
+        fitContent={again}
+        initialFocus={again ? reaskContent : undefined}
         title={again ? t("suggest.labelAgain") : t("suggest.label")}
         aside={c.phase === "ready" ? price : undefined}
       >
-        {c.phase === "pricing" ? (
+        <SuggestMenuContent suggest={suggest} again={again} contentRef={reaskContent} />
+      </Menu>
+    </>
+  );
+}
+
+function SuggestMenuContent({
+  suggest,
+  again,
+  contentRef,
+}: {
+  suggest: ScreenerSuggest;
+  again: boolean;
+  contentRef: RefObject<HTMLDivElement | null>;
+}) {
+  const t = useText("screener");
+  const c = suggest.control;
+  const open = !c.disabled && c.phase !== "closed";
+  const emptyAgain = again && c.phase === "ready" && c.quote?.senders === 0;
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (again && open && content && content.ownerDocument.activeElement === content.ownerDocument.body) {
+      content.focus({ preventScroll: true });
+    }
+  }, [again, open, c.phase, emptyAgain, contentRef]);
+  const n = c.quote?.senders ?? c.size;
+  const count = n > 1 && n === c.size ? (n === c.pool ? "all" : "first") : "count";
+  const showSizes = !again || (c.sizes.length > 1 && (!emptyAgain || c.size < c.pool));
+  const creditPrice =
+    again && suggest.priced && !emptyAgain && c.phase === "ready" && c.quote !== null
+      ? t("suggest.credits", { credits: c.quote.credits })
+      : null;
+  const noControls = c.phase === "running" || (emptyAgain && !showSizes);
+  return (
+    <div ref={contentRef} tabIndex={again ? (noControls ? 0 : -1) : undefined}>
+      {c.phase === "pricing" ? (
+        <p className="oh-text" role="status" aria-busy="true">
+          {t("suggest.pricing")}
+        </p>
+      ) : null}
+      {c.phase === "running" ? (
+        c.progress === null ? (
           <p className="oh-text" role="status" aria-busy="true">
-            {t("suggest.pricing")}
+            {t("suggest.running")}
           </p>
-        ) : null}
-        {c.phase === "running" ? (
-          <>
-            {c.progress !== null ? (
-              <ScreeningProgress label={t("suggest.progress", c.progress)} {...c.progress} />
-            ) : null}
-            <Button kind="ink" size="s" busy disabled>
-              {t("suggest.running")}
-            </Button>
-          </>
         ) : (
-          <>
+          <ScreeningProgress label={t("suggest.progress", c.progress)} {...c.progress} />
+        )
+      ) : (
+        <>
+          {showSizes ? (
             <Seg
               label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
               value={String(c.size)}
@@ -195,23 +232,33 @@ function Suggest({ suggest, allAnswered }: { suggest: ScreenerSuggest; allAnswer
               }))}
               onChange={(size) => c.choose(Number(size))}
             />
-            {/* Nothing is bought without a price the person saw: no quote, or a set priced at zero, leaves it dead. */}
-            <Button
-              kind="ink"
-              size="s"
-              disabled={c.phase !== "ready" || c.quote === null || c.quote.senders === 0}
-              onPress={c.confirm}
-            >
-              {again ? t("suggest.confirmAgain", { n }) : t("suggest.confirm", { n })}
-            </Button>
-            <Button kind="quiet" size="s" onPress={c.cancel}>
-              {t("suggest.cancel")}
-            </Button>
-          </>
-        )}
-        {c.phase !== "running" && c.notice ? <p className="oh-text">{c.notice}</p> : null}
-      </Menu>
-    </>
+          ) : null}
+          {creditPrice ? <p className="oh-text sc-suggest-copy">{creditPrice}</p> : null}
+          <div className={again && !emptyAgain ? "sc-suggest-actions" : undefined}>
+            {!again || (c.phase === "ready" && c.quote !== null && !emptyAgain) ? (
+              <Button
+                kind="ink"
+                size="s"
+                disabled={c.phase !== "ready" || c.quote === null || c.quote.senders === 0}
+                onPress={c.confirm}
+              >
+                {again ? t("suggest.confirmAgain", { n, count }) : t("suggest.confirm", { n })}
+              </Button>
+            ) : null}
+            {!emptyAgain ? (
+              <Button kind="quiet" size="s" onPress={c.cancel}>
+                {t("suggest.cancel")}
+              </Button>
+            ) : null}
+          </div>
+          {c.notice ? (
+            <p className={again ? "oh-text sc-suggest-copy" : "oh-text"} role="status">
+              {c.notice}
+            </p>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }
 

@@ -43,7 +43,8 @@ it("pressing the row's open control opens exactly that message", async () => {
   const hits = screen.getAllByRole("listitem").filter((item) => item.hasAttribute("data-hit"));
   expect(hits.map((hit) => hit.dataset.hit).sort()).toEqual(["a", "b"]);
   const row = hits.find((item) => item.dataset.hit === "b")!;
-  const controls = within(row).getAllByRole("button");
+  const circle = within(row).getByRole("button", { pressed: false, name: "Select the message" });
+  const controls = within(row).getAllByRole("button").filter((button) => button !== circle);
   expect(controls).toHaveLength(1);
   const position = window.history.length;
   await click(controls[0], "the second hit's open control");

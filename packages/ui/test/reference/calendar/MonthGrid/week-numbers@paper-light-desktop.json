@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 1392, 816],
   "clip": [24, 24, 1392, 816],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -93,6 +93,7 @@
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 2 199f07f2a48b" },
     { "backgroundColor": "oklch(0.6 0.14 288)", "borderRadius": "2px" },
     { "backgroundColor": "oklch(0.6 0.14 153)", "borderRadius": "2px" },
+    { "after.backgroundColor": "oklch(0.6 0.14 153)", "after.opacity": "0", "after.borderRadius": "1px" },
     { "backgroundColor": "oklch(0.6 0.14 243)", "borderRadius": "2px" },
     { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "20px" },
     {
@@ -339,7 +340,11 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Open studio? (hold)", "type": 3 }],
-      "surfaces": [{ "box": [1197.4, 74, 8, 8], "paint": 3 }]
+      "surfaces": [
+        { "box": [1197.4, 74, 8, 8], "paint": 3 },
+        { "box": [1189.4, 68, 10, 20], "paint": 4, "parts": { "after": [4, 5, 2, 10] } },
+        { "box": [1368, 68, 10, 20], "paint": 4, "parts": { "after": [4, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -414,7 +419,7 @@
         { "said": "18:30", "type": 1 },
         { "said": "Bouldering with Tim", "type": 3 }
       ],
-      "surfaces": [{ "box": [411.1, 95, 8, 8], "paint": 4 }]
+      "surfaces": [{ "box": [411.1, 95, 8, 8], "paint": 5 }]
     },
     {
       "role": "button",
@@ -654,7 +659,10 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Winter market, Winterthur", "type": 3 }],
-      "surfaces": [{ "box": [1000.8, 202.7, 8, 8], "paint": 3 }]
+      "surfaces": [
+        { "box": [1000.8, 202.7, 8, 8], "paint": 3 },
+        { "box": [992.8, 196.7, 10, 20], "paint": 4, "parts": { "after": [4, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -754,7 +762,7 @@
         { "said": "18:30", "type": 1 },
         { "said": "Bouldering with Tim", "type": 3 }
       ],
-      "surfaces": [{ "box": [411.1, 223.7, 8, 8], "paint": 4 }]
+      "surfaces": [{ "box": [411.1, 223.7, 8, 8], "paint": 5 }]
     },
     {
       "role": "button",
@@ -804,7 +812,7 @@
         { "said": "07:00", "type": 1 },
         { "said": "Run with Reto", "type": 3 }
       ],
-      "surfaces": [{ "box": [804.3, 202.7, 8, 8], "paint": 4 }]
+      "surfaces": [{ "box": [804.3, 202.7, 8, 8], "paint": 5 }]
     },
     {
       "role": "button",
@@ -1019,7 +1027,10 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Winter market, Winterthur", "type": 3 }],
-      "surfaces": [{ "box": [18, 331.3, 8, 8], "paint": 3 }]
+      "surfaces": [
+        { "box": [18, 331.3, 8, 8], "paint": 3 },
+        { "box": [188.6, 325.3, 10, 20], "paint": 4, "parts": { "after": [4, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -1094,7 +1105,7 @@
         { "said": "18:30", "type": 1 },
         { "said": "Bouldering with Tim", "type": 3 }
       ],
-      "surfaces": [{ "box": [411.1, 352.3, 8, 8], "paint": 4 }]
+      "surfaces": [{ "box": [411.1, 352.3, 8, 8], "paint": 5 }]
     },
     {
       "role": "button",
@@ -1144,7 +1155,7 @@
         { "said": "07:00", "type": 1 },
         { "said": "Run with Reto", "type": 3 }
       ],
-      "surfaces": [{ "box": [804.3, 331.3, 8, 8], "paint": 4 }]
+      "surfaces": [{ "box": [804.3, 331.3, 8, 8], "paint": 5 }]
     },
     {
       "role": "button",
@@ -1409,7 +1420,10 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Studio closed", "type": 3 }],
-      "surfaces": [{ "box": [804.3, 460, 8, 8], "paint": 3 }]
+      "surfaces": [
+        { "box": [804.3, 460, 8, 8], "paint": 3 },
+        { "box": [796.3, 454, 10, 20], "paint": 4, "parts": { "after": [4, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -1914,7 +1928,10 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Studio closed", "type": 3 }],
-      "surfaces": [{ "box": [18, 717.3, 8, 8], "paint": 3 }]
+      "surfaces": [
+        { "box": [18, 717.3, 8, 8], "paint": 3 },
+        { "box": [188.6, 711.3, 10, 20], "paint": 4, "parts": { "after": [4, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -1989,7 +2006,7 @@
         { "said": "18:30", "type": 1 },
         { "said": "Bouldering with Tim", "type": 3 }
       ],
-      "surfaces": [{ "box": [411.1, 738.3, 8, 8], "paint": 4 }]
+      "surfaces": [{ "box": [411.1, 738.3, 8, 8], "paint": 5 }]
     },
     {
       "role": "button",
@@ -2045,12 +2062,12 @@
   "loose": {
     "text": [{ "said": "Sun Mon Tue Wed Thu Fri Sat", "type": 4 }],
     "surfaces": [
-      { "box": [0, 0, 1392, 816], "paint": 5 },
-      { "box": [8, 164.7, 1376, 128.7], "paint": 6, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [8, 293.3, 1376, 128.7], "paint": 6, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [8, 422, 1376, 128.7], "paint": 6, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [8, 550.7, 1376, 128.7], "paint": 6, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [8, 679.3, 1376, 128.7], "paint": 6, "parts": { "before": [4, 0, 1368, 2] } }
+      { "box": [0, 0, 1392, 816], "paint": 6 },
+      { "box": [8, 164.7, 1376, 128.7], "paint": 7, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [8, 293.3, 1376, 128.7], "paint": 7, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [8, 422, 1376, 128.7], "paint": 7, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [8, 550.7, 1376, 128.7], "paint": 7, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [8, 679.3, 1376, 128.7], "paint": 7, "parts": { "before": [4, 0, 1368, 2] } }
     ]
   }
 }

@@ -137,7 +137,7 @@ function Block(p: EventBlockProps) {
   const hasSecond = Boolean(p.second || p.was || p.status);
   const layout = blockLayout(p.place, { dense: p.dense, shortest: p.shortest, hasSecond });
   const handles = p.handles && !p.viewOnly;
-  return (
+  const chip = (
     <button
       {...shared(p, layout.style)}
       data-small={layout.small ? "" : undefined}
@@ -192,6 +192,50 @@ function Block(p: EventBlockProps) {
         />
       ) : null}
     </button>
+  );
+  if (p.viewOnly || p.drag === "copy" || !p.timeEdges) return chip;
+  return (
+    <>
+      {chip}
+      <div className="oh-ev-edges" style={layout.style}>
+        {(["start", "end"] as const).map((edge) => {
+          const label = p.timeEdges?.[edge];
+          return label && <ResizeEdge key={edge} edge={edge} label={label} onResizeKey={p.onResizeKey} />;
+        })}
+      </div>
+    </>
+  );
+}
+
+function ResizeEdge({
+  edge,
+  label,
+  onResizeKey,
+}: {
+  edge: "start" | "end";
+  label: string;
+  onResizeKey?: EventBlockProps["onResizeKey"];
+}) {
+  return (
+    <button
+      type="button"
+      className="oh-control oh-ev-hd"
+      data-edge={edge}
+      aria-label={label}
+      aria-keyshortcuts="ArrowUp ArrowDown"
+      onKeyDown={(event) => {
+        if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+        // Use the same resize action and cancellation as the shortcut on the event button.
+        onResizeKey?.({
+          ...event,
+          altKey: true,
+          shiftKey: edge === "start",
+          preventDefault: () => event.preventDefault(),
+          stopPropagation: () => event.stopPropagation(),
+        });
+      }}
+    />
   );
 }
 

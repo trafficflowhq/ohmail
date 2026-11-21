@@ -3,9 +3,9 @@
   "state": "typed",
   "look": "paper-dark-fold",
   "place": "block",
-  "target": [371.5, 455, 331.5, 298],
-  "clip": [371, 455, 332, 298],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [371.5, 407, 331.5, 346],
+  "clip": [371, 407, 332, 346],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": { "device": "fold", "face": "paper", "scheme": "dark", "width": 719, "height": 781, "scale": 2 },
   "reader": 7,
   "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
@@ -130,6 +130,18 @@
       "webkitLocale": "\"en\""
     },
     {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
       "color": "rgb(18, 16, 14)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
@@ -189,7 +201,7 @@
     {
       "role": "dialog",
       "name": "New event",
-      "box": [0, 0, 331.5, 298],
+      "box": [0, 0, 331.5, 346],
       "drawn": {
         "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgb(35, 32, 28)",
@@ -210,7 +222,7 @@
         { "said": "to All day Invite", "type": 1 }
       ],
       "surfaces": [
-        { "box": [0, 0, 331.5, 298], "paint": 0 },
+        { "box": [0, 0, 331.5, 346], "paint": 0 },
         { "box": [0, 0, 331.5, 56], "paint": 1 },
         { "box": [181.2, 17, 104.1, 26], "paint": 2 },
         { "box": [289.7, 17, 41.3, 26], "paint": 2 },
@@ -542,7 +554,7 @@
     {
       "role": "button",
       "name": "Alert",
-      "box": [20, 250, 66.2, 36],
+      "box": [233, 212, 66.2, 36],
       "drawn": {
         "color": "rgb(184, 175, 163)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -559,12 +571,12 @@
         "borderColor": "rgb(184, 175, 163)"
       },
       "text": [{ "said": "Alert", "type": 8 }],
-      "surfaces": [{ "box": [26, 260, 16, 16], "paint": 17 }]
+      "surfaces": [{ "box": [239, 222, 16, 16], "paint": 17 }]
     },
     {
       "role": "button",
       "name": "Notes",
-      "box": [88.2, 250, 71, 36],
+      "box": [20, 250, 71, 36],
       "drawn": {
         "color": "rgb(184, 175, 163)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -581,12 +593,12 @@
         "borderColor": "rgb(184, 175, 163)"
       },
       "text": [{ "said": "Notes", "type": 8 }],
-      "surfaces": [{ "box": [94.2, 260, 16, 16], "paint": 18 }]
+      "surfaces": [{ "box": [26, 260, 16, 16], "paint": 18 }]
     },
     {
       "role": "button",
       "name": "More fields",
-      "box": [161.2, 250, 32, 36],
+      "box": [93, 250, 32, 36],
       "drawn": {
         "color": "rgb(184, 175, 163)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -602,12 +614,33 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(184, 175, 163)"
       },
-      "surfaces": [{ "box": [169.2, 260, 16, 16], "paint": 19 }]
+      "surfaces": [{ "box": [101, 260, 16, 16], "paint": 19 }]
+    },
+    {
+      "role": "button",
+      "name": "Cancel",
+      "box": [168.1, 290, 82.3, 44],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "text": [{ "said": "Cancel", "type": 9 }]
     },
     {
       "role": "button",
       "name": "Add",
-      "box": [262.4, 242, 53.1, 44],
+      "box": [254.4, 290, 61.1, 44],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "rgb(246, 241, 233)",
@@ -618,12 +651,12 @@
         "letterSpacing": "normal",
         "borderRadius": "999px",
         "paddingTop": "0px",
-        "paddingRight": "12px",
+        "paddingRight": "16px",
         "paddingBottom": "0px",
-        "paddingLeft": "12px",
+        "paddingLeft": "16px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "text": [{ "said": "Add", "type": 9 }]
+      "text": [{ "said": "Add", "type": 10 }]
     }
   ],
   "loose": { "text": [], "surfaces": [] }

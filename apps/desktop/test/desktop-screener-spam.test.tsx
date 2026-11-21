@@ -111,13 +111,14 @@ it("Desktop Spam files the inspected mail under its account and sends nothing af
     letter("Later decision", "ohmail/Screener", "Monthly"),
   ]);
   let mailboxId = scope;
+  let providerConfirms = false;
   vi.stubGlobal("__TAURI_INTERNALS__", {
     transformCallback: () => 1,
     invoke: async (_command: string, payload?: { url?: string }) => {
       const pathname = String(payload?.url).split("?")[0];
       const answer = pathname === "/mailboxes"
         ? { items: [{ id: mailboxId, address: "mailbox@example.invalid", status: "connected", lastSyncAt: ISO,
-          organizerRole: "organizer", organizeConsentedAt: ISO, providerConfirms: false }] }
+          organizerRole: "organizer", organizeConsentedAt: ISO, providerConfirms }] }
         : pathname === "/consent" ? { seedConfirmedAt: ISO, dormancyDays: 60, autoUnsubscribe: false, counts: {} } : {};
       const encode = new TextEncoder();
       const header = encode.encode(JSON.stringify({ status: 200, statusText: "OK", h: [] }));
@@ -131,7 +132,8 @@ it("Desktop Spam files the inspected mail under its account and sends nothing af
   });
   window.history.replaceState(null, "", "/#/screener");
   const mounted = render(desktopFrame(desktopProps(engine, scope, account)));
-  await tick(50);
+  await act(async () => { await vi.dynamicImportSettled(); });
+  await tick(3000);
   const ui = within(mounted.container);
   const pressSpam = async (subject: RegExp, shownSibling?: string) => {
     const row = ui.getByRole("option", { name: subject });
@@ -175,4 +177,26 @@ it("Desktop Spam files the inspected mail under its account and sends nothing af
   await tick(COMMIT_MS + 300);
   expect(ui.getByRole("option", { name: /New account letter/ })).toBeTruthy();
   expect(filing()).toEqual(beforeSwitch);
+
+  providerConfirms = true;
+  async function openConfirmation(scope: string, accountId: string, subject: string) {
+    mailboxId = scope;
+    const engine = await engineOver([letter(subject, "ohmail/Screener", "Letters", { accountId, mailboxId: scope })]);
+    window.history.replaceState(null, "", "/#/screener");
+    await act(async () => { mounted.rerender(desktopFrame(desktopProps(engine, scope, accountId))); });
+    await act(async () => { await vi.dynamicImportSettled(); });
+    await tick(3000);
+    await pressSpam(new RegExp(subject));
+    return within(document.body).getByRole("dialog", { name: messages.screener.place.unsub.spam });
+  }
+
+  const first = within(await openConfirmation("original-mailbox", "shared-account", "First confirmation"));
+  expect(first.getByText(/goes from your computer/)).toBeTruthy();
+  await act(async () => { first.getByRole("button", { name: messages.screening.unsubCommitMaybe }).click(); });
+  const sameAccount = within(await openConfirmation("replacement-mailbox", "shared-account", "Second confirmation"));
+  expect.soft(sameAccount.queryByText(/goes from your computer/)).toBeNull();
+  expect.soft(sameAccount.queryByRole("button", { name: "Continue" })).not.toBeNull();
+
+  const other = within(await openConfirmation("third-mailbox", "third-account", "Third confirmation"));
+  expect(other.getByText(/goes from your computer/)).toBeTruthy();
 });

@@ -3,9 +3,9 @@
   "state": "typed",
   "look": "ohmarchy-light-foldl",
   "place": "block",
-  "target": [432.5, 349, 392.5, 296],
-  "clip": [432, 349, 393, 296],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [432.5, 301, 392.5, 344],
+  "clip": [432, 301, 393, 344],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "foldl",
     "face": "ohmarchy",
@@ -137,6 +137,18 @@
       "webkitLocale": "\"en\""
     },
     {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "14px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
       "color": "rgb(255, 252, 240)",
       "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
       "fontSize": "14px",
@@ -198,7 +210,7 @@
     {
       "role": "dialog",
       "name": "New event",
-      "box": [0, 0, 392.5, 296],
+      "box": [0, 0, 392.5, 344],
       "drawn": {
         "color": "rgb(16, 15, 15)",
         "backgroundColor": "rgb(255, 252, 240)",
@@ -219,7 +231,7 @@
         { "said": "to All day Invite", "type": 1 }
       ],
       "surfaces": [
-        { "box": [0, 0, 392.5, 296], "paint": 0 },
+        { "box": [0, 0, 392.5, 344], "paint": 0 },
         { "box": [0, 0, 392.5, 56], "paint": 1 },
         { "box": [174.5, 19, 80.3, 22], "paint": 2 },
         { "box": [264.7, 19, 30.1, 22], "paint": 2 },
@@ -615,8 +627,29 @@
     },
     {
       "role": "button",
+      "name": "Cancel",
+      "box": [232.9, 288, 82.4, 44],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "14px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "Cancel", "type": 9 }]
+    },
+    {
+      "role": "button",
       "name": "Add",
-      "box": [331.3, 240, 45.2, 44],
+      "box": [319.3, 288, 57.2, 44],
       "drawn": {
         "color": "rgb(255, 252, 240)",
         "backgroundColor": "rgb(16, 15, 15)",
@@ -627,12 +660,12 @@
         "letterSpacing": "normal",
         "borderRadius": "0px",
         "paddingTop": "0px",
-        "paddingRight": "10px",
+        "paddingRight": "16px",
         "paddingBottom": "0px",
-        "paddingLeft": "10px",
+        "paddingLeft": "16px",
         "borderColor": "rgb(255, 252, 240)"
       },
-      "text": [{ "said": "Add", "type": 9 }]
+      "text": [{ "said": "Add", "type": 10 }]
     }
   ],
   "loose": { "text": [], "surfaces": [] }

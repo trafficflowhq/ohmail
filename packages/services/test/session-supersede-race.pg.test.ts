@@ -40,7 +40,7 @@ const COOKIE = { concurrentGrace: true, surface: "cookie" } as const;
 
 /** Register and enrol TOTP; the answer signs in a fresh browser session on demand. */
 async function person(svc: AuthService, label: string): Promise<{
-  userId: string; first: { access: string; refresh: string };
+  userId: string; accountId: string; first: { access: string; refresh: string };
   signIn: (over?: Partial<ServiceContext>) => Promise<{ access: string; refresh: string }>;
 }> {
   const email = `${label}-${randomUUID()}@lichtgrat.example`;
@@ -53,6 +53,7 @@ async function person(svc: AuthService, label: string): Promise<{
   const { session } = await svc.totpActivate(enrolCtx, { code: totp(secret) });
   return {
     userId: reg.user.userId,
+    accountId: reg.user.accountId,
     // The full session activation exchanged the enrolment for: this browser's first family.
     first: { access: session!.tokens!.accessToken, refresh: session!.tokens!.refreshToken },
     // ONE sign-in per person: activation spent this step, and the window admits the next one at
@@ -232,7 +233,10 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     const gate = new Promise<void>((r) => { release = r; });
     const atSessionWrite = new Promise<void>((r) => { arrived = r; });
     const rotation = svc.refresh(
-      ctx({ db: pausingUpdatesOf(bindDb(db, { account: null }), sessions, gate, arrived) as never }), { refreshToken: jar.refresh }, COOKIE,
+      ctx({
+        accountId: a.accountId, credentialDb: bindDb(db, { account: null }),
+        db: pausingUpdatesOf(dbFor(db, a.accountId), sessions, gate, arrived) as never,
+      }), { refreshToken: jar.refresh }, COOKIE,
     );
     await atSessionWrite;
     let minted = false;
@@ -258,7 +262,10 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     let arrived!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     const atMint = new Promise<void>((r) => { arrived = r; });
-    const mint = b.signIn({ supersedes: jar.access, db: mintPausedAtSessionInsert(bindDb(db, { account: null }), gate, arrived) as never });
+    const mint = b.signIn({
+      supersedes: jar.access, accountId: b.accountId, credentialDb: bindDb(db, { account: null }),
+      db: mintPausedAtSessionInsert(dbFor(db, b.accountId), gate, arrived) as never,
+    });
     await atMint;
     let settled = false;
     const rotator = `sup-open-${randomUUID().slice(0, 8)}`;
@@ -280,8 +287,10 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     const jar = await a.signIn();
     const broken = Promise.reject(new Error("the mint's insert failed"));
     broken.catch(() => {});   // handled here; the mint's own await still rejects
-    const failing = mintPausedAtSessionInsert(bindDb(db, { account: null }), broken, () => {});
-    await expect(b.signIn({ supersedes: jar.access, db: failing as never })).rejects.toThrow("the mint's insert failed");
+    const failing = mintPausedAtSessionInsert(dbFor(db, b.accountId), broken, () => {});
+    await expect(b.signIn({
+      supersedes: jar.access, accountId: b.accountId, credentialDb: bindDb(db, { account: null }), db: failing as never,
+    })).rejects.toThrow("the mint's insert failed");
     expect(await authenticates(jar.access), "the supersede committed without its mint").toBe(true);
     expect(await refused(svc.refresh(ctx(), { refreshToken: jar.refresh }, COOKIE))).toBe("rotated");
   });
@@ -336,7 +345,10 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     const gate = new Promise<void>((r) => { release = r; });
     const atSessionWrite = new Promise<void>((r) => { arrived = r; });
     const rotation = svc.refresh(
-      ctx({ db: pausingUpdatesOf(bindDb(db, { account: null }), sessions, gate, arrived) as never }), { refreshToken: a.first.refresh }, COOKIE,
+      ctx({
+        accountId: a.accountId, credentialDb: bindDb(db, { account: null }),
+        db: pausingUpdatesOf(dbFor(db, a.accountId), sessions, gate, arrived) as never,
+      }), { refreshToken: a.first.refresh }, COOKIE,
     );
     await atSessionWrite;
     const minter = `sup-mark-${randomUUID().slice(0, 8)}`;

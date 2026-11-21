@@ -132,8 +132,8 @@ async function mountSender({
   expect(rosterReads).toBeGreaterThan(0);
   await click(within(shell).getByRole("button", { name: own ? /^(You|Du) / : /^Delivery reports / }));
   const words = locale === "en" ? messages : de;
-  await click(within(shell).getByRole("menuitem", { name: words.screening.action }));
-  return { sheet: within(document.body).getByRole("dialog", { name: new RegExp(words.screening.aria.split("{sender}")[0]!) }), writes };
+  const dialog = () => within(document.body).getByRole("dialog", { name: new RegExp(words.screening.aria.split("{sender}")[0]!) });
+  return { sheet: dialog(), dialog, writes };
 }
 
 const click = (control: HTMLElement) => act(() => { fireEvent.click(control); });
@@ -170,14 +170,14 @@ const standingSubject: RuleEntity = {
 };
 
 it("adds a whole-sender rule from an Ohbox letter while keeping the narrower rule", async () => {
-  const { sheet, writes } = await mountSender({
+  const { dialog, writes } = await mountSender({
     ruleAnswer: async () => ruleResponse(true), rules: [standingSubject], moveAnswer: () => Response.json({}),
     extra: [{ ...heldMessage, id: "kept-narrow", folder: "ohmail/News" }],
   });
-  await click(within(sheet).getByRole("option", { name: /Receipts/ }));
-  const choice = within(sheet).getByRole("radio", { name: /Keep/ });
+  await click(within(dialog()).getByRole("radio", { name: /Receipts/ }));
+  const choice = within(dialog()).getByRole("radio", { name: /Keep/ });
   await click(choice);
-  await click(within(sheet).getByRole("button", { name: /File to Receipts/ }));
+  await click(within(dialog()).getByRole("button", { name: /File to Receipts/ }));
   await tick(12_000);
   expect(writes.filter((write) => write.path.startsWith("/api/rules"))).toEqual([{
     method: "POST", path: "/api/rules",
@@ -188,18 +188,18 @@ it("adds a whole-sender rule from an Ohbox letter while keeping the narrower rul
 
 it("retargets only the broad rule and cancels the first conflict choice without writes", async () => {
   const broad = { ...standingSubject, id: "plain-sender-rule", subjectContains: null };
-  const { sheet, writes } = await mountSender({
+  const { dialog, writes } = await mountSender({
     ruleAnswer: async () => ruleResponse(true), rules: [standingSubject, broad], moveAnswer: () => Response.json({}),
     extra: [{ ...heldMessage, id: "kept-narrow", folder: "ohmail/News" }],
   });
-  const target = () => within(sheet).getByRole("option", { name: /Receipts/ });
+  const target = () => within(dialog()).getByRole("radio", { name: /Receipts/ });
   await click(target());
-  await act(() => { fireEvent.keyDown(within(sheet).getByRole("radio", { name: /Keep/ }), { key: "Escape" }); });
+  await act(() => { fireEvent.keyDown(within(dialog()).getByRole("radio", { name: /Keep/ }), { key: "Escape" }); });
   expect(document.activeElement).toBe(target());
   expect(writes).toEqual([]);
   await click(target());
-  await click(within(sheet).getByRole("radio", { name: /Keep/ }));
-  await click(within(sheet).getByRole("button", { name: /File to Receipts/ }));
+  await click(within(dialog()).getByRole("radio", { name: /Keep/ }));
+  await click(within(dialog()).getByRole("button", { name: /File to Receipts/ }));
   await tick(12_000);
   expect(writes.filter((write) => write.path.startsWith("/api/rules"))).toEqual([{
     method: "PATCH", path: "/api/rules/plain-sender-rule",
@@ -241,8 +241,9 @@ it.each(["en", "de"] as const)("the sender and subject sheets tell the truth aft
   const words = locale === "en" ? messages : de;
   const { sheet, writes } = await mountSender({ organizerState: "returned", locale });
   expect(within(sheet).getByText(words.screening.orgNobody)).toBeTruthy();
-  expect(within(sheet).queryByText(words.screening.footWillRuleRetro.replace("{sender}", SENDER))).toBeNull();
-  await click(within(sheet).getByRole("button", { name: words.screening.subjectRuleOpen }));
+  expect(within(sheet).getByRole("radio", { name: words.screener.pileReads }).getAttribute("aria-description"))
+    .not.toBe(words.screening.footWillRuleRetro.replace("{sender}", SENDER));
+  await click(within(sheet).getByRole("menuitem", { name: words.screening.cardSubject }));
   const editor = within(document.body).getByRole("dialog", { name: words.screening.subjectAria.replace("{who}", SENDER) });
   expect(within(editor).getByText(words.screening.subjectOrgNobody)).toBeTruthy();
   await click(within(editor).getByRole("option", { name: words.screener.pileReads }));
@@ -258,8 +259,9 @@ it.each(["en", "de"] as const)("the sender and subject sheets tell the truth aft
 it("an organizing mailbox previews and writes the exact subject rule for the current letter", async () => {
   const { sheet, writes } = await mountSender({ ruleAnswer: async () => ruleResponse(true, "Plain letter") });
   expect(within(sheet).queryByText(messages.screening.orgNobody)).toBeNull();
-  expect(within(sheet).getByText(messages.screening.footWillRuleRetro.replace("{sender}", SENDER))).toBeTruthy();
-  await click(within(sheet).getByRole("button", { name: messages.screening.subjectRuleOpen }));
+  expect(within(sheet).getByRole("radio", { name: messages.screener.pileReads }).getAttribute("aria-description"))
+    .toBe(messages.screening.footWillRuleRetro.replace("{sender}", SENDER));
+  await click(within(sheet).getByRole("menuitem", { name: messages.screening.cardSubject }));
   const editor = within(document.body).getByRole("dialog", { name: messages.screening.subjectAria.replace("{who}", SENDER) });
   await click(within(editor).getByRole("option", { name: messages.screener.pileReads }));
   expect(within(editor).getByText(/ohmail applies the rule/)).toBeTruthy();
@@ -286,7 +288,7 @@ it("shows the focused older letter's exact subject in the sender's rule dialog",
   };
   const { sheet, writes } = await mountSender({ threadId, extra: [newer] });
   expect(within(document.body).getByRole("button", { name: /^Newer delivery reports / })).toBeTruthy();
-  await click(within(sheet).getByRole("button", { name: messages.screening.subjectRuleOpen }));
+  await click(within(sheet).getByRole("menuitem", { name: messages.screening.cardSubject }));
   const dialog = within(document.body).getByRole("dialog", {
     name: messages.screening.subjectAria.replace("{who}", SENDER),
   });
@@ -298,9 +300,9 @@ it("shows the focused older letter's exact subject in the sender's rule dialog",
 it("our own address offers onward links and no destination or rule editor", async () => {
   const { sheet, writes } = await mountSender({ own: true });
   expect(within(sheet).getByText(messages.screening.toastOwnAddress)).toBeTruthy();
-  expect(within(sheet).queryByRole("option")).toBeNull();
-  expect(within(sheet).queryByRole("button", { name: messages.screening.subjectRuleOpen })).toBeNull();
-  expect(within(sheet).getByRole("link", { name: messages.screening.addressOpen })).toBeTruthy();
+  expect(within(sheet).queryByRole("radio")).toBeNull();
+  expect(within(sheet).queryByRole("menuitem", { name: messages.screening.cardSubject })).toBeNull();
+  expect(within(sheet).getByRole("menuitem", { name: messages.message.contactAllMail })).toBeTruthy();
   expect(within(sheet).getByRole("button", { name: /See all 1 message/ })).toBeTruthy();
   expect(writes).toEqual([]);
 });
@@ -309,28 +311,29 @@ it("an own-address claim that failed its provider check offers no filing", async
   const { sheet, writes } = await mountSender({ own: "failed" });
   expect(within(sheet).getByText(messages.screener.senderCheck.failed.replace("{address}", "inbox@example.invalid"))).toBeTruthy();
   expect(within(sheet).queryByText(messages.screening.toastOwnAddress)).toBeNull();
-  expect(within(sheet).queryByRole("option")).toBeNull();
+  expect(within(sheet).queryByRole("radio")).toBeNull();
   expect(writes).toEqual([]);
 });
 
 it("marks the rule’s destination even if it has no letters there yet", async () => {
   const broad = { ...standingSubject, subjectContains: null };
   const { sheet, writes } = await mountSender({ rules: [broad] });
-  expect(within(sheet).getByRole("option", { name: /News/, selected: true })).toBeTruthy();
-  expect(within(sheet).getByText(/All their mail → News/).parentElement?.textContent).toMatch(/News\s*0$/);
+  expect(within(sheet).getByRole("radio", { name: /News/, checked: true })).toBeTruthy();
+  const rules = within(sheet).getByRole("group", { name: messages.screening.rulesHead });
+  expect(within(rules).getByText(messages.screening.ruleAll).parentElement?.textContent).toMatch(/^News.*All their mail.*0 messages$/);
   expect(writes).toEqual([]);
 });
 
 it("retargets the domain when the person confirms everyone at the sender's domain", async () => {
   const domain = { ...standingSubject, id: "standing-domain", kind: "domain" as const, match: DOMAIN, subjectContains: null, priority: 30 };
-  const { sheet, writes } = await mountSender({
+  const { dialog, writes } = await mountSender({
     rules: [domain], ruleAnswer: async () => Response.json({
       ...domain, destination: "ohmail/Receipts", retro: { requestedAt: ISO, doneAt: null },
     }), moveAnswer: () => Response.json({}),
   });
-  await click(within(sheet).getByRole("option", { name: /Receipts/ }));
-  await click(within(within(sheet).getByRole("radiogroup", { name: messages.screening.resolveChoiceAria })).getByRole("radio", { name: /Everyone at/ }));
-  await click(within(sheet).getByRole("button", { name: /File to Receipts/ }));
+  await click(within(dialog()).getByRole("radio", { name: /Receipts/ }));
+  await click(within(within(dialog()).getByRole("radiogroup", { name: messages.screening.resolveChoiceAria })).getByRole("radio", { name: /Everyone at/ }));
+  await click(within(dialog()).getByRole("button", { name: /File to Receipts/ }));
   await tick(12_000);
   expect(writes.filter((write) => write.path.startsWith("/api/rules"))).toEqual([{
     method: "PATCH", path: "/api/rules/standing-domain",
@@ -348,15 +351,15 @@ it("names the wider unsubscribe scope before a domain Yes", async () => {
     ...heldMessage, id: "other-domain-letter", authVerdict: "pass" as const,
     from: { name: "Another sender", address: ["list", DOMAIN].join("@") },
   };
-  const { sheet, writes } = await mountSender({ rules: [covering], extra: [another], oneClickId: another.id });
-  await click(within(sheet).getByRole("option", { name: /Spam/ }));
-  await click(within(sheet).getByRole("radio", { name: /Everyone at.*Spam/ }));
-  const disclosure = within(sheet).getByText(/Confirming sends one-click unsubscribe requests/);
+  const { dialog, writes } = await mountSender({ rules: [covering], extra: [another], oneClickId: another.id });
+  await click(within(dialog()).getByRole("radio", { name: /Spam/ }));
+  await click(within(dialog()).getByRole("radio", { name: /Everyone at.*Spam/ }));
+  const disclosure = within(dialog()).getByText(/Confirming sends one-click unsubscribe requests/);
   expect(disclosure.textContent).toContain(`1 sender at ${DOMAIN}`);
   expect(disclosure.textContent).toContain("rule for the whole domain");
   expect(disclosure.textContent).toContain("there is no undo");
   expect(writes).toEqual([]);
-  await click(within(sheet).getByRole("button", { name: messages.screening.unsubCommit }));
+  await click(within(dialog()).getByRole("button", { name: messages.screening.unsubCommit }));
   await tick(12_000);
   const decisions = writes.filter(({ path, method }) => method === "POST" && path.startsWith("/api/screener/"));
   expect(decisions[0]?.body).toMatchObject({ scope: "domain", unsubscribeIds: [another.id] });

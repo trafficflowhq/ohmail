@@ -3,9 +3,9 @@
   "state": "rest",
   "look": "paper-dark-desktop",
   "place": "cell",
-  "target": [800.5625, 556.6719, 320, 36],
-  "clip": [800, 556, 321, 37],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [800.5625, 574.6719, 320, 36],
+  "clip": [800, 574, 321, 37],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",

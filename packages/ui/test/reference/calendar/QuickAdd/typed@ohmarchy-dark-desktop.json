@@ -5,7 +5,7 @@
   "place": "block",
   "target": [529, 648, 620, 224],
   "clip": [529, 648, 620, 224],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -137,6 +137,18 @@
       "webkitLocale": "\"en\""
     },
     {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
       "color": "rgb(26, 27, 38)",
       "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
       "fontSize": "13px",
@@ -163,7 +175,7 @@
   ],
   "paints": [
     { "boxShadow": "oklch(0.83 0.085 241.7) 0px 0px 0px 2px, rgb(122, 162, 247) 0px 0px 0px 2px" },
-    { "backgroundColor": "oklab(0.4156 -0.0245104 -0.0455207)" },
+    { "backgroundColor": "oklab(0.3596 -0.022377 -0.0415585)" },
     {
       "backgroundColor": "oklab(0.226286 0.00390039 -0.0210119 / 0.7)",
       "boxShadow": "oklab(0.226286 0.00390039 -0.0210119 / 0.7) 0px 0px 0px 1px"
@@ -628,6 +640,27 @@
     },
     {
       "role": "button",
+      "name": "Cancel",
+      "box": [467.8, 184, 62.8, 28],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "Cancel", "type": 9 }]
+    },
+    {
+      "role": "button",
       "name": "Add ↵",
       "box": [534.6, 184, 69.4, 28],
       "drawn": {
@@ -646,8 +679,8 @@
         "borderColor": "rgb(26, 27, 38)"
       },
       "text": [
-        { "said": "Add", "type": 9 },
-        { "said": "↵", "type": 10 }
+        { "said": "Add", "type": 10 },
+        { "said": "↵", "type": 11 }
       ],
       "surfaces": [{ "box": [576, 189, 18, 18], "paint": 22 }]
     }

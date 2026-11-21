@@ -3,9 +3,9 @@
   "state": "beside",
   "look": "paper-dark-desktop",
   "place": "window",
-  "target": [761.81, 217, 11.61, 32],
-  "clip": [761, 217, 13, 32],
-  "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a",
+  "target": [760, 264, 30, 32],
+  "clip": [760, 264, 30, 32],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "paper",

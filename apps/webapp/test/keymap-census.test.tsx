@@ -179,7 +179,10 @@ describe("the keymap census — the one table, surface by surface", () => {
     ]);
     const caps = sheetRows().flatMap((row) => row.chords);
     expect(sheetRows().find(({ label }) => label === messages.triage.keyReplyRun)?.chords).toContain(cap("f"));
-    for (const chord of ["w", "p"]) expect(caps).not.toContain(cap(chord));
+    // The design lists Pull new mail, and the mail rail binds it to the Pull action.
+    expect(sheetRows().filter(({ label }) => label === messages.shortcuts.pull).map(({ chords }) => chords))
+      .toEqual([[cap("p")]]);
+    expect(caps).not.toContain(cap("w"));
 
     await key("Escape");
     await key("x");

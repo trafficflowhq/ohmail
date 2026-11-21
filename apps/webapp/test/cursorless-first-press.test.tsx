@@ -433,7 +433,7 @@ describe("a binding resting for ANOTHER reason keeps falling through", () => {
     expect(rowIds(container), "the Parked list still has a row").toHaveLength(1);
     await key("?");
     await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
-    expect(sheetRow(messages.triage.keyReplyRun), "Reply Run is unavailable with nothing to answer").toBeNull();
+    expect(sheetRow(messages.triage.keyReplyRun)?.getAttribute("aria-disabled"), "Reply Run is unavailable with nothing to answer").toBe("true");
     await key("Escape");
     await settle();
 
@@ -447,7 +447,7 @@ describe("a binding resting for ANOTHER reason keeps falling through", () => {
     const container = await shell(["m1", "m2", "m3"]);
     await key("?");
     await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
-    expect(sheetRow(messages.shortcuts.pull), "the host offers no live Pull shortcut").toBeNull();
+    expect(sheetRow(messages.shortcuts.pull)?.getAttribute("aria-disabled"), "the host offers no live Pull shortcut").toBe("true");
     await key("Escape");
     await settle();
 

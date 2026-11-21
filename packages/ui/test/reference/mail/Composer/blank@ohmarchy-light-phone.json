@@ -5,7 +5,7 @@
   "place": "block",
   "target": [10, 58, 370, 440.0938],
   "clip": [10, 58, 370, 441],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "phone",
     "face": "ohmarchy",
@@ -34,6 +34,20 @@
       "textTransform": "none",
       "textOverflow": "ellipsis",
       "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
     },
     {
       "color": "rgb(56, 54, 53)",
@@ -96,20 +110,6 @@
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(56, 54, 53)",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
-      "fontSize": "12px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "16.8px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "fontVariantNumeric": "tabular-nums",
       "webkitLocale": "\"en\"",
       "textRendering": "optimizelegibility"
     },
@@ -187,7 +187,28 @@
       ]
     },
     {
-      "role": "textbox",
+      "role": "status",
+      "name": "",
+      "box": [316, 37.6, 36, 16.8],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "Draft", "type": 1 }]
+    },
+    {
+      "role": "combobox",
       "name": "To",
       "box": [66.8, 68, 214.8, 36],
       "drawn": {
@@ -204,7 +225,8 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(16, 15, 15)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
       "role": "button",
@@ -225,7 +247,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "Cc Bcc", "type": 1 }]
+      "text": [{ "said": "Cc Bcc", "type": 2 }]
     },
     {
       "role": "textbox",
@@ -247,7 +269,7 @@
         "borderColor": "rgb(16, 15, 15)"
       },
       "state": ["shows its hint"],
-      "text": [{ "said": "Subject", "type": 2, "shown": true }],
+      "text": [{ "said": "Subject", "type": 3, "shown": true }],
       "surfaces": [{ "box": [18, 112, 334, 44], "paint": 2 }]
     },
     {
@@ -290,7 +312,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 3 }]
+      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 4 }]
     },
     {
       "role": "button",
@@ -380,7 +402,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(56, 54, 53)"
       },
-      "text": [{ "said": "Aa", "type": 1 }]
+      "text": [{ "said": "Aa", "type": 2 }]
     },
     {
       "role": "button",
@@ -423,14 +445,13 @@
         "borderColor": "rgb(56, 54, 53)"
       },
       "state": ["disabled"],
-      "text": [{ "said": "Draft from text", "type": 4 }],
+      "text": [{ "said": "Draft from text", "type": 5 }],
       "surfaces": [{ "box": [186, 381.1, 18, 18], "paint": 10 }]
     }
   ],
   "loose": {
     "text": [
-      { "said": "From", "type": 5 },
-      { "said": "Draft", "type": 6 },
+      { "said": "From", "type": 6 },
       { "said": "To", "type": 7 }
     ],
     "surfaces": [

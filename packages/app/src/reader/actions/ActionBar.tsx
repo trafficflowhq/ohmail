@@ -93,7 +93,8 @@ export function ActionBar({
   const tags = verbs.tag === null ? [] : (mirror?.list<TagEntity>("tag") ?? []);
   const cardKeys = card?.keysHere === true && reply === null;
   const hintsActive = card === undefined ? keys != null : cardKeys && showPanel;
-  const hints = usePanelHints(verbs.readSlot, hintsActive, card?.canAnswerKey?.(card.letter.id) !== false);
+  // The binding owns the hint as soon as the panel opens. It checks visibility when pressed.
+  const hints = usePanelHints(verbs.readSlot, hintsActive);
   const all = panelVerbs(
     t,
     words,

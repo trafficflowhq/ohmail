@@ -5,7 +5,7 @@
   "place": "block",
   "target": [688, 12, 740, 492.7656],
   "clip": [688, 12, 740, 493],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -34,6 +34,20 @@
       "textTransform": "none",
       "textOverflow": "ellipsis",
       "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
     },
     {
       "color": "oklch(0.36 0.105 150)",
@@ -201,20 +215,6 @@
       "textRendering": "optimizelegibility"
     },
     {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "18.2px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "fontVariantNumeric": "tabular-nums",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
       "color": "rgb(18, 16, 14)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
@@ -291,6 +291,8 @@
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 1 447c0f4542bb" },
     { "boxShadow": "rgb(221, 213, 201) 0px 1px 0px 0px" },
     { "backgroundColor": "rgb(138, 129, 118)", "opacity": "0.55" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 1 acddc4eba6ee" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 1 541a4a0ad8ca" },
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 2 db61eb05bb0f" },
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 2 43c46b290178" },
     { "ink": "fill rgb(90, 83, 75); stroke rgb(90, 83, 75) 1.8px round round; shapes 4 9ce2f856a47e" },
@@ -299,6 +301,7 @@
     },
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 1 08973770abf0" },
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 2 1f9f8725cdc4" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 1 42674f310e5c" },
     { "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 3 93b4b80b8950" },
     { "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 1 9f76e510b51d" },
     {
@@ -344,6 +347,27 @@
       ]
     },
     {
+      "role": "status",
+      "name": "",
+      "box": [678.1, 30.9, 29.9, 18.2],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Draft", "type": 1 }]
+    },
+    {
       "role": "button",
       "name": "N Nadja Lehner nadja@erdton-atelier.example",
       "box": [87.2, 60, 316.8, 32],
@@ -363,9 +387,9 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [
-        { "said": "N", "type": 1 },
-        { "said": "Nadja Lehner", "type": 2 },
-        { "said": "nadja@erdton-atelier.example", "type": 3 }
+        { "said": "N", "type": 2 },
+        { "said": "Nadja Lehner", "type": 3 },
+        { "said": "nadja@erdton-atelier.example", "type": 4 }
       ],
       "surfaces": [{ "box": [92.2, 65, 22, 22], "paint": 2 }]
     },
@@ -391,7 +415,7 @@
       "surfaces": [{ "box": [410, 66, 20, 20], "paint": 3 }]
     },
     {
-      "role": "textbox",
+      "role": "combobox",
       "name": "To",
       "box": [440, 60, 189.8, 32],
       "drawn": {
@@ -408,7 +432,8 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(18, 16, 14)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
       "role": "button",
@@ -429,7 +454,7 @@
         "paddingLeft": "12px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "Cc Bcc", "type": 4 }]
+      "text": [{ "said": "Cc Bcc", "type": 5 }]
     },
     {
       "role": "textbox",
@@ -450,7 +475,7 @@
         "paddingLeft": "59.2px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "text": [{ "said": "Re: Would you teach the December glaze evening?", "type": 5, "shown": true }]
+      "text": [{ "said": "Re: Would you teach the December glaze evening?", "type": 6, "shown": true }]
     },
     {
       "role": "toolbar",
@@ -474,9 +499,11 @@
       "surfaces": [
         { "box": [32, 156, 676, 40], "paint": 4 },
         { "box": [180, 167, 1, 18], "paint": 5 },
-        { "box": [227, 167, 1, 18], "paint": 5 },
-        { "box": [310, 167, 1, 18], "paint": 5 },
-        { "box": [357, 167, 1, 18], "paint": 5 }
+        { "box": [245, 167, 1, 18], "paint": 5 },
+        { "box": [292, 167, 1, 18], "paint": 5 },
+        { "box": [375, 167, 1, 18], "paint": 5 },
+        { "box": [422, 167, 1, 18], "paint": 5 },
+        { "box": [505, 167, 1, 18], "paint": 5 }
       ]
     },
     {
@@ -498,7 +525,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "B", "type": 6 }]
+      "text": [{ "said": "B", "type": 7 }]
     },
     {
       "role": "button",
@@ -519,7 +546,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "I", "type": 7 }]
+      "text": [{ "said": "I", "type": 8 }]
     },
     {
       "role": "button",
@@ -540,7 +567,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "U", "type": 8 }]
+      "text": [{ "said": "U", "type": 9 }]
     },
     {
       "role": "button",
@@ -561,12 +588,36 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "S", "type": 9 }]
+      "text": [{ "said": "S", "type": 10 }]
+    },
+    {
+      "role": "button",
+      "name": "Paragraph style",
+      "box": [187, 160, 52, 32],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "surfaces": [
+        { "box": [195, 167, 18, 18], "paint": 6 },
+        { "box": [213, 167, 18, 18], "paint": 7 }
+      ]
     },
     {
       "role": "button",
       "name": "Link",
-      "box": [187, 160, 34, 32],
+      "box": [252, 160, 34, 32],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -582,12 +633,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [195, 167, 18, 18], "paint": 6 }]
+      "surfaces": [{ "box": [260, 167, 18, 18], "paint": 8 }]
     },
     {
       "role": "button",
-      "name": "Ordered list",
-      "box": [234, 160, 34, 32],
+      "name": "Numbered list",
+      "box": [299, 160, 34, 32],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -603,12 +654,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [242, 167, 18, 18], "paint": 7 }]
+      "surfaces": [{ "box": [307, 167, 18, 18], "paint": 9 }]
     },
     {
       "role": "button",
       "name": "Bulleted list",
-      "box": [270, 160, 34, 32],
+      "box": [335, 160, 34, 32],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -624,12 +675,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [278, 167, 18, 18], "paint": 8 }]
+      "surfaces": [{ "box": [343, 167, 18, 18], "paint": 10 }]
     },
     {
       "role": "button",
-      "name": "Blockquote",
-      "box": [317, 160, 34, 32],
+      "name": "Quote",
+      "box": [382, 160, 34, 32],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -645,12 +696,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [325, 167, 18, 18], "paint": 9 }]
+      "surfaces": [{ "box": [390, 167, 18, 18], "paint": 11 }]
     },
     {
       "role": "button",
-      "name": "Code",
-      "box": [364, 160, 34, 32],
+      "name": "Inline code",
+      "box": [429, 160, 34, 32],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -666,12 +717,12 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [372, 167, 18, 18], "paint": 10 }]
+      "surfaces": [{ "box": [437, 167, 18, 18], "paint": 12 }]
     },
     {
       "role": "button",
       "name": "Code block",
-      "box": [400, 160, 34, 32],
+      "box": [465, 160, 34, 32],
       "drawn": {
         "color": "rgb(90, 83, 75)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -687,7 +738,28 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [408, 167, 18, 18], "paint": 11 }]
+      "surfaces": [{ "box": [473, 167, 18, 18], "paint": 13 }]
+    },
+    {
+      "role": "button",
+      "name": "Divider",
+      "box": [512, 160, 34, 32],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "surfaces": [{ "box": [520, 167, 18, 18], "paint": 14 }]
     },
     {
       "role": "textbox",
@@ -711,7 +783,7 @@
       "text": [
         {
           "said": "Yes, gladly. The 17th suits me better. I would bring the matte white and two test tiles per person, and",
-          "type": 10
+          "type": 11
         }
       ]
     },
@@ -734,7 +806,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 11 }]
+      "text": [{ "said": "Mila Brunner Lichtgrat · Winterthur", "type": 12 }]
     },
     {
       "role": "button",
@@ -777,10 +849,10 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [
-        { "said": "Not sent.", "type": 12 },
-        { "said": "Sending did not work, but your draft is kept, so try again.", "type": 13 }
+        { "said": "Not sent.", "type": 13 },
+        { "said": "Sending did not work, but your draft is kept, so try again.", "type": 14 }
       ],
-      "surfaces": [{ "box": [44, 396.4, 18, 18], "paint": 12 }]
+      "surfaces": [{ "box": [44, 396.4, 18, 18], "paint": 15 }]
     },
     {
       "role": "toolbar",
@@ -801,7 +873,7 @@
         "paddingLeft": "8px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "text": [{ "said": "15 credits", "type": 14 }],
+      "text": [{ "said": "15 credits", "type": 1 }],
       "surfaces": [{ "box": [82, 435.8, 1, 18], "paint": 5 }]
     },
     {
@@ -823,7 +895,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "surfaces": [{ "box": [47, 435.8, 18, 18], "paint": 13 }]
+      "surfaces": [{ "box": [47, 435.8, 18, 18], "paint": 16 }]
     },
     {
       "role": "button",
@@ -866,7 +938,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(90, 83, 75)"
       },
-      "surfaces": [{ "box": [136.5, 434.8, 20, 20], "paint": 14 }]
+      "surfaces": [{ "box": [136.5, 434.8, 20, 20], "paint": 17 }]
     },
     {
       "role": "button",
@@ -888,21 +960,20 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Draft from your text", "type": 16 }],
-      "surfaces": [{ "box": [520.4, 435.8, 18, 18], "paint": 15 }]
+      "surfaces": [{ "box": [520.4, 435.8, 18, 18], "paint": 18 }]
     }
   ],
   "loose": {
     "text": [
       { "said": "From", "type": 17 },
       { "said": "Studio", "type": 18 },
-      { "said": "Draft", "type": 14 },
       { "said": "To", "type": 19 }
     ],
     "surfaces": [
-      { "box": [0, 0, 740, 492.8], "paint": 16 },
-      { "box": [290.9, 29, 53.1, 22], "paint": 17 },
-      { "box": [87.2, 60, 348.8, 32], "paint": 17 },
-      { "box": [32, 156, 676, 312.8], "paint": 18, "parts": { "after": [0, 0, 676, 312.8] } }
+      { "box": [0, 0, 740, 492.8], "paint": 19 },
+      { "box": [290.9, 29, 53.1, 22], "paint": 20 },
+      { "box": [87.2, 60, 348.8, 32], "paint": 20 },
+      { "box": [32, 156, 676, 312.8], "paint": 21, "parts": { "after": [0, 0, 676, 312.8] } }
     ]
   }
 }

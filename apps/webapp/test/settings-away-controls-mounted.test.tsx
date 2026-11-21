@@ -2,9 +2,11 @@
 import { Frame } from "@ohmail/app/frame";
 import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
 import { TextProvider, type Messages } from "@ohmail/app/text";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { fireEvent, render, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { afterEach, beforeAll, expect, it } from "vitest";
+import type { ReactNode } from "react";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import type { AwayResponderSaveWire, AwayResponderWire } from "../app/api-client";
 import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
 import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
@@ -35,6 +37,11 @@ afterEach(async () => {
 async function press(el: HTMLElement) {
   await act(async () => { fireEvent.click(el); });
   await tick(100);
+}
+
+function SettingsConsent({ children }: { children: ReactNode }) {
+  const consent = useConsentState(false, "owner", "none");
+  return <ConsentContext.Provider value={consent}>{children}</ConsentContext.Provider>;
 }
 
 async function mount({
@@ -73,6 +80,7 @@ async function mount({
   await tick(2500);
   const ui = within(host);
   const words = lang === "de" ? de : messages;
+  await vi.waitFor(() => ui.getByRole("navigation", { name: words.settings.navAria }));
   const pane = () => within(ui.getByRole("region", { name: words.settings.away }));
   return {
     ui, writes, reads: () => reads, answer: (next: AwayResponderSaveWire) => { answer = next; },
@@ -122,11 +130,13 @@ it.each([true, false])("only lists the Away pane when the host supplies it (%s)"
   });
   const mounted = render(
     <TextProvider locale="en" messages={messages as Messages} timeZone="UTC">
-      <Frame host={{ ...host, capabilities: { ...host.capabilities, awayRunsOn: away ? "service" : "none" } }} />
+      <SettingsConsent>
+        <Frame host={{ ...host, capabilities: { ...host.capabilities, awayRunsOn: away ? "service" : "none" } }} />
+      </SettingsConsent>
     </TextProvider>,
   );
   try {
-    const menu = within(mounted.getByRole("navigation", { name: messages.settings.navAria }));
+    const menu = within(await vi.waitFor(() => mounted.getByRole("navigation", { name: messages.settings.navAria })));
     const entry = menu.queryByRole("button", { name: messages.settings.away });
     if (away) {
       expect(entry).not.toBeNull();

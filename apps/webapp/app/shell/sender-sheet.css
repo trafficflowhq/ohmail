@@ -28,11 +28,11 @@
 }
 .senderm {
   position: fixed;
-  z-index: var(--oh-layer-top, var(--z-pal));
+  z-index: var(--z-pal);
   width: min(340px, calc(100vw / var(--ui-zoom, 1) - 20px));
-  border-radius: calc(var(--r-sheet, var(--r-overlay)) * 18 / 20);
-  background: var(--sheet);
-  box-shadow: var(--lift-3, var(--float));
+  border-radius: calc(var(--r-overlay) * 18 / 20);
+  background: var(--float);
+  box-shadow: var(--lift-3);
   animation: rise 0.2s var(--spring);
   container-type: inline-size;
 }
@@ -61,12 +61,12 @@
   place-items: center;
   flex: none;
   border-radius: var(--r-pill);
-  background: var(--sheet);
+  background: var(--float);
   color: var(--ink2);
-  font-size: calc(14px + var(--type-up, 0px));
+  font-size: calc(14px + var(--type-up));
 }
 .sm-close:hover {
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
   color: var(--ink);
 }
 .senderm.sm-full .sm-head {
@@ -79,14 +79,14 @@
   min-width: 0;
 }
 .sm-who b {
-  font-size:calc(13px + var(--type-up, 0px));
+  font-size:calc(13px + var(--type-up));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .sm-who small {
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   white-space: nowrap;
   overflow: hidden;
@@ -95,14 +95,14 @@
 /* the situation: "12 messages — now in Ohbox" */
 .sm-now {
   padding: 0 18px 12px;
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
 /* ── what a finished rule pass left elsewhere, and why; the move is the line's own ── */
 .sm-stayed {
   padding: 0 18px 10px;
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -120,22 +120,22 @@
   flex: none;
   padding: 2px 6px;
   margin-right: -6px;
-  border-radius: calc(var(--r-row, var(--r-ctl)) * 6 / 8);
+  border-radius: calc(var(--r-ctl) * 6 / 8);
   font-weight: 600;
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
 }
 .sm-stayed-move:hover {
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
 }
 /* ── "Their rules": every rule deciding this subject's mail, the count on the right ── */
 .sm-rules {
   padding: 0 18px 10px;
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
 .sm-rules-head {
-  font-size:calc(11px + var(--type-up, 0px));
+  font-size:calc(11px + var(--type-up));
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--ink3);
@@ -169,15 +169,15 @@
 /* ── another install organizes this mailbox: a rule from here is made on its next pass ── */
 .sm-org {
   margin: 0 18px 8px;
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
 /* ── a section's label — the settings subhead, at the panel's size; it is also the rule ── */
 .sm-sec {
   padding: 10px 18px 0;
-  border-top: 1px solid var(--line-soft, var(--hair-soft));
-  font-size:calc(11px + var(--type-up, 0px));
+  border-top: 1px solid var(--hair-soft);
+  font-size:calc(11px + var(--type-up));
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--ink3);
@@ -186,7 +186,7 @@
 .sm-shared {
   margin: 0;
   padding: 8px 12px 10px;
-  font-size: calc(12px + var(--type-up, 0px));
+  font-size: calc(12px + var(--type-up));
   line-height: 1.45;
   color: var(--ink2);
 }
@@ -204,12 +204,12 @@
   gap: 2px;
   align-items: flex-start;
   padding: 8px 11px;
-  border-radius: calc(var(--r-row, var(--r-ctl)) * 10 / 8);
-  font-size:calc(12px + var(--type-up, 0px));
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size:calc(12px + var(--type-up));
   font-weight: 550;
   color: var(--ink2);
   text-align: left;
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
   /* A long domain is one word: it breaks inside the tile, never widens the sheet. */
   overflow-wrap: anywhere;
 }
@@ -227,7 +227,7 @@
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  font-size:calc(11px + var(--type-up, 0px));
+  font-size:calc(11px + var(--type-up));
   line-height: 1.4;
   color: var(--ink3);
   font-feature-settings: "tnum";
@@ -237,12 +237,12 @@
   color: var(--ink);
 }
 .sm-scope button.on {
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
   font-weight: 650;
-  background: var(--sheet-new, var(--accent-soft));
+  background: var(--accent-soft);
 }
 .sm-scope button.on small {
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
   opacity: 0.8;
 }
 /* ── where it goes: the five destinations, the current one marked ── */
@@ -256,30 +256,30 @@
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
-  border-radius: calc(var(--r-row, var(--r-card)) * 11 / 14);
-  font-size:calc(13px + var(--type-up, 0px));
+  border-radius: calc(var(--r-card) * 11 / 14);
+  font-size:calc(13px + var(--type-up));
   cursor: pointer;
 }
 .senderm li:hover {
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
 }
 .senderm li.sel {
-  background: var(--sheet-new, var(--accent-soft));
-  color: var(--hot-ink, var(--accent-ink));
+  background: var(--accent-soft);
+  color: var(--accent-ink);
   font-weight: 600;
 }
 .senderm li .ck {
   margin-left: auto;
-  color: var(--hot-ink, var(--accent-ink));
-  font-size:calc(11.5px + var(--type-up, 0px));
+  color: var(--accent-ink);
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 650;
 }
 /* The two destinations that can send mail on your behalf, marked before you reach them. */
 .senderm li .sm-warn {
   margin-left: auto;
-  font-size:calc(11px + var(--type-up, 0px));
+  font-size:calc(11px + var(--type-up));
   font-weight: 650;
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
   opacity: 0.8;
 }
 .senderm li .sm-warn + .ck {
@@ -295,7 +295,7 @@
   gap: 14px;
   width: 100%;
   padding: 11px 18px 10px;
-  border-top: 1px solid var(--line-soft, var(--hair-soft));
+  border-top: 1px solid var(--hair-soft);
   text-align: left;
   font-family: inherit;
   color: var(--ink);
@@ -303,7 +303,7 @@
 }
 .sm-rule:hover,
 .sm-retro:hover {
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
 }
 .sm-rule .lab,
 .sm-retro .lab {
@@ -315,12 +315,12 @@
 }
 .sm-rule .lab b,
 .sm-retro .lab b {
-  font-size:calc(12.5px + var(--type-up, 0px));
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 600;
 }
 .sm-rule .lab small,
 .sm-retro .lab small {
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.45;
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
@@ -336,7 +336,7 @@
    re-declared in the phone block instead would be a second copy that the next shorthand undoes. */
 .sm-rule[aria-checked="true"] .switch,
 .sm-retro[aria-checked="true"] .switch {
-  background-color: var(--hot, var(--accent));
+  background-color: var(--accent);
 }
 .sm-rule[aria-checked="true"] .switch i,
 .sm-retro[aria-checked="true"] .switch i {
@@ -344,7 +344,7 @@
 }
 .sm-rule:focus-visible,
 .sm-retro:focus-visible {
-  outline: 2px solid var(--hot, var(--accent));
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 /* ── the past-mail option: the same settings row, indented under the rule, because it is a
@@ -352,7 +352,7 @@
    selectors above; only the indent, the lighter hairline and the smaller label are its own. ── */
 .sm-retro {
   padding-left: 34px;
-  border-top: 1px solid var(--line-soft, var(--hair-soft));
+  border-top: 1px solid var(--hair-soft);
 }
 .sm-retro .lab b {
   font-weight: 500;
@@ -362,21 +362,21 @@
   display: flex;
   flex-direction: column;
   padding: 5px 8px 6px;
-  border-top: 1px solid var(--line-soft, var(--hair-soft));
+  border-top: 1px solid var(--hair-soft);
 }
 .sm-detail {
   display: block;
   width: 100%;
   padding: 8px 10px;
-  border-radius: calc(var(--r-row, var(--r-ctl)) * 10 / 8);
-  font-size:calc(12px + var(--type-up, 0px));
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   line-height: 1.4;
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
   text-align: left;
 }
 .sm-detail:hover {
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
 }
 /* One of the ways onward is a real link (the address view's row): no underline and no visited
    blue — it wears the row's own ink like its button siblings. */
@@ -386,13 +386,13 @@ a.sm-detail {
 /* ── the reason ── */
 .sm-foot {
   padding: 10px 18px 14px;
-  border-top: 1px solid var(--line-soft, var(--hair-soft));
-  font-size:calc(11.5px + var(--type-up, 0px));
+  border-top: 1px solid var(--hair-soft);
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink3);
 }
 .sm-scope button:focus-visible {
-  outline: 2px solid var(--hot, var(--accent));
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -409,30 +409,30 @@ a.sm-detail {
   gap: 2px;
   align-items: flex-start;
   padding: 8px 11px;
-  border-radius: calc(var(--r-row, var(--r-ctl)) * 10 / 8);
-  font-size:calc(12px + var(--type-up, 0px));
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size:calc(12px + var(--type-up));
   font-weight: 550;
   color: var(--ink2);
   text-align: left;
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
   cursor: text;
 }
 .sm-scope .sm-edit.on {
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
   font-weight: 650;
-  background: var(--sheet-new, var(--accent-soft));
+  background: var(--accent-soft);
 }
 .sm-scope .sm-edit small {
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  font-size:calc(11px + var(--type-up, 0px));
+  font-size:calc(11px + var(--type-up));
   line-height: 1.4;
   font-weight: 450;
   color: var(--ink3);
 }
 .sm-scope .sm-edit.on small {
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
   opacity: 0.8;
 }
 /* The tile's own radio — the lead line as the atomic pick control, the field beside it.
@@ -453,7 +453,7 @@ a.sm-detail {
   text-align: left;
   cursor: pointer;
   font-family: inherit;
-  font-size:calc(11px + var(--type-up, 0px));
+  font-size:calc(11px + var(--type-up));
   font-weight: 600;
   letter-spacing: 0.01em;
   color: inherit;
@@ -481,18 +481,18 @@ input.sm-edit-input {
   min-width: 0;
   margin: 1px 0;
   padding: 3px 0;
-  font-size:max(var(--input-floor, 16px), calc(12.5px + var(--type-up, 0px)));
+  font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
   font-weight: 550;
   color: var(--ink);
-  border-bottom: 1px solid var(--line-soft, var(--hair-soft));
+  border-bottom: 1px solid var(--hair-soft);
 }
 .sm-edit.on .sm-edit-input {
-  color: var(--hot-ink, var(--accent-ink));
-  border-bottom-color: var(--hot, var(--accent-hair));
+  color: var(--accent-ink);
+  border-bottom-color: var(--accent-hair);
 }
 .sm-edit-input:focus {
   outline: none;
-  border-bottom-color: var(--hot-ink, var(--accent-ink));
+  border-bottom-color: var(--accent-ink);
 }
 /* The two warnings keep the count's size and take the ink that means "stop and read" —
    they are statements about what the fragment names, made before anything is written. */
@@ -506,12 +506,12 @@ input.sm-edit-input {
 .sm-confirm {
   margin: 4px 12px 10px;
   padding: 12px 14px;
-  border-radius: var(--r-row, var(--r-card));
-  background: var(--sheet-new, var(--accent-soft));
+  border-radius: var(--r-card);
+  background: var(--accent-soft);
 }
 .sm-confirm p {
   margin: 0;
-  font-size:calc(12.5px + var(--type-up, 0px));
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink);
 }
@@ -519,7 +519,7 @@ input.sm-edit-input {
    styling from `.sm-confirm p` and states its own line-height. */
 .sm-confirm .sm-confirm-fine {
   margin-top: 8px;
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -528,7 +528,7 @@ input.sm-edit-input {
    its own (i). Same inset as `.sm-now`, whose sentence it follows. */
 .senderm > .sm-confirm-fine {
   margin: 0 18px 10px;
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -546,12 +546,12 @@ input.sm-edit-input {
   align-items: stretch;
   width: 100%;
   padding: 8px 11px;
-  border-radius: calc(var(--r-row, var(--r-ctl)) * 10 / 8);
-  font-size:calc(12px + var(--type-up, 0px));
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size:calc(12px + var(--type-up));
   font-weight: 550;
   color: var(--ink2);
   text-align: left;
-  background: var(--sheet, var(--panel));
+  background: var(--panel);
 }
 .sm-choice .head {
   display: flex;
@@ -565,13 +565,13 @@ input.sm-edit-input {
 }
 .sm-choice .n {
   flex: none;
-  font-size:calc(11px + var(--type-up, 0px));
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   font-feature-settings: "tnum";
   font-variant-numeric: tabular-nums;
 }
 .sm-choice small {
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.4;
   color: var(--ink3);
 }
@@ -579,17 +579,17 @@ input.sm-edit-input {
   color: var(--ink);
 }
 .sm-choice.on {
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
   font-weight: 650;
-  box-shadow: inset 0 0 0 2px var(--hot, var(--accent));
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .sm-choice.on small,
 .sm-choice.on .n {
-  color: var(--hot-ink, var(--accent-ink));
+  color: var(--accent-ink);
 }
 /* Focus follows the choice in a radiogroup, so the chosen tile's ring is its focus ring. */
 .sm-choice:focus-visible {
-  outline: 2px solid var(--hot, var(--accent));
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .sm-choice.on:focus-visible {
@@ -605,23 +605,23 @@ input.sm-edit-input {
   margin-top: 12px;
 }
 .sm-confirm-row button {
-  font-size:calc(12px + var(--type-up, 0px));
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   border-radius: var(--r-pill);
   padding: 6px 13px;
   color: var(--ink2);
-  background: var(--sheet, var(--panel));
-  box-shadow: var(--lift-0, var(--oh-ring-line));
+  background: var(--panel);
+  box-shadow: var(--lift-0);
 }
 .sm-confirm-row button.go {
-  color: var(--on-hot, var(--on-accent));
-  background: var(--hot, var(--accent));
+  color: var(--on-accent);
+  background: var(--accent);
 }
 .sm-confirm-row button:hover {
   color: var(--ink);
 }
 .sm-confirm-row button.go:hover {
-  color: var(--on-hot, var(--on-accent));
+  color: var(--on-accent);
   opacity: 0.9;
 }
 
@@ -632,7 +632,7 @@ input.sm-edit-input {
 .sa-bg {
   position: fixed;
   inset: 0;
-  z-index: var(--oh-layer-top, var(--z-pal));
+  z-index: var(--z-pal);
   background: var(--scrim);
 }
 .sa {
@@ -640,13 +640,13 @@ input.sm-edit-input {
   left: 50%;
   top: 10vh;
   transform: translateX(-50%);
-  z-index: var(--oh-layer-top, var(--z-pal));
+  z-index: var(--z-pal);
   width: min(620px, calc(100vw / var(--ui-zoom, 1) - 32px));
   max-height: 76vh;
   overflow-y: auto;
-  border-radius:calc(var(--r-sheet, var(--r-overlay)) * 22 / 20);
-  background: var(--sheet);
-  box-shadow: var(--lift-3, var(--float));
+  border-radius:calc(var(--r-overlay) * 22 / 20);
+  background: var(--float);
+  box-shadow: var(--lift-3);
   padding: 20px 24px 20px;
   animation: rise 0.22s var(--spring);
 }
@@ -656,7 +656,7 @@ input.sm-edit-input {
   gap: 10px;
 }
 .sa-head h3 {
-  font-size:calc(14px + var(--type-up, 0px));
+  font-size:calc(14px + var(--type-up));
   font-weight: 650;
   letter-spacing: -0.01em;
   margin: 0;
@@ -674,12 +674,12 @@ input.sm-edit-input {
   color: var(--ink3);
 }
 .sa-head .x:hover {
-  background: var(--soft-sheet, var(--tint));
+  background: var(--tint);
   color: var(--ink);
 }
 .sa-count,
 .sa-empty {
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink3);
   margin: 8px 0 0;
@@ -691,7 +691,7 @@ input.sm-edit-input {
 }
 .sa-list li {
   padding: 11px 0;
-  border-top: 1px solid var(--line-soft, var(--hair-soft));
+  border-top: 1px solid var(--hair-soft);
 }
 .sa-line {
   display: flex;
@@ -699,7 +699,7 @@ input.sm-edit-input {
   gap: 10px;
 }
 .sa-line b {
-  font-size:calc(12.5px + var(--type-up, 0px));
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -709,10 +709,10 @@ input.sm-edit-input {
 .sa-place {
   margin-left: auto;
   flex: none;
-  font-size:calc(10.5px + var(--type-up, 0px));
+  font-size:calc(10.5px + var(--type-up));
   font-weight: 600;
-  color: var(--hot-ink, var(--accent-ink));
-  background: var(--sheet-new, var(--accent-soft));
+  color: var(--accent-ink);
+  background: var(--accent-soft);
   border-radius:var(--r-pill);
   padding: 2px 9px;
 }
@@ -721,7 +721,7 @@ input.sm-edit-input {
   gap: 10px;
   align-items: baseline;
   margin-top: 3px;
-  font-size:calc(11px + var(--type-up, 0px));
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
 }
 .sa-meta .sa-from {
@@ -738,7 +738,7 @@ input.sm-edit-input {
 }
 .sa-why {
   margin-top: 5px;
-  font-size:calc(11.5px + var(--type-up, 0px));
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink2);
 }
@@ -754,8 +754,8 @@ input.sm-edit-input {
 }
 
 /* The identity fact (mail 0148): body ink behind the shield, the reader line's and the Screener row's mark. */
-.sm-check{display:flex;gap:8px;margin:0;padding:8px 12px 0;font-size:calc(12px + var(--type-up, 0px));font-weight:600;line-height:1.45;color:var(--ink)}
-.sm-check svg{color:var(--hot-ink, var(--accent-ink));flex:none;margin-top:2px}
+.sm-check{display:flex;gap:8px;margin:0;padding:8px 12px 0;font-size:calc(12px + var(--type-up));font-weight:600;line-height:1.45;color:var(--ink)}
+.sm-check svg{color:var(--accent-ink);flex:none;margin-top:2px}
 
 /* UNDER A THUMB, EVERY DOOR AND BOTH VERBS ARE 44: the destinations drew 39px and
    the confirm pair 31.5px at 390. Drawn, not stripped — the rows and the pair sit edge to edge. */

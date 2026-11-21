@@ -1,5 +1,7 @@
-import type { ThreadPanel } from "@ohmail/client-engine";
+import type { StreamHand, StreamItemBox, StreamLook, StreamReadRule } from "./stream-read-types.js";
+export type { StreamHand, StreamItemBox, StreamLook, StreamReadRule } from "./stream-read-types.js";
 import { previewEvidence } from "./preview-evidence.js";
+import { createStreamBand } from "./stream-band.js";
 
 /**
  * The News and Receipts visit's read evidence. A mounted stream measures the visible sender and
@@ -10,6 +12,8 @@ import { previewEvidence } from "./preview-evidence.js";
 
 /** How long a hand scroll or a chosen letter must rest. */
 export const STREAM_REST_MS = 600;
+/** A folded snippet at the cursor needs a longer, deliberate rest. */
+export const STREAM_SNIPPET_REST_MS = 2000;
 /** The first lines of an item that must stand wholly in view for it to count as shown. */
 export const STREAM_FIRST_LINES_PX = 96;
 /** How far past the top (going down) or the foot (going up) an item must be carried. */
@@ -19,71 +23,6 @@ export const STREAM_END_SLACK_PX = 2;
 /** How long after the last wheel step or key a scroll is still the hand's; a finger's momentum runs longer. */
 export const STREAM_HAND_MS = 450;
 export const STREAM_TOUCH_HAND_MS = 1500;
-
-export interface StreamItemBox {
-  /** The measured sender and preview text, in the same content coordinates as the card. */
-  readonly lines?: Pick<ThreadPanel, "first" | "lead" | "end">;
-  readonly id: string;
-  /** From the top of the stream's content, in CSS px. */
-  readonly top: number;
-  readonly height: number;
-  readonly unread: boolean;
-  /** Its body is in: an item drawn as a placeholder is never read live. */
-  readonly ready: boolean;
-}
-export interface StreamLook {
-  readonly scrollTop: number;
-  /** The part of the scroller where text can be read. */
-  readonly viewHeight: number;
-  /** The whole scrollport, for judging overflow and how far it moved. */
-  readonly physicalHeight?: number;
-  readonly scrollHeight: number;
-  /** The mounted items, measured. */
-  readonly items: readonly StreamItemBox[];
-  /** The clock of the look, in ms (the caller's). */
-  readonly at: number;
-}
-export type StreamHand = "wheel" | "touch" | "key";
-
-export interface StreamReadRule {
-  /** A press in the stream or on a row, an arrow, `j` or `k`: the stream is driven, and the scroll that follows is not the hand's. */
-  enter(at: number, letter?: string, viewport?: boolean): void;
-  /** Withdrawing a Search result ends its read dwell, including when history later previews the same letter. */
-  selectionChanged(openId: string | null): void;
-  /** A passive address ends the permission to read and move the line from the previous screen. */
-  preview(): void;
-  /** The letter still eligible for a dwell started by choosing it. */
-  holdsEntered(id: string): boolean;
-  /** A scroll key that jumps to an end (End, Home, Ctrl or Cmd with an arrow): driven by a hand; its scroll is a flight. */
-  scrollKey(at: number): void;
-  /** The app moved the stream (a landing, the hold): the scroll that follows is not the hand's, and nothing is driven. */
-  appMoved(at: number): void;
-  /** A wheel step, a finger moving on the stream (`touching` while it is down), or Space, Page Up, Page Down. */
-  hand(kind: StreamHand, at: number, touching?: boolean): void;
-  /** A finger came down on the stream: driven, and what it scrolls is the hand's; no hand for the leave until it moves. */
-  touchDown(at: number): void;
-  /** The finger lifted: its momentum is the hand's a while; a tap that never moved is no hand for the leave. */
-  touchUp(at: number): void;
-  /** A scroll was seen: what it carried through, read now. `flight`: a jump of many screens. */
-  look(l: StreamLook, attended: boolean, flight: boolean, receiptAttended?: boolean): readonly string[];
-  /** A hand on a stream that fits whole: what stands in it, read now (nothing where the stream overflows). */
-  still(l: StreamLook, by: StreamHand): readonly string[];
-  /** The application finished a landing: record the displayed screen. */
-  settled(l: StreamLook): void;
-  /** Fired STREAM_REST_MS after the last scroll: the item the stream rests on, read now. */
-  rest(l: StreamLook, restingId: string | null, openId?: string | null): readonly string[];
-  /** Observe pending previews, or clear their dwell when attention leaves. */
-  previewDwell(look: StreamLook | null): readonly string[];
-  readonly previewDue: number | null;
-  keepUnread(id: string): void;
-  keptUnread(id: string): boolean;
-  shown(id: string): boolean;
-  /** This visit read it, live or by the rule while its body was not in, and it was not marked unread since: the leave flips it. */
-  read(id: string): boolean;
-  readonly driven: boolean;
-  /** A wheel, a moving finger or a scroll key moved the stream this visit: what the leave answers to. */
-  readonly handDrove: boolean;
-}
 
 /** Its first lines stand wholly in the view from `top` to `foot`. */
 const firstLinesIn = (item: StreamItemBox, top: number, foot: number): boolean =>
@@ -121,14 +60,21 @@ function restingAt(look: StreamLook): string | null {
   return resting;
 }
 
-function readPast(l: StreamLook, up: boolean, readable: (item: StreamItemBox) => boolean): string[] {
+function readPast(
+  l: StreamLook,
+  previous: number,
+  up: boolean,
+  readable: (item: StreamItemBox) => boolean,
+): string[] {
   const top = l.scrollTop;
   const foot = top + l.viewHeight;
   const atEnd = atTheEnd(l, up);
   const past: string[] = [];
   for (const item of l.items) {
     const pastLine = carriedPast(item, up, top, foot);
-    if ((atEnd || pastLine) && readable(item)) past.push(item.id);
+    const wasInView = item.top + item.height > previous && item.top < previous + l.viewHeight;
+    const restsAtEnd = atEnd && firstLinesIn(item, top, foot);
+    if (((wasInView && (atEnd || pastLine)) || restsAtEnd) && readable(item)) past.push(item.id);
   }
   return past;
 }
@@ -156,6 +102,7 @@ function trackReads(shownIds: Set<string>, kept: Set<string>, owed: Set<string>,
 interface Visit {
   driven: boolean;
   textDriven: boolean;
+  bandDriven: boolean;
   enteredLetter: string | null;
   enteredViewport: boolean;
   handDrove: boolean;
@@ -168,6 +115,7 @@ export function createStreamReadRule(receipts = false): StreamReadRule {
   const visit: Visit = {
     driven: false,
     textDriven: false,
+    bandDriven: false,
     enteredLetter: null,
     enteredViewport: false,
     handDrove: false,
@@ -185,6 +133,7 @@ export function createStreamReadRule(receipts = false): StreamReadRule {
   const owed = new Set<string>();
   const reads = trackReads(shownIds, kept, owed, receipts);
   const evidence = previewEvidence(reads.unread, owed);
+  const band = createStreamBand();
 
   const byHand = (at: number): boolean =>
     touching || at - handAt < (handKind === "touch" ? STREAM_TOUCH_HAND_MS : STREAM_HAND_MS);
@@ -205,6 +154,7 @@ export function createStreamReadRule(receipts = false): StreamReadRule {
     },
     enter(_at, letter, viewport = false) {
       evidence.dwell(null);
+      band.clear();
       visit.handRest = false;
       visit.enteredLetter = letter ?? null;
       visit.enteredViewport = viewport || (letter !== undefined && visit.handDrove);
@@ -226,17 +176,20 @@ export function createStreamReadRule(receipts = false): StreamReadRule {
       visit.textDriven = false;
       visit.enteredLetter = null;
       visit.handDrove = false;
+      visit.bandDriven = false;
       visit.handRest = false;
       handAt = Number.NEGATIVE_INFINITY;
       touching = false;
       visit.lastTop = null;
       shownIds.clear();
       shownPreviews.clear();
+      band.clear();
       evidence.reset();
       owed.clear();
     },
     holdsEntered: (id) => visit.enteredLetter === id,
     scrollKey() {
+      band.clear();
       evidence.dwell(null);
       shownIds.clear();
       shownPreviews.clear();
@@ -245,12 +198,15 @@ export function createStreamReadRule(receipts = false): StreamReadRule {
       visit.enteredLetter = null;
       visit.driven = true;
       visit.textDriven = true;
+      visit.bandDriven = true;
       visit.handDrove = true;
       /* What the jump flies past is its flight's, not the hand's. */
       handAt = Number.NEGATIVE_INFINITY;
       touching = false;
     },
     appMoved() {
+      band.clear();
+      visit.bandDriven = false;
       evidence.dwell(null);
       shownIds.clear();
       shownPreviews.clear();
@@ -260,63 +216,75 @@ export function createStreamReadRule(receipts = false): StreamReadRule {
       touching = false;
     },
     hand(kind, at, isTouching) {
+      if (!byHand(at)) band.clear();
+      visit.bandDriven = true;
       visit.handDrove = true;
       handOn(kind, at, isTouching === true);
     },
     touchDown: (at) => handOn("touch", at, true),
     touchUp: (at) => handOn("touch", at, false),
-    ...streamObservation(visit, { shownIds, shownPreviews, kept, reads, evidence, receipts, byHand }),
+    ...streamObservation(visit, { shownIds, shownPreviews, kept, reads, evidence, receipts, byHand, band }),
     get previewDue() {
       return evidence.due;
     },
   };
 }
 
+type StreamObservation = Pick<
+  StreamReadRule,
+  | "look"
+  | "still"
+  | "band"
+  | "settled"
+  | "rest"
+  | "previewDwell"
+  | "keepUnread"
+  | "keptUnread"
+  | "shown"
+  | "read"
+>;
+
+interface ObservationInputs {
+  shownIds: Set<string>;
+  shownPreviews: Set<string>;
+  kept: Set<string>;
+  reads: ReturnType<typeof trackReads>;
+  evidence: ReturnType<typeof previewEvidence>;
+  receipts: boolean;
+  byHand: (at: number) => boolean;
+  band: ReturnType<typeof createStreamBand>;
+}
+
 function streamObservation(
   visit: Visit,
-  {
-    shownIds,
-    shownPreviews,
-    kept,
-    reads,
-    evidence,
-    receipts,
-    byHand,
-  }: {
-    shownIds: Set<string>;
-    shownPreviews: Set<string>;
-    kept: Set<string>;
-    reads: ReturnType<typeof trackReads>;
-    evidence: ReturnType<typeof previewEvidence>;
-    receipts: boolean;
-    byHand: (at: number) => boolean;
-  },
-): Pick<
-  StreamReadRule,
-  "look" | "still" | "settled" | "rest" | "previewDwell" | "keepUnread" | "keptUnread" | "shown" | "read"
-> {
+  { shownIds, shownPreviews, kept, reads, evidence, receipts, byHand, band }: ObservationInputs,
+): StreamObservation {
   return {
     look(l, attended, flight, receiptAttended) {
       const previous = visit.lastTop ?? l.scrollTop;
       const height = l.physicalHeight ?? l.viewHeight;
       const resized = visit.lastHeight !== null && visit.lastHeight !== height;
-      const moved = l.scrollTop !== previous;
+      const delta = l.scrollTop - previous;
       visit.lastTop = l.scrollTop;
       visit.lastHeight = height;
       if (!attended || flight || resized) {
         visit.handRest = false;
+        band.clear();
         if (!attended) evidence.dwell(null);
         return [];
       }
       rememberShown(l, shownIds, shownPreviews);
-      if (!moved) return [];
+      if (delta === 0) return [];
       visit.handRest = visit.driven && byHand(l.at);
-      if (Math.abs(l.scrollTop - previous) > height) evidence.dwell(null);
+      const discontinuous = Math.abs(delta) >= height;
+      band.scroll(l, !discontinuous && delta > 0 && visit.handRest);
+      if (discontinuous) evidence.dwell(null);
       if (!visit.handRest) return [];
       visit.textDriven = true;
-      const up = l.scrollTop < previous;
+      if (discontinuous) return [];
+      const up = delta < 0;
       return reads.write(
-        readPast(l, up, (item) => {
+        readPast(l, previous, up, (item) => {
           // An unfinished receipt can pass its preview at the top. Upward movement still needs its displayed-text dwell.
           const preview =
             shownPreviews.has(item.id) && (receipts ? !up && receiptAttended : item.lines !== undefined);
@@ -325,11 +293,13 @@ function streamObservation(
       );
     },
     still(l, _by) {
+      band.sample(l);
       rememberShown(l, shownIds, shownPreviews);
       if (l.viewHeight <= 0 || l.scrollHeight - (l.physicalHeight ?? l.viewHeight) > STREAM_END_SLACK_PX)
         return [];
       visit.driven = true;
       visit.textDriven = true;
+      visit.bandDriven = true;
       visit.handDrove = true;
       const foot = l.scrollTop + l.viewHeight;
       const past: string[] = [];
@@ -339,12 +309,17 @@ function streamObservation(
       }
       return reads.write(past);
     },
+    band(l) {
+      if (!visit.bandDriven || l.viewHeight <= 0) return [];
+      rememberShown(l, shownIds, shownPreviews);
+      return reads.write(band.read(l, (item) => reads.readable(item, true)));
+    },
     settled(l) {
       visit.lastTop = l.scrollTop;
       visit.lastHeight = l.physicalHeight ?? l.viewHeight;
       rememberShown(l, shownIds, shownPreviews);
     },
-    rest(l, restingId, openId) {
+    rest(l, restingId, openId, snippetRested) {
       rememberShown(l, shownIds, shownPreviews);
       const target = visit.enteredLetter ?? restingId ?? (visit.handRest ? restingAt(l) : null);
       if (!visit.driven || target === null) return [];
@@ -357,9 +332,11 @@ function streamObservation(
       const lead = item.lines?.lead;
       const previewVisible = lead != null && lead.top >= l.scrollTop && lead.bottom <= foot;
       const preview = visit.handRest && visit.enteredLetter === null && previewVisible && !receipts;
+      if (!item.ready && preview && !snippetRested) return [];
       return reads.readable(item, preview) ? reads.write([item.id]) : [];
     },
-    previewDwell(l) {
+    previewDwell(l, judged) {
+      if (l && judged) return reads.write(evidence.judgedDwell(l, judged !== "settled"));
       if (!l || !visit.textDriven) return evidence.dwell(null);
       const observed =
         visit.enteredLetter === null || visit.enteredViewport

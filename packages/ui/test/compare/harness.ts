@@ -74,6 +74,8 @@ export interface KitSubject {
   on?: "ground" | "sheet" | "screen" | ((look: Look) => "ground" | "sheet");
   /** Further root attributes of this state, without the `data-` (`{ icons: "0", product: "cal" }`). */
   root?: Record<string, string>;
+  /** Password values are set on the node, since they are absent from static markup. */
+  passwordValue?: string;
   /** The node that is compared, as a selector inside the stage. Left out: everything the stage holds. */
   target?: string;
   /** A state a pointer or a key makes: made on the real node, after the page is drawn. */
@@ -314,6 +316,11 @@ export async function draw(
   let alone: Scene | null = null;
   const drew = await shoot(browser, variant, async (page) => {
     await page.setContent(html, { waitUntil: "load" });
+    if (subject.passwordValue !== undefined) {
+      await page.locator('input[type="password"]').evaluateAll((inputs, value) => {
+        for (const input of inputs) (input as HTMLInputElement).value = value;
+      }, subject.passwordValue);
+    }
     /* A part that keeps its own place in the window stands where its reference stood, as the app sets it at its anchor. */
     if (subject.place === "window" && reference.place !== "window") {
       await page.evaluate(

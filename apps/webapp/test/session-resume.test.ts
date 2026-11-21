@@ -519,7 +519,7 @@ describe("the refresh client", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const body = src.slice(start, end);
-    expect(body).toMatch(/const retryOwner = \(\): OwnerVerdict => whose\(opts\.ceremony/);
+    expect(body).toMatch(/const retryOwner = \(\): OwnerVerdict => opts\.mayProceed\?\.\(\) === false \? "mismatch"\s*: whose\(opts\.ceremony/);
     expect(body).toMatch(/const resumed = sessionMints\(\) !== mintsAtSend\s*\? "resumed" : await resumeSession\(\{/);
     expect(body).toMatch(/mayProceed: \(\) => retryOwner\(\) === "holds", staleJar: jarAtSend,/);
     expect(body).toMatch(/if \(resumed === "unavailable"\) throw sessionUncheckedError\(\);/);

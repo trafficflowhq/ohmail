@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { build } from "esbuild";
 import {
   BlockedImages,
   DesignedLetter,
@@ -35,7 +36,30 @@ const part = (key: string, target: string, render: (look: Look) => ReactNode): K
 });
 
 const tracker = { caption: "Tracker blocked", sentence: "A tracking pixel was blocked." };
-const chip = (open: boolean) => <BlockedImages {...tracker} open={open} onOpen={shut} onClose={shut} />;
+const chip = () => <BlockedImages {...tracker} open={false} onOpen={shut} onClose={shut} />;
+
+function openTrackerCard(): Promise<string> {
+  return (trackerCardScript ??= build({
+    stdin: {
+      contents: `
+        import { createRoot } from "react-dom/client";
+        import { BlockedImages } from "./packages/ui/src/mail/Reading/BlockedImages.tsx";
+        const shut = () => {};
+        createRoot(document.querySelector("[data-stage]")).render(
+          <BlockedImages {...${JSON.stringify(tracker)}} open onOpen={shut} onClose={shut} />
+        );
+      `,
+      resolveDir: process.cwd(),
+      loader: "tsx",
+    },
+    bundle: true,
+    write: false,
+    jsx: "automatic",
+    loader: { ".css": "empty" },
+  }).then(({ outputFiles }) => outputFiles[0]!.text));
+}
+
+let trackerCardScript: Promise<string> | undefined;
 const head = (more: Partial<MessageHeadProps>): MessageHeadProps => ({
   sender: W.person("Drehscheibe", "brief@drehscheibe-magazin.example"),
   menu: { label: "Message" },
@@ -142,10 +166,27 @@ function clubLetter(look: Look): { document: string; paper?: string } {
 }
 
 export const letters: KitSubject[] = [
-  { key: "BlockedImages/chip", on: "sheet", target: ".oh-blocked", render: () => onSheet(chip(false)) },
-  /* It opens over the letter's sheet. */
-  { key: "BlockedImages/said", place: "window", on: "sheet", target: ".oh-menu", render: () => chip(true) },
-  part("MessageHead/noted", ".oh-messagehead", () => <MessageHead {...head({ note: chip(false) })} />),
+  { key: "BlockedImages/chip", on: "sheet", target: ".oh-blocked", render: () => onSheet(chip()) },
+  {
+    key: "BlockedImages/said",
+    place: "window",
+    on: "sheet",
+    target: ".oh-menu",
+    // The harness positions this marker before the chip and its card mount.
+    render: () => <div className="oh-menu" hidden />,
+    act: async (page) => {
+      const position = await page.locator(".oh-menu[hidden]").evaluate(({ style }) => ({
+        left: style.left,
+        top: style.top,
+      }));
+      await page.addScriptTag({ content: await openTrackerCard() });
+      await page.locator(".oh-menu:not([hidden], [data-sheet])").evaluate((card, { left, top }) => {
+        card.style.left = left;
+        card.style.top = top;
+      }, position);
+    },
+  },
+  part("MessageHead/noted", ".oh-messagehead", () => <MessageHead {...head({ note: chip() })} />),
   part("MessageHead/marks", ".oh-messagehead", () => (
     <MessageHead
       {...head({

@@ -8,7 +8,7 @@ it("issues a routing reference for a full session and accepts only that account 
   const route = selfHostRoutes.find((route) => route.method === "GET" && route.pattern === "/auth/session")!;
   const session = (accountId: string, scope: ResolvedSession["scope"] = "full", via: ResolvedSession["via"] = "cookie"): ResolvedSession => ({
     accountId, scope, userId: "person", sessionId: "session", via,
-    lastTwofaAt: null, emailVerifiedAt: null,
+    lastTwofaAt: null,
   });
   let time = 1_000;
   const request = (query: string, session: ResolvedSession | null) => route.handler(

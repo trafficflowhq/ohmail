@@ -8,7 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
-import { pickedRows as seatedPicked } from "./ohbox/_finders.js";
+import { ohboxRows, pickedRows as seatedPicked } from "./ohbox/_finders.js";
 
 /**
  * ═══ "MOVE TO <PLACE>" OVER A SELECTION WRITES ROUTING, NOT FOLDER MOVES ════════════════════
@@ -74,7 +74,7 @@ async function mountShell(): Promise<void> {
       }),
     }));
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
   await key("j");
 }
 

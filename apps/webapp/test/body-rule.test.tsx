@@ -72,8 +72,6 @@ async function mountSender(list: EngineMessage[], seedId: string, rules: RuleDTO
   const reader = within(frame.getByRole("region", { name: messages.frame.landmark.reading }));
   await click(reader.getByRole("button", { name: (name) => name.startsWith(SENDER) }));
   const page = within(document.body);
-  const contact = within(page.getByRole("dialog", { name: messages.message.contactAria.replace("{who}", SENDER) }));
-  await click(contact.getByRole("menuitem", { name: messages.screening.action }));
   return {
     el: page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", SENDER) }),
     mutate,
@@ -83,7 +81,7 @@ async function mountSender(list: EngineMessage[], seedId: string, rules: RuleDTO
 
 async function renderSheet(list: EngineMessage[], seedId: string, rules: RuleDTO[] = []) {
   const { el, mutate, page } = await mountSender(list, seedId, rules);
-  await click(within(el).getByRole("button", { name: messages.screening.subjectRuleOpen }));
+  await click(within(el).getByRole("menuitem", { name: messages.screening.cardSubject }));
   return {
     el: page.getByRole("dialog", { name: messages.screening.subjectAria.replace("{who}", SENDER) }),
     ruleWrites: () => mutate.mock.calls.map(([mutation]) => mutation).filter((mutation) => mutation.kind.startsWith("rule_")),
@@ -175,7 +173,7 @@ describe("the whole-sender sheet leaves a body rule alone", () => {
     const mounted = await mountSender(CORPUS(), "invoice", [
       ruleRow({ id: "narrow", destination: "ohmail/Receipts", bodyContains: TOKEN }),
     ]);
-    await chooseNews(mounted.el);
+    await click(within(mounted.el).getByRole("radio", { name: /^News/ }));
     await finishWholeSenderPress(mounted.page);
     expect(mounted.mutate.mock.calls.map(([mutation]) => mutation).filter(({ kind }) => kind.startsWith("rule_")))
       .toEqual([expect.objectContaining({ kind: "rule_create", ruleKind: "sender", match: SENDER, destination: "ohmail/News" })]);
@@ -194,7 +192,7 @@ describe("the whole-sender sheet leaves a body rule alone", () => {
       ruleRow({ id: "bare", destination: "ohmail/Receipts" }),
       ruleRow({ id: "narrow", destination: "ohmail/News", bodyContains: TOKEN }),
     ]);
-    await chooseNews(mounted.el);
+    await click(within(mounted.el).getByRole("radio", { name: /^News/ }));
     await finishWholeSenderPress(mounted.page);
     expect(mounted.mutate.mock.calls.map(([mutation]) => mutation).filter(({ kind }) => kind.startsWith("rule_")))
       .toEqual([expect.objectContaining({ kind: "rule_update", ruleId: "bare" })]);

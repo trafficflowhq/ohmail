@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 300, 44],
   "clip": [24, 24, 300, 44],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "fold",
     "face": "ohmarchy",
@@ -53,7 +53,7 @@
   "nodes": [
     {
       "role": "status",
-      "name": "",
+      "name": "Parked",
       "box": [0, 0, 300, 44],
       "drawn": {
         "color": "rgb(255, 252, 240)",

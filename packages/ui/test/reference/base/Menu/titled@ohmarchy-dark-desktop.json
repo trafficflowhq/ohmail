@@ -3,9 +3,9 @@
   "state": "titled",
   "look": "ohmarchy-dark-desktop",
   "place": "block",
-  "target": [1169, 583, 248.6094, 245.7969],
-  "clip": [1169, 583, 249, 246],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [1167, 583, 248.6094, 245.7969],
+  "clip": [1167, 583, 249, 246],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",

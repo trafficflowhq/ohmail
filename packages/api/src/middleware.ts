@@ -1,4 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { and, eq } from "drizzle-orm";
+import { assertBinding, users } from "@trafficflow/db";
 import {
   ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin, PRESS_AGE_MAX_MS, pressIsAged,
 } from "@trafficflow/services/mail";
@@ -586,13 +588,21 @@ export const withStepUp: Middleware = (next, route) => async (req, deps, params)
  * `deps.requireVerifiedForProduct !== false`: only the exact boolean `false` relaxes.
  */
 export const withSpendGate: Middleware = (next, route) => async (req, deps, params) => {
-  if (deps.requireVerifiedForProduct !== false
-    && deps.session && deps.session.emailVerifiedAt == null && !unverifiedMayReach(route.cost)) {
-    return errorResponse(
-      "email_unverified", 403,
-      "Confirm your email address first. We sent a link when you signed up — " +
-      "open it, or ask for a new one, and then try again.",
-    );
+  const session = deps.session;
+  if (deps.requireVerifiedForProduct !== false && session && !unverifiedMayReach(route.cost)) {
+    // withSession has bound the request's handle to the account the session row named.
+    assertBinding(deps.db, session.accountId);
+    const [user] = await deps.db.select({ emailVerifiedAt: users.emailVerifiedAt })
+      .from(users)
+      .where(and(eq(users.id, session.userId), eq(users.accountId, session.accountId)))
+      .limit(1);
+    if (user?.emailVerifiedAt == null) {
+      return errorResponse(
+        "email_unverified", 403,
+        "Confirm your email address first. We sent a link when you signed up — " +
+        "open it, or ask for a new one, and then try again.",
+      );
+    }
   }
   /**
    * The access arm — one place, so a refused account meets the same answer at every door. 402 and

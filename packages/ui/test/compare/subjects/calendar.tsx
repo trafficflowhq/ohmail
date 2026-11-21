@@ -8,7 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { Button, design, Dot, Faces, Slot } from "../../../src/base/index.js";
+import { Button, design, Dot, Faces, Icon, Slot } from "../../../src/base/index.js";
 import {
   AgendaRow,
   AllDayRow,
@@ -472,6 +472,8 @@ const rows: KitSubject[] = [
       shown
       switchLabel="Show Mila"
       defaultLabel="New events go here"
+      onToggle={() => {}}
+      onMenu={() => {}}
     />
   )),
   row(
@@ -482,6 +484,8 @@ const rows: KitSubject[] = [
         tone={tone(look, "studio")}
         shown
         switchLabel="Show Lichtgrat studio"
+        onToggle={() => {}}
+        onMenu={() => {}}
       />
     ),
     force(".oh-calrow", "hover"),
@@ -493,10 +497,19 @@ const rows: KitSubject[] = [
       shown
       switchLabel="Show Catalogue 2027"
       viewOnlyLabel="View only"
+      onToggle={() => {}}
+      onMenu={() => {}}
     />
   )),
   row("hidden", (look) => (
-    <CalendarRow name="Home" tone={tone(look, "home")} shown={false} switchLabel="Show Home" />
+    <CalendarRow
+      name="Home"
+      tone={tone(look, "home")}
+      shown={false}
+      switchLabel="Show Home"
+      onToggle={() => {}}
+      onMenu={() => {}}
+    />
   )),
   row("neutral", () => (
     <CalendarRow
@@ -505,6 +518,8 @@ const rows: KitSubject[] = [
       shown
       switchLabel="Show Holidays in Switzerland"
       viewOnlyLabel="View only"
+      onToggle={() => {}}
+      onMenu={() => {}}
     />
   )),
 ];
@@ -895,7 +910,12 @@ const cards: KitSubject[] = [
       why={{ text: "View only", locked: true }}
       close={close}
       rows={[
-        { label: "Calendar", tone: tone(look, "catalogue"), text: "Catalogue 2027" },
+        {
+          label: "Calendar",
+          tone: tone(look, "catalogue"),
+          text: "Catalogue 2027",
+          children: <Icon name="lock" size={16} className="oh-ecard-lock" />,
+        },
         { label: "Access", text: "View only · from Inês Carvalho" },
         { label: "From", link: { label: "Inês Carvalho" } },
       ]}
@@ -1184,6 +1204,7 @@ const typedForm = (look: Look) => (
     adds={ADDS}
     more={{ label: "More fields" }}
     submit={{ label: "Add", keyHint: "↵" }}
+    cancel={{ label: "Cancel" }}
   />
 );
 const fullForm = (look: Look) => (

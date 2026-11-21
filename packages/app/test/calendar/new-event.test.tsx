@@ -196,6 +196,8 @@ it.each([
   mountFrame("#/cal/day/2026-11-16", world(), NONE);
   const column = screen.getByRole("group", { name: /November 16/ });
   vi.spyOn(column, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ width: 120, height: 1440 }));
+  const hours = column.closest("[data-today-scroll]")!;
+  vi.spyOn(hours, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ width: 120, height: 900 }));
   const pointer = (target: EventTarget, type: string, y: number) =>
     fireEvent(
       target,

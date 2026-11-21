@@ -67,6 +67,7 @@ const naming = declaring.filter((n) => /disabledReason:\s*"no_cursor"/.test(read
  * under test, not a note about it.
  */
 const EXEMPT: Record<string, string> = {
+  "place-list/use-row-selection.ts": "Escape clears the rows picked in a list; the binding exists only while at least one row is picked, and it acts on the picks, never on a cursor row",
   "write/keys.ts":
     "the composer's own send and schedule chords — a writing surface with no list and no cursor; "
     + "the digits are the picker's, and are declared `inWriting` for that reason",

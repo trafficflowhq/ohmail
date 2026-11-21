@@ -397,6 +397,10 @@ async function shellModules() {
   const { CloudShell } = await import("../../app/(product)/mailbox/CloudShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { THEME_DOOR } = await import("../../app/shell/face-mirror.js");
+  const { prepareWriting } = await import("@ohmail/app/mail");
+  await prepareWriting();
+  await import("../../../../packages/app/src/settings/place.js");
+  await import("../../../../packages/app/src/settings/SettingsReading.js");
   return { CloudShell, ThemeProvider, ToastHost, THEME_DOOR };
 }
 

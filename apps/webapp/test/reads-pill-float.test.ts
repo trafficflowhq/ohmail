@@ -132,9 +132,9 @@ describe("the reading card's pill floats", () => {
     const wide = mediaBlock(app(), "max-width: 699.98px");
     expect(wide, "app.css has no phone block").not.toBe("");
     const viewStream = /\.view \.stream \{[^}]*\}/.exec(wide)?.[0] ?? "";
-    // The sending pill's height (`--send-pill-h`) joins the spacer, so the last card rests clear of it;
-    // the safe area stays last.
-    expect(viewStream).toContain("--stream-tail: calc(48px + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px))");
+    // The frame's notice is above the stream. The phone clearance is held in
+    // packages/app/test/streams/send-notice-clearance.test.tsx.
+    expect(viewStream).toContain("--stream-tail: calc(48px + env(safe-area-inset-bottom, 0px))");
     expect(viewStream, "the phone's stream is padding its bottom again, which moves the pinned bar up")
       .toMatch(/padding: 0 6px 0;/);
   });

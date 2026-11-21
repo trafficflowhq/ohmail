@@ -5,7 +5,7 @@
   "place": "block",
   "target": [28, 213.3906, 334, 12],
   "clip": [28, 213, 334, 13],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "paper",
@@ -23,8 +23,16 @@
   ],
   "types": [],
   "paints": [
-    { "backgroundColor": "rgb(18, 16, 14)", "borderRadius": "999px 0px 0px 999px" },
-    { "backgroundColor": "rgb(90, 83, 75)" },
+    {
+      "backgroundColor": "rgb(18, 16, 14)",
+      "boxShadow": "rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
+      "borderRadius": "999px 0px 0px 999px"
+    },
+    {
+      "backgroundColor": "rgb(90, 83, 75)",
+      "boxShadow": "rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
+      "borderRadius": "20px"
+    },
     { "backgroundColor": "rgb(18, 16, 14)" }
   ],
   "nodes": [
@@ -48,8 +56,8 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "surfaces": [
-        { "box": [0, 0, 13.2, 12], "paint": 0 },
-        { "box": [13.2, 0, 2.5, 12], "paint": 1 },
+        { "box": [0, 0, 232, 16], "paint": 0 },
+        { "box": [13.2, 0, 232, 16], "paint": 1 },
         { "box": [333, -4, 2, 20], "paint": 2 }
       ]
     }

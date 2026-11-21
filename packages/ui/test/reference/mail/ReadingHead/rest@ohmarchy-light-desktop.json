@@ -5,7 +5,7 @@
   "place": "block",
   "target": [724, 11, 706, 77.3906],
   "clip": [724, 11, 706, 78],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",
@@ -178,7 +178,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(16, 15, 15)"
       },
-      "level": 1,
+      "level": 2,
       "text": [{ "said": "Glaze order #2291", "type": 5 }]
     }
   ],

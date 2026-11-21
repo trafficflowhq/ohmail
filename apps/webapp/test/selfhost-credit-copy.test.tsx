@@ -82,6 +82,7 @@ async function mountQuote(
       const senders = ask.senders.length;
       return Response.json({
         dryRun: true, requested: senders, quoted: senders, quotedCredits: managed ? senders : 0,
+        quoteGrant: { proof: "fixture-quote", pairs: ask.senders.map((sender, i) => ({ sender, messageId: "m-" + i })) },
         charged: 0, suggestions: [], skipped: [],
       });
     }
@@ -102,6 +103,7 @@ async function mountQuote(
     children: shell,
   }));
   const view = within(container);
+  await act(async () => { await vi.dynamicImportSettled(); });
   await tick(1_000);
   const offer = hash === "#/screener"
     ? view.getByRole("button", { name: catalogue.screener.suggest.open })

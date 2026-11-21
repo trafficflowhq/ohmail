@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [219.9844, 244.5938, 142.0156, 32],
   "clip": [219, 244, 143, 33],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "ohmarchy",

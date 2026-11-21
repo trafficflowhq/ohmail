@@ -113,6 +113,7 @@ export const cloudSuggestWire: SuggestWire = {
         ...(opts.dryRun
           ? { senders, dryRun: true }
           : { senders, ...(typeof opts.maxCredits === "number" ? { maxCredits: opts.maxCredits } : {}) }),
+        ...(!opts.dryRun && opts.quoteGrant !== undefined ? { quoteGrant: opts.quoteGrant } : {}),
         ...(opts.automatic === true ? { automatic: true } : {}),
       }),
     }),

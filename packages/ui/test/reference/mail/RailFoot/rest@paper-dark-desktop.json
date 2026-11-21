@@ -5,7 +5,7 @@
   "place": "block",
   "target": [12, 796, 232, 92],
   "clip": [12, 796, 232, 92],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -105,7 +105,7 @@
     },
     {
       "role": "button",
-      "name": "M Mila Brunner 2 mailboxes",
+      "name": "Mila Brunner · 2 mailboxes · mila@lichtgrat.example",
       "box": [0, 44, 166, 48],
       "drawn": {
         "color": "rgb(246, 241, 233)",

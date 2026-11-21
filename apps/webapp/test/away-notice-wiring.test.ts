@@ -66,7 +66,7 @@ describe("the shell wiring, pinned by source", () => {
     const registration = mounted("packages/app/src/mail/panes.ts");
     const available = mounted("packages/app/src/host/panes.ts");
     const facts = mounted("packages/app/src/settings/facts.ts");
-    expect(registration).toContain('away: parts.away === NONE ? NONE : paneOf("away", { Body: parts.away })');
+    expect(registration).toContain('away: parts.away === NONE ? NONE : paneOf("away", { Body: parts.away, useSummary: useAwaySummary })');
     expect(available).toContain("away: wires.away !== NONE && capabilities.awayRunsOn !== NONE");
     expect(facts).toContain('away: fact("mail", "reply", said("away"), byHost("away"))');
     const pane = read("(product)/mailbox/pane-parts.tsx");

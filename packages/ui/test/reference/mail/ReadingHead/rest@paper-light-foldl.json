@@ -3,9 +3,9 @@
   "state": "rest",
   "look": "paper-light-foldl",
   "place": "block",
-  "target": [427, 11, 402, 91.875],
-  "clip": [427, 11, 402, 92],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [427, -25, 402, 87.875],
+  "clip": [427, 0, 402, 63],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "foldl",
     "face": "paper",
@@ -23,69 +23,16 @@
   ],
   "types": [
     {
-      "color": "oklch(0.36 0.105 78)",
-      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "800",
-      "fontStyle": "normal",
-      "lineHeight": "13px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "\"opsz\" 24",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "oklch(0.36 0.105 250)",
-      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "800",
-      "fontStyle": "normal",
-      "lineHeight": "13px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "\"opsz\" 24",
-      "textTransform": "none",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
+      "color": "rgb(18, 16, 14)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
-      "fontWeight": "400",
+      "fontWeight": "700",
       "fontStyle": "normal",
       "lineHeight": "22.4px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
       "textOverflow": "ellipsis",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "600",
-      "fontStyle": "normal",
-      "lineHeight": "18.2px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "textOverflow": "ellipsis",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(18, 16, 14)",
-      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "24px",
-      "fontWeight": "800",
-      "fontStyle": "normal",
-      "lineHeight": "26.88px",
-      "letterSpacing": "-0.528px",
-      "fontVariationSettings": "\"opsz\" 48",
-      "textTransform": "none",
       "webkitLocale": "\"en\"",
       "textRendering": "optimizelegibility"
     }
@@ -95,18 +42,6 @@
       "boxShadow": "rgb(240, 235, 227) 0px -2px 0px 0px",
       "after.backgroundImage": "linear-gradient(rgb(240, 235, 227), color(srgb 0 0 0 / 0))"
     },
-    {
-      "backgroundColor": "oklch(0.915 0.05 78)",
-      "boxShadow": "rgb(240, 235, 227) 0px 0px 0px 2px",
-      "borderRadius": "999px"
-    },
-    {
-      "backgroundColor": "oklch(0.915 0.05 250)",
-      "boxShadow": "rgb(240, 235, 227) 0px 0px 0px 2px",
-      "borderRadius": "999px"
-    },
-    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "999px" },
-    { "backgroundColor": "oklch(0.62 0.13 150)", "borderRadius": "999px" },
     { "boxShadow": "rgb(138, 129, 118) 0px 0px 0px 1px inset", "borderRadius": "999px" },
     { "boxShadow": "rgb(133, 124, 114) 0px 0px 0px 2px inset", "borderRadius": "2px" },
     { "backgroundColor": "rgb(133, 124, 114)", "borderRadius": "2px" },
@@ -117,7 +52,7 @@
     {
       "role": "banner",
       "name": "",
-      "box": [0, 0, 402, 91.9],
+      "box": [0, 0, 402, 87.9],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "rgb(240, 235, 227)",
@@ -129,45 +64,12 @@
         "borderRadius": "0px",
         "paddingTop": "9px",
         "paddingRight": "20px",
-        "paddingBottom": "16px",
+        "paddingBottom": "12px",
         "paddingLeft": "20px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "text": [
-        { "said": "G", "type": 0 },
-        { "said": "B", "type": 1 },
-        { "said": "Giulia Ferrari, Ben Arnold", "type": 2 },
-        { "said": "Pottery Project", "type": 3 }
-      ],
-      "surfaces": [
-        { "box": [0, 0, 402, 91.9], "paint": 0, "parts": { "after": [0, 91.9, 402, 24] } },
-        { "box": [20, 48.9, 22, 22], "paint": 1 },
-        { "box": [37, 48.9, 22, 22], "paint": 2 },
-        { "box": [128.3, 48.9, 117.7, 22], "paint": 3 },
-        { "box": [136.3, 55.9, 8, 8], "paint": 4 }
-      ]
-    },
-    {
-      "role": "heading",
-      "name": "Glaze order #2291",
-      "box": [20, 9, 362, 26.9],
-      "drawn": {
-        "color": "rgb(18, 16, 14)",
-        "backgroundColor": "rgba(0, 0, 0, 0)",
-        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
-        "fontSize": "24px",
-        "fontWeight": "800",
-        "lineHeight": "26.88px",
-        "letterSpacing": "-0.528px",
-        "borderRadius": "0px",
-        "paddingTop": "0px",
-        "paddingRight": "0px",
-        "paddingBottom": "0px",
-        "paddingLeft": "0px",
-        "borderColor": "rgb(18, 16, 14)"
-      },
-      "level": 1,
-      "text": [{ "said": "Glaze order #2291", "type": 4 }]
+      "text": [{ "said": "Glaze order #2291", "type": 0 }],
+      "surfaces": [{ "box": [0, 0, 402, 87.9], "paint": 0, "parts": { "after": [0, 87.9, 402, 24] } }]
     },
     {
       "role": "group",
@@ -189,13 +91,13 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "surfaces": [
-        { "box": [266, 43.9, 116, 32], "paint": 5 },
-        { "box": [279, 54.9, 10, 10], "paint": 6 },
-        { "box": [299, 54.9, 10, 10], "paint": 7 },
-        { "box": [319, 54.9, 10, 10], "paint": 6 },
-        { "box": [339, 54.9, 10, 10], "paint": 8 },
-        { "box": [359, 54.9, 10, 10], "paint": 8 },
-        { "box": [356, 51.9, 16, 16], "paint": 9 }
+        { "box": [266, 43.9, 116, 32], "paint": 1 },
+        { "box": [279, 54.9, 10, 10], "paint": 2 },
+        { "box": [299, 54.9, 10, 10], "paint": 3 },
+        { "box": [319, 54.9, 10, 10], "paint": 2 },
+        { "box": [339, 54.9, 10, 10], "paint": 4 },
+        { "box": [359, 54.9, 10, 10], "paint": 4 },
+        { "box": [356, 51.9, 16, 16], "paint": 5 }
       ]
     }
   ],

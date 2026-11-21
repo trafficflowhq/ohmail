@@ -55,7 +55,7 @@ export function attachHold(core: StreamScrollCore, el: HTMLElement): () => void 
     const held = core.holdAt;
     const card = held ? core.one(el, held.sid) : null;
     /* No anchor yet, or it left the pile or unmounted under the sliding window: take a new one. */
-    if (core.seamLanding() || !held || !card) {
+    if (core.inputs.seam?.edgeLanding?.() || !held || !card) {
       core.holdAcc = 0;
       remember(rootRect.top);
       return;

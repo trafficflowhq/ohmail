@@ -149,8 +149,10 @@ describe.runIf(ON_DEVICE_STORE)("a request on the phone's store", () => {
     const res = await p.sidecar.handle(new Request("http://engine.invalid/mailboxes", { headers }));
     expect(res.status, await res.clone().text()).toBe(200);
     const door = p.door.take();
-    expect(door.rodeOf("sessions"), "the session's look-up").toEqual(["keyed"]);
-    const after = door.all.filter((r) => r.table !== "sessions");
+    const [lookup, ...after] = door.all;
+    expect(lookup, "the session's look-up").toEqual({
+      verb: "select", table: "sessions", rode: "keyed", inTransaction: false,
+    });
     expect(after.length, "the route asked the store nothing through its door").toBeGreaterThan(3);
     expect([...new Set(after.map((r) => r.rode))], "what the route and its services asked").toEqual([p.account]);
 

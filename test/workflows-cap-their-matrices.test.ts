@@ -127,7 +127,7 @@ describe("the hosted jobs each event starts", () => {
   const parsed = (edit: (file: string, t: string) => string = (_f, t) => t) =>
     Object.fromEntries(FILES.map((f) => [f, yaml.load(edit(f, text(f)))]));
   const WORKFLOWS = parsed();
-  const PLAN: IfContext = { "needs.plan.outputs.shards": '[{"shard":0},{"shard":1}]', "needs.plan.outputs.alone": '["a.test.ts"]', "needs.plan.outputs.sqlite": '[{"shard":0}]' };
+  const PLAN: IfContext = { "needs.plan.outputs.scope": "whole", "needs.plan.outputs.shards": '[{"shard":0},{"shard":1}]', "needs.plan.outputs.alone": '["a.test.ts"]', "needs.plan.outputs.sqlite": '[{"shard":0}]' };
   /** An event as the files' expressions read it: a maintainer started it, and a pull request is theirs, from a pr/ branch. */
   const at = (event: string, ref: string, extra: IfContext): IfContext => {
     const pr = event.startsWith("pull_request");

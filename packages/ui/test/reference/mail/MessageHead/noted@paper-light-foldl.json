@@ -3,9 +3,9 @@
   "state": "noted",
   "look": "paper-light-foldl",
   "place": "block",
-  "target": [447, 140.9375, 362, 76],
-  "clip": [447, 140, 362, 77],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [447, 136.9375, 362, 76],
+  "clip": [447, 136, 362, 77],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "foldl",
     "face": "paper",

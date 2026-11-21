@@ -46,6 +46,7 @@ let dispose: (() => void) | null = null;
 
 
 async function mount(element: React.ReactElement): Promise<HTMLElement> {
+  await (await import("@ohmail/app/mail")).prepareWriting();
   mountPoint = document.createElement("div");
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);

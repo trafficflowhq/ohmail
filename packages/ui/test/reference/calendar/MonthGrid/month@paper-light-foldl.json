@@ -5,7 +5,7 @@
   "place": "cell",
   "target": [24, 24, 1392, 816],
   "clip": [24, 24, 1392, 816],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "foldl",
     "face": "paper",
@@ -140,7 +140,9 @@
     { "outline": "1px dashed rgb(90, 83, 75) -1px", "borderRadius": "999px" },
     { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 8c8578e2e715" },
     { "boxShadow": "oklch(0.6 0.14 153) 0px 0px 0px 1.5px inset", "borderRadius": "999px" },
+    { "after.backgroundColor": "oklch(0.6 0.14 153)", "after.opacity": "0", "after.borderRadius": "1px" },
     { "boxShadow": "rgb(18, 16, 14) 0px 0px 0px 1.5px inset", "borderRadius": "999px" },
+    { "after.backgroundColor": "oklch(0.6 0.14 243)", "after.opacity": "0", "after.borderRadius": "1px" },
     { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "20px" },
     {
       "before.backgroundImage": "radial-gradient(circle at 1px 1px, color(srgb 0.78 0.770667 0.76) 1px, rgba(0, 0, 0, 0) 1.3px)",
@@ -1612,7 +1614,11 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Makersfest", "type": 2 }],
-      "surfaces": [{ "box": [804.3, 460, 8, 8], "paint": 2 }]
+      "surfaces": [
+        { "box": [804.3, 460, 8, 8], "paint": 2 },
+        { "box": [796.3, 454, 22, 20], "paint": 12, "parts": { "after": [6, 5, 2, 10] } },
+        { "box": [1356, 454, 22, 20], "paint": 12, "parts": { "after": [14, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -2044,7 +2050,7 @@
         { "said": "Tech check, main hall", "type": 2 }
       ],
       "surfaces": [
-        { "box": [796.3, 517, 188.6, 20], "paint": 12 },
+        { "box": [796.3, 517, 188.6, 20], "paint": 13 },
         { "box": [968.8, 523, 8, 8], "paint": 7 }
       ]
     },
@@ -2346,7 +2352,11 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Days off", "type": 2 }],
-      "surfaces": [{ "box": [18, 588.7, 8, 8], "paint": 4 }]
+      "surfaces": [
+        { "box": [18, 588.7, 8, 8], "paint": 4 },
+        { "box": [10, 582.7, 22, 20], "paint": 14, "parts": { "after": [6, 5, 2, 10] } },
+        { "box": [569.7, 582.7, 22, 20], "paint": 14, "parts": { "after": [14, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -2786,7 +2796,11 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [{ "said": "Open studio? (hold)", "type": 2 }],
-      "surfaces": [{ "box": [1000.8, 717.3, 8, 8], "paint": 2 }]
+      "surfaces": [
+        { "box": [1000.8, 717.3, 8, 8], "paint": 2 },
+        { "box": [992.8, 711.3, 22, 20], "paint": 12, "parts": { "after": [6, 5, 2, 10] } },
+        { "box": [1159.4, 711.3, 22, 20], "paint": 12, "parts": { "after": [14, 5, 2, 10] } }
+      ]
     },
     {
       "role": "button",
@@ -2942,15 +2956,15 @@
   "loose": {
     "text": [{ "said": "Mon Tue Wed Thu Fri Sat Sun", "type": 7 }],
     "surfaces": [
-      { "box": [0, 0, 1392, 816], "paint": 13 },
-      { "box": [8, 164.7, 1376, 128.7], "paint": 14, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [8, 293.3, 1376, 128.7], "paint": 14, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [381.1, 304.3, 14, 14], "paint": 15 },
-      { "box": [577.7, 304.3, 14, 14], "paint": 16 },
-      { "box": [8, 422, 1376, 128.7], "paint": 14, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [184.6, 433, 14, 14], "paint": 15 },
-      { "box": [8, 550.7, 1376, 128.7], "paint": 14, "parts": { "before": [4, 0, 1368, 2] } },
-      { "box": [8, 679.3, 1376, 128.7], "paint": 14, "parts": { "before": [4, 0, 1368, 2] } }
+      { "box": [0, 0, 1392, 816], "paint": 15 },
+      { "box": [8, 164.7, 1376, 128.7], "paint": 16, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [8, 293.3, 1376, 128.7], "paint": 16, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [381.1, 304.3, 14, 14], "paint": 17 },
+      { "box": [577.7, 304.3, 14, 14], "paint": 18 },
+      { "box": [8, 422, 1376, 128.7], "paint": 16, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [184.6, 433, 14, 14], "paint": 17 },
+      { "box": [8, 550.7, 1376, 128.7], "paint": 16, "parts": { "before": [4, 0, 1368, 2] } },
+      { "box": [8, 679.3, 1376, 128.7], "paint": 16, "parts": { "before": [4, 0, 1368, 2] } }
     ]
   }
 }

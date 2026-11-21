@@ -38,7 +38,7 @@ describe("the rail account and its tools", () => {
           `<!doctype html><html data-face="paper" data-scheme="light" data-device="desktop" data-touch="0"><head><style>${await fontsCss()}</style><style>${await entryCss("mail")}</style></head><body><div class="oh-root"><div style="width:232px">${foot}</div></div></body></html>`,
         );
         await page.evaluate(() => document.fonts.ready);
-        const account = page.getByRole("button", { name: `${name} · ${address}` });
+        const account = page.getByRole("button", { name: `${name} · ${address}`, exact: true });
         const palette = page.getByRole("button", { name: "Command palette · Ctrl K" });
         const dark = page.getByRole("button", { name: "Dark" });
         const text = account.locator("span").filter({ hasText: name }).first();
@@ -56,7 +56,8 @@ describe("the rail account and its tools", () => {
         expect(before.text!.x + before.text!.width).toBeLessThanOrEqual(before.palette!.x);
         expect(before.palette!.x + before.palette!.width).toBeLessThanOrEqual(before.dark!.x);
         expect(hover).toEqual(before);
-        expect(await text.getAttribute("title")).toContain(address);
+        expect(await account.getAttribute("title")).toBe("Mailboxes");
+        expect(await text.getAttribute("title")).toBeNull();
         expect(
           await text.evaluate((el) =>
             Array.from(el.children).every((child) => getComputedStyle(child).textOverflow === "ellipsis"),

@@ -114,6 +114,9 @@ async function show(locale: "en" | "de"): Promise<void> {
     root!.render(h(Frame!, { locale, messages }));
   });
   await flush();
+  await within(host!).findByRole("textbox", {
+    name: (name) => [en.settings.screening.barLabel, GERMAN.settings.screening.barLabel].includes(name),
+  }, { timeout: 5000 });
 }
 
 const textarea = (): HTMLTextAreaElement =>

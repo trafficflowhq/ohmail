@@ -27,6 +27,7 @@ import { useKeymap, type BoundKey } from "@ohmail/app-logic/keys";
 import { takeDeleteIntents } from "@ohmail/app-logic/press/delete-intents";
 import { LANDING_REST_MS } from "@ohmail/app-logic/reading/reader-seen";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
+import { setFormatWords } from "@ohmail/app-logic/text";
 import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
 import {
   trashLiveKeyOf,
@@ -760,11 +761,16 @@ describe("the Trash view", () => {
   it("the row's stamp says WHEN IT WAS DELETED, not when the message was sent", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     vi.setSystemTime(new Date("2026-09-09T11:00:00.000Z"));
-    const bin = seat({ rows: [gone] });
-    await settled();
-    expect(stamp()?.textContent).toBe("Deleted 11:00");
-    expect(stamp()?.textContent).not.toContain("Jan");
-    expectNoMutation(bin);
+    setFormatWords({ locale: () => "en", zone: () => "Europe/Zurich", translatorOf: () => null });
+    try {
+      const bin = seat({ rows: [gone] });
+      await settled();
+      expect(stamp()?.textContent).toBe("Deleted 11:00");
+      expect(stamp()?.textContent).not.toContain("Jan");
+      expectNoMutation(bin);
+    } finally {
+      setFormatWords(null);
+    }
   });
 
   it("a row with NO trashedAt shows no stamp rather than the message's own date", async () => {

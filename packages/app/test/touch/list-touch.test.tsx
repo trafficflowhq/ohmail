@@ -20,34 +20,38 @@ const letters = () => ({
 const rowOf = (name: string) => screen.getByRole("option", { name });
 
 describe("a swipe on an Ohbox row", () => {
-  it("presses Done once on an unread row past 76, and nothing released at 75", () => {
+  it("marks an unread row read once to the left past 76, and nothing released at 75", () => {
     const world = touchWorld(letters());
-    finger(rowOf("a: Kiln")).move(20, 0).move(75, 0).up();
+    finger(rowOf("a: Kiln")).move(-20, 0).move(-75, 0).up();
     expect(world.said.marked).toEqual([]);
-    finger(rowOf("a: Kiln")).move(20, 0).move(80, 2).up();
+    expect(world.said.acted).toEqual([]);
+    finger(rowOf("a: Kiln")).move(-20, 0).move(-80, 2).up();
     expect(world.said.marked).toEqual([{ ids: ["a"], unread: false }]);
     expect(world.said.opened, "the click closing the swipe opened the letter").toEqual([]);
   });
 
-  it("presses Later to the left, and Mark unread to the right of a read row", () => {
+  it("marks read to the left and unread to the right", () => {
     const world = touchWorld(letters());
     finger(rowOf("a: Kiln")).move(-20, 0).move(-90, 0).up();
-    expect(world.said.acted).toEqual([["later", "a"]]);
+    expect(world.said.marked).toEqual([{ ids: ["a"], unread: false }]);
     finger(rowOf("r: Glaze")).move(20, 0).move(100, 0).up();
-    expect(world.said.marked).toEqual([{ ids: ["r"], unread: true }]);
+    expect(world.said.marked).toEqual([
+      { ids: ["a"], unread: false },
+      { ids: ["r"], unread: true },
+    ]);
   });
 
   it("is the very call the row's menu makes", () => {
     const swiped = touchWorld(letters());
     finger(rowOf("a: Kiln")).move(-20, 0).move(-90, 0).up();
-    finger(rowOf("a: Kiln")).move(20, 0).move(90, 0).up();
+    finger(rowOf("r: Glaze")).move(20, 0).move(90, 0).up();
     const bySwipe = { acted: swiped.said.acted, marked: swiped.said.marked };
     cleanup();
     const pressed = touchWorld(letters());
     fireEvent.contextMenu(rowOf("a: Kiln"), { clientX: 30, clientY: 40 });
-    fireEvent.click(screen.getByRole("menuitem", { name: /Later/ }));
-    fireEvent.contextMenu(rowOf("a: Kiln"), { clientX: 30, clientY: 40 });
-    fireEvent.click(screen.getByRole("menuitem", { name: /Done/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Done|Mark read/ }));
+    fireEvent.contextMenu(rowOf("r: Glaze"), { clientX: 30, clientY: 40 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Mark unread" }));
     expect({ acted: pressed.said.acted, marked: pressed.said.marked }).toEqual(bySwipe);
   });
 
@@ -98,7 +102,7 @@ describe("a swipe on an Ohbox row", () => {
         await new Promise((done) => requestAnimationFrame(() => done(undefined)));
       });
     swipeWithNoClick();
-    expect(world.said.acted).toEqual([["later", "a"]]);
+    expect(world.said.marked).toEqual([{ ids: ["a"], unread: false }]);
     await aFrame();
     fireEvent.click(rowOf("r: Glaze"));
     expect(world.said.opened, "a screen reader's activate after a swipe").toContain("r");
@@ -126,13 +130,15 @@ describe("a swipe on an Ohbox row", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /Select/ }));
     finger(rowOf("a: Kiln")).move(-20, 0).move(-100, 0).up();
     expect(world.said.acted).toEqual([]);
+    expect(world.said.marked).toEqual([{ ids: ["a"], unread: false }]);
   });
 
   it("starts no swipe from a press inside the row (its time, where a press turns every time)", () => {
     const world = touchWorld(letters(), { side: { flipTime: () => undefined } });
     const time = within(rowOf("r: Glaze")).getByText("09:00");
-    finger(time).move(-20, 0).move(-100, 0).up();
+    finger(time).move(20, 0).move(100, 0).up();
     expect(world.said.acted).toEqual([]);
+    expect(world.said.marked).toEqual([]);
   });
 
   it("draws the row by the phone's travel and arms it past 76", () => {
@@ -144,13 +150,13 @@ describe("a swipe on an Ohbox row", () => {
     f.up();
   });
 
-  it("is no swipe under a mouse: the row has no slot and keeps its index", () => {
+  it("is no swipe under a mouse: the row has no swipe back and keeps its index", () => {
     const world = touchWorld(letters(), { room: "desktop" });
     const read = rowOf("r: Glaze");
     expect(
-      read.parentElement?.classList.contains("oh-row-slot"),
-      "a read row has no verbs to stand beside",
-    ).toBe(false);
+      read.parentElement?.querySelector(".oh-row-back"),
+      "a read row has no swipe action to show",
+    ).toBeNull();
     expect(read.hasAttribute("data-index")).toBe(true);
     expect(world.scroller().hasAttribute("data-touch-list")).toBe(false);
     finger(rowOf("a: Kiln"), "mouse").move(20, 0).move(100, 0).up();

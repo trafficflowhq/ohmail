@@ -71,6 +71,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
   document.body.innerHTML = "";
@@ -174,12 +175,9 @@ async function shell(
 }
 
 async function waitFor(predicate: () => boolean, what: string, timeout = 3000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
-  }
-  throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
+  await vi.waitFor(() => {
+    if (!predicate()) throw new Error(`waiting for: ${what}`);
+  }, { timeout, interval: 25 });
 }
 
 describe("the badge rule", () => {

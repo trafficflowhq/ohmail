@@ -5,7 +5,7 @@
   "place": "block",
   "target": [556, 712, 580, 148],
   "clip": [556, 712, 580, 148],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -93,6 +93,18 @@
       "fontWeight": "600",
       "fontStyle": "normal",
       "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
       "letterSpacing": "normal",
       "fontVariationSettings": "normal",
       "textTransform": "none",
@@ -492,6 +504,27 @@
     },
     {
       "role": "button",
+      "name": "Cancel",
+      "box": [420.6, 116, 74.3, 32],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "text": [{ "said": "Cancel", "type": 6 }]
+    },
+    {
+      "role": "button",
       "name": "Add ↵",
       "box": [498.9, 116, 81.1, 32],
       "drawn": {
@@ -510,14 +543,14 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [
-        { "said": "Add", "type": 6 },
-        { "said": "↵", "type": 7 }
+        { "said": "Add", "type": 7 },
+        { "said": "↵", "type": 8 }
       ],
       "surfaces": [{ "box": [548, 122, 20, 20], "paint": 12 }]
     }
   ],
   "loose": {
-    "text": [{ "said": "to All day Invite", "type": 8 }],
+    "text": [{ "said": "to All day Invite", "type": 9 }],
     "surfaces": [
       { "box": [1, 7, 18, 18], "paint": 13 },
       { "box": [1, 43, 18, 18], "paint": 14 },

@@ -49,13 +49,16 @@ const FILES = [
 /**
  * Focus moves admitted without `preventScroll`, each with its reason, counted so a new one is a
  * reviewed diff: the reply editor's toolbar runs TipTap's `chain().focus()` on a press of one of its
- * own buttons (Write's editor: its four marks, `marksOf`'s `run`; the link's and the insert's chains are not a
+ * own buttons (Write's editor: bold, italic, underline, strike and code, all in `marksOf`'s `run`; the link's and the insert's chains are not a
  * toolbar's press and are not admitted) — the button's `onMouseDown` calls `preventDefault()`, so the press leaves the focus where it
  * is, and TipTap's `focus()` on an editor that already has it returns without scrolling.
  */
 const ADMITTED: Record<string, { pattern: RegExp; count: number }> = {
-  "packages/app/src/write/editor/RichEditor.tsx": { pattern: /editor\.chain\(\)\.focus\(\)\.toggle/g, count: 4 },
-  "packages/app/src/write/editor/commands.ts": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 7 },
+  "packages/app/src/write/editor/RichEditor.tsx": { pattern: /editor\.chain\(\)\.focus\(\)\.toggle/g, count: 5 },
+  // The dedicated Code block toggle adds two paths: lift an existing block and format the caret's line.
+  // The toolbar keeps editor focus on a pointer press, and the shortcut runs in the editor.
+  // In either case TipTap's focus returns without scrolling the focused editor.
+  "packages/app/src/write/editor/commands.ts": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 9 },
 };
 const RAW = /\.scrollTop\s*(?:=(?!=)|\+=|-=)|\.scrollTo\s*\(|\.scrollBy\s*\(|\.scrollIntoView\b/g;
 

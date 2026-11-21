@@ -3,9 +3,9 @@
   "state": "card",
   "look": "ohmarchy-dark-desktop",
   "place": "block",
-  "target": [766, 378, 372, 486.9531],
-  "clip": [766, 378, 372, 487],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [766, 376, 372, 486.9531],
+  "clip": [766, 376, 372, 487],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "desktop",
     "face": "ohmarchy",

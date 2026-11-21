@@ -44,6 +44,8 @@ const MAX_ITEM_PX = ROW_TWO_LINE_PX + PREVIEW_LINE_PX;
 const MIN_ITEM_PX = LABEL_PX;
 /** `useListWindow`'s own OVERSCAN_ROWS, which is not exported; asserted through the slice below. */
 const OVERSCAN = 8;
+/** useOhboxWindow's scrollStep: the slice is cut again after this many rows. */
+const STEP = 4;
 /** The most one row's price can be wrong by, so the most the overscan above the anchor can owe. */
 const LANDING_PX = OVERSCAN * (MAX_ITEM_PX - MIN_ITEM_PX);
 /** Past FULL_RANGE_MAX_ROWS, where the window runs, as a real Ohbox does. */
@@ -245,8 +247,7 @@ class Recorder {
   /**
    * I4. The frame that settles after a position is asked for is AT that position — the window may
    * owe only the overscan rows above the anchor, whose prices are all it can have got wrong — and
-   * the slice it renders is CENTRED there: the reader's row is the overscan-th item of it, never
-   * one the slice merely happens to cover. Which row is truly at a pixel is not a question a
+   * the slice it renders is CENTRED there within the window's scroll step. Which row is truly at a pixel is not a question a
    * window that has measured a handful of its rows can answer; I5 is what bounds its estimate.
    */
   private landed(n: number, s: number, request: number, start: number, underTop: Item | null, allowance: number): void {
@@ -254,8 +255,8 @@ class Recorder {
     if (Math.abs(off) > LANDING_PX + allowance) {
       this.red.I4.push(`frame ${n}: a ${request.toFixed(1)}px position settled at scrollTop ${s.toFixed(1)} — ${off.toFixed(1)}px out, past the ${LANDING_PX}px the overscan above the anchor can owe (truly index ${truthIndexAt(this.f, s)} where ${truthIndexAt(this.f, request)} was asked for)`);
     }
-    if (underTop && underTop.index - start > OVERSCAN) {
-      this.red.I4.push(`frame ${n}: the reader is on index ${underTop.index} and the slice starts at ${start}, ${underTop.index - start} items above it — the window is rendering around somewhere other than the reader`);
+    if (underTop && underTop.index - start > OVERSCAN + STEP - 1) {
+      this.red.I4.push(`frame ${n}: the reader is on index ${underTop.index} and the slice starts at ${start}, ${underTop.index - start} items above it — past the ${OVERSCAN} overscan rows plus the ${STEP}-row step`);
     }
   }
 

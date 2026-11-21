@@ -1,8 +1,6 @@
 /**
  * THE UNSUBSCRIBE QUESTION: Screen out or Spam on a sender whose letters offer a one-click unsubscribe asks before
- * anything leaves, since a sent request cannot be taken back. It names the sender it asks about (a row's press asks
- * about a sender that is not the open one) and says whose machine sends it (the host's own answer: ohmail's servers,
- * or this computer); the yes makes the decision it held, Cancel makes none.
+ * anything leaves. The first confirmation on an account also explains who sends the request and what it affects.
  */
 import type { ScreenerView } from "@ohmail/app-logic/screener";
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
@@ -16,19 +14,34 @@ export function Unsubscribe({ view }: { view: ScreenerView }) {
   const { host } = useFrame();
   const ask = view.ask?.kind === "unsub" ? view.ask : null;
   const from = host.capabilities.unsubscribeFrom;
-  const title = ask?.dest === "spam" ? t("place.unsub.spam") : t("place.unsub.screened");
-  const how =
-    from === "service" ? t("place.unsub.service") : from === "computer" ? t("place.unsub.computer") : null;
+  const spam = ask?.dest === "spam";
+  const title =
+    ask?.scope === "domain" && !ask.explain
+      ? t(spam ? "place.unsub.spamDomain" : "place.unsub.screenedDomain", {
+          domain: displayDomainLabel(ask.sender.from.address),
+        })
+      : t(spam ? "place.unsub.spam" : "place.unsub.screened");
+  const how = !ask?.explain
+    ? null
+    : from === "service"
+      ? t("place.unsub.service")
+      : from === "computer"
+        ? t("place.unsub.computer")
+        : null;
   const claim = ask?.claim ?? "none";
-  const confirm = claim === "may_send" ? screening("unsubCommitMaybe") : title;
+  const confirm = !ask?.explain
+    ? t("place.unsub.continue")
+    : claim === "may_send"
+      ? screening("unsubCommitMaybe")
+      : title;
   let explanation: string | null = null;
-  if (ask?.scope === "domain") {
+  if (ask?.explain && ask.scope === "domain") {
     explanation = screening(claim === "sends" ? "unsubDomain" : "unsubDomainMaybe", {
       domain: displayDomainLabel(ask.sender.from.address),
       senders: ask.senders,
       place: title,
     });
-  } else if (ask) {
+  } else if (ask?.explain) {
     explanation = screening(claim === "sends" ? "unsubSender" : "unsubSenderMaybe", {
       sender: displayAddress(ask.sender.from.address),
       place: title,
@@ -39,13 +52,18 @@ export function Unsubscribe({ view }: { view: ScreenerView }) {
       open={ask !== null}
       onClose={() => view.answerUnsub(false)}
       title={title}
+      hot
       line={t("place.unsub.final")}
       keysOn="cancel"
       confirm={{ label: confirm, onPress: () => view.answerUnsub(true) }}
       cancel={{ label: t("cancel") }}
     >
-      {explanation === null ? null : <p className="oh-text">{explanation}</p>}
-      {how === null ? null : <p className="oh-text">{how}</p>}
+      {explanation !== null || how !== null ? (
+        <>
+          {explanation === null ? null : <p className="oh-text">{explanation}</p>}
+          {how === null ? null : <p className="oh-text">{how}</p>}
+        </>
+      ) : null}
     </Dialog>
   );
 }

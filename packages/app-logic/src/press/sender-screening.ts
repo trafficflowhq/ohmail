@@ -233,7 +233,7 @@ const byDateDesc = (a: EngineMessage, b: EngineMessage) =>
   String(b.date ?? "").localeCompare(String(a.date ?? ""));
 
 /**
- * Read a sender out of the mirror, starting from any of their messages. Every list stamps `data-id`
+ * Read a sender in the seed message's account, starting from any of their messages. Every list stamps `data-id`
  * with a message id, and the Screener's row id is its representative message id, so one lookup
  * serves every view. The address override (contact chips): a recipient chip opens Screener settings
  * for THE CHIP'S address — a To/Cc person, not the sender — and `address` is how that reaches this
@@ -262,7 +262,7 @@ export function senderScreening(
   const mine: EngineMessage[] = [];
   const theirs: EngineMessage[] = [];
   for (const m of reader.list<EngineMessage>("message")) {
-    if (options && (m.mailboxId !== seed.mailboxId || m.accountId !== seed.accountId)) continue;
+    if (m.accountId !== seed.accountId || (options?.mailbox === "seed" && m.mailboxId !== seed.mailboxId)) continue;
     const k = senderKey(m.from.address);
     if (k === key) mine.push(m);
     // `domain !== ""` guards the malformed-address case: without it every address with no `@`

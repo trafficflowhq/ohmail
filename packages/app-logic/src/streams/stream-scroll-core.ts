@@ -32,6 +32,8 @@ export interface StreamScrollSeam {
   hands?(): number;
   /** A jump to an end is in flight. */
   landing?(): boolean;
+  /** A key in the host scroller is driving the native end. */
+  edgeLanding?(): boolean;
   /** A scroll nobody announced is being judged. */
   judging?(): boolean;
   /** The run starts again where the landing rests. */

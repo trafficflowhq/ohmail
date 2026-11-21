@@ -43,6 +43,8 @@ export interface MenuProps {
   up?: boolean;
   right?: boolean;
   wide?: boolean;
+  /** Fit an ask to its contents within the available viewport. */
+  fitContent?: boolean;
   /** Stay at the anchor on the phone, where a menu otherwise comes up from the foot. */
   anchored?: boolean;
   /** Keep an anchored card whole, or let a row menu scroll beside its trigger. */
@@ -102,6 +104,7 @@ export function Menu(props: MenuProps) {
     title,
     aside,
     wide,
+    fitContent,
     anchored,
     closeWhenFull,
     initialFocus,
@@ -181,6 +184,7 @@ export function Menu(props: MenuProps) {
         tabIndex={-1}
         data-kind={kind}
         data-wide={wide ? "" : undefined}
+        data-fit-content={fitContent ? "" : undefined}
         data-anchored={anchored ? "" : undefined}
         data-sheet={anchor ? undefined : ""}
         onFocusCapture={rememberItem}

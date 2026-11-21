@@ -95,8 +95,8 @@ function ObservedReading(props: PaneProps) {
       rests.push(...ids);
       return ids;
     };
-    read.rule.previewDwell = (look) => {
-      const ids = previewDwell(look);
+    read.rule.previewDwell = (...args) => {
+      const ids = previewDwell(...args);
       displayed.push(...ids);
       return ids;
     };

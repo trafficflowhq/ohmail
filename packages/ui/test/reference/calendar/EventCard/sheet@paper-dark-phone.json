@@ -3,9 +3,9 @@
   "state": "sheet",
   "look": "paper-dark-phone",
   "place": "window",
-  "target": [0, 276.7344, 390, 567.2656],
-  "clip": [0, 276, 390, 568],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [0, 264.7344, 390, 579.2656],
+  "clip": [0, 264, 390, 580],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "paper",
@@ -103,7 +103,7 @@
       "textRendering": "optimizelegibility"
     },
     {
-      "color": "rgb(184, 175, 163)",
+      "color": "rgb(246, 241, 233)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
       "fontWeight": "400",
@@ -143,7 +143,7 @@
       "textRendering": "optimizelegibility"
     },
     {
-      "color": "rgb(184, 175, 163)",
+      "color": "rgb(246, 241, 233)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "13px",
       "fontWeight": "600",
@@ -212,7 +212,6 @@
       "boxShadow": "rgba(0, 0, 0, 0.7) 0px 18px 48px -12px, rgba(246, 241, 233, 0.08) 0px 0px 0px 1px",
       "borderRadius": "20px 20px 0px 0px"
     },
-    { "backgroundColor": "rgb(52, 48, 43)", "borderRadius": "2px" },
     { "backgroundColor": "oklch(0.83 0.093 155.7)", "borderRadius": "2px" },
     {
       "backgroundColor": "oklch(0.38 0.06 150)",
@@ -225,6 +224,7 @@
       "borderRadius": "999px"
     },
     { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 2 97483c72e431" },
+    { "backgroundColor": "rgb(52, 48, 43)", "borderRadius": "2px" },
     { "backgroundColor": "rgb(52, 48, 43)", "borderRadius": "999px" },
     { "backgroundColor": "oklch(0.83 0.093 290.7)", "borderRadius": "2px" },
     { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 1 447c0f4542bb" },
@@ -241,7 +241,7 @@
     {
       "role": "dialog",
       "name": "Poster review",
-      "box": [0, 276.7, 390, 567.3],
+      "box": [0, 264.7, 390, 579.3],
       "drawn": {
         "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgb(35, 32, 28)",
@@ -269,31 +269,30 @@
         { "said": "Poster-A2-final.pdf", "type": 4 }
       ],
       "surfaces": [
-        { "box": [0, 276.7, 390, 567.3], "paint": 0 },
-        { "box": [177, 288.7, 36, 4], "paint": 1 },
-        { "box": [112, 546, 8, 8], "paint": 2 },
-        { "box": [112, 627, 22, 22], "paint": 3 },
-        { "box": [129, 627, 22, 22], "paint": 4 },
-        { "box": [112, 719, 14, 14], "paint": 5 }
+        { "box": [0, 264.7, 390, 579.3], "paint": 0 },
+        { "box": [112, 546, 8, 8], "paint": 1 },
+        { "box": [112, 627, 22, 22], "paint": 2 },
+        { "box": [129, 627, 22, 22], "paint": 3 },
+        { "box": [112, 719, 14, 14], "paint": 4 }
       ]
     },
     {
       "role": "banner",
       "name": "",
-      "box": [24, 308.7, 342, 195.3],
+      "box": [0, 264.7, 390, 239.3],
       "drawn": {
         "color": "rgb(246, 241, 233)",
-        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "backgroundColor": "oklab(0.4378 -0.0436198 0.0196951)",
         "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
         "fontSize": "16px",
         "fontWeight": "400",
         "lineHeight": "22.4px",
         "letterSpacing": "normal",
         "borderRadius": "0px",
-        "paddingTop": "0px",
-        "paddingRight": "0px",
-        "paddingBottom": "0px",
-        "paddingLeft": "0px",
+        "paddingTop": "12px",
+        "paddingRight": "24px",
+        "paddingBottom": "12px",
+        "paddingLeft": "24px",
         "borderColor": "rgb(246, 241, 233)"
       },
       "text": [
@@ -302,15 +301,16 @@
         { "said": "overlaps Catalogue weekly Invited", "type": 7 }
       ],
       "surfaces": [
-        { "box": [24, 418, 188.3, 22], "paint": 6 },
-        { "box": [32, 425, 8, 8], "paint": 7 },
-        { "box": [216.3, 418, 55.6, 22], "paint": 6 }
+        { "box": [177, 276.7, 36, 4], "paint": 5 },
+        { "box": [24, 406, 188.3, 22], "paint": 6 },
+        { "box": [32, 413, 8, 8], "paint": 7 },
+        { "box": [216.3, 406, 55.6, 22], "paint": 6 }
       ]
     },
     {
       "role": "button",
       "name": "Close",
-      "box": [310, 320.7, 44, 44],
+      "box": [334, 296.7, 44, 44],
       "drawn": {
         "color": "rgb(184, 175, 163)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -326,12 +326,12 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(184, 175, 163)"
       },
-      "surfaces": [{ "box": [322, 332.7, 20, 20], "paint": 8 }]
+      "surfaces": [{ "box": [346, 308.7, 20, 20], "paint": 8 }]
     },
     {
       "role": "heading",
       "name": "Poster review",
-      "box": [24, 308.7, 342, 26.9],
+      "box": [24, 296.7, 342, 26.9],
       "drawn": {
         "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -353,9 +353,9 @@
     {
       "role": "button",
       "name": "Open in Maps",
-      "box": [162.8, 366, 80.5, 44],
+      "box": [162.8, 354, 80.5, 44],
       "drawn": {
-        "color": "rgb(184, 175, 163)",
+        "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
         "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
         "fontSize": "13px",
@@ -367,15 +367,15 @@
         "paddingRight": "0px",
         "paddingBottom": "0px",
         "paddingLeft": "0px",
-        "borderColor": "rgb(184, 175, 163)"
+        "borderColor": "rgb(246, 241, 233)"
       },
       "text": [{ "said": "Open in Maps", "type": 9 }],
-      "surfaces": [{ "box": [162.8, 366, 80.5, 44], "paint": 9 }]
+      "surfaces": [{ "box": [162.8, 354, 80.5, 44], "paint": 9 }]
     },
     {
       "role": "group",
       "name": "Answer",
-      "box": [24, 456, 342, 48],
+      "box": [24, 444, 342, 48],
       "drawn": {
         "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -391,12 +391,12 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(246, 241, 233)"
       },
-      "surfaces": [{ "box": [24, 456, 286, 48], "paint": 6 }]
+      "surfaces": [{ "box": [24, 444, 286, 48], "paint": 6 }]
     },
     {
       "role": "button",
       "name": "Yes",
-      "box": [26, 458, 92.7, 44],
+      "box": [26, 446, 92.7, 44],
       "drawn": {
         "color": "rgb(18, 16, 14)",
         "backgroundColor": "rgb(246, 241, 233)",
@@ -418,7 +418,7 @@
     {
       "role": "button",
       "name": "Maybe",
-      "box": [120.7, 458, 92.7, 44],
+      "box": [120.7, 446, 92.7, 44],
       "drawn": {
         "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -439,7 +439,7 @@
     {
       "role": "button",
       "name": "No",
-      "box": [215.3, 458, 92.7, 44],
+      "box": [215.3, 446, 92.7, 44],
       "drawn": {
         "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgba(0, 0, 0, 0)",
@@ -460,7 +460,7 @@
     {
       "role": "button",
       "name": "Propose a time",
-      "box": [318, 458, 48, 44],
+      "box": [318, 446, 48, 44],
       "drawn": {
         "color": "rgb(246, 241, 233)",
         "backgroundColor": "rgb(52, 48, 43)",
@@ -476,7 +476,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(246, 241, 233)"
       },
-      "surfaces": [{ "box": [332, 470, 20, 20], "paint": 10 }]
+      "surfaces": [{ "box": [332, 458, 20, 20], "paint": 10 }]
     },
     {
       "role": "button",

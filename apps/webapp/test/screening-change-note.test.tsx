@@ -76,6 +76,7 @@ async function mount(): Promise<void> {
     root!.render(h(screeningSettingsFrame(), { locale: "en", messages }));
   });
   await flush();
+  await vi.waitFor(() => posture(), { timeout: 5000 });
 }
 
 const text = (): string => host!.textContent ?? "";

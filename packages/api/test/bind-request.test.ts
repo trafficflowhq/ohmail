@@ -24,7 +24,7 @@ const B = randomUUID();
 function sessionOf(accountId: string): ResolvedSession {
   return {
     accountId, userId: randomUUID(), sessionId: randomUUID(), lastTwofaAt: null,
-    scope: "full", via: "bearer", emailVerifiedAt: null,
+    scope: "full", via: "bearer",
   };
 }
 

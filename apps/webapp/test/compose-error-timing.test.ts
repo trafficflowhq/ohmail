@@ -80,7 +80,7 @@ describe("the display gate withholds exactly one entry, and only while focused",
     // Two sources here would let the red bar disappear while the field still announced itself
     // as invalid to a screen reader. (Write: each refused person is marked from the line's gated list, and the
     // sentence under the lines is the same lists joined.)
-    expect(people).toMatch(/const refusedOf = \(row: RecipientRow\): string\[\] => beside\.lines\.refused\(/);
+    expect(people).toMatch(/const refusedOf = \(row: RecipientRow\): string\[\] =>\s+beside\.lines\.refused\(/);
     expect(people).toMatch(/const refused = ROWS\.flatMap\(refusedOf\);/);
     expect(people).toMatch(/const bad = new Set\(refusedOf\(row\)\);/);
     expect(people).toMatch(/refusal=\{refused\.length > 0 \? t\("refused", \{ list: refused\.join/);

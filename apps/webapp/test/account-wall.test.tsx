@@ -529,7 +529,9 @@ describe("the first paint after sign-in waits for the verdict", async () => {
 
   beforeEach(async () => {
     // The client holds one access read per session; a case's unanswered read must not be the next one's.
-    (await import("../app/api-client")).forgetAccess();
+    const client = await import("../app/api-client");
+    client.forgetAccess();
+    client.bindApiOwner(null);
     shell.installConfirmEnv();
     shell.scriptSession(() => shell.sessionFull());
     shell.rememberOwner(OWNER);
@@ -684,7 +686,8 @@ describe("the first paint after sign-in waits for the verdict", async () => {
 
   it("THE LIFT RE-ANNOUNCES THIS BROWSER'S PUSH REGISTRATION, ONCE (mail 0135)", async () => {
     // A live subscription and no stored id: the closure's registration is gone from the server.
-    localStorage.setItem("ohmail.notifications.channels", JSON.stringify({
+    document.cookie = "tf_family=returning-session; Path=/";
+    localStorage.setItem(`ohmail.notifications.channels.${OWNER}`, JSON.stringify({
       master: true, ohbox: true, screener: true, scheduled: true, pairing: true, showSenderAndSubject: false,
     }));
     const sub = {
@@ -700,6 +703,14 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(sub) } }) },
+    });
+    const cached = new Map<string, Response>();
+    Object.defineProperty(globalThis, "caches", {
+      configurable: true,
+      value: { open: async () => ({
+        match: async (url: string) => cached.get(url)?.clone(),
+        put: async (url: string, value: Response) => { cached.set(url, value.clone()); },
+      }) },
     });
     Object.defineProperty(globalThis, "Notification", { configurable: true, value: { permission: "granted" } });
     const posts: number[] = [];
@@ -726,8 +737,10 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       expect(document.body.querySelector(".fr-root")).not.toBeNull();
       expect(posts, "the lift did not re-announce, or announced twice").toHaveLength(1);
     } finally {
+      document.cookie = "tf_family=; Path=/; Max-Age=0";
       Reflect.deleteProperty(navigator, "locks");
       delete (navigator as unknown as Record<string, unknown>).serviceWorker;
+      Reflect.deleteProperty(globalThis, "caches");
       delete (globalThis as Record<string, unknown>).Notification;
     }
   });

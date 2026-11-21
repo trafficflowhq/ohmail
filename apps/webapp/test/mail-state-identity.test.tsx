@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -173,6 +173,7 @@ async function mountShell(probe: () => Promise<Row[]>): Promise<{ root: Root; dr
     for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
   };
   await settle();
+  await vi.waitFor(() => expect(partitions.length).toBeGreaterThan(0));
   /* ONE WHOLE POLL INTERVAL, on fake timers. `MailStateProvider` re-reads `GET /mailboxes` on a
      `setInterval` at FACTS_POLL_MS, and a driver that only flushed microtasks never fired it — the
      first cut of this test did exactly that, so it counted zero extra polls and stayed green under
@@ -184,6 +185,11 @@ async function mountShell(probe: () => Promise<Row[]>): Promise<{ root: Root; dr
   };
   return { root, drain: poll };
 }
+
+beforeAll(async () => {
+  const { prepareWriting } = await import("@ohmail/app/mail");
+  await prepareWriting();
+});
 
 afterEach(() => { vi.useRealTimers(); });
 

@@ -3,9 +3,9 @@
   "state": "lines",
   "look": "paper-light-desktop",
   "place": "block",
-  "target": [760, 293.1875, 636, 176],
-  "clip": [760, 293, 636, 177],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [760, 253.1875, 636, 176],
+  "clip": [760, 253, 636, 177],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "desktop",
     "face": "paper",
@@ -34,6 +34,20 @@
       "textTransform": "none",
       "textOverflow": "ellipsis",
       "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
     },
     {
       "color": "oklch(0.36 0.105 78)",
@@ -102,20 +116,6 @@
     {
       "color": "rgb(90, 83, 75)",
       "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
-      "fontSize": "13px",
-      "fontWeight": "400",
-      "fontStyle": "normal",
-      "lineHeight": "18.2px",
-      "letterSpacing": "normal",
-      "fontVariationSettings": "normal",
-      "textTransform": "none",
-      "fontVariantNumeric": "tabular-nums",
-      "webkitLocale": "\"en\"",
-      "textRendering": "optimizelegibility"
-    },
-    {
-      "color": "rgb(90, 83, 75)",
-      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
       "fontSize": "16px",
       "fontWeight": "600",
       "fontStyle": "normal",
@@ -166,6 +166,27 @@
       ]
     },
     {
+      "role": "status",
+      "name": "",
+      "box": [606.1, 6.9, 29.9, 18.2],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Draft", "type": 1 }]
+    },
+    {
       "role": "button",
       "name": "G Giulia Ferrari giulia@terracotta-milano.example",
       "box": [55.2, 36, 338.3, 32],
@@ -185,9 +206,9 @@
         "borderColor": "rgb(18, 16, 14)"
       },
       "text": [
-        { "said": "G", "type": 1 },
-        { "said": "Giulia Ferrari", "type": 2 },
-        { "said": "giulia@terracotta-milano.example", "type": 3 }
+        { "said": "G", "type": 2 },
+        { "said": "Giulia Ferrari", "type": 3 },
+        { "said": "giulia@terracotta-milano.example", "type": 4 }
       ],
       "surfaces": [{ "box": [60.2, 41, 22, 22], "paint": 2 }]
     },
@@ -213,7 +234,7 @@
       "surfaces": [{ "box": [399.5, 42, 20, 20], "paint": 3 }]
     },
     {
-      "role": "textbox",
+      "role": "combobox",
       "name": "To",
       "box": [429.5, 36, 206.5, 32],
       "drawn": {
@@ -230,10 +251,11 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(18, 16, 14)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
-      "role": "textbox",
+      "role": "combobox",
       "name": "Cc",
       "box": [55.2, 72, 580.8, 32],
       "drawn": {
@@ -250,10 +272,11 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(18, 16, 14)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
-      "role": "textbox",
+      "role": "combobox",
       "name": "Bcc",
       "box": [55.2, 108, 580.8, 32],
       "drawn": {
@@ -270,7 +293,8 @@
         "paddingBottom": "0px",
         "paddingLeft": "4px",
         "borderColor": "rgb(18, 16, 14)"
-      }
+      },
+      "state": ["collapsed"]
     },
     {
       "role": "textbox",
@@ -291,14 +315,13 @@
         "paddingLeft": "59.2px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "text": [{ "said": "Re: Glaze order #2291", "type": 2, "shown": true }]
+      "text": [{ "said": "Re: Glaze order #2291", "type": 3, "shown": true }]
     }
   ],
   "loose": {
     "text": [
-      { "said": "From", "type": 4 },
-      { "said": "Studio", "type": 5 },
-      { "said": "Draft", "type": 6 },
+      { "said": "From", "type": 5 },
+      { "said": "Studio", "type": 6 },
       { "said": "To Cc Bcc", "type": 7 }
     ],
     "surfaces": [

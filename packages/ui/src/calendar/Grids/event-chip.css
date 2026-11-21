@@ -267,19 +267,17 @@
   .oh-ev-hd[data-edge="end"] {
     bottom: 0;
   }
-  .oh-ev-hd::after {
+  /* The keyboard controls share the hit boxes. Pointer drags still start on the event button. */
+  .oh-ev-edges {
     position: absolute;
-    inset: 50% auto auto 50%;
-    width: var(--s5);
-    height: var(--oh-focus);
-    translate: -50% -50%;
-    border-radius: var(--r-pill);
-    background: currentColor;
-    opacity: 0;
-    content: "";
+    pointer-events: none;
   }
-  .oh-ev:is(:hover, :focus) .oh-ev-hd::after {
-    opacity: 1;
+  .oh-ev-edges:focus-within {
+    z-index: var(--oh-ev-z-words);
+  }
+  .oh-ev-edges > .oh-ev-hd:focus-visible {
+    outline: var(--oh-focus) solid var(--focus);
+    outline-offset: 0;
   }
   .oh-ev[data-fixed] {
     cursor: default;
@@ -490,6 +488,9 @@
     pointer-events: none;
     transition: none;
   }
+  .oh-ev[data-drag="copy"][data-state="draft"] {
+    box-shadow: none;
+  }
   .oh-ev[data-drag="copy"][data-size="line"] {
     border: var(--oh-hair) dashed var(--oh-cal-mark, var(--ink));
   }
@@ -510,7 +511,8 @@
   }
 
   /* The layers inside a day's column. */
-  .oh-ev {
+  .oh-ev,
+  .oh-ev-edges {
     --oh-ev-z-line: 1;
     --oh-ev-z-lap: 2;
     --oh-ev-z-words: 4;

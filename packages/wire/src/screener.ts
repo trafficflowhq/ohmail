@@ -330,3 +330,10 @@ export interface ScreenerSenderDTO {
   stored?: true;
   updatedAt: ISODateTime;
 }
+
+
+/** The exact held letters an interactive price approved for a single request. */
+export interface ScreenerQuoteGrant {
+  readonly proof: string;
+  readonly pairs: ReadonlyArray<{ readonly sender: string; readonly messageId: string }>;
+}

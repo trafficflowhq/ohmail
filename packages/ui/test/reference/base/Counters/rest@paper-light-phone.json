@@ -3,9 +3,9 @@
   "state": "rest",
   "look": "paper-light-phone",
   "place": "block",
-  "target": [24, 100, 342, 106.3906],
-  "clip": [24, 100, 342, 107],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "target": [24, 116, 342, 106.3906],
+  "clip": [24, 116, 342, 107],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "paper",
@@ -54,11 +54,11 @@
   "nodes": [],
   "loose": {
     "text": [
-      { "said": "598", "type": 0 },
+      { "said": "685", "type": 0 },
       { "said": "screened", "type": 1 },
-      { "said": "3,785", "type": 0 },
+      { "said": "4,333", "type": 0 },
       { "said": "in History", "type": 1 },
-      { "said": "5,023", "type": 0 },
+      { "said": "4,388", "type": 0 },
       { "said": "to read", "type": 1 }
     ],
     "surfaces": [

@@ -154,12 +154,6 @@
     "since": "2026-11-14"
   },
   {
-    "key": "Report/why@paper-dark-desktop",
-    "question": "picture",
-    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
-    "since": "2026-11-14"
-  },
-  {
     "key": "RefusalLine/way@paper-light-desktop",
     "question": "picture",
     "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
@@ -185,36 +179,6 @@
   },
   {
     "key": "RefusalLine/start@paper-light-desktop",
-    "question": "picture",
-    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
-    "since": "2026-11-14"
-  },
-  {
-    "key": "WaitRow/refused@paper-light-desktop",
-    "question": "picture",
-    "reason": "The reference's last row of pixels is the rule of the next row in its list.",
-    "since": "2026-11-14"
-  },
-  {
-    "key": "WaitRow/refused@ohmarchy-light-desktop",
-    "question": "picture",
-    "reason": "The reference's last row of pixels is the rule of the next row in its list.",
-    "since": "2026-11-14"
-  },
-  {
-    "key": "WaitRow/refused@ohmarchy-dark-desktop",
-    "question": "picture",
-    "reason": "The reference's last row of pixels is the rule of the next row in its list.",
-    "since": "2026-11-14"
-  },
-  {
-    "key": "Report/why@ohmarchy-light-desktop",
-    "question": "picture",
-    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
-    "since": "2026-11-14"
-  },
-  {
-    "key": "Report/why@ohmarchy-dark-desktop",
     "question": "picture",
     "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
     "since": "2026-11-14"
@@ -295,30 +259,6 @@
     "key": "Opening/phone@ohmarchy-dark-phone",
     "question": "boxes",
     "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
-    "since": "2026-11-15"
-  },
-  {
-    "key": "Page/refused@ohmarchy-light-fold",
-    "question": "boxes",
-    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
-    "since": "2026-11-15"
-  },
-  {
-    "key": "Page/refused@ohmarchy-light-foldl",
-    "question": "boxes",
-    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
-    "since": "2026-11-15"
-  },
-  {
-    "key": "Page/refused@ohmarchy-dark-fold",
-    "question": "boxes",
-    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
-    "since": "2026-11-15"
-  },
-  {
-    "key": "Page/refused@ohmarchy-dark-foldl",
-    "question": "boxes",
-    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
     "since": "2026-11-15"
   },
   {

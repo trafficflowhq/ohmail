@@ -171,8 +171,22 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
       bearer: s.token, body: JSON.stringify({ senders: ["alice@ex.example"], dryRun: true }),
     }), deps);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ dryRun: true, quoted: 1, charged: 0, suggestions: [] });
+    const quote = await res.json();
+    expect(quote).toMatchObject({ dryRun: true, quoted: 1, charged: 0, suggestions: [] });
     expect(calls.n).toBe(0);
+    const confirm = { senders: ["alice@ex.example"], maxCredits: quote.quotedCredits };
+    const missing = await H(req("POST", "/screener/suggest", {
+      bearer: s.token, body: JSON.stringify(confirm),
+    }), deps);
+    expect(missing.status).toBe(409);
+    expect((await missing.json()).error.code).toBe("suggest_quote_changed");
+    expect(calls.n).toBe(0);
+
+    const bought = await H(req("POST", "/screener/suggest", {
+      bearer: s.token, body: JSON.stringify({ ...confirm, quoteGrant: quote.quoteGrant.proof }),
+    }), deps);
+    expect(bought.status).toBe(200);
+    expect(calls.n).toBe(1);
   });
 
   it("`automatic` over HTTP reaches the rule: a `no_ai` sender is skipped unasked; a bad flag is a 400", async () => {

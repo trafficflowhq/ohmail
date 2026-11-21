@@ -5,7 +5,7 @@
   "place": "window",
   "target": [0, 0, 390, 844],
   "clip": [0, 0, 390, 844],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
   "variant": {
     "device": "phone",
     "face": "ohmarchy",
@@ -76,11 +76,7 @@
   "paints": [
     { "borderBottom": "1px dotted rgb(169, 177, 214)", "placeholder": "rgb(141, 150, 188)" },
     { "ink": "stroke rgb(169, 177, 214) 1.6px square miter 4; shapes 3 93b4b80b8950" },
-    { "backgroundColor": "rgb(122, 162, 247)" },
-    {
-      "backgroundColor": "rgb(26, 27, 38)",
-      "before.backgroundImage": "linear-gradient(rgba(0, 0, 0, 0), rgb(26, 27, 38))"
-    }
+    { "backgroundColor": "rgb(122, 162, 247)" }
   ],
   "nodes": [
     {
@@ -180,9 +176,6 @@
       { "said": "Confirm my email address with password", "type": 3 },
       { "said": "It is the password you chose when you signed up.", "type": 1 }
     ],
-    "surfaces": [
-      { "box": [325.2, 120.4, 10.1, 10.1], "paint": 2 },
-      { "box": [0, 760, 390, 84], "paint": 3, "parts": { "before": [0, -24, 390, 24] } }
-    ]
+    "surfaces": [{ "box": [325.2, 120.4, 10.1, 10.1], "paint": 2 }]
   }
 }

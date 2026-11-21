@@ -11,7 +11,7 @@
  * THE READER is the same on the three: the letter's own renderer over the ground's two doors. No look at a file's
  * bytes is handed: a press on a file saves it, until the reader's own part draws the look.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChunkLoadContext, Frame, lazyView } from "@ohmail/app/frame";
 import { OhboxShapeContext } from "@ohmail/app/ohbox";
 import { PdfLookContext } from "@ohmail/app/reader";
@@ -80,18 +80,29 @@ export function useBrowserMail(recover: HostSession["recover"], own: MailHostPar
 }
 
 const bootRows = <BootSkeleton active />;
+let writingPrepared = false;
+
+export const writingReady = prepareWriting().then(() => {
+  writingPrepared = true;
+}).catch(() => undefined);
+
 const ReadyFrame = lazyView(async () => {
   await prepareWriting();
+  writingPrepared = true;
   return { default: Frame };
 });
 
 /** The frame over a browser host's contract. */
 export function MailFrame({ host }: { host: HostContract }): ReactNode {
+  // A cold frame keeps its retry boundary for the life of this mount.
+  const [preparedAtMount] = useState(() => writingPrepared);
   return (
     <TextFromIntl>
       <PdfLookContext.Provider value={usePdfLook}>
         <OhboxShapeContext.Provider value={bootRows}>
-          <BrowserChunkLoads><ReadyFrame host={host} /></BrowserChunkLoads>
+          <BrowserChunkLoads>
+            {preparedAtMount ? <Frame host={host} /> : <ReadyFrame host={host} />}
+          </BrowserChunkLoads>
         </OhboxShapeContext.Provider>
       </PdfLookContext.Provider>
     </TextFromIntl>

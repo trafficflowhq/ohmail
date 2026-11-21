@@ -266,6 +266,8 @@ const ME = "Mila Brunner";
 const typed = () => {};
 /** What a part of a page before the app stands on: the ground on paper; ohmarchy's page is a window in the sheet's tone. */
 const onPage = (look: Look): "ground" | "sheet" => (look.face === "ohmarchy" ? "sheet" : "ground");
+const MASKED_FIELD_SAMPLE = "xxxxxxxxxxxxxxxx";
+
 const field: KitSubject[] = [
   {
     key: "Field/rest",
@@ -288,13 +290,14 @@ const field: KitSubject[] = [
   },
   {
     key: "Field/hint",
+    passwordValue: MASKED_FIELD_SAMPLE,
     place: "block",
     width: 240,
     render: () => (
       <Field
         label="App password"
         type="password"
-        value="abcdabcdabcdabcd"
+        value={MASKED_FIELD_SAMPLE}
         hint="16 letters"
         onChange={typed}
       />
@@ -1286,12 +1289,14 @@ const pages: KitSubject[] = [
   },
 ];
 
-/* Where the sheet stands a specimen on a sheet, not on the ground: what shows around its round corners. */
-const STANDS: Record<string, KitSubject["on"]> = {
-  "Notice/full": (look) => (look.device.startsWith("fold") ? "sheet" : "ground"),
-  "Report/why": "sheet",
-};
-const stood = (s: KitSubject): KitSubject => (s.key in STANDS ? { ...s, on: STANDS[s.key] } : s);
+/* These parts stand over the app's screen. */
+const stood = (s: KitSubject): KitSubject =>
+  /^(Menu|Palette|PhoneSheet|Dialog)\//.test(s.key) ||
+  s.key === "NoticeSlot/listed" ||
+  s.key === "Notice/full" ||
+  s.key === "Report/why"
+    ? { ...s, on: "screen" }
+    : s;
 
 /* What a field offers while a person types: the places and people of the design sheet's own specimens. */
 const offered = (id: string, icon: IconName, primary: string, secondary?: string): SuggestionRow => ({

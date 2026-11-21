@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { makeOwnedDb, readLock } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { MIGRATOR_ROLE, ownServersAvailable, realPgAvailable, startLockGround, throwawayDb } from "../../../packages/db/src/testing.js";
+import { MIGRATED_DB_TEARDOWN_BUDGET_MS, MIGRATOR_ROLE, ownServersAvailable, realPgAvailable, startLockGround, throwawayDb } from "../../../packages/db/src/testing.js";
 import { fingerprintOf } from "../../../packages/db/test/_plant-1-0-11.js";
 import { keyRingVar } from "../../../test/support/key-ring-env.js";
 import { makeStoreAtOldHeads, plantAccount } from "../../../packages/db/test/_store-at-old-heads.js";
@@ -19,7 +19,7 @@ const ring = new StaticKeyProvider({ 1: key });
 
 afterAll(async () => {
   for (const db of databases) await db.drop();
-});
+}, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 
 async function legacy(label: string) {
   const db = throwawayDb(label);

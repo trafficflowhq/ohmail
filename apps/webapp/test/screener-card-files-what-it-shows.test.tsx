@@ -252,7 +252,7 @@ describe("quick-adjust — the decision on the row", () => {
       const choose = row.getByRole("button", { name: "Choose a place" });
       const select = row.getByRole("button", { name: "Select the message" });
       const sender = row.getByRole("button", { name: `Options for ${who}` });
-      expect(row.getAllByRole("button"), `${who} was offered an accept`).toEqual([select, sender, choose]);
+      expect(row.getAllByRole("button"), `${who} was offered an accept`).toEqual([sender, select, choose]);
       await act(async () => { choose.click(); });
       const menu = within(document.body).getByRole("menu", { name: "Choose where this sender's mail goes" });
       const items = within(menu).getAllByRole("menuitem");

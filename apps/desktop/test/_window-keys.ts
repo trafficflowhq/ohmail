@@ -11,6 +11,7 @@ import { deleteIntentsKey } from "@ohmail/app-logic/press/delete-intents";
 import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "@ohmail/app-logic/writing/mail-send";
 import { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
+import { unsubscribeSeenKey } from "@ohmail/app-logic/screener";
 import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";
 import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 import { sendLocksKey } from "@ohmail/app-logic/writing/send-lock";
@@ -22,7 +23,7 @@ export interface WindowKeys { gone: string[]; kept: string[] }
 /** A mailbox's preferences; the impersonation mark is the Screener's (#777), by name until its builder is on main. */
 const preferences = (scope: string): string[] => [
   searchSortKey(scope), seedNotNowKey(scope), `${AFTER_VERB_STORAGE_KEY}:${scope}`, imageQualityKeyFor(scope),
-  `ohmail.screener.impersonationSeen.${scope}`, foldersOpenedKey(scope), mailOriginalKey(scope),
+  `ohmail.screener.impersonationSeen.${scope}`, foldersOpenedKey(scope), mailOriginalKey(scope), unsubscribeSeenKey(scope),
 ];
 /** A note this tab keeps about a mailbox, in `sessionStorage` (the catch-up note's builder is private). */
 const NOTE = "ohmail.lifecycle.";

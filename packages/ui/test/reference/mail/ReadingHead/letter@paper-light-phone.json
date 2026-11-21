@@ -5,7 +5,7 @@
   "place": "window",
   "target": [8, 56, 374, 69.0625],
   "clip": [8, 56, 374, 70],
-  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
   "variant": {
     "device": "phone",
     "face": "paper",
@@ -92,7 +92,7 @@
         "paddingLeft": "0px",
         "borderColor": "rgb(18, 16, 14)"
       },
-      "level": 1,
+      "level": 2,
       "text": [{ "said": "Your talk is on the programme", "type": 1 }]
     }
   ],
