@@ -1,12 +1,12 @@
 import { addDays, type CalendarEventRecord, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import type { CalendarEventFields, CalendarTime } from "@ohmail/wire";
-import { fieldsOfDraft, type EventDraft } from "./event-draft.js";
+import { draftTimes, type EventDraft } from "./event-draft.js";
 
 const dayOf = (time: CalendarTime) =>
   time.value.slice(0, 4) + "-" + time.value.slice(4, 6) + "-" + time.value.slice(6, 8);
 const clockOf = (time: CalendarTime) => time.value.slice(9, 11) + ":" + time.value.slice(11, 13);
 
-export function draftOfRecord(record: CalendarEventRecord) {
+export function draftOfRecord(record: CalendarEventRecord, viewerZone?: string) {
   const { start, end } = record;
   const day = dayOf(start);
   const allDay = start.kind === "date";
@@ -21,7 +21,7 @@ export function draftOfRecord(record: CalendarEventRecord) {
     end.zone === start.zone &&
     last >= day &&
     (allDay || last > day || to > from) &&
-    (allDay || (from !== to && start.value.slice(13, 15) === "00" && end.value.slice(13, 15) === "00")),
+    (allDay || (start.value.slice(13, 15) === "00" && end.value.slice(13, 15) === "00")),
   );
   const draft: EventDraft = {
     day,
@@ -29,6 +29,12 @@ export function draftOfRecord(record: CalendarEventRecord) {
     from,
     to,
     allDay,
+    zone:
+      start.kind === "instant" ? "UTC" : (start.zone ?? (start.kind === "floating" ? viewerZone : undefined)),
+    invitees: record.invitees.filter(
+      (person) => person.address.toLowerCase() !== record.organizer?.address.toLowerCase(),
+    ),
+    alarms: [...new Set(record.alarms.map((alarm) => alarm.minutesBefore))],
     title: record.title,
     place: record.place,
     notes: record.notes,
@@ -45,14 +51,20 @@ function timeLike(value: CalendarTime, original: CalendarTime): CalendarTime {
     : { kind: "floating", value: value.value };
 }
 
+export function draftTimeChanged(draft: EventDraft, first: EventDraft) {
+  return (["day", "endDay", "from", "to", "allDay", "zone"] as const).some(
+    (key) => draft[key] !== first[key],
+  );
+}
+
 /** Only the fields changed in this editor travel. Provider-only fields and time shapes stay exact. */
 export function eventChanges(
   record: CalendarEventRecord,
   draft: EventDraft,
-  calendar: CalendarRecord,
+  _calendar: CalendarRecord,
   viewerZone: string,
 ): Partial<CalendarEventFields> | null {
-  const baseline = draftOfRecord(record);
+  const baseline = draftOfRecord(record, viewerZone);
   const first = baseline.draft;
   const title = draft.title.trim();
   if (!title) return null;
@@ -63,13 +75,26 @@ export function eventChanges(
   }
   if (draft.busy !== first.busy) patch.busy = draft.busy;
   if (draft.private !== first.private) patch.private = draft.private;
-  const timeFields = ["day", "endDay", "from", "to", "allDay"] as const;
-  if (timeFields.some((key) => draft[key] !== first[key])) {
+  if (JSON.stringify(draft.alarms) !== JSON.stringify(first.alarms)) patch.alarms = [...(draft.alarms ?? [])];
+  if (JSON.stringify(draft.invitees) !== JSON.stringify(first.invitees)) {
+    patch.invitees = (draft.invitees ?? []).flatMap(({ address, name, role }) =>
+      role === "required" || role === "optional" ? [{ address, name, role }] : [],
+    );
+  }
+  if (draftTimeChanged(draft, first)) {
     if (!baseline.timeEditable || !record.end) return null;
-    const fields = fieldsOfDraft(draft, calendar, record.start.zone ?? viewerZone);
-    if (!fields) return null;
-    patch.start = timeLike(fields.start, record.start);
-    patch.end = timeLike(fields.end, record.end);
+    const { times } = draftTimes(draft, draft.zone ?? viewerZone);
+    if (!times) return null;
+    const converted = draft.zone !== first.zone && draft.zone !== undefined;
+    const start = converted ? times.start : timeLike(times.start, record.start);
+    const end = converted ? times.end : timeLike(times.end, record.end);
+    if (
+      JSON.stringify(start) !== JSON.stringify(record.start) ||
+      JSON.stringify(end) !== JSON.stringify(record.end)
+    ) {
+      patch.start = start;
+      patch.end = end;
+    }
   }
   return patch;
 }

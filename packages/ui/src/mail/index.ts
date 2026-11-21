@@ -52,6 +52,8 @@ export { MonthRail } from "./Lists/MonthRail.js";
 export type { MonthRailEntry, MonthRailProps } from "./Lists/MonthRail.js";
 export { ReadSquares } from "./Lists/ReadSquares.js";
 export type { ReadSquaresProps, SquareKind, SquaresRun } from "./Lists/ReadSquares.js";
+export { SelectionCircle } from "./Lists/SelectionCircle.js";
+export type { CircleSelection } from "./Lists/SelectionCircle.js";
 export { SelectionBar } from "./Lists/SelectionBar.js";
 export type { SelectionBarProps } from "./Lists/SelectionBar.js";
 
@@ -100,6 +102,7 @@ export { Attach } from "./Editor/Attach.js";
 export type { AttachProps } from "./Editor/Attach.js";
 export { AttachRoom } from "./Editor/AttachRoom.js";
 export type { AttachRoomProps } from "./Editor/AttachRoom.js";
+export { AfterComposerText } from "./Editor/AfterComposerText.js";
 export { Composer } from "./Editor/Composer.js";
 export type { ComposerProps } from "./Editor/Composer.js";
 export { ComposerMarks, type ComposerMark, type ComposerMarksProps } from "./Editor/ComposerMarks.js";

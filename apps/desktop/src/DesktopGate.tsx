@@ -21,9 +21,10 @@
  * drives `go()`, the same function the rail, palette and number keys call.
  */
 
+import { useWindowReport } from "@ohmail/app/frame";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import { Button, Spinner, useOptionalToast } from "@ohmail/ui";
+import { Button, Spinner } from "@ohmail/ui";
 
 import { createFeed, NONE, type HostConnectionState } from "@ohmail/app/host";
 import { EngineProvider } from "../../webapp/app/shell/engine";
@@ -80,7 +81,7 @@ import {
   hostDoorFor, isDesktopHost, isManagedDoor, listedOnLabel, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
   restorePairingSwitch, selfHostedServerOf, suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
-import { DesktopDevices } from "./DesktopDevices.js";
+import { DesktopPairingDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
 import { organizerNoticeOverBridge } from "./local-organizer-notice.js";
 import { reuseSweepsOverBridge } from "./reuse-sweeps-wire.js";
@@ -386,35 +387,35 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
      link in the app's document and one in a message frame cannot be worded differently. The event
      says why: ohmail's own gate refusing is said as ohmail's, and only the opener's refusal
      blames this computer. */
-  const toast = useOptionalToast();
+  const report = useWindowReport();
   useEffect(() => {
-    if (!toast) return;
+    if (!report) return;
     /* The whole address, written inside the press; "copied" only once the write fulfilled
        (`DesktopDevices.tsx`'s rule: a false "copied" strands the person). */
     const copy = (url: string): void => {
       void (async () => {
         try {
           await navigator.clipboard.writeText(url);
-          toast(DOOR_COPY.linkAddressCopied);
+          report(DOOR_COPY.linkAddressCopied);
         } catch {
-          toast(DOOR_COPY.linkAddressNotCopied);
+          report(DOOR_COPY.linkAddressNotCopied);
         }
       })();
     };
     const say = ({ url, why }: LinkRefusal): void => {
       const shown = url.length > ADDRESS_SHOWN ? `${url.slice(0, ADDRESS_SHOWN)}…` : url;
       const sentence = why === "opener" ? DOOR_COPY.linkNoBrowser(machineWord(), shown) : DOOR_COPY.linkNotOpened(shown);
-      toast(sentence, {
+      report(sentence, {
         action: DOOR_COPY.linkCopyAddress,
         onAction: () => copy(url),
-        duration: 10_000,
+        actionDeadline: Date.now() + 10_000,
       });
     };
     void onLinkRefused(say);
     return () => {
       offLinkRefused(say);
     };
-  }, [toast]);
+  }, [report]);
   /* …AND WHO ASKS WHEN THE SHELL HOLDS A MARKED LINK'S PRESS: the gate draws the ask over every
      screen (`LinkAsk.tsx`), and a newer press replaces one still up, as in the shell's one slot. */
   useEffect(() => {
@@ -509,7 +510,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   const gateStatus = shell?.kind === "status" ? shell.status : null;
   const providerForm = useMemo(() => <AiProviderForm onStatus={setAi} />, []);
   const pairNode = useMemo(
-    () => (hostDoorFor(gateStatus) === "local" ? <DesktopDevices /> : undefined),
+    () => (hostDoorFor(gateStatus) === "local" ? <DesktopPairingDevices /> : undefined),
     [gateStatus],
   );
   const firstRun = useLocalFirstRun({

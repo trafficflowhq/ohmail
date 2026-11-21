@@ -137,6 +137,84 @@ describe("the list of the changes that did not go through", () => {
     expect(pressed).toEqual(["retry:a", "discard:a", "retryQueued:b", "withdraw:key-b"]);
   });
 
+  it("shows only the pressed Discard as busy until the change is discarded", async () => {
+    let finishDiscard = () => {};
+    const discard = new Promise<void>((resolve) => (finishDiscard = resolve));
+    list({
+      abandoned: [given("a", "move")],
+      queued: [waiting("b", "draft_discard")],
+      onDiscard: (id) => {
+        pressed.push(`discard:${id}`);
+        return discard;
+      },
+    });
+    const [first, second] = rows();
+    const button = within(first!).getByRole("button", { name: S.unsavedDiscard });
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    const retry = within(first!).getByRole("button", { name: S.unsavedRetry });
+    for (const other of [retry, ...within(second!).getAllByRole("button")]) {
+      expect(other.hasAttribute("aria-busy")).toBe(false);
+      fireEvent.click(other);
+    }
+    fireEvent.click(button);
+    expect(pressed).toEqual(["discard:a"]);
+    await act(async () => finishDiscard());
+    expect(button.hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("starts only the first action when Retry and Discard are clicked in the same batch", async () => {
+    let finishRetry = () => {};
+    const pending = new Promise<null>((resolve) => (finishRetry = () => resolve(null)));
+    list({
+      queued: [waiting("a", "move")],
+      onRetryQueued: (id) => {
+        pressed.push(`retryQueued:${id}`);
+        return pending;
+      },
+    });
+    const retry = screen.getByRole("button", { name: S.unsavedRetry });
+    const discard = screen.getByRole("button", { name: S.unsavedDiscard });
+    act(() => {
+      retry.click();
+      discard.click();
+    });
+    expect(pressed).toEqual(["retryQueued:a"]);
+    expect(retry.getAttribute("aria-busy")).toBe("true");
+    expect(discard.hasAttribute("aria-busy")).toBe(false);
+    await act(async () => finishRetry());
+    expect(retry.hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("releases the action after a failed retry and guards the next attempt", async () => {
+    list({
+      queued: [waiting("a", "move")],
+      onRetryQueued: async (id) => {
+        pressed.push(`retryQueued:${id}`);
+        return {
+          ...confirmed(id),
+          status: "rolled_back",
+          error: { code: "gone", message: "That folder is gone." },
+        } as MutationResult;
+      },
+    });
+    const retry = screen.getByRole("button", { name: S.unsavedRetry });
+    const discard = screen.getByRole("button", { name: S.unsavedDiscard });
+    fireEvent.click(retry);
+    expect(retry.getAttribute("aria-busy")).toBe("true");
+    await flush();
+    expect(rowText()[0]).toContain("That folder is gone.");
+    expect(retry.hasAttribute("aria-busy")).toBe(false);
+
+    act(() => {
+      discard.click();
+      retry.click();
+    });
+    await flush();
+    expect(pressed).toEqual(["retryQueued:a", "withdraw:key-a"]);
+    expect(discard.hasAttribute("aria-busy")).toBe(false);
+  });
+
   it("says a retry's refusal in its row, and a waiting change's refusal in its own", async () => {
     list({
       abandoned: [given("a", "move")],

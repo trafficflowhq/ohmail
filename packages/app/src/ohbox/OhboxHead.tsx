@@ -19,10 +19,12 @@ export function OhboxHead({
   beside,
   plan,
   onMarkAllRead,
+  displayOnly = false,
 }: {
   model: OhboxListModel;
   beside: OhboxBeside;
   plan: LayoutPlan;
+  displayOnly?: boolean;
   /** Mark every unread letter of the Ohbox read; absent where the shell has no such verb. */
   onMarkAllRead: ((ids: string[]) => void) | null;
 }) {
@@ -31,6 +33,7 @@ export function OhboxHead({
   const all = useText("markAll");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
+  if (displayOnly && menuOpen) setMenuOpen(false);
   /* The engine's unread letters: Mark all read names them as soon as rows stand, as the shipped head did. The hot
      dot is a claim about the mailbox and waits until the Ohbox may say it. */
   const unread = model.unreadIds.length;
@@ -64,7 +67,7 @@ export function OhboxHead({
         }
       />
       <Menu
-        open={menuOpen}
+        open={!displayOnly && menuOpen}
         onClose={() => setMenuOpen(false)}
         anchor={menuButton}
         right

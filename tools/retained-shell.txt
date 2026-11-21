@@ -1,5 +1,4 @@
 apps/webapp/app/shell/AutoActRow.tsx
-apps/webapp/app/shell/AutoFiledReview.tsx
 apps/webapp/app/shell/BootSkeleton.tsx
 apps/webapp/app/shell/CertificateTrust.tsx
 apps/webapp/app/shell/EmptiedLetter.tsx
@@ -12,7 +11,6 @@ apps/webapp/app/shell/ProfileImportCard.tsx
 apps/webapp/app/shell/ProviderPicker.tsx
 apps/webapp/app/shell/QrCode.tsx
 apps/webapp/app/shell/ReuseSweepNotice.tsx
-apps/webapp/app/shell/ScreeningSection.tsx
 apps/webapp/app/shell/StorageNotice.tsx
 apps/webapp/app/shell/StoragePane.tsx
 apps/webapp/app/shell/UpdateLine.tsx

@@ -33,6 +33,7 @@ export interface FoldFolder {
 export interface FolderFoldProps {
   /** The tree's name: "All folders". */
   label: string;
+  narrow?: boolean;
   /** The line that looks for a folder, once there are more than a few. */
   find?: { label: string; value: string; onChange?: (value: string) => void };
   /** Each mailbox's folders as they stand now, branches opened or shut, the best match first while a name is typed. */
@@ -52,7 +53,7 @@ export interface FolderFoldProps {
 }
 
 /** All the folders the shelf does not show, opened and shut in place in the sidebar. */
-export function FolderFold({ label, find, groups, none, onOpen, onBranch, onMenu }: FolderFoldProps) {
+export function FolderFold({ label, narrow, find, groups, none, onOpen, onBranch, onMenu }: FolderFoldProps) {
   const first = groups.flatMap((group) => group.folders)[0];
   const keys = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -66,7 +67,7 @@ export function FolderFold({ label, find, groups, none, onOpen, onBranch, onMenu
     }
   };
   return (
-    <div className="oh-folderfold" role="tree" aria-label={label}>
+    <div className="oh-folderfold" data-narrow={narrow || undefined} role="tree" aria-label={label}>
       {find ? (
         <label className="oh-folderfold-find">
           <Icon name="search" size={16} />
@@ -92,7 +93,9 @@ export function FolderFold({ label, find, groups, none, onOpen, onBranch, onMenu
                 <div
                   className="oh-folderfold-row"
                   style={
-                    folder.depth ? ({ "--oh-folderfold-depth": folder.depth } as CSSProperties) : undefined
+                    folder.depth
+                      ? ({ "--oh-folderfold-depth": Math.min(folder.depth, 5) } as CSSProperties)
+                      : undefined
                   }
                 >
                   {folder.branch ? (

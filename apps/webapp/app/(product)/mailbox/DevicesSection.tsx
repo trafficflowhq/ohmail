@@ -29,9 +29,11 @@
  * a camera needs it typed, and five minutes of single-use lifetime bounds that exposure.
  */
 
+import type { ToastFn } from "@ohmail/app-logic/press/report";
+import { useReport } from "@ohmail/app/frame";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSection, SettingsSubhead, useToast } from "@ohmail/ui";
+import { Button, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 import { devicesOf } from "@ohmail/client-engine";
 import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
 import { showDevicesListed, type ToldDevices } from "@ohmail/app-logic/notices/use-notices";
@@ -75,11 +77,14 @@ function pairOrigin(): string {
 
 type Busy = null | "mint" | "web-group" | `revoke:${string}` | `remove:${string}`;
 
-export function DevicesSection() {
+export function PairingDevicesSection() {
+  return <DevicesSection report={useReport()} />;
+}
+
+export function DevicesSection({ report }: { report: ToastFn }) {
   const t = useTranslations("devices");
   const sentence = useRefusalSentence();
   const format = useFormatter();
-  const toast = useToast();
   /**
    * A label whose key may not be in `messages/*.json` yet — the same shim, with the same one
    * exit, as `MessagePane.copy` (named `line` here — this pane already has a clipboard verb
@@ -265,7 +270,7 @@ export function DevicesSection() {
       // id (a functional update against the stale-closure race), so revoking an OLDER code
       // never takes a live display with it.
       setMinted((cur) => (cur && cur.id === id ? null : cur));
-      toast(t("revoked"));
+      report(t("revoked"));
       await refresh();
     });
 
@@ -274,7 +279,7 @@ export function DevicesSection() {
       await devicesApi.revoke(id);
       if (!alive.current) return;
       setRemoving(null);
-      toast(t("removed"));
+      report(t("removed"));
       await refresh();
     });
 
@@ -284,7 +289,7 @@ export function DevicesSection() {
       const { revoked } = await devicesApi.revokeWebSessions();
       if (!alive.current) return;
       setConfirmingGroup(false);
-      toast(t("webGroupDone", { count: revoked }));
+      report(t("webGroupDone", { count: revoked }));
       await refresh();
     });
 
@@ -296,7 +301,7 @@ export function DevicesSection() {
     void (async () => {
       try {
         await navigator.clipboard.writeText(link);
-        if (alive.current) toast(t("copied"));
+        if (alive.current) report(t("copied"));
       } catch {
         if (alive.current) setError(t("copyFailed"));
       }

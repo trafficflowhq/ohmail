@@ -58,9 +58,13 @@
   font-size: var(--t-meta);
 }
 
-.rd-stream-conversation {
+.rd-stream-conversation[data-thread] {
   display: grid;
   grid-template-columns: var(--sq-gutter) minmax(0, 1fr);
+}
+
+.rd-stream-conversation:not([data-thread]) > .rd-stream-squares {
+  display: none;
 }
 
 .rd-stream-squares {

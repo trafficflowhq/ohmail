@@ -24,6 +24,7 @@ import { useSquaresRun } from "./squares-run.js";
 export interface OhboxGroupProps {
   model: OhboxListModel;
   beside: OhboxBeside;
+  displayOnly?: boolean;
   /** On the phone the personal tag leaves room for the sender's address. */
   showTaggedByline?: boolean;
   /** The group's name, said by its heading and its listbox. */
@@ -45,6 +46,7 @@ const SQUARE: Record<ThreadMark, SquareKind> = { read: "seen", unread: "unseen",
 export function OhboxGroup({
   model,
   beside,
+  displayOnly = false,
   showTaggedByline = false,
   name,
   rows,
@@ -78,6 +80,8 @@ export function OhboxGroup({
     at: { x: number; y: number };
     anchor: HTMLElement;
   } | null>(null);
+  if (displayOnly && contact !== null) setContact(null);
+  if (displayOnly && menu !== null) setMenu(null);
   const drawn = rows.slice(from, to);
   const hot = rows.some(model.rowUnread);
   return (
@@ -107,14 +111,15 @@ export function OhboxGroup({
           ))}
         </Rows>
       ) : null}
-      {contact &&
+      {!displayOnly &&
+      contact &&
       ScreenContact &&
       contact.openId === openId &&
       model.picked.size === 0 &&
       contact.person.anchor.isConnected ? (
         <Contact person={contact.person} onClose={() => setContact(null)} />
       ) : null}
-      {menu ? (
+      {!displayOnly && menu ? (
         <OhboxRowMenu
           model={model}
           row={menu.row}
@@ -146,6 +151,23 @@ interface OhboxRowItemProps {
   onMenu: NonNullable<Parameters<typeof Row>[0]["onMenu"]>;
   onContact?: (letter: EngineMessage, anchor: HTMLElement) => void;
   words: ReturnType<typeof useText>;
+}
+
+/* Windowed rows remount as they enter the slice. Format a letter's date once for each time view. */
+type Stamp = OhboxBeside["words"]["stamp"];
+const stamps = new WeakMap<Stamp, WeakMap<EngineMessage, ReturnType<Stamp>>>();
+
+function rowStamp(format: Stamp, message: EngineMessage): ReturnType<Stamp> {
+  let byMessage = stamps.get(format);
+  if (!byMessage) {
+    byMessage = new WeakMap();
+    stamps.set(format, byMessage);
+  }
+  const saved = byMessage.get(message);
+  if (saved) return saved;
+  const stamp = format(message);
+  byMessage.set(message, stamp);
+  return stamp;
 }
 
 function OhboxRowItem({
@@ -187,7 +209,7 @@ function OhboxRowItem({
   const unreadMarks = marks ? marks.filter((k) => k === "unread").length : 0;
   const marksWords = marks ? t("row.marks", { count: marks.length, unread: unreadMarks }) : null;
   const file = row.members.some((m) => m.hasAttachments) ? t("row.file") : null;
-  const stamp = w.stamp(face);
+  const stamp = rowStamp(w.stamp, face);
   const tag = w.tag(row.openTarget);
   const picked = model.pickState(row.members.every((m) => model.picked.has(m.id)));
   const open = model.rowOpen(row);
@@ -211,7 +233,7 @@ function OhboxRowItem({
       onWhen={beside.flipTime}
       file={file ?? undefined}
       squares={
-        marks ? (
+        marks && run !== null ? (
           <ReadSquares
             squares={marks.map((k) => SQUARE[k])}
             here={walked?.here ?? undefined}
@@ -233,8 +255,10 @@ function OhboxRowItem({
           : undefined
       }
       onOpen={() => model.pressRow(row)}
+      onKeyboardOpen={() => model.pressRow(row, true)}
       selection={{
         label: t("keyPick"),
+        active: picked !== undefined,
         onPress: (extend) => (extend ? model.pickRangeTo : model.togglePick)(row.openTarget.id),
       }}
       onMenu={onMenu}

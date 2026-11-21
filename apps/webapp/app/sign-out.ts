@@ -152,7 +152,6 @@ export async function forgetThisBrowser(
    */
   if (may("account")) {
     postSignedOut(owner ?? null);
-    postSessionChange();
   }
   /* The sanitized documents this window kept per engine (`mail-doc-cache.ts`): mail, in memory. */
   if (may("jar")) forgetMailDocs();
@@ -532,6 +531,7 @@ export async function signOut(
       recorded = durableSet(PENDING_SIGN_OUT_KEY, JSON.stringify(operation), "session.signOut") === "stored";
     }
     markSignedOutPending();
+    postSessionChange();
     if (operation !== null) {
       retainAccountCleanup(operation);
       retainRetiredComposeCleanup(operation);

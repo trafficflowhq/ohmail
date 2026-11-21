@@ -4,7 +4,15 @@
  * screen and hands it down; what a shell stands above every pane wraps all of this.
  */
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
-import { useCallback, useContext, useEffect, useRef, type ComponentProps, type ReactNode } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Overlay } from "@ohmail/ui/base";
 import { NONE, type None } from "../host/index.js";
 import { ProductKeys, ProductSwitch } from "./ProductSwitch.js";
@@ -35,6 +43,7 @@ import {
 } from "./FeatureNotices.js";
 import { LetterBesideClose, LetterOverKeys } from "./letter-over.js";
 import { isCalendarPlace } from "./product.js";
+import { useRailGesture } from "./rail-gesture.js";
 import { RAIL_SHEET, RailKeys } from "./rail-keys.js";
 import type { NoticeStore } from "./notice-store.js";
 import { NoticeHost } from "./NoticeHost.js";
@@ -42,6 +51,7 @@ import { NoticeMore } from "./NoticeMore.js";
 import { DockRail, SideRail, type RailHostProps } from "./RailHost.js";
 import { ReportHost } from "./ReportHost.js";
 import type { useReportSlot } from "./report-slot.js";
+import { fragmentOf } from "./route.js";
 import { useProductArrival } from "./product-arrival.js";
 import { Stage } from "./Stage.js";
 import { useText } from "../text/index.js";
@@ -162,10 +172,51 @@ function Overs({
   );
 }
 
+function RailDrawer({
+  frame,
+  open,
+  enabled,
+  toggle,
+  label,
+  children,
+}: {
+  frame: RefObject<HTMLDivElement | null>;
+  open: boolean;
+  enabled: boolean;
+  toggle: (open: boolean) => void;
+  label: string;
+  children: ReactNode;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  const preview = useRailGesture(frame, panel, enabled, open, toggle);
+  return (
+    <Overlay
+      open={open}
+      preview={preview}
+      panelRef={panel}
+      onClose={() => toggle(false)}
+      label={label}
+      place="start"
+      className={preview ? `${RAIL_SHEET} fr-rail-preview` : RAIL_SHEET}
+    >
+      {children}
+    </Overlay>
+  );
+}
+
 /** What the frame's root holds, as the frame's body hands it down. */
 function SwitchAtCommit({ route }: { route: Route }) {
   useSwitchEnded(route, true);
   return null;
+}
+
+/** Beside an upright dock, the notice stands inside the list, or over the window on a phone. */
+function columnNotice(rail: LayoutPlan["rail"], notice: ReactNode, onSheet: boolean) {
+  return rail === "icons" ? (
+    <div key="bar" className="fr-noticebar" data-on-sheet={onSheet ? "" : undefined}>
+      {notice}
+    </div>
+  ) : null;
 }
 
 interface FramePartsProps {
@@ -232,7 +283,8 @@ export function FrameParts({
     host.capabilities.products === "both" && host.features.calendar !== NONE ? host.features.calendar : null;
   const inCalendar = isCalendarPlace(route.place) && calendar !== null;
   const frame = useRef<HTMLDivElement>(null);
-  useProductArrival(frame, plan.device, inCalendar ? "cal" : "mail");
+  const resumed = !inCalendar && letterOpen && inner.readerPosition.current?.address === fragmentOf(route);
+  useProductArrival(frame, plan.device, inCalendar ? "cal" : "mail", resumed);
   const navigation = (form: CalendarRailProps["form"], notice: ReactNode, phoneMore = false) => (
     <Navigation
       {...rails}
@@ -244,17 +296,6 @@ export function FrameParts({
       phoneMore={phoneMore}
     />
   );
-  const sideRail =
-    plan.rail === "dock" ? null : navigation(plan.rail, <div className="fr-railnotice">{slotNotice}</div>);
-  /* Where no rail's foot stands, the one notice stands over the list: inside its column beside an upright dock, over
-     the whole window on a phone's width. */
-  const inColumn = (onSheet: boolean) =>
-    plan.rail === "icons" ? (
-      <div key="bar" className="fr-noticebar" data-on-sheet={onSheet ? "" : undefined}>
-        {slotNotice}
-      </div>
-    ) : null;
-
   return (
     <>
       {!staged && (inCalendar || route.place === "settings") ? <SwitchAtCommit route={route} /> : null}
@@ -277,16 +318,20 @@ export function FrameParts({
         {plan.rail === "dock" ? <div className="fr-noticebar">{slotNotice}</div> : null}
         <Columns
           plan={plan}
-          rail={sideRail}
+          rail={
+            plan.rail === "dock"
+              ? null
+              : navigation(plan.rail, <div className="fr-railnotice">{slotNotice}</div>)
+          }
           list={[
-            inColumn(plan.device !== "phone"),
+            columnNotice(plan.rail, slotNotice, plan.device !== "phone"),
             <StageNoticeInReview.Provider key="list" value={seedReview}>
               {list}
             </StageNoticeInReview.Provider>,
           ]}
           listKeys={!staged && route.open === null && !holds}
           reading={reading}
-          wide={wide !== null ? [inColumn(false), wide] : null}
+          wide={wide !== null ? [columnNotice(plan.rail, slotNotice, false), wide] : null}
           above={above}
           labels={{
             list: t("landmark.list"),
@@ -296,20 +341,18 @@ export function FrameParts({
           }}
         />
         {plan.rail === "dock" && !letterUp ? navigation("dock", null) : null}
-        <div className="fr-report">
-          <ReportHost slot={slot} />
-        </div>
+        {staged ? null : renderReport(slot, "fr-report")}
       </div>
-      {/* The kit's overlay: the keys go in and stay, Escape or a press beside it closes it, and they go back to More. */}
-      <Overlay
+      <RailDrawer
+        frame={frame}
         open={sheet}
-        onClose={() => commands.rail(false)}
+        enabled={active && !inCalendar && plan.rail !== "words"}
+        toggle={commands.rail}
         label={t("dock.more")}
-        className={RAIL_SHEET}
       >
-        {navigation("words", null, plan.rail === "dock")}
-      </Overlay>
-      {renderStage(stage, pane, seedReview, inner.notices, t("landmark.stage"))}
+        {navigation("words", null, true)}
+      </RailDrawer>
+      {renderStage(stage, pane, seedReview, inner.notices, slot, t("landmark.stage"))}
       <Overs overs={host.features.overs} over={over} close={commands.over} />
     </>
   );
@@ -324,17 +367,27 @@ function SeedReviewNotice({ store }: { store: NoticeStore }) {
   );
 }
 
+function renderReport(slot: FramePartsProps["slot"], className: string, hideKeyedUndo = false) {
+  return (
+    <div className={className}>
+      <ReportHost slot={slot} hideKeyedUndo={hideKeyedUndo} />
+    </div>
+  );
+}
+
 function renderStage(
   stage: FramePartsProps["stage"],
   pane: FramePartsProps["pane"],
   seedReview: boolean,
   notices: NoticeStore,
+  slot: FramePartsProps["slot"],
   label: string,
 ) {
   return (
     <Stage open={stage !== NONE} label={label}>
       {seedReview ? <SeedReviewNotice store={notices} /> : null}
       {stage !== NONE ? <stage.Body {...pane} keysHere /> : null}
+      {stage !== NONE ? renderReport(slot, "fr-stage-report", true) : null}
     </Stage>
   );
 }

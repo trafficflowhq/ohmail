@@ -610,6 +610,8 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
             saveCalendarSettings: gatedPress(calendarSetup.saveCalendarSettings, "saving calendar settings"),
           } : {}),
         }) } : {}),
+        ...(adapter.setSuggestionDismissed
+          ? { setSuggestionDismissed: gatedPress(adapter.setSuggestionDismissed.bind(adapter), "changing a calendar suggestion") } : {}),
         ...(adapter.calendarSettings
           ? { calendarSettings: gatedPress(adapter.calendarSettings.bind(adapter), "reading calendar settings") } : {}),
         ...(adapter.writeCalendar
@@ -763,6 +765,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          */
         ...(adapter.searchServer
           ? { searchServer: gatedRead(adapter.searchServer.bind(adapter), "a server-side search") }
+          : {}),
+        ...(adapter.searchPlaces
+          ? { searchPlaces: gatedRead(adapter.searchPlaces.bind(adapter), "search folder counts") }
           : {}),
 
         /**

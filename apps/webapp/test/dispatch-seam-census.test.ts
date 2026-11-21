@@ -49,21 +49,32 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
    + "claimed about it: the sentence the person reads is the send's own"],
   ["app-logic/writing/shell-compose.ts", 3,
    "the discarded reply seed and two watched scheduled-send cancellations"],
-  ["shell/folder-verbs.ts", 1,
-   "the folder-op notice's dismissal: it raises no sentence at all, and its three siblings in the "
-   + "same object already speak only on `rolled_back`"],
   ["app-logic/writing/draft-creates.ts", 1,
    "the copy a landed create left beside its editor's row, or of a message a Discard or confirmed send "
    + "ended; no sentence rides it; a refused delete leaves one more draft, never a lost one"],
-  ["views/ComposeView.tsx", 1,
-   "`draft_accept` beside taking a draft into the form — the form filling IS the confirmation"],
+
 ];
 
 /**
- * Each former bare dispatch is still accounted for. These four moved to producers that read their result.
+ * Each former bare dispatch is still accounted for. The reported dispatches moved to producers that read their result.
  * The total stays pinned apart from the counts of calls still using the old shape.
  */
 const REPORTED = [
+  {
+    file: "writing/shell-compose.ts", declaration: "takeOfferedDraft",
+    steps: [
+      /onComposeFields\(\{/,
+      /await engine\.mutate\(\{ kind: "draft_accept", draftId: draft\.id \}\)/,
+    ],
+  },
+  {
+    file: "../../app/src/folder/RailSeat.tsx", declaration: "run",
+    steps: [
+      /if \(act\.kind === "folder_op_dismiss" \? liveFolder\.op\?\.error === undefined : liveFolder\.op !== undefined\)/,
+      /const verdict = await press\.dispatchPress\(act\)/,
+      /if \(verdict\.kind === "refused"\) report\(rail\("folderVerbFailed"\)\)/,
+    ],
+  },
   {
     file: "screener/screener-state.ts", declaration: "dispatchDecision",
     steps: [
@@ -190,6 +201,8 @@ describe("the shell's dispatch seam", () => {
       const code = read(row.file, row.declaration);
       for (const step of row.steps) expect(code, row.declaration).toMatch(step);
     }
+    const folderNotice = read("../../app/src/folder/FolderRailPrompts.tsx", "folderRowCommands");
+    expect(folderNotice).toContain("writable.run(folderCommands.dismiss(folder.id), folder)");
     const answer = read("writing/shell-compose.ts", "answerHeldDraft");
     expect(answer).toMatch(/const res = await engine\.mutate\(\{ kind: "draft_resolve", draftId, outcome,/);
     expect(answer).toMatch(/if \(res\.status !== "confirmed"\)/);

@@ -47,6 +47,7 @@ const SESSION_CHANGE_SIGNAL = "ohmail.session-changed";
 
 export function postSessionChange(): void {
   post(SESSION_CHANGE_SIGNAL);
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_CHANGE_SIGNAL));
 }
 
 const LOCAL_SIGN_OUT = "ohmail.same-tab-sign-out";
@@ -66,6 +67,19 @@ export function listenLocalSignOut(onSignal: () => void): () => void {
 
 export function listenSessionChange(onSignal: () => void): () => void {
   return listen(SESSION_CHANGE_SIGNAL, onSignal);
+}
+
+/** Follow the browser's session marker in this tab as well as in other tabs. */
+export function listenBrowserSession(onSignal: () => void): () => void {
+  const stop = listenSessionChange(onSignal);
+  const cookies = window.cookieStore;
+  cookies?.addEventListener("change", onSignal);
+  window.addEventListener(SESSION_CHANGE_SIGNAL, onSignal);
+  return () => {
+    stop();
+    cookies?.removeEventListener("change", onSignal);
+    window.removeEventListener(SESSION_CHANGE_SIGNAL, onSignal);
+  };
 }
 
 /** Tell every other tab of this account that the session here has ended. Never throws. */

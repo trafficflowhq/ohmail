@@ -7,6 +7,7 @@ export type ChangeAnswer = Answer<"left", StorageWord>;
 export function someFigures(over: Partial<StorageFigures> = {}): StorageFigures {
   return {
     used: "235 MB",
+    percent: 5,
     limit: "5 GB",
     room: { kind: "plan", limit: "5 GB" },
     tag: null,

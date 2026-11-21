@@ -3,9 +3,14 @@ import ts from "typescript";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  apiRoutes, createApp, JSON_BODY_MAX_BYTES, LARGE_BODY_ROUTES,
+  apiRoutes, bodyCeilingFor, createApp, JSON_BODY_MAX_BYTES, LARGE_BODY_ROUTES,
   type ApiDeps, type Route,
 } from "@trafficflow/api";
+import { calendarRoutes } from "@trafficflow/api/calendar";
+import { CALENDAR_WRITE_LIMITS } from "@trafficflow/db/calendar";
+import { CALDAV_PASSWORD_MAX_CHARS, CALDAV_USER_MAX_CHARS } from "../../services/src/calendar/connect.js";
+import { CALENDAR_NAME_MAX_CHARS } from "../../services/src/calendar/connect-acts.js";
+import { CALENDAR_ZONE_NAME_MAX } from "../../services/src/calendar/settings-service.js";
 import {
   ATTACHMENT_MAX_FETCH_BYTES, BODIES_IDS_MAX, CONTACTS_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT,
   DOWNLOAD_ALL_MAX_BYTES, DOWNLOAD_ALL_MAX_PARTS, DRAFT_MAX_RECIPIENTS, FORWARD_MAX_PARTS,
@@ -84,7 +89,7 @@ import { DISCOVER_DOMAIN_MAX_CHARS, DISCOVER_RECORDS_MAX } from "../src/mailbox-
  *
  * ## Three censuses, each EXACT over a stated domain
  *
- *  1. **The route table.** Every route in `apiRoutes` is classified, with no remainder. A new
+ *  1. **The route table.** Every route in the base and calendar route tables is classified, with no remainder. A new
  *     route is red until it is placed.
  *  2. **Query parameters.** Every `searchParams.get("…")` in `packages/api/src`, derived from
  *     the source text. A new query parameter is red until it is dispositioned.
@@ -168,7 +173,8 @@ function readingHelpers(): Set<string> {
 }
 
 /** Every route in the table, as `METHOD /pattern`. */
-const allRoutes = apiRoutes.map(key);
+const composedRoutes = [...apiRoutes, ...calendarRoutes];
+const allRoutes = composedRoutes.map(key);
 
 /**
  * Does this handler's own source read a request body or a query string?
@@ -206,9 +212,15 @@ const readsInputInline = (r: Route): boolean => READS_INPUT.test(String(r.handle
  *
  * The census was not wrong about counts. It was silent about a question it never asked, which is
  * the more dangerous state: a green guard reads as coverage. SECTION 6 now asks it, by DRIVING
- * `createApp(apiRoutes)` rather than by reading source, and this list keeps its original job.
+ * `createApp(composedRoutes)` rather than by reading source, and this list keeps its original job.
  */
 const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
+  "GET /calendar/settings",
+  "GET /calendar/connect",
+  "DELETE /calendar/connections/:id",
+  "POST /calendar/connections/:id/check",
+  "POST /calendar/writes/:id/retry",
+  "DELETE /calendar/writes/:id",
   "GET /health",
   "GET /hello",
   "POST /internal/alerts",
@@ -841,6 +853,24 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
       SEND_ATTACHMENT_FIELD_MAX_CHARS, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS],
   },
 
+  // ── calendar ──────────────────────────────────────────────────────────────────────────────
+  "PATCH /calendar/settings": { bounds: [CALENDAR_ZONE_NAME_MAX] },
+  // The JSON ceiling caps parsing. Only the boolean reaches the update, keyed by the session's
+  // account and the UUID checked by the router (Section 6).
+  "PATCH /calendar/suggestions/:id": { bounds: [JSON_BODY_MAX_BYTES], scalarsOnly: true },
+  "POST /calendar/writes": { bounds: [
+    CALENDAR_WRITE_LIMITS.keyChars, CALENDAR_WRITE_LIMITS.payloadBytes,
+    CALENDAR_WRITE_LIMITS.invitees, CALENDAR_WRITE_LIMITS.alarms,
+  ] },
+  // readPlaceQuestion bounds the normalized text, language tag, and result count at the parser.
+  "POST /calendar/places/suggest": { bounds: [200, 35, 8] },
+  "POST /calendar/connections": {
+    // The subscription address is capped at MAX_URL_CHARS in the credential parser.
+    bounds: [CALENDAR_WRITE_LIMITS.keyChars, CALDAV_USER_MAX_CHARS, CALDAV_PASSWORD_MAX_CHARS, 8192],
+  },
+  "POST /calendar/connections/:id/sign-in": { bounds: [CALDAV_USER_MAX_CHARS, CALDAV_PASSWORD_MAX_CHARS] },
+  "PATCH /calendar/calendars/:id": { bounds: [CALENDAR_NAME_MAX_CHARS] },
+
   // ── workflows ───────────────────────────────────────────────────────────────────────────
   "POST /workflows": { bounds: [MAX_WORKFLOW_STEPS], door: "`name` is stored on one column; each step's `args` OBJECT is shape-checked but not sized, and the worker resolves and executes it" },
   "PATCH /workflows/:id": { bounds: [MAX_WORKFLOW_STEPS], door: "`name` is stored on one column; each step's `args` OBJECT is shape-checked but not sized, and the worker resolves and executes it" },
@@ -965,7 +995,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
   });
 
   it("PATH_PARAMS_ONLY is true of the handlers, not merely asserted about them", () => {
-    const lying = apiRoutes
+    const lying = composedRoutes
       .filter((r) => PATH_PARAMS_ONLY.includes(key(r)) && readsInputInline(r))
       .map(key);
     // A route parked here that has since started reading a body or a query string.
@@ -973,7 +1003,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
   });
 
   it("every CENSUS route really does read caller input inline", () => {
-    const notReading = apiRoutes
+    const notReading = composedRoutes
       .filter((r) => CENSUS[key(r)] !== undefined && !readsInputInline(r))
       .map(key);
     // Either the route stopped reading input (move it to PATH_PARAMS_ONLY) or it started
@@ -1004,7 +1034,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
     }
 
     const viaHelper = new Set(Object.keys(INPUT_VIA_HELPER));
-    const hidden = apiRoutes
+    const hidden = composedRoutes
       .filter((r) => PATH_PARAMS_ONLY.includes(key(r)) && !viaHelper.has(key(r)))
       .filter((r) => {
         const src = String(r.handler);
@@ -1021,7 +1051,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
       .toEqual(helperKeys);
     // The blind spot is closed only while these routes genuinely read nothing inline: one that
     // started reading directly would be covered by the derived signal and must move.
-    const readsInline = apiRoutes
+    const readsInline = composedRoutes
       .filter((r) => INPUT_VIA_HELPER[key(r)] !== undefined && readsInputInline(r))
       .map(key);
     expect(readsInline, "listed as reading via a helper, but reads inline now").toEqual([]);
@@ -1346,6 +1376,8 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/search.ts#limit": "clamped",
   // Narrowed by `isSearchParts` against `SEARCH_PARTS`; an unknown value is a 400, never `both`.
   "routes/search.ts#parts": "closed-set",
+  // Only the literal "1" selects the inventory arm. Other values follow regular Search.
+  "routes/search.ts#places": "closed-set",
   "routes/search.ts#q": "length-capped",
   // An opaque page cursor this service wrote, refused past `SEARCH_CURSOR_MAX_CHARS` and on any
   // shape it does not decode to.
@@ -2198,8 +2230,14 @@ describe("SECTION 3 — every SQL `IN` predicate says where its array came from"
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
 describe("SECTION 4 — the door's large-body exemption is derived, not asserted", () => {
+  it("uses the regular JSON body ceiling for a calendar suggestion change", () => {
+    const id = crypto.randomUUID();
+    expect(bodyCeilingFor(composedRoutes, "PATCH", `/calendar/suggestions/${id}`, 50 * 1024 * 1024))
+      .toBe(JSON_BODY_MAX_BYTES);
+  });
+
   it("LARGE_BODY_ROUTES is exactly the routes whose handler decodes inline bytes", () => {
-    const decodesBytes = apiRoutes
+    const decodesBytes = composedRoutes
       .filter((r) => /contentBase64|decodeSendAttachments/.test(String(r.handler)))
       .map(key)
       .sort();
@@ -2468,7 +2506,7 @@ const paramNamesOf = (pattern: string): string[] =>
 /** Every `METHOD /pattern#name` in the shipped table. */
 function allParamKeys(): string[] {
   const out: string[] = [];
-  for (const r of apiRoutes) for (const p of paramNamesOf(r.pattern)) out.push(`${key(r)}#${p}`);
+  for (const r of composedRoutes) for (const p of paramNamesOf(r.pattern)) out.push(`${key(r)}#${p}`);
   return out;
 }
 
@@ -2484,6 +2522,7 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
       "GET /drafts/:id#id",
       "GET /attachments/:id#id",
       "GET /admin/accounts/:id#id",
+      "PATCH /calendar/suggestions/:id#id",
     ]) {
       expect(keys).toContain(k);
     }
@@ -2503,7 +2542,7 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
 
   it("OPAQUE_PATH_PARAMS and the routes' own `opaqueParams` say the same thing, both ways", () => {
     const fromRoutes: string[] = [];
-    for (const r of apiRoutes) {
+    for (const r of composedRoutes) {
       for (const p of r.options?.opaqueParams ?? []) fromRoutes.push(`${key(r)}#${p}`);
     }
     // Both directions, because either one alone is a list that can drift: a route can widen its
@@ -2512,7 +2551,7 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
     // And every declared param must actually exist on its pattern — an `opaqueParams: ["mid"]` on a
     // route whose param is `:id` is a typo that silently checks everything, which looks exactly
     // like working correctly.
-    for (const r of apiRoutes) {
+    for (const r of composedRoutes) {
       for (const p of r.options?.opaqueParams ?? []) {
         expect(paramNamesOf(r.pattern), `${key(r)} declares :${p} opaque but has no such param`)
           .toContain(p);
@@ -2524,13 +2563,14 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
     // `deps` is deliberately a bare cast and never populated. If the check were a middleware, or
     // anywhere below `createApp.handle`, these calls would touch the session store or the database
     // and throw on the empty object — so this passing IS the placement proof, not a shortcut.
-    const app = createApp(apiRoutes);
+    const app = createApp(composedRoutes);
     const deps = {} as unknown as ApiDeps;
 
     for (const [method, path] of [
       ["GET", "/drafts/not-a-uuid"],              // FULL_PIPELINE
       ["GET", "/attachments/not-a-uuid"],         // RAW_PIPELINE
       ["GET", "/admin/accounts/not-a-uuid"],      // ANONYMOUS_PIPELINE
+      ["PATCH", "/calendar/suggestions/not-a-uuid"], // composed Calendar route
     ] as const) {
       const res = await app.handle(new Request(`http://localhost${path}`, { method }), deps);
       expect(res.status, `${method} ${path}`).toBe(400);

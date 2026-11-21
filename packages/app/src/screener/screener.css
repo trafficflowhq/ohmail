@@ -82,3 +82,9 @@
   flex: 1;
   min-height: 0;
 }
+
+:root[data-device="phone"] .sc-mailbox-badge {
+  max-inline-size: 33.333%;
+  min-inline-size: 0;
+  flex: 0 1 auto;
+}

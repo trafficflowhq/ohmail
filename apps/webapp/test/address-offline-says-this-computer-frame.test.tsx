@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { queryAllByRole } from "@testing-library/dom";
+import { queryAllByRole, within } from "@testing-library/dom";
 import { Frame } from "@ohmail/app/frame";
 import { MailGround, mailPlaces, mailReader } from "@ohmail/app/mail";
 import { TextProvider } from "@ohmail/app/text";
@@ -50,7 +50,7 @@ function engineFailing(fail: () => unknown) {
   return { engine, asked };
 }
 
-async function mount(engine: OhmailEngine): Promise<HTMLElement> {
+async function mount(engine: OhmailEngine, device: "desktop" | "phone" = "desktop"): Promise<HTMLElement> {
   const { host: appHost } = fakeHost({
     engine,
     service: "self",
@@ -58,7 +58,7 @@ async function mount(engine: OhmailEngine): Promise<HTMLElement> {
     places: mailPlaces(),
     above: MailGround,
     reader: mailReader({ body: letterBody, look: "none" }),
-    window: fakeWindow("desktop"),
+    window: fakeWindow(device),
     address: fakeAddress("#/address/" + encodeURIComponent(JONAS)),
   });
   host = document.createElement("div");
@@ -83,6 +83,16 @@ describe("the address view on a paired desktop whose account is out of reach", (
     await settle();
     expect(el.textContent).toContain(messages.search.addressOffline);
     expect(el.textContent).not.toContain(messages.search.scopeUnanswered);
+    expect(tryAgain(el)).toHaveLength(0);
+  });
+
+  it.each(["desktop", "phone"] as const)("emphasizes this computer in the offline sentence on %s", async (device) => {
+    const { engine } = engineFailing(offline);
+    await engine.start();
+    const el = await mount(engine, device);
+    await settle();
+    expect(within(el).getByText("this computer", { selector: "strong" })).toBeTruthy();
+    expect(el.textContent).toContain(messages.search.addressOffline);
     expect(tryAgain(el)).toHaveLength(0);
   });
 

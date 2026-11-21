@@ -15,10 +15,10 @@ export interface SideVerb {
   press(): void;
 }
 
-/** What a swipe lands on: to the right the read slot, to the left Later. A side left out does not move. */
+/** What each swipe direction lands on. A side left out does not move. */
 export interface RowSides {
-  readonly read?: SideVerb;
-  readonly later?: SideVerb;
+  readonly right?: SideVerb;
+  readonly left?: SideVerb;
 }
 
 /** Pull new mail, as the list already has it: the one flight's state and its press. */

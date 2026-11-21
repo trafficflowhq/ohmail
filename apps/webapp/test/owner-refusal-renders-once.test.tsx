@@ -6,6 +6,7 @@
  * on `ownerRefusalCodes()`; the Devices pane is driven into the mismatch for real, and a census
  * holds the other panes to the renderer.
  */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -61,7 +62,7 @@ async function mountDevices(locale: "en" | "de"): Promise<HTMLElement> {
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale, messages: locale === "de" ? de : en, timeZone: "UTC",
-      children: h(ThemeProvider, null, h(ToastHost, null, h(DevicesSection))),
+      children: h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DevicesSection }))),
     }));
     await Promise.resolve();
   });

@@ -157,7 +157,7 @@ describe("no container takes the line breaks away", () => {
     ["the focused message", "msg-body"],
     ["a conversation sibling", "pm-body"],
     ["the Screener preview", "hm-body"],
-    ["the Trash read", "trash-live-read"],
+    ["the Trash read", "oh-message"],
     ["the html viewer's text fallback", "mb"],
   ];
   for (const [what, cls] of CONTAINERS) {

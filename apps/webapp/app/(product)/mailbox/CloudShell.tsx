@@ -32,7 +32,7 @@ import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
 import { useRevokedHere } from "../../revoked-door";
 import { AccountLocale } from "./AccountLocale";
 import { useCloudStorage } from "./storage-change";
-import { DevicesSection } from "./DevicesSection";
+import { PairingDevicesSection } from "./DevicesSection";
 import { useServerWords } from "../../server-words";
 import { useUserInvites } from "./InvitesSection";
 import { useManageOffer } from "./SubscriptionSection";
@@ -126,13 +126,14 @@ export function WakeMailboxEntry() {
  * an answer: `session-outcome.ts` classifies into three, `EngineProvider` retries the middle one, and
  * only an ANSWERED refusal reaches the signed-out screen (`AUTH-FLICKER-DIAGNOSIS.md`).
  */
-export function CloudShell({ demo, drawMail, settingsAccount, wakeSession }: {
+export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSession }: {
   demo: boolean;
   /**
    * The page's word for the first frame: `page.tsx`, the one mount, always passes it (`now` only after the edge's probe
    * named a full session). Absent is the warm open as before, for the harnesses that mount this shell directly.
    */
   drawMail?: "now" | "wait";
+  edgeOwner?: string | null;
   settingsAccount?: string;
   wakeSession?: WakeSession;
 }) {
@@ -264,7 +265,7 @@ export function CloudShell({ demo, drawMail, settingsAccount, wakeSession }: {
    * panel rides along wherever this server pairs — the same `features.pairing` gate the Devices
    * pane is built on, so setup's last step exists exactly where the surface it links to does.
    */
-  const firstRun = useCloudFirstRun(resolvedDemo, devicePairing ? <DevicesSection /> : undefined);
+  const firstRun = useCloudFirstRun(resolvedDemo, devicePairing ? <PairingDevicesSection /> : undefined);
 
   /**
    * The shell's confirm — now nothing but a pass-through to the shared classifier. It used to hold
@@ -358,6 +359,7 @@ export function CloudShell({ demo, drawMail, settingsAccount, wakeSession }: {
       resolveOwner={resolveOwner}
       onConfirmed={onConfirmed}
       drawMail={settingsAccount || wakeSession ? "confirmed" : drawMail}
+      edgeOwner={edgeOwner}
     >
       <AccountCleanupContext.Provider value={showAccountCleanup}>
         <WebFrame words={words} />

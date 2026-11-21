@@ -3,7 +3,7 @@
  * set — else the device's own, counted over what is on screen. What is pressed narrows the device's first paint here
  * and goes to the store, each as its own filter.
  */
-import type { EngineMessage } from "@ohmail/wire";
+import type { EngineMessage, SearchPlaceCount } from "@ohmail/wire";
 import { useEffect, useMemo, useState } from "react";
 import {
   folderLeaf,
@@ -18,7 +18,7 @@ import { displayAddress } from "../text/idn.js";
 import type { Translator } from "../text/translator.js";
 import type { DevicePaint } from "./local-pass.js";
 import type { StorePass } from "./store-pass.js";
-import type { SearchFacetGroup, SearchFacetItem, SearchFacetPick } from "./types.js";
+import type { SearchFacetGroup, SearchFacetItem, SearchFacetPick, SearchListInput } from "./types.js";
 
 /** The pressed facet: its group, the key it is shown under, and the store's own key for it where the store named one. */
 export interface Filter {
@@ -97,8 +97,8 @@ function pressedBy(pressed: Pressed, pick: SearchFacetPick): boolean {
   return pressed.some((f) => {
     if (f.group !== pick.group) return false;
     if (pick.group === "refine") return true;
-    if (pick.group === "folder" && (f.exactPath || pick.exactPath)) {
-      return f.exactPath === pick.exactPath && f.raw === pick.raw;
+    if (pick.group === "folder" && f.raw !== undefined && pick.raw !== null) {
+      return f.raw === pick.raw;
     }
     return f.label === pick.key;
   });
@@ -234,6 +234,7 @@ function filterPick(f: Filter): SearchFacetPick {
 }
 
 export interface FacetsInput {
+  readonly scope: SearchListInput["scope"];
   readonly store: StorePass;
   readonly engine: OhmailEngine;
   readonly trimmed: string;
@@ -254,6 +255,7 @@ export interface FacetsInput {
  * fallback may count (the device's paint, or the store's held pages as of this render's revision).
  */
 export function useFacets({
+  scope,
   store,
   engine,
   trimmed,
@@ -281,26 +283,33 @@ export function useFacets({
     answered && (!apart || trimmed !== "")
       ? facetGroupsOf(facets, storeFacets?.exact === true, rows, pressed, t)
       : [];
-  const needsPlaces = apart && !groups.some((group) => group.group === "folder");
-  const messageStamp = needsPlaces ? engine.read().stampOf("message") : 0;
-  const places = useMemo(
-    () => (needsPlaces ? blankPlaces(engine, messageStamp) : []),
-    [needsPlaces, engine, messageStamp],
-  );
+  const serverPlaces = useSearchPlaces(engine, scope, apart);
+  const useMirror = apart && serverPlaces === null;
+  const messageStamp = useMirror ? engine.read().stampOf("message") : 0;
+  const places = useMemo(() => {
+    if (!apart) return [];
+    const counts =
+      serverPlaces === null
+        ? mirrorPlaces(engine, messageStamp)
+        : new Map(serverPlaces.map(({ folder, count }) => [folder, count]));
+    return folderPicks([...counts.keys()]).map((pick) => ({
+      pick,
+      label: pick.key,
+      count: counts.get(pick.raw)!,
+    }));
+  }, [apart, engine, messageStamp, serverPlaces]);
   if (!apart) return groups;
-  if (needsPlaces) {
-    groups.push({
-      group: "folder",
-      items: places.map((pick) => ({
-        pick,
-        label: pick.key,
-        count: null,
-        pressed: pressedBy(pressed, pick),
-      })),
-    });
-  }
-  if (!groups.some((group) => group.group === "refine")) {
-    groups.push({
+  const inventory: SearchFacetGroup = {
+    group: "folder",
+    items: places.map((place) => {
+      const pick = trimmed === "" ? { ...place.pick, exactPath: true as const } : place.pick;
+      return { ...place, pick, pressed: pressedBy(pressed, pick) };
+    }),
+  };
+  const offered = groups.filter((group) => group.group !== "folder");
+  offered.push(inventory);
+  if (!offered.some((group) => group.group === "refine")) {
+    offered.push({
       group: "refine",
       items: [
         {
@@ -312,33 +321,47 @@ export function useFacets({
       ],
     });
   }
-  return withPressed(groups, pressed);
+  return withPressed(offered, pressed);
 }
 
-/** Offer the folders the mirror knows. These are server query keys, without mirror-only counts. */
-function blankPlaces(
-  engine: OhmailEngine,
-  _messageStamp: number,
-): Extract<SearchFacetPick, { group: "folder" }>[] {
-  const paths = new Set(
-    engine
-      .read()
-      .list<EngineMessage>("message")
-      .map((message) => message.folder),
-  );
-  return folderPicks(paths).map((pick) => ({ ...pick, exactPath: true }));
+/** The inventory belongs to the engine and scope that asked for it. */
+function useSearchPlaces(engine: OhmailEngine, scope: SearchListInput["scope"], enabled: boolean) {
+  const [answer, setAnswer] = useState<{
+    engine: OhmailEngine;
+    scope: SearchListInput["scope"];
+    places: readonly SearchPlaceCount[];
+  }>();
+  useEffect(() => {
+    if (!enabled || scope === false) return;
+    let current = true;
+    void engine.searchPlaces().then((places) => {
+      if (current && places !== null) setAnswer({ engine, scope, places });
+    });
+    return () => {
+      current = false;
+    };
+  }, [engine, scope, enabled]);
+  return enabled && answer?.engine === engine && answer.scope === scope ? answer.places : null;
+}
+
+function mirrorPlaces(engine: OhmailEngine, _messageStamp: number): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const { folder } of engine.read().list<EngineMessage>("message")) {
+    counts.set(folder, (counts.get(folder) ?? 0) + 1);
+  }
+  return new Map([...counts].sort(([a, x], [b, y]) => y - x || a.localeCompare(b)));
 }
 
 /** Use the display leaf unless two different paths would have the same name. */
 function folderPicks(
-  paths: Iterable<string>,
+  paths: readonly string[],
 ): (Extract<SearchFacetPick, { group: "folder" }> & { raw: string })[] {
   const keys = new Map<string, number>();
   for (const path of paths) {
     const key = folderKeyOf(path);
     keys.set(key, (keys.get(key) ?? 0) + 1);
   }
-  return [...paths].map((raw) => {
+  return paths.map((raw) => {
     const key = folderKeyOf(raw);
     return { group: "folder", key: keys.get(key) === 1 ? key : raw, raw };
   });

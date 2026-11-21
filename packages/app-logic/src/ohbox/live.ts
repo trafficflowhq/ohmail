@@ -1,3 +1,4 @@
+import { useMirrorReplacing } from "../engine/context.js";
 /**
  * THE OHBOX, LIVE: what the Ohbox's seat calls once (`packages/app/src/ohbox/Seat.tsx`). It assembles the list's
  * input (`OhboxListInput`) from the frame's side (`args`), the mail ground's readers and the engine, calls the
@@ -90,6 +91,7 @@ export interface OhboxLiveOwn {
 /** What the seat stands above the Ohbox's columns: the model, and the facts the words beside the list are said from. */
 export interface OhboxLive {
   readonly model: OhboxListModel;
+  readonly replacing: boolean;
   readonly now: Date;
   readonly absoluteTime: boolean;
   readonly flipTime: () => void;
@@ -112,24 +114,29 @@ function useOhboxKeys(
   own: OhboxLiveOwn,
   model: OhboxListModel,
   act: ListVerbs["onMessageAction"],
+  replacing: boolean,
 ): void {
   const engine = useEngine();
   const cursorRow = args.plan.columns === 1 && args.route.open === null;
   const selected = model.selected;
-  useKeyBindings([
-    ...model.keys,
-    ...(cursorRow
-      ? cursorRowKeys({
-          t: own.shortcuts,
-          row: selected,
-          replyAll: selected !== null && own.replyAll(selected),
-          deletable:
-            selected !== null && engine.verbRead().get<EngineMessage>("message", selected.id) != null,
-          act,
-          ask: (kind, m) => own.askRow({ kind, letter: m, act: (action) => act(action, m) }),
-        })
-      : []),
-  ]);
+  useKeyBindings(
+    replacing
+      ? []
+      : [
+          ...model.keys,
+          ...(cursorRow
+            ? cursorRowKeys({
+                t: own.shortcuts,
+                row: selected,
+                replyAll: selected !== null && own.replyAll(selected),
+                deletable:
+                  selected !== null && engine.verbRead().get<EngineMessage>("message", selected.id) != null,
+                act,
+                ask: (kind, m) => own.askRow({ kind, letter: m, act: (action) => act(action, m) }),
+              })
+            : []),
+        ],
+  );
   useZoneNav(own.shortcuts, {
     list: model.zone.list,
     reader: { selector: own.at.reading, ...model.zone.reader },
@@ -144,8 +151,14 @@ function useOhboxKeys(
  * column the cursor row alone moves. It declines where there is nothing to place on or a press would take a letter
  * away: a cursor that stands, a letter the address names, a list with no row, a first row the list has not mounted.
  */
-function useOhboxPlacer(args: PlaceLiveArgs, own: OhboxLiveOwn, model: OhboxListModel): void {
+function useOhboxPlacer(
+  args: PlaceLiveArgs,
+  own: OhboxLiveOwn,
+  model: OhboxListModel,
+  replacing: boolean,
+): void {
   useCursorPlacer((label) => {
+    if (replacing) return false;
     const first = model.firstRow;
     if (model.selected !== null || args.route.open !== null) return false;
     const row = first === null ? null : own.anchors.row(first);
@@ -158,7 +171,11 @@ function useOhboxPlacer(args: PlaceLiveArgs, own: OhboxLiveOwn, model: OhboxList
   }, "view");
 }
 
-export function useOhboxLive(args: PlaceLiveArgs, own: OhboxLiveOwn): OhboxLive {
+export function useOhboxLive(
+  args: PlaceLiveArgs,
+  own: OhboxLiveOwn,
+  initialSquare: string | null = null,
+): OhboxLive {
   const engine = useEngine();
   const demo = useDemoMode();
   const { state: mail, mailboxes: facts } = useMailState();
@@ -191,6 +208,7 @@ export function useOhboxLive(args: PlaceLiveArgs, own: OhboxLiveOwn): OhboxLive 
     previouslySeen: mirror.ohbox.previouslySeen,
     ...threads,
     absoluteTime,
+    initialSquare,
     onToggleTime: flipTime,
     tags: mirror.tags,
     now,
@@ -235,11 +253,13 @@ export function useOhboxLive(args: PlaceLiveArgs, own: OhboxLiveOwn): OhboxLive 
     senderName,
     sentLabelOf,
   });
-  useOhboxKeys(args, own, model, verbs.onMessageAction);
-  useOhboxPlacer(args, own, model);
+  const replacing = useMirrorReplacing();
+  useOhboxKeys(args, own, model, verbs.onMessageAction, replacing);
+  useOhboxPlacer(args, own, model, replacing);
 
   return {
     model,
+    replacing,
     now,
     absoluteTime,
     flipTime,

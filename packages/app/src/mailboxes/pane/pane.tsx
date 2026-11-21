@@ -1,10 +1,12 @@
 import { confirmedAccountForScope } from "../../host/session.js";
 import { useMemo, type ComponentType, type ReactNode } from "react";
+import { statusKey } from "@ohmail/app-logic/mailboxes/pane/rows";
 import { useEngine } from "@ohmail/app-logic/engine";
 import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
 import { useFrame } from "../../frame/index.js";
 import { NONE, panesOf, type None } from "../../host/index.js";
 import type { PaneBodyProps, PaneSummary, SettingsPane } from "../../settings/contract.js";
+import { useLocale, useText } from "../../text/index.js";
 import type { CalendarHalfSlot, FactorSlot } from "../connect/contract.js";
 import { MailboxesPane } from "./MailboxesPane.js";
 
@@ -15,7 +17,15 @@ import { MailboxesPane } from "./MailboxesPane.js";
 export interface PaneMailState {
   readonly state: { readonly key: string };
   refresh(): unknown;
-  readonly mailboxes?: readonly { readonly status: string }[] | null;
+  readonly mailboxes?:
+    | readonly {
+        readonly status: string;
+        readonly lastSyncAt?: string | null;
+        readonly displayName?: string | null;
+        readonly address?: string;
+        readonly syncBlockedReason?: string | null;
+      }[]
+    | null;
 }
 
 /** What a shell fills the pane's registration with: each a function, or `none` where it has none. */
@@ -82,9 +92,33 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
     );
   }
   function useSummary(): PaneSummary | null {
+    const t = useText("settingsMenu");
+    const locale = useLocale();
     const facts = slots.mailState().mailboxes;
     if (facts === undefined || facts === null) return null;
-    return { count: String(facts.filter((m) => m.status !== "disabled").length) };
+    const live = facts.filter((m) => m.status !== "disabled");
+    const full = live.some((m) => m.syncBlockedReason === "mailbox_full");
+    const statuses = live.map(({ status, lastSyncAt, syncBlockedReason }) =>
+      lastSyncAt === undefined || syncBlockedReason ? null : statusKey({ status, lastSyncAt }),
+    );
+    const connecting = statuses.includes("status_connecting");
+    const connected = statuses.length > 0 && statuses.every((status) => status === "status_connected");
+    return {
+      count: new Intl.NumberFormat(locale).format(live.length),
+      value: full
+        ? t("mailboxFull")
+        : connecting
+          ? t("mailboxConnecting")
+          : connected
+            ? t("mailboxConnected")
+            : undefined,
+      detail:
+        live
+          .map((m) => m.displayName || m.address)
+          .filter(Boolean)
+          .join(" · ") || undefined,
+      hot: full,
+    };
   }
   const Device = slots.device;
   function DeviceBody(props: PaneBodyProps): ReactNode {

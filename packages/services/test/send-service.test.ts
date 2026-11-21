@@ -6,7 +6,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads, bindDb } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { createLogger, SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
+import { createLogger, normalizeMime, SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
 import { ImapAdapter, outboundToMail } from "@trafficflow/core/adapters/imap";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -16,6 +16,7 @@ import {
   SEND_COPY_OWED_STAGED_NOT_DUE, SEND_COPY_OWED_CLAIM_MS, SENT_COPY_PASS_WINDOW, dbFor, runOwedSentCopyPass, sentCopyRefusalOf,
 } from "../src/index.js";
 import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
+import { prepareOutboundBody } from "../src/outbound-html.js";
 import { ServiceError } from "../src/errors.js";
 import { SENT_COPY_MAILBOX_WAITS_MS, SENT_COPY_TURN_MAX, SENT_COPY_TURN_UNIT } from "../src/sent-copy-pass.js";
 import { owedCopiesDueNow, ownAttempts, SEND_COPY_OWED_MAILBOX_UNIT } from "../src/send-service.js";
@@ -59,7 +60,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "mila@lichtgrat.example" }).returning();
   const ctx: ServiceContext = { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "r" };
   const ctxB: ServiceContext = { db: dbFor(db, B), accountId: B, userId: null, now: () => NOW, requestId: "r" };
-  async function newDraft(status = "draft", over: { subject?: string; body?: string } = {}) {
+  async function newDraft(status = "draft", over: { subject?: string; body?: string; html?: string } = {}) {
     const [d] = await db.insert(drafts).values({
       accountId: A, mailboxId: mb!.id, subject: "Re: hi", body: "Thanks!",
       to: [{ name: null, address: "you@example.com" }], status,
@@ -92,6 +93,68 @@ describe("SendService — gated idempotent send (Phase 3c)", () => {
     expect(row!.providerMessageId).toBe(res.providerMessageId);
     expect(row!.mintedMessageId).toBe(res.providerMessageId);   // minted up front == delivered id
     expect(row!.sentAt).toBeInstanceOf(Date);
+  });
+
+  it.each([
+    { format: "legacy code", text: "one\n  two", html: "<pre><code>one\n  two</code></pre>" },
+    { format: "ordinary rich text", text: "ordinary", html: "<p><strong>ordinary</strong></p>" },
+    { format: "plain lines", text: "one\ntwo\nthree", html: undefined },
+  ])("sends previously stored $format byte for byte", async ({ text, html }) => {
+    const { ctx, newDraft } = await setup();
+    const draftId = await newDraft("draft", { body: text, ...(html ? { html } : {}) });
+    const { factory, state } = fakeAdapter();
+    await svc.send(ctx, draftId, "unchanged-body", { openSendAdapter: factory });
+    const sent = state.sent[0]!;
+    const baseline = { ...sent, text, html };
+    const actual = await normalizeMime(await composed(sent));
+    const before = await normalizeMime(await composed(baseline));
+    expect(actual.textBody).toBe(before.textBody);
+    expect(actual.htmlBody).toBe(before.htmlBody);
+    expect(sent.text).toBe(text);
+    expect(sent.html).toBe(html);
+  });
+
+  it("delivers the source edges of an authored code block verbatim with indentation", async () => {
+    const { ctx, newDraft } = await setup();
+    const draft = prepareOutboundBody('<pre data-ohmail-code="1"><code>\r\none  \r\n\r\n  two  \r\n\r\n</code></pre>');
+    const draftId = await newDraft("draft", { html: draft.html, body: draft.text });
+    const { factory, state } = fakeAdapter();
+    await svc.send(ctx, draftId, "code-source", { openSendAdapter: factory });
+    const delivered = await normalizeMime(await composed(state.sent[0]!));
+    expect(delivered.textBody?.replace(/\r\n/g, "\n")).toBe("\n    one  \n\n      two  \n\n");
+    expect(delivered.htmlBody?.replace(/\r\n/g, "\n")).toContain("<code>\none  \n\n  two  \n\n</code>");
+    expect(delivered.htmlBody).not.toContain("data-ohmail-code");
+  });
+
+  it("sends a divider-only draft as a rule and a plain divider line", async () => {
+    const { ctx, newDraft } = await setup();
+    const draft = prepareOutboundBody("<hr><p></p>");
+    const draftId = await newDraft("draft", { html: draft.html, body: draft.text });
+    const { factory, state } = fakeAdapter();
+    expect((await svc.send(ctx, draftId, "divider-only", { openSendAdapter: factory })).status).toBe("sent");
+    const delivered = await normalizeMime(await composed(state.sent[0]!));
+    expect(delivered.htmlBody).toContain('<hr style="border:0;');
+    expect(delivered.textBody).toBe("--------");
+  });
+
+  it("delivers heading sizes, a divider and a code block in both MIME parts", async () => {
+    const { ctx, newDraft } = await setup();
+    const draft = prepareOutboundBody(
+      '<h1>Release</h1><h2>Install</h2><h3>Notes</h3><hr><pre data-ohmail-code="1"><code>one\n  two</code></pre>',
+    );
+    const draftId = await newDraft("draft", { html: draft.html, body: draft.text });
+    const { factory, state } = fakeAdapter();
+
+    expect((await svc.send(ctx, draftId, "formats", { openSendAdapter: factory })).status).toBe("sent");
+    const delivered = await normalizeMime(await composed(state.sent[0]!));
+    const html = delivered.htmlBody?.replace(/\r\n/g, "\n");
+    expect(html).toMatch(/<h1 style="font-size:28px;[^"]*">Release<\/h1>/);
+    expect(html).toMatch(/<h2 style="font-size:20px;[^"]*">Install<\/h2>/);
+    expect(html).toMatch(/<h3 style="font-size:17px;[^"]*">Notes<\/h3>/);
+    expect(html).toContain('<hr style="border:0;');
+    expect(html).toContain("white-space:pre-wrap");
+    expect(html).toContain("<code>one\n  two</code>");
+    expect(delivered.textBody?.replace(/\r\n/g, "\n")).toBe("Release\nInstall\nNotes\n--------\n    one\n      two");
   });
 
   it("threads Cc AND Bcc from the draft into the OutboundMessage the adapter is handed", async () => {

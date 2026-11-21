@@ -56,6 +56,13 @@ export abstract class EngineCalendar extends EngineLifecycle {
       writeCalendar: adapter.writeCalendar.bind(adapter),
       retryCalendarWrite: adapter.retryCalendarWrite.bind(adapter),
       dismissCalendarWrite: adapter.dismissCalendarWrite.bind(adapter),
+      ...(adapter.setSuggestionDismissed ? {
+        setSuggestionDismissed: async (id: string, dismissed: boolean) => {
+          await adapter.setSuggestionDismissed!(id, dismissed);
+          // A drain already in flight may have read before the change committed.
+          await this.syncFresh().catch(() => { /* the next scheduled drain catches up */ });
+        },
+      } : {}),
     };
   }
 

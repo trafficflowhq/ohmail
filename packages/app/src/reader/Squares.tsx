@@ -6,7 +6,7 @@
  * phone (the tokens' row of squares).
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { ReadSquares, type SquaresRun } from "@ohmail/ui/mail";
 import { squaresWindow } from "@ohmail/ui/squares-window";
 import { squareKindsOf, squareStamp, type ThreadWalk } from "@ohmail/app-logic/reader";
@@ -19,9 +19,9 @@ interface Fit {
 }
 
 /** The room the squares have, read off the tokens and the column; null where nothing is laid out. */
-function useFit(axis: "column" | "head", column: HTMLElement | null): Fit | null {
-  const [fit, setFit] = useState<Fit | null>(null);
-  useEffect(() => {
+function useFit(axis: "column" | "head", column: HTMLElement | null): Fit | null | undefined {
+  const [fit, setFit] = useState<Fit | null>();
+  useLayoutEffect(() => {
     const win = column?.ownerDocument.defaultView;
     if (!column || !win) return;
     const read = (): void => {
@@ -75,12 +75,14 @@ export function Squares({
   walk,
   axis,
   column,
+  waitForFit = true,
 }: {
   messages: readonly EngineMessage[];
   walk: ThreadWalk;
   axis: "column" | "head";
   /** The column the squares stand beside: their room. */
   column: HTMLElement | null;
+  waitForFit?: boolean;
 }) {
   const t = useText("reader");
   const tm = useText("message");
@@ -126,10 +128,17 @@ export function Squares({
     });
   }, [messages, kinds, locale, zone, tm]);
   const run: SquaresRun | undefined = useMemo(() => {
-    if (fit === null || n * fit.pitch <= fit.room) return undefined;
+    if (!fit || n * fit.pitch <= fit.room) return undefined;
     const w = squaresWindow({ n, current, focus, room: fit.room, pitch: fit.pitch, count: fit.count });
-    return { from: w.from, to: w.to, scale: w.scale, ...(axis === "column" ? { room: fit.room } : {}) };
+    return {
+      from: w.from,
+      to: w.to,
+      scale: w.scale,
+      ...(axis === "column" ? { room: fit.room, column: { pitch: fit.pitch, count: fit.count } } : {}),
+    };
   }, [fit, n, current, focus, axis]);
+  // Mount the run at its measured size so its transitions only animate subsequent changes.
+  if (waitForFit && fit === undefined) return null;
   return (
     <ReadSquares
       squares={kinds}

@@ -134,6 +134,19 @@ export function useNoticesVersion(copy: number): number {
   return copy + useSyncExternalStore(hearChoices, choicesNow, choicesBeforeHydration);
 }
 
+/** Permission can change in the OS while the app is in the background. */
+export function onNoticeReturn(surface: Window, refresh: () => void): () => void {
+  const onVisible = () => {
+    if (surface.document.visibilityState === "visible") refresh();
+  };
+  surface.addEventListener("focus", refresh);
+  surface.document.addEventListener("visibilitychange", onVisible);
+  return () => {
+    surface.removeEventListener("focus", refresh);
+    surface.document.removeEventListener("visibilitychange", onVisible);
+  };
+}
+
 /**
  * The members the stored record holds beside this build's own: an older install's switch, or a
  * newer build's. Kept as they are and read by nothing, so a write here never changes a record

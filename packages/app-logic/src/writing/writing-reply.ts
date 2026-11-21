@@ -41,7 +41,11 @@ export function replyOf(compose: ShellCompose, ctx: ReplyContext) {
   const send = compose.replySendState(mode === "forward" ? inlineForwardKey(message.id) : message.id);
   /* What the reply draws is the lane's state as it applies to THIS reply (`sendStateFor`): a send nobody could confirm
      warns over the reply it belongs to alone. Its refusal reads the lane's state as it stands, the send's own rule. */
-  const base = { messageId: message.id, from: { ...from, domainMatched: false } };
+  const base = {
+    messageId: message.id,
+    from: { ...from, domainMatched: false },
+    saveRefused: compose.replySaveRefused,
+  };
   if (mode === "forward") {
     const plan = forwardEnvelopePlan(compose.replyEnvelope, own);
     const wire = compose.replyForwardFiles?.plan.wire;

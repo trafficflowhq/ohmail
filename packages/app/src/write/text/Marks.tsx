@@ -11,10 +11,10 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Button, Field, Menu } from "@ohmail/ui/base";
+import { Button, Field, Menu, MenuItem } from "@ohmail/ui/base";
 import type { ComposerMark, ComposerMarksProps, ComposerProps } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
-import type { EditorHandle, EditorLink, EditorMarks, MarkId } from "../ports.js";
+import type { EditorHandle, EditorLink, EditorMarks, MarkId, ParagraphStyle } from "../ports.js";
 
 const NONE: ReadonlySet<MarkId> = new Set();
 const NEVER = (): (() => void) => () => undefined;
@@ -23,7 +23,8 @@ const GROUPS: readonly (readonly MarkId[])[] = [
   ["link"],
   ["numbers", "bullets"],
   ["quote"],
-  ["code"],
+  ["code", "codeBlock"],
+  ["divider"],
 ];
 const GLYPH: Partial<Record<MarkId, ComposerMark["glyph"]>> = {
   bold: { letter: "B", as: "bold" },
@@ -33,6 +34,8 @@ const GLYPH: Partial<Record<MarkId, ComposerMark["glyph"]>> = {
 };
 const ICON: Partial<Record<MarkId, ComposerMark["icon"]>> = {
   code: "mcode",
+  codeBlock: "mpre",
+  divider: "divider",
   link: "link",
   bullets: "mul",
   numbers: "mol",
@@ -69,6 +72,9 @@ export function useMarks(handle: EditorHandle | null, editable: boolean, initial
   const marks = handle !== null && handle.marks !== "none" ? handle.marks : null;
   const active = useActive(marks);
   const [shown, setShown] = useState(initiallyShown);
+  const [paragraphAnchor, setParagraphAnchor] = useState<HTMLElement | null>(null);
+  const paragraph = marks?.paragraph;
+  const paragraphName = t("marks.paragraphStyle");
   const [link, setLink] = useState<EditorLink | null>(null);
   const opened = useRef<EditorLink | null>(null);
   const restore = useRef<EditorLink | null>(null);
@@ -86,7 +92,10 @@ export function useMarks(handle: EditorHandle | null, editable: boolean, initial
     }
   }, [editable, marks, close]);
   useEffect(() => {
-    if (!editable) close();
+    if (!editable) {
+      close();
+      setParagraphAnchor(null);
+    }
   }, [editable, close]);
   useEffect(() => marks?.link.onKey(toggle), [marks, toggle]);
   useLayoutEffect(() => {
@@ -101,6 +110,8 @@ export function useMarks(handle: EditorHandle | null, editable: boolean, initial
     underline: t("marks.underline"),
     strike: t("marks.strike"),
     code: t("marks.code"),
+    codeBlock: t("marks.codeBlock"),
+    divider: t("marks.divider"),
     link: t("marks.link"),
     bullets: t("marks.bullets"),
     numbers: t("marks.numbers"),
@@ -115,21 +126,87 @@ export function useMarks(handle: EditorHandle | null, editable: boolean, initial
         label: label[id],
         glyph: GLYPH[id],
         icon: ICON[id],
-        ...(id === "link" ? { dialogExpanded: link !== null } : { pressed: active.has(id) }),
+        ...(id === "link"
+          ? { dialogExpanded: link !== null }
+          : id === "divider"
+            ? {}
+            : { pressed: active.has(id) }),
         disabled: !editable,
         onPress: id === "link" ? toggle : () => marks.run(id),
       })),
-  ).filter((group) => group.length > 0);
+  );
+  if (paragraph) {
+    groups.splice(1, 0, [
+      {
+        id: "paragraph",
+        label: paragraphName,
+        icon: "paragraph",
+        menuExpanded: paragraphAnchor !== null,
+        disabled: !editable,
+        onPress: (anchor) => setParagraphAnchor((current) => (current ? null : anchor)),
+      },
+    ]);
+  }
   return {
-    strip: shown ? { label: t("marks.bar"), groups } : undefined,
+    strip: shown ? { label: t("marks.bar"), groups: groups.filter((group) => group.length > 0) } : undefined,
     format: {
       label: t("marks.show"),
       word: t("marks.word"),
       pressed: shown,
-      onPress: () => setShown((s) => !s),
+      onPress: () => {
+        setParagraphAnchor(null);
+        setShown((s) => !s);
+      },
     },
-    card: link ? <LinkCard link={link} onClose={close} /> : null,
+    card: link ? (
+      <LinkCard link={link} onClose={close} />
+    ) : paragraphAnchor && paragraph ? (
+      <ParagraphMenu
+        anchor={paragraphAnchor}
+        paragraph={paragraph}
+        subscribe={marks.subscribe}
+        onClose={() => setParagraphAnchor(null)}
+      />
+    ) : null,
   };
+}
+
+function ParagraphMenu({
+  anchor,
+  paragraph,
+  subscribe,
+  onClose,
+}: {
+  anchor: HTMLElement;
+  paragraph: NonNullable<EditorMarks["paragraph"]>;
+  subscribe: EditorMarks["subscribe"];
+  onClose: () => void;
+}) {
+  const t = useText("write");
+  const selected = useSyncExternalStore(subscribe, paragraph.active, () => null);
+  const choices: readonly [ParagraphStyle, string][] = [
+    [0, t("marks.paragraph")],
+    [1, t("marks.heading1")],
+    [2, t("marks.heading2")],
+    [3, t("marks.heading3")],
+  ];
+  return (
+    <Menu open anchor={anchor} label={t("marks.paragraphStyle")} onClose={onClose}>
+      {choices.map(([style, name]) => (
+        <MenuItem
+          key={style}
+          checked={selected === style}
+          checkmark
+          onPress={() => {
+            onClose();
+            paragraph.set(style);
+          }}
+        >
+          {name}
+        </MenuItem>
+      ))}
+    </Menu>
+  );
 }
 
 /** The link's address, asked in a card: Apply sets it, an empty address or Remove (over a link) takes it off. */

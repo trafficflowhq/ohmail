@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HELD_BODY_STALL_MS } from "@ohmail/app-logic/screener";
 import { MemoryMirrorStore, OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import type { EngineMessage, EngineMutation, MessageBodyWire } from "@ohmail/wire";
 import { message } from "./_draft-shell.js";
@@ -162,6 +163,19 @@ describe("Reads — collapsed by default, and openable because the body arrives"
     expect(asked).toEqual(["r1"]);
   });
 
+  it("a FAILED fetch says so on the card, rather than passing the snippet off as the mail", async () => {
+    const prefetched = keepOnlyFirstNear();
+    const { asked, el } = await mount("#/reads", inNews, async () => { throw new Error("HTTP 500"); });
+    await act(async () => { prefetched(); });
+    await tick(1000);
+    expect(asked).toEqual(["r1"]);
+    const stream = within(el).getByRole("region", { name: "News stream" });
+    const card = within(articleFor(stream, "Subject r1"));
+    expect(card.getByRole("alert").textContent).toContain("The full message didn't load");
+    expect(card.getByText("one line of r1")).toBeTruthy();
+    expect(card.getByRole("button", { name: "Expand", expanded: false })).toBeTruthy();
+  });
+
   it("expanding a snippet card fetches its body, and the card then holds the mail", async () => {
     measurePreviews();
     const { asked, el } = await mount("#/reads/m/r1", inNews);
@@ -231,6 +245,47 @@ describe("StreamCard — the clamp tells the truth about what it is clamping", (
     expect(box().textContent).toContain(full("r1").text);
   });
 
+  it("a SHORT full body is short, draws no pill, says nothing — and still opens for the keyboard", async () => {
+    const resized = measurePreviews();
+    const prefetched = keepOnlyFirstNear();
+    const answer = "Thanks — see you Friday.";
+    const { el } = await mount("#/reads", inNews, async (id) => ({ ...full(id), text: answer }));
+    await act(async () => { prefetched(); resized(); });
+    await tick(1000);
+    await act(async () => { resized(); });
+    const page = within(el);
+    const stream = page.getByRole("region", { name: "News stream" });
+    const card = () => within(articleFor(stream, "Subject r1"));
+    expect(card().getByText(answer)).toBeTruthy();
+    expect(card().queryByRole("button", { name: "Expand" })).toBeNull();
+    expect(card().queryByRole("status")).toBeNull();
+    expect(card().queryByRole("alert")).toBeNull();
+
+    const list = within(page.getByRole("region", { name: "News" }));
+    const option = list.getByRole("option", { name: /Subject r1$/ });
+    await act(async () => { option.focus(); fireEvent.keyDown(option, { key: "Enter" }); });
+    expect(card().getByRole("button", { name: "Collapse", expanded: true })).toBeTruthy();
+  });
+
+  it("LOADING and FAILED are said, and said differently", async () => {
+    let refuse!: (error: Error) => void;
+    const pending = new Promise<MessageBodyWire>((_, reject) => { refuse = reject; });
+    const prefetched = keepOnlyFirstNear();
+    const { el } = await mount("#/reads", inNews, () => pending);
+    await act(async () => { prefetched(); });
+    await tick(400);
+    const stream = within(el).getByRole("region", { name: "News stream" });
+    const card = () => within(articleFor(stream, "Subject r1"));
+    expect(card().getByRole("status").textContent).toContain("Loading the full message");
+    expect(card().queryByRole("alert")).toBeNull();
+
+    await act(async () => { refuse(new Error("HTTP 500")); });
+    await tick(400);
+    expect(card().getByRole("alert").textContent).toContain("The full message didn't load");
+    expect(card().queryByRole("status")).toBeNull();
+    expect(card().getByText("one line of r1")).toBeTruthy();
+  });
+
   it("the state line is a SIBLING of the body, never inside it", async () => {
     const { el } = await mount("#/reads", inNews, () => new Promise(() => {}));
     const stream = within(el).getByRole("region", { name: "News stream" });
@@ -286,6 +341,44 @@ describe("Screener — every held message, in full, for the sender being decided
       expect(within(note).getByRole("button", { name: "Retry" })).toBeTruthy();
     }
     expect(articleFor(el, "Subject s1").textContent).toContain("one line of s1");
+  });
+
+  it("…and an ordinary body still says it is loading — the spinner was NARROWED, not deleted", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const { asked, el } = await openHeld(async (id) => {
+      await pending;
+      return full(id);
+    });
+
+    try {
+      const preview = within(el).getAllByRole("article");
+      expect(preview).toHaveLength(2);
+      expect([...asked].sort()).toEqual(["s1", "s2"]);
+      for (const article of preview) {
+        const note = within(article).getByRole("status");
+        expect(note.textContent).toContain("Loading the full message");
+        expect(within(article).queryByRole("button", { name: "Retry" })).toBeNull();
+        expect(within(article).queryByText("This letter could not be loaded.")).toBeNull();
+      }
+    } finally {
+      release();
+      await act(async () => { await pending; });
+    }
+  });
+
+  it("…and a request that NEVER answers stops claiming it is coming, and grows a Retry", async () => {
+    const { asked, el } = await openHeld(() => new Promise<MessageBodyWire>(() => {}));
+    const letter = within(articleFor(el, "Subject s1"));
+    expect([...asked].sort()).toEqual(["s1", "s2"]);
+    expect(letter.getByRole("status").textContent).toContain("Loading the full message");
+    expect(letter.queryByRole("button", { name: "Retry" })).toBeNull();
+
+    await tick(HELD_BODY_STALL_MS + 1_000);
+    expect(letter.getByText("This letter could not be loaded.")).toBeTruthy();
+    expect(letter.queryByText("Loading the full message…")).toBeNull();
+    await act(async () => { fireEvent.click(letter.getByRole("button", { name: "Retry" })); });
+    expect(letter.getByRole("status").textContent).toContain("Loading the full message");
   });
 
   it("a SENSITIVE held message is fetched and shows its body — no withholding at the gate", async () => {

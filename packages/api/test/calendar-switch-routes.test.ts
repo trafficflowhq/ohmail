@@ -4,10 +4,10 @@ import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
 import { eq } from "drizzle-orm";
 import { fencedAccountWrite, recordCalendarChanges } from "@trafficflow/db";
-import { calCalendars, calConnections, calEvents, calSettings, calWrites } from "@trafficflow/db/mail";
-import type { CalendarWriteAnswer, SyncResponse } from "@ohmail/wire";
+import { calCalendars, calConnections, calEvents, calSettings, calSuggestions, calWrites } from "@trafficflow/db/mail";
+import type { CalendarWriteAnswer, SnapshotResponse, SyncResponse } from "@ohmail/wire";
 import { calendarFeed } from "@trafficflow/services/calendar";
-import { makeDeps, req, seedSession, FIXED_NOW } from "./helpers.js";
+import { makeDeps, req, seedMailbox, seedSession, seedSessionFor, FIXED_NOW } from "./helpers.js";
 
 /**
  * THE SWITCH'S ROUTES AND THE WORD, through the composed pipeline: the seq a change answers and
@@ -124,6 +124,74 @@ describe("a calendar record leaves the server only with the word and the switch 
     expect(await kinds(r)).toEqual([]);
     expect((await r.ask("PATCH", "/calendar/settings", { enabled: true })).status).toBe(200);
     expect(await kinds(r)).toEqual(["calendar", "calendar_connection", "settings"]);
+  });
+});
+
+describe("receipt calendar suggestions", () => {
+  it("persists a dismissal across sessions, keeps accounts separate, and restores on Undo", async () => {
+    const r = await rig({ calendar: true });
+    const second = await seedSessionFor(r.db, { accountId: r.s.accountId, userId: r.s.userId, now: FIXED_NOW });
+    const other = await seedSession(r.db, { now: FIXED_NOW });
+    const ask = (session: typeof second, method: string, path: string, body?: unknown) =>
+      withCalendar.handle(req(method, path, {
+        bearer: session.token, ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        headers: { "x-requested-with": "ohmail" },
+      }), { ...r.deps, session: null, idempotency: null } as ApiDeps);
+    async function plant(accountId: string) {
+      await r.db.insert(calSettings).values({ accountId, enabledAt: FIXED_NOW });
+      const id = randomUUID();
+      const mailboxId = await seedMailbox(r.db, { accountId });
+      await r.db.insert(calSuggestions).values({
+        id, accountId, mailboxId, messageId: randomUUID(), evidence: "data", proposed: { title: "Train" },
+      });
+      await fencedAccountWrite(r.db as never, { accountId }, (tx) =>
+        recordCalendarChanges(tx as never, accountId, [{ kind: "calendar_suggestion", id, op: "create" }]));
+      return id;
+    }
+    const mine = await plant(r.s.accountId);
+    const theirs = await plant(other.accountId);
+    const path = `/calendar/suggestions/${mine}`;
+    const feed = async (session: typeof second, since = "0") => {
+      const res = await ask(session, "GET", `/sync?since=${since}&types=settings,calendar_suggestion`);
+      expect(res.status).toBe(200);
+      return await res.json() as SyncResponse;
+    };
+    const ids = (changes: readonly { type: string; id: string }[]) =>
+      changes.filter((c) => c.type === "calendar_suggestion").map((c) => c.id);
+    const snapshot = async (session: typeof second) => {
+      const res = await ask(session, "GET", "/sync/snapshot?phase=calendar&types=settings,calendar_suggestion");
+      expect(res.status).toBe(200);
+      return ids((await res.json() as SnapshotResponse).changes);
+    };
+    const stored = async () => {
+      const [row] = await r.db.select({ state: calSuggestions.state, decidedAt: calSuggestions.decidedAt })
+        .from(calSuggestions).where(eq(calSuggestions.id, mine));
+      return row;
+    };
+    const initial = await feed(second);
+    expect(ids(initial.changes.creates)).toEqual([mine]);
+    expect((await ask(other, "PATCH", path, { dismissed: true })).status).toBe(404);
+    expect((await r.ask("PATCH", path, { dismissed: "true" })).status).toBe(400);
+    expect(await stored()).toEqual({ state: "open", decidedAt: null });
+    const dismissed = await r.ask("PATCH", path, { dismissed: true });
+    expect(dismissed.status).toBe(200);
+    const seq = dismissed.headers.get("x-sync-seq");
+    expect(seq).toMatch(/^\d+$/);
+    expect(await stored()).toEqual({ state: "dismissed", decidedAt: FIXED_NOW });
+    expect(ids((await feed(r.s, initial.cursor)).changes.deletes)).toEqual([mine]);
+    const hidden = await feed(second, initial.cursor);
+    expect(ids(hidden.changes.deletes)).toEqual([mine]);
+    expect(await snapshot(second)).toEqual([]);
+    expect(ids((await feed(other)).changes.creates)).toEqual([theirs]);
+    const again = await r.ask("PATCH", path, { dismissed: true });
+    expect(again.status).toBe(200);
+    expect(again.headers.get("x-sync-seq")).toBeNull();
+    expect((await ask(other, "PATCH", path, { dismissed: false })).status).toBe(404);
+    const restored = await r.ask("PATCH", path, { dismissed: false });
+    expect(restored.status).toBe(200);
+    expect(await stored()).toEqual({ state: "open", decidedAt: null });
+    expect(ids((await feed(second, hidden.cursor)).changes.creates)).toEqual([mine]);
+    expect(await snapshot(second)).toEqual([mine]);
   });
 });
 

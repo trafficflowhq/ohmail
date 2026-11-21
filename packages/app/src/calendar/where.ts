@@ -29,6 +29,7 @@ import {
 import { NONE } from "../host/index.js";
 import { hoursInView } from "../calsettings/hours.js";
 import { useCalendarSettings } from "../calsettings/settings-read.js";
+import { useKnownOwnAddresses } from "../frame/room.js";
 import { useFrame } from "../frame/commands.js";
 import type { AnyPlaceId, CalendarPlaceId, Route } from "../frame/contract.js";
 import { isCalendarPlace } from "../frame/product.js";
@@ -236,6 +237,7 @@ export function useFaces(
   zone: string,
   zones: ZoneSource,
 ) {
+  const own = useKnownOwnAddresses();
   const first = span?.first ?? null;
   const last = span?.last ?? null;
   return useMemo(() => {
@@ -247,10 +249,10 @@ export function useFaces(
     return {
       capped: occurrences.capped,
       events: occurrences.shown.map((o): CalendarEventFace =>
-        faceOf(o, sources.connections, sources.faceWords, sources.tones.get(o.calendar.id) ?? "neutral"),
+        faceOf(o, sources.connections, sources.faceWords, sources.tones.get(o.calendar.id) ?? "neutral", own),
       ),
       /* The held window moves with the version, as the records do. */
       edge: edgeOf({ from, to }, port.held(), at),
     };
-  }, [sources, first, last, today, zone, zones, port]);
+  }, [sources, first, last, today, zone, zones, port, own]);
 }

@@ -6,7 +6,7 @@
  */
 import { useConversationColumn } from "./conversation-column.js";
 import type { EngineMessage } from "@ohmail/wire";
-import { useEffect, useRef, type MutableRefObject, type WheelEvent } from "react";
+import { memo, useEffect, useRef, type MutableRefObject, type WheelEvent } from "react";
 import { JumpBack } from "@ohmail/ui/base";
 import { Sheet } from "@ohmail/ui/mail";
 import { baseSubject, isForwardedByUs, type ThreadWalk } from "@ohmail/app-logic/reader";
@@ -24,6 +24,8 @@ import { Squares } from "./Squares.js";
 import { readSubjectDisplay } from "./subject-display.js";
 import { Tags } from "./Tags.js";
 import "./column.css";
+
+const ConversationLetter = memo(Letter);
 
 export function Reader({ route, plan, keysHere }: PaneProps) {
   const tp = useText("place");
@@ -172,7 +174,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
         jump={messages.length > 1 ? <WayToLatest walk={walk} last={messages.length - 1} /> : undefined}
       >
         {messages.map((m, index) => (
-          <Letter
+          <ConversationLetter
             key={m.id}
             message={m}
             showSubject={

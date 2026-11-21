@@ -226,6 +226,7 @@ export function useWebHost(
       ...(typeof window === "undefined" ? {} : { online: window }),
       mayRun: () => engine.calendarQueueReady() && readOwner() === scope && sessionMayAsk(),
       settings: transport.calendarSettings,
+      setSuggestionDismissed: transport.setSuggestionDismissed,
       setup: setup ? calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()) : undefined,
       held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
     });

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  APP_ROUTE, SESSION_COOKIE, SESSION_ENDPOINT, firstPageUnasked, looksLikeSessionToken, resolveSurface,
+  APP_ROUTE, SESSION_COOKIE, SESSION_ENDPOINT, firstPageUnasked, looksLikeSessionToken, resolveFirstPage, resolveSurface,
 } from "../app/session-gate.js";
 import { EDGE_PATHS, OWN_ROUTES } from "../routes.mjs";
 
@@ -350,7 +350,7 @@ describe("the middleware wiring cannot drift from the gate", () => {
     // The widened matcher must not widen the AMPLIFIER. `resolveSurface` is reached only
     // after an explicit `pathname !== "/"` early return.
     expect(middleware).toMatch(/if \(pathname !== "\/"\) \{/);
-    expect(middleware.indexOf(`if (pathname !== "/")`)).toBeLessThan(middleware.indexOf("resolveSurface("));
+    expect(middleware.indexOf(`if (pathname !== "/")`)).toBeLessThan(middleware.indexOf("resolveFirstPage("));
   });
 
   it("a direct request for the internal route is answered with a 308 to `/`", () => {
@@ -451,4 +451,17 @@ describe("the first page without the probe", () => {
       expect(firstPageUnasked(value), String(value)).toBe(false);
     }
   });
+});
+
+it("carries a confirmed account only when the full edge probe answers", async () => {
+  const request = {
+    sessionToken: "x".repeat(43), resumeMarker: true, search: "", apiOrigin: "https://api.example.test",
+  };
+  const full = async () => Response.json({ scope: "full", user: { userId: "user", accountId: "reader" } });
+  expect(await resolveFirstPage({ ...request, fetchImpl: full })).toEqual({ account: "reader" });
+  expect(await resolveFirstPage({ ...request, fetchImpl: full, throttled: true })).toBe("app");
+  expect(await resolveFirstPage({ ...request, fetchImpl: full, firstPageUnasked: true })).toBe("app-unasked");
+  expect(await resolveFirstPage({
+    ...request, fetchImpl: async () => { throw new DOMException("Expired", "TimeoutError"); },
+  })).toBe("app");
 });

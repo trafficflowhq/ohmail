@@ -123,8 +123,8 @@ export function SenderRow({
       labels={labels}
       tag={
         mailbox ? (
-          <span title={deliveredTo}>
-            <Tag>{mailbox}</Tag>
+          <span className="sc-mailbox-badge" title={deliveredTo}>
+            <Tag truncateOnPhone>{mailbox}</Tag>
           </span>
         ) : undefined
       }
@@ -150,7 +150,9 @@ export function SenderRow({
 }
 
 /** Waiting and pending share one option set. The heading takes a measured slot but has no option position. */
-function WaitingRows({
+const NO_DECISIONS: ScreenerView["decided"] = [];
+
+function SenderRowsWindow({
   view,
   label,
   scroller,
@@ -162,7 +164,8 @@ function WaitingRows({
   renderRow: (row: ScreenerView["rows"][number], slot?: SenderSlot) => ReactNode;
 }) {
   const t = useText("screener");
-  const { rows, decided, openId } = view;
+  const { rows, openId } = view;
+  const decided = view.segment === "waiting" ? view.decided : NO_DECISIONS;
   useMovingRows(scroller, JSON.stringify([rows.map(viewRowId), decided.map(({ sender }) => sender.id)]));
   const size = rows.length + decided.length;
   const pendingStart = rows.length + 1;
@@ -340,8 +343,8 @@ export function Rows({
           </KitRows>
         </>
       ) : null}
-      {waiting && scroller && view.rows.length + view.decided.length > 0 ? (
-        <WaitingRows view={view} label={name} scroller={scroller} renderRow={renderRow} />
+      {scroller && (view.rows.length > 0 || (waiting && view.decided.length > 0)) ? (
+        <SenderRowsWindow view={view} label={name} scroller={scroller} renderRow={renderRow} />
       ) : view.rows.length > 0 ? (
         <KitRows label={name}>{view.rows.map((row) => renderRow(row))}</KitRows>
       ) : null}

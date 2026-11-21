@@ -104,5 +104,5 @@ export function useEventCardActions({
         ))}
       </Menu>
     ) : null;
-  return { blocked, onKeyDown, panel, menu };
+  return { blocked, onKeyDown, panel, menu, items };
 }

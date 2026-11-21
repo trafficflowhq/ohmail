@@ -86,7 +86,7 @@ export function OpenEvent({
           onPress: begin,
         }
       : null;
-  const { blocked, onKeyDown, panel, menu } = useEventCardActions({
+  const { blocked, onKeyDown, panel, menu, items } = useEventCardActions({
     event,
     actions,
     edit,
@@ -102,6 +102,8 @@ export function OpenEvent({
           key={editing.revision}
           beforeRestore={beforeRestore}
           port={editing.port}
+          actionItems={items}
+          provider={current.connection?.provider}
           original={editing.record}
           allowed={allowed}
           calendar={current.calendar}
@@ -112,6 +114,7 @@ export function OpenEvent({
           finish={finish}
         />
         {bridge}
+        {menu}
       </>
     );
   }

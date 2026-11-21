@@ -4,11 +4,15 @@ import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 /**
  * THE ACCOUNT FACE'S MIRROR NAMES ITS ACCOUNT. `ohmail.face.account` holds the account's look for the next
  * boot's pre-paint stamp (`ThemeProvider`'s `accountFaceStorageKey`), and nothing in it says whose look it is,
- * so a revoke of that account while another holds the jar could not take it (`sign-out.ts`'s one-account
- * sweep). The account goes beside it, in a key the stamp never reads.
+ * so its owner goes beside it. The mailbox boot and the one-account sweep both use that owner stamp.
  */
 export const FACE_ACCOUNT_KEY = "ohmail.face.account";
 export const FACE_ACCOUNT_OWNER_KEY = "ohmail.face.account.owner";
+
+/** The account allowed to supply the mailbox document's saved face. */
+export function faceMirrorOwner(cookie: string): string | null {
+  return readOwner(cookie);
+}
 
 /**
  * `door`, with the face mirror's writes naming the account the jar names. The name goes first and is written
@@ -33,5 +37,31 @@ export function faceMirrorDoor(door: StorageDoor): StorageDoor {
   };
 }
 
-/** The product door's theme storage, at module scope as `ThemeProvider` asks (`(product)/providers.tsx`). */
-export const THEME_DOOR = faceMirrorDoor(localStorageDoor("theme"));
+let themeStorage: StorageDoor | undefined;
+
+function themeDoor(): StorageDoor {
+  return (themeStorage ??= faceMirrorDoor(localStorageDoor("theme")));
+}
+
+/** The browser opens the storage door on use. The server only reads the request's owner. */
+export const THEME_DOOR: StorageDoor = {
+  get: (key) => themeDoor().get(key),
+  set: (key, value) => themeDoor().set(key, value),
+  remove: (key) => themeDoor().remove(key),
+};
+
+export function currentFaceOwner(): string | null {
+  return readOwner();
+}
+
+/** Only the account confirmed for this document can initialize its face from storage. */
+export function accountThemeDoor(confirmedOwner: string | null): StorageDoor {
+  return {
+    ...THEME_DOOR,
+    get(key) {
+      if (key === FACE_ACCOUNT_KEY && (confirmedOwner === null || readOwner() !== confirmedOwner
+        || THEME_DOOR.get(FACE_ACCOUNT_OWNER_KEY) !== confirmedOwner)) return null;
+      return THEME_DOOR.get(key);
+    },
+  };
+}

@@ -33,7 +33,7 @@ const CALLERS = [
   // A forward's original files and the sentence under them.
   "shell/ForwardFiles.tsx",
   "shell/SendStatus.tsx",
-  "views/ComposeView.tsx",
+  "app/mail/ground/writing-words.ts",
 ];
 
 function files(dir: string): string[] {
@@ -49,9 +49,14 @@ function files(dir: string): string[] {
 /** The behaviour moved out of the shell: read with it, named `app-logic/…`. */
 const LOGIC = resolve(join(import.meta.dirname, "..", "..", "..", "packages", "app-logic", "src"));
 const BODY = resolve(join(import.meta.dirname, "..", "..", "..", "packages", "letter-body", "src"));
+const PRODUCT = resolve(join(import.meta.dirname, "..", "..", "..", "packages", "app", "src"));
+const WRITE = join(PRODUCT, "write");
+const WRITE_WORDS = "mail/ground/writing-words.ts";
 const ALL = [
   ...files(APP).map((f) => ({ rel: f.slice(APP.length + 1), text: readFileSync(f, "utf8") })),
   ...files(LOGIC).map((f) => ({ rel: `app-logic/${f.slice(LOGIC.length + 1)}`, text: readFileSync(f, "utf8") })),
+  ...files(WRITE).map((f) => ({ rel: `app/write/${f.slice(WRITE.length + 1)}`, text: readFileSync(f, "utf8") })),
+  { rel: `app/${WRITE_WORDS}`, text: readFileSync(join(PRODUCT, WRITE_WORDS), "utf8") },
   ...files(BODY).map((f) => ({ rel: `letter-body/${f.slice(BODY.length + 1)}`, text: readFileSync(f, "utf8") })),
 ];
 
@@ -86,7 +91,7 @@ describe("a file's size is formatted in one place", () => {
     for (const rel of CALLERS) {
       const f = ALL.find((x) => x.rel === rel)!;
       // From the shared package, never re-declared locally.
-      expect(/import \{[^}]*\bformatFileSize\b[^}]*\} from "@ohmail\/ui"/.test(f.text), rel).toBe(true);
+      expect(/import \{[^}]*\bformatFileSize\b[^}]*\} from "@ohmail\/ui(?:\/file-size)?"/.test(f.text), rel).toBe(true);
       expect(/function formatFileSize\b/.test(f.text), `${rel} must not redefine it`).toBe(false);
     }
   });

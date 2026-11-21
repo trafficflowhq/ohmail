@@ -3,6 +3,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
   markSeenOver,
+  OPEN_TAIL,
   useColumnVisit,
   useConversationBodies,
   useStoreLetterBody,
@@ -20,9 +21,11 @@ import {
   useOffMirrorLetter,
   useThreadRead,
 } from "@ohmail/app-logic/reading";
+import type { ThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
+import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
 import type { Route } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
-import { useEntered, useFrame } from "../frame/commands.js";
+import { useEntered, useFrame, useReaderPosition, useResumingReader } from "../frame/commands.js";
 import { useOwnGone } from "../frame/own-gone.js";
 import { fragmentOf } from "../frame/route.js";
 import { useMailboxWord, useOwnAddresses, usePress, useRoomHolds } from "../frame/room.js";
@@ -54,6 +57,7 @@ export function useConversationColumn(
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const [columnRoot, columnEl] = useKeyboardStays(setRoot, keyboard);
   const scroller = useMemo(() => ({ current: scrollerOf(root) }), [root]);
+  const resumed = useReadingPosition(route, scroller.current, column.wiring?.walk);
   const under = useContentUnderHead(scroller.current, phone);
   useThreadRead({ scroller, wiring: column.wiring ?? undefined, active: opened !== null, names: READER_DOM });
   useOwnOpen(opened !== null, column);
@@ -74,7 +78,7 @@ export function useConversationColumn(
     channel: column.wiring?.walk,
     onEnter: column.enter,
     names: READER_DOM,
-    anchor: true,
+    anchor: !resumed,
     wholeThread: route.wholeThread,
     standsDown: sentJoined,
   });
@@ -137,6 +141,40 @@ export function useConversationColumn(
     scroller,
     under,
   };
+}
+
+/** Remember just the last reader's position for this frame and restore it before measuring the thread. */
+function useReadingPosition(route: Route, scroller: HTMLElement | null, walk?: ThreadWalkChannel): boolean {
+  const memory = useReaderPosition();
+  const { host } = useFrame();
+  const offered = host.capabilities.products === "both";
+  const address = fragmentOf(route);
+  const [resume] = useState(useResumingReader());
+  const applied = useRef(false);
+  useLayoutEffect(() => {
+    if (!offered || !scroller) return;
+    if (!applied.current && resume?.address === address) {
+      applied.current = true;
+      if (resume.tail) scroller.style.setProperty(OPEN_TAIL, resume.tail);
+      scrollProgrammatically(scroller, resume.top);
+    }
+    const remember = () => {
+      memory.current = {
+        address,
+        top: scroller.scrollTop,
+        tail: scroller.style.getPropertyValue(OPEN_TAIL),
+        square: walk?.get()?.here ?? null,
+      };
+    };
+    remember();
+    scroller.addEventListener("scroll", remember, { passive: true });
+    const stop = walk?.subscribe(remember);
+    return () => {
+      stop?.();
+      scroller.removeEventListener("scroll", remember);
+    };
+  }, [address, memory, offered, resume, scroller, walk]);
+  return resume !== null;
 }
 
 /** The sticky head fades into the letter once content starts passing under it. */

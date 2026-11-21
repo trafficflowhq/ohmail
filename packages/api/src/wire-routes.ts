@@ -18,7 +18,7 @@ export const WIRE_ROUTES = [
   "GET /attachments/:id", "POST /attachments/staging", "GET /away-responder", "PUT /away-responder",
   "PATCH /calendar/calendars/:id", "GET /calendar/connect", "POST /calendar/connections", "DELETE /calendar/connections/:id",
   "POST /calendar/connections/:id/check", "POST /calendar/connections/:id/sign-in",
-  "GET /calendar/settings", "PATCH /calendar/settings",
+  "GET /calendar/settings", "PATCH /calendar/settings", "PATCH /calendar/suggestions/:id",
   "POST /calendar/writes", "DELETE /calendar/writes/:id", "POST /calendar/writes/:id/retry", "POST /calendar/places/suggest",
   "POST /drafts", "DELETE /drafts/:id", "DELETE /drafts/:id/conditional", "GET /drafts/:id", "POST /drafts/from-text",
   "PUT /drafts/:id", "POST /drafts/:id/resolve", "DELETE /drafts/:id/schedule", "POST /drafts/:id/schedule",

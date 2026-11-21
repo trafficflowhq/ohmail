@@ -25,7 +25,6 @@ import { sliceOfDeclaration } from "./source-anchor.js";
  * replace the one face the row exists to show.
  */
 
-const at = (p: string) => fileURLToPath(new URL(`../app/${p}`, import.meta.url));
 const repo = (p: string) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));
 
 /** The new tree's models and seats: where a place's rows are read from the mirror. */
@@ -45,7 +44,6 @@ const NEW_TREE = {
     return out;
   },
 };
-const read = (p: string) => readFileSync(at(p), "utf8");
 
 /**
  * The compatibility views still pass their participants input. The mounted lists are checked against their
@@ -76,15 +74,29 @@ const app = (file: string) => readFileSync(repo(`packages/app/src/${file}`), "ut
 
 describe("thread circles are wired into every mail list", () => {
   it.each(MAIL_LISTS)("%s takes the shell's participants binding and passes it on its row", (view) => {
-    const src = read(`views/${view}.tsx`);
-    // (a) the prop exists, with the shape the shell binds…
-    expect(src).toContain(
-      "threadParticipants?: (threadId: string) => { initials: string; hue: number }[];",
-    );
-    // …and is destructured rather than left on an unread props object.
-    expect(src).toMatch(/^\s*threadParticipants,$/m);
-    // (b) and a row is actually given participants. `MessageRow` decides whether to draw them.
-    expect(src).toMatch(/participants=\{/);
+    if (view === "TriageView") {
+      expect(app("piles/place.ts")).toMatch(/\bList: PilesList\b/);
+      const piles = app("piles/PilesList.tsx");
+      expect(piles).toContain("const rowPeople = useRowPeople()");
+      expect(piles).toMatch(/<PileItem[\s\S]*?rowPeople=\{rowPeople\}/);
+      expect(sliceOfDeclaration(piles, "PileItem")).toContain("rowPeople(m, who)");
+      return;
+    }
+    if (view === "TagView" || view === "HistoryView") {
+      const [place, list, file] = view === "TagView" ? MOUNTED_LISTS[3] : MOUNTED_LISTS[2];
+      expect(app(`${place}/place.ts`)).toMatch(new RegExp(`\\bList: ${list}\\b`));
+      expect(app(file)).toMatch(/<LetterRows\b/);
+      const rows = app("place-list/LetterRows.tsx");
+      expect(rows).toContain("const rowPeople = useRowPeople()");
+      expect(sliceOfDeclaration(rows, "LetterRows")).toMatch(/<Row[\s\S]*?\{\.\.\.rowPeople\(m,/);
+      return;
+    }
+    const place = view === "ReadsView" ? "news" : "receipts";
+    expect(app(`${place}/place.ts`)).toMatch(/\bList: StreamList\b/);
+    const stream = app("stream/StreamList.tsx");
+    expect(stream).toContain("const rowPeople = useRowPeople()");
+    expect(stream).toMatch(/<ItemRow[\s\S]*?rowPeople=\{rowPeople\}/);
+    expect(sliceOfDeclaration(stream, "ItemRow")).toMatch(/<Row[\s\S]*?\{\.\.\.rowPeople\(m, recipient \?\? who\)\}/);
   });
 
   it("the shell hands its indexed binding to every one of them", () => {

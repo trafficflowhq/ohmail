@@ -19,6 +19,28 @@
     outline: none;
   }
 
+  .oh-lettertext-heading {
+    margin: var(--s2) 0;
+    font-weight: var(--w-bold);
+    line-height: var(--lh-read);
+  }
+
+  .oh-lettertext-heading[data-level="1"] {
+    font-size: var(--t-head);
+  }
+  .oh-lettertext-heading[data-level="2"] {
+    font-size: var(--t-title);
+  }
+  .oh-lettertext-heading[data-level="3"] {
+    font-size: var(--t-read);
+  }
+
+  .oh-lettertext-divider {
+    margin: var(--s3) 0;
+    border: 0;
+    border-top: var(--oh-hair) solid var(--ctl-ring);
+  }
+
   .oh-lettertext-p,
   .oh-lettertext-bullets,
   .oh-lettertext-numbers,

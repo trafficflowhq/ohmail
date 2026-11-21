@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { KeyHint } from "../../base/Primitives/KeyHint.js";
 import "./dock.css";
@@ -29,7 +29,10 @@ export interface DockProps {
   /** How many places always stand: the tabs of the app. */
   floor: number;
   /** The rest of the places, behind one entry. It is the current one while the open place stands behind it. */
-  more: Pick<DockPlace, "label" | "current" | "count" | "countHot" | "onPress"> & { expanded?: boolean };
+  more: Pick<DockPlace, "label" | "current" | "count" | "countHot" | "onPress"> & {
+    expanded?: boolean;
+    drawer?: boolean;
+  };
   /** The way to search. Left out where the host hands no place to search: the dock draws none. */
   search?: { label: string; current?: boolean; keyHint?: string; onPress?: () => void };
   /** The way to write. Left out where the host hands no place to write: the dock draws none. */
@@ -77,6 +80,62 @@ function DockEntry({ place, hidden }: { place: DockPlace; hidden: boolean }) {
   );
 }
 
+function useDockFit({
+  places,
+  floor,
+  shown,
+  onFit,
+  searches,
+  writes,
+  round,
+}: Pick<DockProps, "places" | "floor" | "shown" | "onFit"> & {
+  searches: boolean;
+  writes: boolean;
+  round: boolean;
+}) {
+  const rail = useRef<HTMLElement>(null);
+  const strip = useRef<HTMLDivElement>(null);
+  const told = useRef("");
+  const [foldedCurrent, setFoldedCurrent] = useState(false);
+  const tell = useRef(onFit);
+  tell.current = onFit;
+  /* The way to search and the way to write take room too: the rail fits again when either comes or goes. */
+
+  /* Places leave from the end until the upright rail or the circular dock fits. */
+  useLayoutEffect(() => {
+    const el = rail.current;
+    const row = strip.current;
+    if (!el || !row) return;
+    const fit = () => {
+      const entries = [...el.querySelectorAll<HTMLElement>("[data-place]")];
+      const limit = shown === undefined ? entries.length : Math.max(shown, floor);
+      const across = round && getComputedStyle(el).flexDirection === "row";
+      const tooSmall = () =>
+        across ? row.scrollWidth > row.clientWidth + 1 : el.scrollHeight > el.clientHeight + 1;
+      entries.forEach((entry, index) => {
+        entry.hidden = index >= limit;
+      });
+      for (let i = Math.min(limit, entries.length) - 1; i >= floor && tooSmall(); i--)
+        entries[i]!.hidden = true;
+      setFoldedCurrent(
+        entries.some((entry) => entry.hidden && entry.getAttribute("aria-current") === "page"),
+      );
+      const ids = entries.filter((entry) => !entry.hidden).map((entry) => entry.dataset.place ?? "");
+      if (ids.join("\n") === told.current) return;
+      told.current = ids.join("\n");
+      tell.current?.(ids);
+    };
+    fit();
+    if (typeof ResizeObserver !== "function") return;
+    const watch = new ResizeObserver(fit);
+    watch.observe(el);
+    watch.observe(row);
+    return () => watch.disconnect();
+  }, [places, floor, round, shown, searches, writes]);
+
+  return { rail, strip, foldedCurrent };
+}
+
 /** The rail on touch: the app's tabs, More, and Search and Write where the host has them. Upright on an unfolded phone, with every place that fits. */
 export function Dock({
   label,
@@ -90,39 +149,27 @@ export function Dock({
   shown,
   onFit,
 }: DockProps) {
-  const rail = useRef<HTMLElement>(null);
-  const told = useRef("");
-  const tell = useRef(onFit);
-  tell.current = onFit;
-  /* The way to search and the way to write take room too: the rail fits again when either comes or goes. */
-  const searches = Boolean(search);
-  const writes = Boolean(write);
-
-  /* Upright, places leave from the end until the rail fits its height. */
-  useLayoutEffect(() => {
-    const el = rail.current;
-    if (!el) return;
-    const fit = () => {
-      const entries = [...el.querySelectorAll<HTMLElement>("[data-place]")];
-      for (const entry of entries) entry.hidden = false;
-      for (let i = entries.length - 1; i >= floor && el.scrollHeight > el.clientHeight + 1; i--)
-        entries[i]!.hidden = true;
-      const ids = entries.filter((entry) => !entry.hidden).map((entry) => entry.dataset.place ?? "");
-      if (ids.join("\n") === told.current) return;
-      told.current = ids.join("\n");
-      tell.current?.(ids);
-    };
-    fit();
-    if (typeof ResizeObserver !== "function") return;
-    const watch = new ResizeObserver(fit);
-    watch.observe(el);
-    return () => watch.disconnect();
-  }, [places, floor, upright, searches, writes]);
-
+  const round = more.drawer === true && !upright;
+  const { rail, strip, foldedCurrent } = useDockFit({
+    places,
+    floor,
+    shown,
+    onFit,
+    searches: Boolean(search),
+    writes: Boolean(write),
+    round,
+  });
   return (
-    <nav ref={rail} className="oh-dock" aria-label={label} data-upright={upright ? "" : undefined}>
+    <nav
+      ref={rail}
+      className="oh-dock"
+      aria-label={label}
+      data-upright={upright ? "" : undefined}
+      data-drawer-dock={more.drawer ? "" : undefined}
+      data-round={round ? "" : undefined}
+    >
       {switcher}
-      <div className="oh-dock-places">
+      <div className="oh-dock-places" ref={strip}>
         {places.map((place, index) => (
           <DockEntry
             /* A registered hook belongs to its own mount, separate from an entry with a supplied count. */
@@ -134,9 +181,10 @@ export function Dock({
         <button
           type="button"
           className="oh-control oh-dock-entry"
-          aria-current={more.current ? "page" : undefined}
-          aria-haspopup="menu"
-          aria-expanded={more.expanded}
+          aria-current={more.current || foldedCurrent ? "page" : undefined}
+          data-drawer-toggle={more.drawer ? "" : undefined}
+          aria-haspopup={more.drawer ? "dialog" : "menu"}
+          aria-expanded={more.drawer ? undefined : more.expanded}
           aria-label={more.count ? `${more.label}, ${more.count}` : more.label}
           title={more.label}
           onClick={more.onPress}

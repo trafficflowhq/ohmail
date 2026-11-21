@@ -8,16 +8,18 @@ export interface TagProps {
   /** A tag of the person's own: the hue of its dot. Left out: a pile, a plain capsule. */
   hue?: number;
   title?: string;
+  /** A long label can shorten within the space its phone row gives it. */
+  truncateOnPhone?: boolean;
 }
 
 /**
  * A pile, a tag of the person's own with its dot, or a short fact about what it stands beside ("2 held",
  * "Confirmed", "This device"). No capsule for anything else.
  */
-export function Tag({ children, hue, title }: TagProps) {
+export function Tag({ children, hue, title, truncateOnPhone }: TagProps) {
   if (hue === undefined)
     return (
-      <span className="oh-tag" title={title}>
+      <span className="oh-tag" title={title} data-truncate={truncateOnPhone ? "" : undefined}>
         {children}
       </span>
     );

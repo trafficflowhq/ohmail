@@ -55,6 +55,12 @@ describe("the queue", () => {
     expect(asked.flushes).toBe(1);
   });
 
+  it("shows the empty queue without an explanation of how screening works", () => {
+    mountPlace(modelOf(asked, { waiting: [], waitingCount: 0 }));
+    expect(within(reading()).getByRole("button", { name: "Ohbox" })).toBeTruthy();
+    expect(screen.queryByText(/First-time senders appear here/)).toBeNull();
+  });
+
   it("opening a row asks the model for nothing", () => {
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 3 }));
     fireEvent.click(within(list()).getByRole("option", { name: /Ben Kiln/ }));

@@ -17,7 +17,7 @@ const NON_TEXT = new Set(["style", "script", "head", "title", "noscript", "templ
  * the one thing a code block may not survive. It gets its own branch, before this set is
  * consulted.
  */
-const BLOCKS = new Set(["p", "ul", "ol", "li", "blockquote"]);
+const BLOCKS = new Set(["p", "h1", "h2", "h3", "ul", "ol", "li", "blockquote"]);
 
 /** The deepest quote or list a line's prefix shows, so a line costs a bounded prefix. */
 const QUOTE_MAX = 32;
@@ -32,7 +32,7 @@ const QUOTE_MAX = 32;
  * no invented `**` or backticks. `<pre>` renders VERBATIM — the one place whitespace is meaning,
  * and the only construct exempt from the blank-run collapse.
  */
-export function htmlToPlainText(html: string): string {
+export function htmlToPlainText(html: string, options?: { indentCode?: boolean }): string {
   /** The output, built as lines so block boundaries are decided in one place. */
   let out = "";
   /** Open list contexts, innermost last. `null` marks a bullet list. */
@@ -85,7 +85,9 @@ export function htmlToPlainText(html: string): string {
    * the result: the output is plain text with nothing left in it to distinguish code from prose,
    * which is the point of the rendering and also why the exemption has to be carried along.
    */
-  const codeSpans: Array<[number, number]> = [];
+  const codeSpans: Array<[number, number, boolean]> = [];
+  let authoredCode = false;
+  let firstPreChild = false;
 
   const prefix = (): string => "> ".repeat(Math.min(quoteDepth, QUOTE_MAX));
 
@@ -162,18 +164,27 @@ export function htmlToPlainText(html: string): string {
     else line += s;
   };
 
-  /**
-   * A finished code block, written line by line with the quote prefix and nothing else. Three
-   * normalisations, each what a renderer of the html half already does: `\r\n`/`\r` become `\n`;
-   * ONE leading newline is dropped (html's own rule after `<pre>`); trailing blank lines go.
-   * Interior whitespace — indentation, alignment, blank lines between blocks — is untouched.
-   */
   const flushPre = (raw: string): void => {
-    const body = trimNewlinesEnd(raw.replace(/\r\n?/g, "\n").replace(/^\n/, ""));
+    const normalized = raw.replace(/\r\n?/g, "\n");
+    const body = authoredCode ? normalized : trimNewlinesEnd(normalized.replace(/^\n/, ""));
     if (body === "") return;
     const start = out.length;
-    for (const l of body.split("\n")) out += `${prefix()}${l}\n`;
-    codeSpans.push([start, out.length]);
+    const lines = body.split("\n");
+    if (!authoredCode) {
+      for (const line of lines) out += `${prefix()}${line}\n`;
+      codeSpans.push([start, out.length, false]);
+      return;
+    }
+
+    // Keep the author's terminal newline in the span. A separator for following prose is
+    // generated only when the source does not already end at a line boundary.
+    const endsOnBreak = body.endsWith("\n");
+    if (endsOnBreak) lines.pop();
+    const indent = options?.indentCode ? "    " : "";
+    out += lines.map((line) => `${prefix()}${line ? indent : ""}${line}`).join("\n");
+    if (endsOnBreak) out += "\n";
+    codeSpans.push([start, out.length, true]);
+    if (!endsOnBreak) out += "\n";
   };
 
   // Elements whose text is never prose — a stylesheet, a script, the document head. The outbound
@@ -193,16 +204,25 @@ export function htmlToPlainText(html: string): string {
           if (preDepth === 0) {
             flush();
             preText = "";
-          }
+            authoredCode = attribs["data-ohmail-code"] === "1";
+            firstPreChild = true;
+          } else firstPreChild = false;
           preDepth += 1;
           return;
         }
         if (preDepth > 0) {
+          firstPreChild = false;
           if (name === "br") preText += "\n";
           return;
         }
         if (name === "br") {
           hardBreak();
+          return;
+        }
+        if (name === "hr") {
+          flush();
+          emit("--------");
+          flush();
           return;
         }
         if (name === "a") {
@@ -247,7 +267,8 @@ export function htmlToPlainText(html: string): string {
         // Verbatim inside a code block: the collapse below is what turns two spaces into one,
         // and in code the second space is the message.
         if (preDepth > 0) {
-          preText += text;
+          preText += authoredCode && firstPreChild ? text.replace(/^(?:\r\n?|\n)/, "") : text;
+          firstPreChild = false;
           return;
         }
         // The collapse deliberately steps around U+00A0: a no-break space is CONTENT — it is
@@ -335,12 +356,14 @@ export function htmlToPlainText(html: string): string {
     s.replace(/\n{3,}/g, "\n\n").replace(/\u00a0/g, " ");
   let result = "";
   let cursor = 0;
-  for (const [start, end] of codeSpans) {
+  let authoredEnd = 0;
+  for (const [start, end, authored] of codeSpans) {
     result += collapse(out.slice(cursor, start)) + out.slice(start, end);
+    if (authored) authoredEnd = result.length;
     cursor = end;
   }
   result += collapse(out.slice(cursor));
-  return trimNewlinesEnd(result);
+  return result.slice(0, Math.max(trimNewlinesEnd(result).length, authoredEnd));
 }
 
 /** Elements whose content the reader never draws: the sanitizer's drop set, and the stylesheet. */

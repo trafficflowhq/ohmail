@@ -15,20 +15,20 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
-import { SESSION_TIMEOUT_MS } from "../session-gate";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
 import { cloudLane, cloudPushWakes, cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { accountCleanupOwed, finishRetiredComposeCleanup, isolateAccountScope, otherAccountCleanup, readIsolatedScope } from "../pending-sign-out-storage";
-import { readSessionFamily } from "../signed-out-signal";
+import { listenBrowserSession, readSessionFamily } from "../signed-out-signal";
 import { setDemoStorage } from "@ohmail/app-logic/storage/storage-owner";
 import { markStartup } from "@ohmail/app-logic/session/ui-vitals";
 import {
@@ -37,6 +37,7 @@ import {
 } from "@ohmail/app-logic/session/session-truth";
 import {
   confirmSyncOwner,
+  mirrorOwnerOf,
   onSyncNeedsConfirm,
   syncIdentityOf,
   sameSyncStatus,
@@ -155,6 +156,7 @@ export function EngineProvider({
   resolveOwner,
   onConfirmed,
   drawMail,
+  edgeOwner,
   children,
 }: {
   demo: boolean;
@@ -171,14 +173,9 @@ export function EngineProvider({
    * in the desktop program, which has no session client. Absent on the desktop and the demo.
    */
   onConfirmed?: (accountId: string, address?: string, familyId?: string) => void;
-  /**
-   * The page's word for the first frame (`page.tsx`): `wait` when the edge did not ask the API whose session this is,
-   * or when no word arrived. A remembered mirror then opens but is not DRAWN until the check names that account, or
-   * until the check has had the edge's own budget ({@link SESSION_TIMEOUT_MS}) and said nothing — the edge's fault
-   * path, which also draws this device's copy with its sync gate closed. A Settings handoff requires
-   * confirmation before opening any mirror. Absent: the warm open draws at once.
-   */
+  /** The web can preload a remembered mirror while its session is still being checked. */
   drawMail?: "now" | "wait" | "confirmed";
+  edgeOwner?: string | null;
   children: ReactNode;
 }) {
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -188,6 +185,7 @@ export function EngineProvider({
   // than to a live engine, because the account id has to be re-established before anything
   // may touch persistence again.
   const desired = resolveDemo(serverDemo);
+  const browserOwner = useSyncExternalStore(listenBrowserSession, readOwner, () => edgeOwner ?? null);
   /* AND THE DEMO'S STORAGE PARTITION, established here because this is where the demo is decided —
      both of its doors (`/demo` in the landing page's iframe, `?demo=1` in an ordinary tab) pass
      through this line. In RENDER and re-derived every render: the shell reads the compose scratch
@@ -243,14 +241,6 @@ export function EngineProvider({
   useAfterHydration(() => {
     setBrowserPass(true);
   }, []);
-
-  /** Under `wait`: the check has had the edge's budget and said nothing, so this device's copy may be drawn. */
-  const [waitedOut, setWaitedOut] = useState(false);
-  useEffect(() => {
-    if (drawMail !== "wait" || !browserPass) return;
-    const timer = setTimeout(() => setWaitedOut(true), SESSION_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [drawMail, browserPass]);
 
   /**
    * The warm open, one render after hydration. `readOwner()` is a synchronous cookie read with
@@ -422,7 +412,8 @@ export function EngineProvider({
            * B's session), and before `setBinding` so the scheduler's first tick sees an open gate
            * rather than racing it.
            */
-          if (owner === warm.owner) {
+          const confirmed = owner === warm.owner && (edgeOwner === undefined || readOwner() === owner);
+          if (confirmed) {
             confirmSyncOwner(warm.engine, owner);
             // AFTER the comparison and the cancellation check above: the client is bound to the account
             // this tab has decided it is for, not to whatever the last resolver happened to see.
@@ -430,7 +421,7 @@ export function EngineProvider({
             retryOldCleanup();
           }
           setBinding(
-            owner === warm.owner
+            confirmed
               ? { status: "ready", demo: false, engine: warm.engine }
               : { status: "unauthenticated" },
           );
@@ -439,6 +430,10 @@ export function EngineProvider({
         // The cold path builds the engine for the account the server just named, so the gate
         // opens with no comparison to make — but it still has to be OPENED, and before the
         // binding, for the same first-tick reason as the warm arm above.
+        if (edgeOwner !== undefined && readOwner() !== owner) {
+          setBinding({ status: "unauthenticated" });
+          return;
+        }
         const family = outcome.familyId ?? readSessionFamily();
         const owed = accountCleanupOwed(owner);
         const isolatedScope = owed ? isolateAccountScope(owner, family) : readIsolatedScope(owner, family);
@@ -494,7 +489,7 @@ export function EngineProvider({
     // the engine off it, and a dependency on the status alone would let this effect close over a
     // stale one. The early return above is what keeps that cheap — every binding that is not
     // `resolving`, `warm` or `checking` re-runs the effect and leaves immediately.
-  }, [binding, browserPass, resolveOwner]);
+  }, [binding, browserPass, edgeOwner, resolveOwner]);
 
   /**
    * A fresh session clears an unconfirmed check — the one automatic escape from `unconfirmed`, which
@@ -689,15 +684,18 @@ export function EngineProvider({
     return <SessionScreen status="resolving" />;
   }
 
-  /** No mirror and no answer after the whole ladder: the honest card, on its own. */
-  if (binding.status === "unconfirmed" && binding.warm === null) {
+  const warmMayPaint = warmMirror !== null && (edgeOwner === undefined
+    ? drawMail !== "wait"
+    : drawMail === "now" && edgeOwner === warmMirror.owner && browserOwner === edgeOwner && readOwner() === edgeOwner);
+  if (binding.status === "unconfirmed" && !warmMayPaint) {
     return <UnconfirmedGate onRetry={retryConfirm} />;
   }
-
-  /* A mirror opened from the remembered name, not yet named by the check: under `wait`, nothing of it is drawn. */
-  if (drawMail === "wait" && !waitedOut && binding.status !== "ready") {
+  if (binding.status !== "ready" && !warmMayPaint) {
     return <SessionScreen status="resolving" />;
   }
+
+  if (edgeOwner !== undefined && !desired && engine !== null
+      && mirrorOwnerOf(engine) !== readOwner()) return <SessionScreen status="resolving" />;
 
   if (engine === null) {
     /* Unreachable: every status still standing is `ready` or carries a warm mirror, so
@@ -718,6 +716,7 @@ export function EngineProvider({
         demo: binding.status === "ready" ? binding.demo : false,
         serverDemo,
         sync: live ? sync : SYNC_SETTLED,
+        waitForLocalCopy: live && (drawMail === "now" || drawMail === "wait"),
       }}
     >
       {children}

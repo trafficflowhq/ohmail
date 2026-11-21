@@ -13,14 +13,24 @@ export function useNotificationSummary(): PaneSummary | null {
   if (!model) return null;
   if (model.permission === "denied") return { value: t("blocked"), hot: true };
   if (!model.live) return { value: t("off") };
-  const labels = {
-    ohbox: "ohbox",
-    screener: "screener",
-    scheduled: "scheduled",
-    pairing: "devices",
-  } as const;
-  const detail = (Object.keys(labels) as (keyof typeof labels)[])
-    .filter((kind) => model.carries.includes(kind) && model.channels[kind])
-    .map((kind) => t(labels[kind]));
+  const mail = [
+    ["ohbox", "ohbox"],
+    ["screener", "screener"],
+    ["scheduled", "scheduled"],
+    ["pairing", "devices"],
+  ] as const;
+  const calendar = [
+    ["cal_alert", "shortAlerts"],
+    ["cal_invitation", "shortInvitations"],
+    ["cal_change", "shortChanges"],
+    ["cal_answer", "shortAnswers"],
+    ["cal_found", "shortFound"],
+  ] as const;
+  const detail = [
+    ...mail.filter(([kind]) => model.carries.includes(kind) && model.channels[kind]).map(([, key]) => t(key)),
+    ...calendar
+      .filter(([kind]) => model.carries.includes(kind) && model.calendarChoices?.[kind])
+      .map(([, key]) => t(key)),
+  ];
   return { value: t("on"), detail: detail.length ? detail.join(" · ") : undefined };
 }

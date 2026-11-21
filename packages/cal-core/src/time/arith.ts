@@ -134,6 +134,17 @@ export function resolveWall(w: Wall, tzid: string, zones: ZoneSource): number | 
   return early; // it holds, or the reading was skipped: the offset before the gap either way
 }
 
+/** The exact instants on a clock, in order. A skipped reading has none. */
+export function wallInstants(w: Wall, tzid: string, zones: ZoneSource): number[] {
+  const local = wallSeconds(w) * MS_PER_SECOND;
+  const offsets = new Set([zones.offsetAt(tzid, local - PROBE_MS), zones.offsetAt(tzid, local + PROBE_MS)]);
+  return [...offsets].flatMap((offset) => {
+    if (offset === null) return [];
+    const at = local - offset;
+    return zones.offsetAt(tzid, at) === offset ? [at] : [];
+  }).sort((a, b) => a - b);
+}
+
 /** What the clock shows in `tzid` at an instant, or `null` when the zone is not known. */
 export function wallIn(epochMs: number, tzid: string, zones: ZoneSource): Wall | null {
   const offset = zones.offsetAt(tzid, epochMs);

@@ -29,7 +29,7 @@ import {
 } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { design } from "@ohmail/ui/base";
-import { useFrame, usePaletteOffers, useSelectionBar } from "../frame/commands.js";
+import { useFrame, usePaletteOffers, useResumingReader, useSelectionBar } from "../frame/commands.js";
 import { usePlaceLiveArgs } from "../frame/place-live.js";
 import { useRailDrag } from "../frame/rail-drag.js";
 import { useOwnAddresses, usePress } from "../frame/room.js";
@@ -196,6 +196,19 @@ function useOhboxTagOffers(live: ReturnType<typeof useOhboxLive>): void {
   );
 }
 
+function useOhboxListFocus(
+  model: ReturnType<typeof useOhboxLive>["model"],
+  page: ReturnType<typeof usePage>,
+) {
+  const scroller = model.listScrollerRef;
+  useLayoutEffect(() => page.from(scroller), [page, scroller]);
+  /* The selection's bar stands at the list's foot while rows are picked: on a phone the frame draws no dock over it. */
+  useSelectionBar(model.pickedRowCount > 0);
+  useRowFocusFollow(model.selected?.id ?? null, page.read);
+  useListKeepsKeyboard(page.read);
+  useRailDrag({ ...model.drag, rows: `${SEATED.list} .oh-row[data-id]`, page: page.read });
+}
+
 export function OhboxSeat({ children }: { readonly children: ReactNode }): ReactNode {
   const { host, plan, commands, route } = useFrame();
   const storageCard = host.features.storageCard;
@@ -206,18 +219,14 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
   const tag = useText("tag");
   const press = usePress();
   const args = usePlaceLiveArgs();
-  const live = useOhboxLive(args, own);
+  const live = useOhboxLive(args, own, useResumingReader()?.square ?? null);
   const located = useLocatedLetter(args.entered.letter, route.open);
-  const { model, now, absoluteTime, flipTime, tags, mail, notOrganizing, sentLabelOf } = live;
+  const { model, replacing, now, absoluteTime, flipTime, tags, mail, notOrganizing, sentLabelOf } = live;
+  if (replacing && rowAsk !== null) setRowAsk(null);
+  if (replacing && tagAsk !== null) setTagAsk(null);
   useOhboxTagOffers(live);
   useSwitchEnded(route, live.onScreen);
-  const scroller = model.listScrollerRef;
-  useLayoutEffect(() => page.from(scroller), [page, scroller]);
-  /* The selection's bar stands at the list's foot while rows are picked: on a phone the frame draws no dock over it. */
-  useSelectionBar(model.pickedRowCount > 0);
-  useRowFocusFollow(model.selected?.id ?? null, page.read);
-  useListKeepsKeyboard(page.read);
-  useRailDrag({ ...model.drag, rows: `${SEATED.list} .oh-row[data-id]`, page: page.read });
+  useOhboxListFocus(model, page);
   const { doorbell, setupHref } = own;
   /* The ground's one Pull new mail: the list under a finger and "Ohbox actions" ring the same flight as the foot. */
   const pull = usePull();
@@ -288,8 +297,8 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
   return (
     <OhboxAbove model={model} beside={beside}>
       {children}
-      <OhboxRowAsk ask={rowAsk} row={own.anchors.row} onClose={() => setRowAsk(null)} />
-      {tagAsk ? (
+      <OhboxRowAsk ask={replacing ? null : rowAsk} row={own.anchors.row} onClose={() => setRowAsk(null)} />
+      {!replacing && tagAsk ? (
         <TagPicker
           anchor={tagAsk.anchor}
           tags={tags}

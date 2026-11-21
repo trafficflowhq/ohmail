@@ -461,6 +461,41 @@ describe("Empty, WaitRow, RefusalLine", () => {
     expect(again).toHaveBeenCalledTimes(1);
   });
 
+  it("a waiting row says its pressed answer is busy and takes no second press on it", () => {
+    const again = vi.fn();
+    const discard = vi.fn();
+    function Row() {
+      const [busy, setBusy] = useState(false);
+      return (
+        <WaitRow
+          what="Filing a message"
+          why="The folder is not there."
+          acts={[
+            {
+              label: "Try again",
+              busy,
+              onPress: () => {
+                again();
+                setBusy(true);
+              },
+            },
+            { label: "Discard", onPress: discard },
+          ]}
+        />
+      );
+    }
+    render(<Row />);
+    const retry = screen.getByRole("button", { name: "Try again" });
+    fireEvent.click(retry);
+    expect(retry.getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(retry);
+    expect(again).toHaveBeenCalledTimes(1);
+    const other = screen.getByRole("button", { name: "Discard" });
+    expect(other.hasAttribute("aria-busy")).toBe(false);
+    fireEvent.click(other);
+    expect(discard).toHaveBeenCalledTimes(1);
+  });
+
   it("a refusal that answers a press is said at once and can be handed the keys; one that reports stays a status", () => {
     const at: { current: HTMLParagraphElement | null } = { current: null };
     render(

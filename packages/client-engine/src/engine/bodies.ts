@@ -351,7 +351,7 @@ export abstract class EngineBodies extends EngineWindowed {
    * happens to be holding. Nothing is written to the mirror. The row is the server's DTO and the next page carrying a
    * body is what repairs it; a local patch would put text at a seq the store did not observe.
    */
-  async readDraftBody(draftId: string): Promise<string | null> {
+  async readDraftBody(draftId: string): Promise<Awaited<ReturnType<NonNullable<EngineAdapter["fetchDraftBody"]>>>> {
     const fetchDraftBody = this.adapter.fetchDraftBody?.bind(this.adapter);
     if (!fetchDraftBody) return null;
     try {

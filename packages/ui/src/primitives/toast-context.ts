@@ -9,6 +9,8 @@ export interface ToastOptions {
   actionKey?: string;
   /** Auto-dismiss in ms; defaults to 2600 (6000+ recommended with an action). */
   duration?: number;
+  /** Keep the action available until pressed or replaced. */
+  actionUntilPressed?: boolean;
   /** The stored deadline of an action whose window started before the report was shown. */
   actionDeadline?: number;
   /** Keep this local recovery behind a newer report until its original deadline. */

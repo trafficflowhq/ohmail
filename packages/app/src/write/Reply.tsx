@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import { useReplyRunState } from "@ohmail/app-logic/piles";
 import { Composer, SendStatus, type RecipientsProps } from "@ohmail/ui/mail";
 import { inlineForwardKey, SEND_IN_FLIGHT_PHASES } from "@ohmail/app-logic/writing/mail-send";
-import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
+import { hasEditedQuotedHistory, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { letterCap } from "@ohmail/app-logic/write/files";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { pageModal } from "@ohmail/app-logic/session/modal-gate";
@@ -22,6 +22,7 @@ import { useWriteParts } from "./parts.js";
 import type { EditorHandle, WritePerson, WriteReply } from "./ports.js";
 import { Status } from "./status/Status.js";
 import { useMarks } from "./text/Marks.js";
+import { useQuotedHistory } from "./text/QuotedHistory.js";
 import { useSignature } from "./text/Signature.js";
 import { unwritten } from "./text/unwritten.js";
 import { modalIsOpen } from "@ohmail/app-logic/session/modal-gate";
@@ -119,6 +120,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
   const beside = useWriteBeside();
   const { editor: Editor } = useWriteParts();
   const forward = reply.mode === "forward";
+  const quotedHistory = useQuotedHistory(reply.messageId, forward);
   const going = SEND_IN_FLIGHT_PHASES.has(reply.send.phase);
   useShowsSend(reply);
   const [handle, setHandle] = useState<EditorHandle | null>(null);
@@ -156,7 +158,12 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
   const placeholder = forward ? t("reply.forwardPlaceholder") : t("reply.placeholder");
   const refusedLine = longLine ?? empty.line;
   const noted =
-    forward || refusedLine !== null || notice !== null || forwarded.refusal !== null || files.note !== null;
+    forward ||
+    reply.saveRefused ||
+    refusedLine !== null ||
+    notice !== null ||
+    forwarded.refusal !== null ||
+    files.note !== null;
   useLandInView(sheet);
   return (
     <>
@@ -187,8 +194,9 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
         note={
           noted ? (
             <ReplyNote
-              forward={forward}
+              forward={forward && !hasEditedQuotedHistory(w.replyBody.html)}
               tooLong={refusedLine}
+              saveRefused={reply.saveRefused === true}
               notice={notice}
               refusal={forwarded.refusal}
               files={files.note}
@@ -206,6 +214,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
         }}
       >
         <Editor
+          quotedHistory={quotedHistory}
           value={w.replyBody}
           onChange={onText}
           label={forward ? t("reply.forwardText") : t("reply.text")}
@@ -324,11 +333,13 @@ function ReplyPeople({
 function ReplyNote(props: {
   readonly forward: boolean;
   readonly tooLong: string | null;
+  readonly saveRefused: boolean;
   readonly notice: string | null;
   readonly refusal: string | null;
   readonly files: string | null;
 }) {
   const t = useText("write");
+  const compose = useText("compose");
   return (
     <>
       {props.forward ? (
@@ -337,6 +348,7 @@ function ReplyNote(props: {
         </SendStatus>
       ) : null}
       {props.tooLong !== null ? <SendStatus place="start">{props.tooLong}</SendStatus> : null}
+      {props.saveRefused ? <SendStatus place="start">{compose("draftNotSaved")}</SendStatus> : null}
       {props.notice !== null ? (
         <SendStatus place="end" sign="spark">
           {props.notice}

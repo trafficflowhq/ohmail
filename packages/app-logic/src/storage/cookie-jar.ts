@@ -7,13 +7,13 @@
 export const HOST_PREFIX = "__Host-";
 
 /** The value in a `name=value; …` string, or `null` when neither spelling is present. */
-export function cookieFromJar(jar: string, name: string): string | null {
+export function cookieFromJar(jar: string, name: string, hostPrefix = HOST_PREFIX): string | null {
   let bare: string | null = null;
   for (const part of jar.split(";")) {
     const eq = part.indexOf("=");
     if (eq < 0) continue;
     const key = part.slice(0, eq).trim();
-    if (key === `${HOST_PREFIX}${name}`) return part.slice(eq + 1).trim();
+    if (key === `${hostPrefix}${name}`) return part.slice(eq + 1).trim();
     if (key === name && bare === null) bare = part.slice(eq + 1).trim();
   }
   return bare;

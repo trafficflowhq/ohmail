@@ -22,9 +22,10 @@
  * sentence is in the lead: each person gets their own account and their own mail.
  */
 
+import type { ToastFn } from "@ohmail/app-logic/press/report";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSection, SettingsSubhead, useToast } from "@ohmail/ui";
+import { Button, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 import { ApiError, pair, type PairingTokenDTO } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
@@ -61,12 +62,11 @@ export function useUserInvites(demo: boolean): boolean {
 
 type Busy = null | "mint" | `revoke:${string}`;
 
-export function InvitesSection() {
+export function InvitesSection({ report }: { report: ToastFn }) {
   const t = useTranslations("invites");
   const td = useTranslations("devices");
   const sentence = useRefusalSentence();
   const format = useFormatter();
-  const toast = useToast();
 
   /** Open invites — the caller's own, `grant === "invite"`, live only. `null` = not read yet. */
   const [items, setItems] = useState<PairingTokenDTO[] | null>(null);
@@ -164,7 +164,7 @@ export function InvitesSection() {
         if (!(err instanceof ApiError && err.status === 404)) throw err;
       }
       if (!alive.current) return;
-      toast(t("revoked"));
+      report(t("revoked"));
       await refresh();
     });
 
@@ -179,7 +179,7 @@ export function InvitesSection() {
     void (async () => {
       try {
         await navigator.clipboard.writeText(link);
-        if (alive.current) toast(t("copied"));
+        if (alive.current) report(t("copied"));
       } catch {
         if (alive.current) setError(t("copyFailed"));
       }

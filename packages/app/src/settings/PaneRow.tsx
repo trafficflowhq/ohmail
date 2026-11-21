@@ -4,6 +4,7 @@ import { useLocale, useTextLookup } from "../text/index.js";
 import type { PaneSummary, SettingsPane, SettingsPaneId } from "./contract.js";
 import { useNotificationSummary } from "./notifications/summary.js";
 import { useTagSummary } from "./tags/summary.js";
+import { useScreenerSummary } from "./screener/summary.js";
 
 export interface PaneRowProps {
   readonly pane: SettingsPane;
@@ -12,23 +13,10 @@ export interface PaneRowProps {
   readonly onOpen: () => void;
 }
 
-const DETAIL: Partial<Record<SettingsPaneId, string>> = {
-  notifications: "notifyMaster",
-  screener: "screening.title",
-  ai: "aiLabel",
-  tags: "tagNew",
-  folders: "folders.useTitle",
-  signatures: "signatures.title",
-  devices: "webDevicesTitle",
-  billing: "webBillingTitle",
-  storage: "storagePlanHead",
-  security: "webSecurityTitle",
-  account: "webAccountTitle",
-};
-
 const MENU_SUMMARY: Partial<Record<SettingsPaneId, NonNullable<SettingsPane["useSummary"]>>> = {
   notifications: useNotificationSummary,
   tags: useTagSummary,
+  screener: useScreenerSummary,
 };
 
 function useMenuSummary(id: SettingsPaneId): PaneSummary | null {
@@ -37,28 +25,26 @@ function useMenuSummary(id: SettingsPaneId): PaneSummary | null {
   const theme = useOptionalTheme();
   const t = textOf("settings");
   if (id === "general") {
-    const face = theme?.face === "ohmarchy" ? "faceOhmarchy" : "facePaper";
+    const face = theme
+      ? theme.face === "ohmarchy"
+        ? t("faceOhmarchy")
+        : textOf("settingsMenu")("faceOh")
+      : undefined;
     const mode =
-      theme?.preference === "system"
-        ? "themeAuto"
-        : theme?.preference === "dark"
-          ? "themeDark"
-          : "themeLight";
+      theme &&
+      t(
+        theme.preference === "system"
+          ? "themeAuto"
+          : theme.preference === "dark"
+            ? "themeDark"
+            : "themeLight",
+      );
     return {
-      value: [face, mode, `languageName.${locale}`]
-        .filter((key) => t.has(key))
-        .map((key) => t(key))
-        .join(" · "),
+      value: [face, mode].filter(Boolean).join(" · "),
+      detail: t.has(`languageName.${locale}`) ? t(`languageName.${locale}`) : undefined,
     };
   }
-  if (id === "help") {
-    const help = textOf("help");
-    return help.has("write") && help.has("diag")
-      ? { detail: [help("write"), help("diag")].join(" · ") }
-      : null;
-  }
-  const detail = DETAIL[id];
-  return detail && t.has(detail) ? { detail: t(detail) } : null;
+  return null;
 }
 
 function Entry({

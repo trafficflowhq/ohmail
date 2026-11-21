@@ -11,12 +11,14 @@
  * Nothing leaves the page: the engine is the fake one.
  */
 import type { EngineMessage } from "@ohmail/wire";
+import { Fragment } from "react";
 import { createRoot } from "react-dom/client";
 import { ListHead } from "@ohmail/ui/mail";
 import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
-import { useRailModel } from "../../src/frame/commands.js";
-import type { PlaceEntry, RailModel } from "../../src/frame/contract.js";
+import { useFrame, useRailModel } from "../../src/frame/commands.js";
+import type { CalendarEntry, PlaceEntry, RailModel } from "../../src/frame/contract.js";
+import { NONE } from "../../src/host/index.js";
 import { readerEntry, type ReaderFiles } from "../../src/reader/index.js";
 import { letterBody } from "./reader-body-part.mjs";
 import { fillOver, TextProvider, type Messages } from "../../src/text/index.js";
@@ -31,6 +33,7 @@ import ohboxEn from "../../messages/ohbox.en.json" with { type: "json" };
 import doorsEn from "../../messages/doors.en.json" with { type: "json" };
 
 const q = new URLSearchParams(location.search);
+const switchProducts = q.has("switch");
 const device = (q.get("device") ?? "desktop") as "desktop" | "phone";
 const room = ROOMS[device] ?? ROOMS.desktop;
 const size = { width: window.innerWidth || room.width, height: window.innerHeight || room.height };
@@ -47,7 +50,7 @@ const letters: EngineMessage[] = Array.from({ length: n }, (_, i) => {
     address: `s${i}@example.invalid`,
     subject: "Q3 plan",
     at: day.toISOString().slice(0, 16),
-    text: LINES,
+    text: switchProducts ? `${LINES}\n\nOn Monday, a teammate wrote:\n${`> ${LINES}\n`.repeat(5)}` : LINES,
   } as Parameters<typeof engineLetter>[1]);
   return {
     ...m,
@@ -108,9 +111,11 @@ const RAIL: RailModel = {
 /** The list beside the column: a head and nothing else; the squares' cases read the reading column. */
 function List() {
   useRailModel(RAIL);
+  const { commands } = useFrame();
   return (
     <div className="st-pane">
       <ListHead title="Reading" />
+      {switchProducts && <button onClick={() => commands.open(`w${openAt}`)}>Q3 plan</button>}
     </div>
   );
 }
@@ -131,6 +136,24 @@ const place: PlaceEntry = {
   panes: { kind: "columns", List, Reading: "reader" },
 };
 
+const calendar: CalendarEntry = {
+  Above: Fragment,
+  Rail: ({ switcher }) => <nav aria-label="Calendar">{switcher}</nav>,
+  places: {
+    week: { id: "week", body: "week", panes: { kind: "wide", Wide: () => <h1>Calendar week</h1> } },
+    day: NONE,
+    month: NONE,
+    year: NONE,
+    agenda: NONE,
+    calsearch: NONE,
+    frommail: NONE,
+    calsettings: NONE,
+  },
+  stage: NONE,
+  panels: { agenda: NONE, invitations: NONE },
+  useWants: () => false,
+};
+
 const look = {
   face: q.get("face") === "ohmarchy" ? "ohmarchy" : "paper",
   scheme: q.get("scheme") === "dark" ? "dark" : "light",
@@ -142,9 +165,10 @@ const { host } = fakeHost({
   service: "managed",
   scope: "mila",
   places: { ohbox: place },
+  ...(switchProducts && { calendar, products: "both" }),
   reader,
   window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
-  address: fakeAddress(`#/ohbox/${q.has("whole") ? "t" : "m"}/w${openAt}`),
+  address: fakeAddress(switchProducts ? "#/ohbox" : `#/ohbox/${q.has("whole") ? "t" : "m"}/w${openAt}`),
   appearance: fakeAppearance(look),
 });
 

@@ -51,7 +51,7 @@ export interface PanelVerb {
   /** The widest label this slot ever shows, so that the panel keeps its width when the label changes. */
   widest?: string;
   /** A count that leads and stays when its word goes: "3", then "selected". The label is the two as one name. */
-  counted?: { count: string; word: string };
+  counted?: { count: string; word: string; announce?: boolean };
   /** Its sign is the unread mark: the face that colours that mark draws the icon hot. */
   hotIcon?: boolean;
   /** A press: with the verb's own button, where a menu it opens stands. */
@@ -218,8 +218,8 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
         className="oh-actionpanel-label"
         data-wide={verb.widest ? "" : undefined}
         /* A count that leads is said, whole, when it changes: how many are picked. */
-        aria-live={verb.counted ? "polite" : undefined}
-        aria-atomic={verb.counted ? true : undefined}
+        aria-live={verb.counted && verb.counted.announce !== false ? "polite" : undefined}
+        aria-atomic={verb.counted && verb.counted.announce !== false ? true : undefined}
       >
         {verb.counted ? <b className="oh-actionpanel-count">{verb.counted.count}</b> : null}
         {verb.counted ? (

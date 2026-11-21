@@ -4,6 +4,9 @@ import { Menu, MenuItem } from "@ohmail/ui/base";
 import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } from "@ohmail/ui/calendar";
 import { addDays, dayShort, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
+import { ZoneMenu } from "./ZoneMenu.js";
+import { useEditorRows, type EditorRows } from "./use-editor-rows.js";
+import { zoneName } from "./zone-names.js";
 import { endDayOf, type EventDraft } from "./event-draft.js";
 
 interface Props {
@@ -13,6 +16,7 @@ interface Props {
   readonly tone: CalendarTone;
   readonly choices: readonly CalendarRecord[];
   readonly choose?: (id: string) => void;
+  readonly edit?: EditorRows;
   readonly fixedTime?: string;
   readonly timeZone?: string;
   readonly change: (edit: Partial<EventDraft>) => void;
@@ -26,6 +30,7 @@ function whenRow(
   locale: string,
   menu: MenuAnchor | null,
   open: (menu: MenuAnchor) => void,
+  timeZone?: string,
 ): EventFormRow {
   const endDay = endDayOf(draft);
   const nextDay = !draft.allDay && endDay === addDays(draft.day, 1);
@@ -69,6 +74,18 @@ function whenRow(
             },
           ]
         : [{ kind: "word" as const, text: t("create.toWord") }, end]),
+      ...(!draft.allDay && timeZone
+        ? [
+            {
+              kind: "slot" as const,
+              label: t("create.timeZone"),
+              value: zoneName(timeZone),
+              expanded: menu?.kind === "zone",
+              onPress: (event: MouseEvent<HTMLButtonElement>) =>
+                open({ kind: "zone", anchor: event.currentTarget }),
+            },
+          ]
+        : []),
       {
         kind: "switch",
         label: t("create.allDay"),
@@ -103,7 +120,7 @@ function optionalRow(
   ];
 }
 
-type MenuAnchor = { kind: "date" | "end" | "calendar"; anchor: HTMLElement };
+type MenuAnchor = { kind: "date" | "end" | "calendar" | "busy" | "zone"; anchor: HTMLElement };
 
 export function DraftFields({
   draft,
@@ -117,20 +134,18 @@ export function DraftFields({
   cancel,
   fixedTime,
   timeZone,
+  edit,
 }: Props) {
   const t = useText("calendar");
   const locale = useLocale();
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
+  const details = useEditorRows(draft, change, edit);
   const rows: EventFormRow[] = [
     fixedTime
       ? { id: "when", icon: "clock", items: [{ kind: "word", text: fixedTime }] }
-      : whenRow({ draft, today, change }, t, locale, menu, setMenu),
+      : whenRow({ draft, today, change }, t, locale, menu, setMenu, timeZone),
   ];
-  if (timeZone && !fixedTime && !draft.allDay) {
-    const when = rows[0]!;
-    rows[0] = { ...when, items: [...when.items, { kind: "word", text: timeZone }] };
-  }
-  rows.push(...optionalRow("place", draft, change, t));
+  rows.push(...details.beforePlace, ...optionalRow("place", draft, change, t), ...details.afterPlace);
   rows.push({
     id: "calendar",
     mark: tone,
@@ -143,11 +158,26 @@ export function DraftFields({
             expanded: menu?.kind === "calendar",
             onPress: (event) => setMenu({ kind: "calendar", anchor: event.currentTarget }),
           }
-        : { kind: "word", text: calendar?.name ?? t("create.calendar") },
-      { kind: "toggle", label: t("create.busy"), on: draft.busy, onChange: (busy) => change({ busy }) },
+        : {
+            kind: "slot",
+            state: "done",
+            disabled: true,
+            label: t("create.calendar"),
+            value: calendar?.name ?? "",
+          },
+      edit
+        ? {
+            kind: "slot",
+            label: t("create.showAs"),
+            value: t(draft.busy ? "create.busy" : "create.free"),
+            expanded: menu?.kind === "busy",
+            onPress: (event) => setMenu({ kind: "busy", anchor: event.currentTarget }),
+          }
+        : { kind: "toggle", label: t("create.busy"), on: draft.busy, onChange: (busy) => change({ busy }) },
       {
         kind: "toggle",
         label: t("create.private"),
+        icon: edit ? "lock" : undefined,
         on: draft.private,
         onChange: (value) => change({ private: value }),
       },
@@ -159,6 +189,7 @@ export function DraftFields({
       <EventForm
         rows={rows}
         adds={[
+          ...details.adds,
           ...(draft.place === null
             ? [
                 {
@@ -183,7 +214,33 @@ export function DraftFields({
         submit={submit}
         cancel={cancel}
       />
-      {menu && menu.kind !== "calendar" && (
+      {details.menu}
+      {menu && (
+        <DraftMenus {...{ draft, today, calendar, choices, choose, change, menu, setMenu, timeZone }} />
+      )}
+    </>
+  );
+}
+
+function DraftMenus({
+  draft,
+  today,
+  calendar,
+  choices,
+  choose,
+  change,
+  menu,
+  setMenu,
+  timeZone,
+}: Pick<Props, "draft" | "today" | "calendar" | "choices" | "choose" | "change" | "timeZone"> & {
+  menu: MenuAnchor;
+  setMenu: (menu: null) => void;
+}) {
+  const t = useText("calendar");
+  const locale = useLocale();
+  return (
+    <>
+      {(menu?.kind === "date" || menu?.kind === "end") && (
         <DatePicker
           locale={locale}
           today={today}
@@ -204,6 +261,30 @@ export function DraftFields({
             setMenu(null);
           }}
           onClose={() => setMenu(null)}
+        />
+      )}
+      {menu?.kind === "busy" && (
+        <Menu open anchor={menu.anchor} label={t("create.showAs")} onClose={() => setMenu(null)}>
+          {[true, false].map((busy) => (
+            <MenuItem
+              key={String(busy)}
+              checked={busy === draft.busy}
+              onPress={() => {
+                change({ busy });
+                setMenu(null);
+              }}
+            >
+              {t(busy ? "create.busy" : "create.free")}
+            </MenuItem>
+          ))}
+        </Menu>
+      )}
+      {menu?.kind === "zone" && timeZone && (
+        <ZoneMenu
+          anchor={menu.anchor}
+          zone={timeZone}
+          close={() => setMenu(null)}
+          pick={(zone) => change({ zone })}
         />
       )}
       {choose && menu?.kind === "calendar" && (

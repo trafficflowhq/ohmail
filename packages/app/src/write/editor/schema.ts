@@ -71,6 +71,7 @@ export const EXTENSIONS = [
     orderedList: {},
     listItem: {},
     blockquote: {},
+    trailingNode: { notAfter: ["quotedHistory"] },
     // The block half of the Code control. Admitted in the same commit that put `pre` into
     // `outbound-html.ts`'s allowlist and taught `htmlToPlainText` to render one — see the
     // header. Its options are the shipped defaults: `exitOnTripleEnter` is how you leave a

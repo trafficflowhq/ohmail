@@ -2,7 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { SenderSuggestion } from "@ohmail/app-logic/screener/screener-suggest";
 import type { ConversationShown } from "@ohmail/app-logic/reader";
 import type { EngineMessage } from "@ohmail/wire";
-import type { MessageClip } from "@ohmail/ui/mail";
+import type { MessageClip, MessageHeadProps } from "@ohmail/ui/mail";
 import type { CalendarEntry, FrameNotice, FrameOvers, FramePlaces, FrameStages, PaneProps } from "../frame/contract.js";
 import type { HeldParts } from "../screener/ports.js";
 import type { ContactScreeningProps } from "../reader/contact/Contact.js";
@@ -50,7 +50,11 @@ export interface ScreenerEntry extends FeatureEntry {
 export interface ReaderEntry {
   readonly Reading: ComponentType<PaneProps>;
   /** The shared header for a folded stream card, with no body or file access. */
-  readonly PreviewHead?: ComponentType<{ message: EngineMessage; hideBodyNotice?: boolean }>;
+  readonly PreviewHead?: ComponentType<{
+    message: EngineMessage;
+    hideBodyNotice?: boolean;
+    selection?: MessageHeadProps["selection"];
+  }>;
   /** The cached markup of a folded card, with remote pictures and reader actions unavailable. */
   readonly PreviewBody?: ComponentType<{ message: EngineMessage; children: ReactNode }>;
   readonly Screening?: ComponentType<ContactScreeningProps>;

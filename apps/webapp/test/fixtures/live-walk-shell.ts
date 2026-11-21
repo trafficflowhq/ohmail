@@ -40,7 +40,7 @@ import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
 import type { NotificationHost } from "../../app/shell/notification-settings";
 import type { MailShellProps } from "../_mail-shell";
-import type { SuggestWire } from "../../app/shell/screener-suggest";
+import type { SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 import { settleFirstPaint } from "../_first-paint.js";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 import { forgetOwner, readOwner, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";

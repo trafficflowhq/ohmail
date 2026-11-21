@@ -9,7 +9,7 @@
  */
 
 import type { EmailAddress, EngineDraft } from "@ohmail/wire";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { localStorageDoor } from "../storage/durable.js";
 import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
@@ -18,6 +18,7 @@ import { AUTOSAVE_DELAY_MS } from "./compose-autosave.js";
 import {
   STORED_CREATES, copyGoes, createLive, dropCopy, landedOf, landingOf, twins, type CreateClaim,
 } from "./draft-creates.js";
+import { hasEditedQuotedHistory } from "./rich-text.js";
 import { readReplyMeta, replyDraftKey, replyMetaKey, writeReplyMeta } from "./mail-send.js";
 
 /** What the open reply editor would store — `null` while no reply editor is open. */
@@ -59,6 +60,7 @@ export interface ReplyRowDoors {
 export type ReplyRowFields = Pick<ReplyDraftForm, "mailboxId" | "subject" | "body" | "html" | "to" | "cc" | "bcc" | "forwardOf" | "forwardParts">;
 
 export interface ReplyAutosave {
+  readonly saveRefused: boolean;
   /**
    * The Send press: the text sent is not saved again, and a create still in the air is undone. It
    * answers the undo for a press the door refused: nothing went, so nothing was sealed.
@@ -139,6 +141,7 @@ export function accountSigOf(engine: OhmailEngine, id: string): string | null {
 /** Something the person wrote: a reply's subject is derived, so a create needs text or a retitle. */
 export function replyWorthCreating(f: ReplyDraftForm): boolean {
   // A forward's audience is never derived: a typed recipient is the person's own.
+  if (hasEditedQuotedHistory(f.html)) return true;
   if (f.forwardOf) return f.body.trim() !== "" || f.to.length + f.cc.length + f.bcc.length > 0;
   return f.body.trim() !== "" || (f.subjectEdited && f.subject.trim() !== "");
 }
@@ -148,6 +151,7 @@ export function useReplyAutosave(
   /** Whose reply keys these are: the mount's storage scope, kept for the life of the mount. */
   scope: StorageScope,
 ): ReplyAutosave {
+  const [refused, setRefused] = useState<{ lane: string; binding: number } | null>(null);
   const owner = useRef(usePinnedScope(scope));
   const formRef = useRef(form);
   formRef.current = form;
@@ -306,6 +310,11 @@ export function useReplyAutosave(
         if (row !== null && result.error?.code === "draft_changed" && on === bindingOf(lane)) {
           doorsRef.current.changed(lane, row);
           forkOwed.current.add(lane);
+        } else if (
+          result.error?.code !== "draft_sent" && !composerGone.current &&
+          on === bindingOf(lane) && formRef.current?.lane === lane
+        ) {
+          setRefused({ lane, binding: on });
         }
         return false;
       }
@@ -339,6 +348,9 @@ export function useReplyAutosave(
       }
       saved.current.set(lane, sig);
       if (result.status === "confirmed") {
+        if (!composerGone.current && current) {
+          setRefused((prior) => prior?.lane === lane && prior.binding === on ? null : prior);
+        }
         reached.current.set(lane, seq);
         confirmedSig.current.set(lane, sig);
       }
@@ -650,5 +662,6 @@ export function useReplyAutosave(
   return {
     seal, sending, cancelled, baseline, forget, asSaved, rebind, owns, bindingOf, ownsRow, restore, awaits, settled, notSent, takeOwn, fork,
     waitedOf, opened, flush,
+    saveRefused: lane !== null && refused?.lane === lane && refused.binding === bindingOf(lane),
   };
 }

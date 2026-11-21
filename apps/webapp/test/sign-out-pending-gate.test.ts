@@ -99,7 +99,7 @@ describe("the gate and the pending sign-out", () => {
     const mw = readFileSync(`${HERE}../middleware.ts`, "utf8");
     expect(mw, "the gate is never told about the pending sign-out")
       .toMatch(/const signOutPending = cookieFromStore\(request\.cookies, OWNER_COOKIE\) === OWNER_SIGNED_OUT;/);
-    expect(mw).toMatch(/resolveSurface\(\{[\s\S]*?signOutPending,[\s\S]*?\}\)/);
+    expect(mw).toMatch(/resolveFirstPage\(\{[\s\S]*?signOutPending,[\s\S]*?\}\)/);
   });
 
   it("…and answers `sign-out` with a 307 to the sign-in page, private and no-store, on both builds", () => {

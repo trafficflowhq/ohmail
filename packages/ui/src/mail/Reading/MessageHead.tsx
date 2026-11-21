@@ -2,6 +2,7 @@ import { Fragment, useLayoutEffect, useRef, useState, type MouseEvent, type Reac
 import { Avatar, Button } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
 import { AddressText } from "../AddressText.js";
+import { SelectionCircle, SelectionMark, type CircleSelection } from "../Lists/SelectionCircle.js";
 import "./message-head.css";
 
 /** Somebody the head names, optionally with a contact action. */
@@ -52,6 +53,8 @@ export interface MessageHeadProps {
     controls?: string;
     onPress?: (anchor: HTMLElement) => void;
   };
+  /** A folded stream card can select the letter with its sender circle. */
+  selection?: { control: CircleSelection; picked: boolean };
   /** Not read yet: the dot on the circle. */
   unread?: boolean;
   /** What was kept out of the letter, as its one chip. */
@@ -88,49 +91,61 @@ function Sender({
   sender,
   unread,
   staticMetadata,
-}: Pick<MessageHeadProps, "sender" | "unread" | "staticMetadata">) {
+  selection,
+}: Pick<MessageHeadProps, "sender" | "unread" | "staticMetadata" | "selection">) {
   const address = sender.displayAddress ?? sender.address;
   const printed = sender.printed ?? sender.name;
   const addressOnly = printed === sender.address;
-  const line = (
-    <span className="oh-messagehead-line">
-      <Avatar name={sender.name} address={sender.address} unread={unread} />
-      <span className="oh-messagehead-who">
-        <b className="oh-messagehead-name">
-          {/* No name: the address stands in its place, and its domain is kept whole there too. */}
-          {addressOnly ? <AddressText address={address} /> : printed}
-        </b>
-        {/* A sender with no name is printed once: the address is not said again beside itself. Its domain is never
-          cut (the evidence a stranger is judged by): the local part gives way first. */}
-        {!addressOnly ? (
-          <span className="oh-messagehead-address">
-            <AddressText address={address} />
-          </span>
-        ) : null}
-      </span>
+  const avatar = <Avatar name={sender.name} address={sender.address} unread={unread} />;
+  const who = (
+    <span className="oh-messagehead-who">
+      <b className="oh-messagehead-name">{addressOnly ? <AddressText address={address} /> : printed}</b>
+      {!addressOnly ? (
+        <span className="oh-messagehead-address">
+          <AddressText address={address} />
+        </span>
+      ) : null}
     </span>
   );
-  if (staticMetadata && !sender.onPress) {
-    return (
-      <div className="oh-messagehead-sender" data-sender-line="">
-        {line}
-      </div>
-    );
-  }
-  return (
+  const words = selection ? (
+    who
+  ) : (
+    <span className="oh-messagehead-line">
+      {avatar}
+      {who}
+    </span>
+  );
+  const interactive = !staticMetadata || sender.onPress;
+  const content = interactive ? (
     <button
       type="button"
-      className="oh-control oh-messagehead-sender"
-      data-sender-line=""
-      /* The address is drawn in two halves; a screen reader hears it whole, after the name, as the head prints it. */
+      className={selection ? "oh-control oh-messagehead-contact" : "oh-control oh-messagehead-sender"}
+      data-sender-line={selection ? undefined : ""}
       aria-label={addressOnly ? address : `${printed} ${address}`}
       aria-haspopup="dialog"
       aria-expanded={sender.expanded ?? false}
       aria-controls={sender.expanded ? sender.controls : undefined}
       onClick={(event) => sender.onPress?.(event.currentTarget)}
     >
-      {line}
+      {words}
     </button>
+  ) : (
+    words
+  );
+  if (!selection && interactive) return content;
+  return (
+    <div className="oh-messagehead-sender" data-sender-line="">
+      {selection ? (
+        <span className="oh-messagehead-line">
+          <SelectionCircle selection={selection.control} picked={selection.picked}>
+            {selection.control.active ? <SelectionMark picked={selection.picked} /> : avatar}
+          </SelectionCircle>
+          {content}
+        </span>
+      ) : (
+        content
+      )}
+    </div>
   );
 }
 
@@ -176,6 +191,7 @@ export function MessageHead({
   marks,
   staticMetadata,
   preview,
+  selection,
 }: MessageHeadProps) {
   return (
     <header
@@ -183,7 +199,7 @@ export function MessageHead({
       data-noted={note ? "" : undefined}
       data-preview={preview ? "" : undefined}
     >
-      <Sender sender={sender} unread={unread} staticMetadata={staticMetadata} />
+      <Sender sender={sender} unread={unread} staticMetadata={staticMetadata} selection={selection} />
       {delivery ? (
         <span className="oh-messagehead-delivery" data-open={deliveryOpen ? "" : undefined}>
           {delivery}

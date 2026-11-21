@@ -5,16 +5,21 @@
  * holds while it is mounted.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import { useEditor, type Editor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
-import { escapeAsParagraphs, richToHtml, type RichValue } from "@ohmail/app-logic/writing/rich-text";
-import type { EditorHandle, EditorMarks, EditorProps, MarkId } from "../ports.js";
-import { applyCode, applyList, applyQuote } from "./commands.js";
+import { dropCarriesFiles } from "@ohmail/app-logic/write/dropped-files";
+import { richToHtml, type RichValue } from "@ohmail/app-logic/writing/rich-text";
+import type { EditorHandle, EditorMarks, EditorProps, MarkId, ParagraphStyle } from "../ports.js";
+import { applyCodeBlock, applyDivider, applyList, applyParagraphStyle, applyQuote } from "./commands.js";
 import { linkAtCaret, nextMarks, normalizeHref } from "./marks.js";
 import { EXTENSIONS, escapeUnlessTaken, linksIn } from "./schema.js";
 import { LETTER_TEXT, LetterNames } from "./letter-names.js";
+import { QuotedHistory, appendHistory, historyIn, historyValue } from "./quoted-history.js";
+import { HistorySelection } from "./history-selection.js";
+import { HistoryEditorContent } from "./HistoryEditorContent.js";
+import { FormatExtensions } from "./formats.js";
 import { PasteAsLines, readParagraphsAsLines } from "./paste.js";
 
 /** The links a body reads, handed by the shell that mounts the body (the folder imports nothing of it). */
@@ -31,11 +36,13 @@ export const RICH_MARKS: readonly MarkId[] = [
   "italic",
   "underline",
   "strike",
-  "code",
   "link",
-  "bullets",
   "numbers",
+  "bullets",
   "quote",
+  "code",
+  "codeBlock",
+  "divider",
 ];
 
 const NO_LINKS: readonly string[] = [];
@@ -43,7 +50,7 @@ const NO_LINKS: readonly string[] = [];
  * The schema, the names the kit's sheet reads stamped on the view alone, and the paste rule (`paste.ts`): pasted
  * text keeps its lines, and a draft's paragraphs are read as lines when it is put back.
  */
-const DRAWN = [...EXTENSIONS, LetterNames, PasteAsLines];
+const DRAWN = [...EXTENSIONS, QuotedHistory, ...FormatExtensions, LetterNames, PasteAsLines];
 
 /** The marks that hold where the caret is: the next letter's marks with nothing selected, the selection's otherwise. */
 function activeIn(editor: Editor): ReadonlySet<MarkId> {
@@ -56,7 +63,8 @@ function activeIn(editor: Editor): ReadonlySet<MarkId> {
   if (mark("italic")) on.add("italic");
   if (mark("underline")) on.add("underline");
   if (mark("strike")) on.add("strike");
-  if (mark("code") || editor.isActive("codeBlock")) on.add("code");
+  if (mark("code")) on.add("code");
+  if (editor.isActive("codeBlock")) on.add("codeBlock");
   if (editor.isActive("bulletList")) on.add("bullets");
   if (editor.isActive("orderedList")) on.add("numbers");
   if (editor.isActive("blockquote")) on.add("quote");
@@ -75,14 +83,29 @@ function marksOf(editor: Editor, asks: Set<() => void>): EditorMarks {
       };
     },
     run(id) {
+      keepNativeSelection(editor.view);
       if (id === "bold") editor.chain().focus().toggleBold().run();
       else if (id === "italic") editor.chain().focus().toggleItalic().run();
       else if (id === "underline") editor.chain().focus().toggleUnderline().run();
       else if (id === "strike") editor.chain().focus().toggleStrike().run();
-      else if (id === "code") applyCode(editor);
+      else if (id === "code") editor.chain().focus().toggleCode().run();
+      else if (id === "codeBlock") applyCodeBlock(editor);
+      else if (id === "divider") applyDivider(editor);
       else if (id === "bullets") applyList(editor, "bulletList");
       else if (id === "numbers") applyList(editor, "orderedList");
       else if (id === "quote") applyQuote(editor);
+    },
+    paragraph: {
+      active() {
+        for (const level of [1, 2, 3] as const) {
+          if (editor.isActive("heading", { level })) return level;
+        }
+        return editor.isActive("paragraph") ? 0 : null;
+      },
+      set(style: ParagraphStyle) {
+        keepNativeSelection(editor.view);
+        applyParagraphStyle(editor, style);
+      },
     },
     link: {
       open() {
@@ -169,34 +192,12 @@ function inlineOf(text: string): { type: string; text?: string }[] {
     ]);
 }
 
-/**
- * A drop of files is never text: the composer around the editor takes the files. Three shapes: File objects, the
- * `Files` type, and a drop whose files are withheld (a Linux file manager's: no File, `text/uri-list` listed, its
- * data unreadable or every entry `file:`), whose URL the editor would otherwise insert.
- */
-function carriesFiles(dt: DataTransfer | null): boolean {
-  if (!dt) return false;
-  const types = [...(dt.types ?? [])];
-  if ((dt.files?.length ?? 0) > 0 || types.includes("Files")) return true;
-  if (!types.includes("text/uri-list")) return false;
-  let data = "";
-  try {
-    data = dt.getData("text/uri-list");
-  } catch {
-    data = "";
-  }
-  const entries = data
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line !== "" && !line.startsWith("#"));
-  return entries.every((entry) => /^file:/i.test(entry));
-}
-
 export function RichEditor({
   links,
   value,
   onChange,
   label,
+  quotedHistory,
   placeholder,
   editable,
   focusAtMount,
@@ -211,12 +212,14 @@ export function RichEditor({
   told.current = value;
   const keys = useRef({ onChange, onSendKey, onLeaveKey });
   keys.current = { onChange, onSendKey, onLeaveKey };
-  /** Who asks for a link on Mod+K: the strip's card, while it stands. */
   const asks = useRef(new Set<() => void>()).current;
+
+  const original = useRef<ProseMirrorNode | null>(null);
+  const historyVisible = useRef(false);
 
   const editor = useEditor(
     {
-      extensions: DRAWN,
+      extensions: [...DRAWN, HistorySelection.configure({ visible: () => historyVisible.current })],
       content: richToHtml(value),
       editable,
       immediatelyRender: false,
@@ -225,7 +228,7 @@ export function RichEditor({
           keyup: syncArrowSelection,
           keydown: (view, event) => editorKeyDown(view, event, keys.current, asks),
         },
-        handleDrop: (_view, event, _slice, moved) => !moved && carriesFiles(event.dataTransfer),
+        handleDrop: (_view, event, _slice, moved) => !moved && dropCarriesFiles(event.dataTransfer),
         attributes: {
           class: LETTER_TEXT,
           role: "textbox",
@@ -234,11 +237,14 @@ export function RichEditor({
           "aria-placeholder": placeholder,
         },
       },
-      onUpdate: ({ editor: e }) => {
-        const text = e.getText({ textSerializers: { hardBreak: () => "\n" } });
-        const markup = e.isEmpty ? "" : e.getHTML();
-        const html = markup === escapeAsParagraphs(text) ? "" : markup;
-        emitted.current = markup;
+      onUpdate: ({ editor: e, transaction }) => {
+        const { text, html } = readEditorValue(
+          e,
+          original.current,
+          historyVisible.current,
+          transaction.before,
+        );
+        emitted.current = richToHtml({ text, html });
         if (text === told.current.text && html === told.current.html) return;
         told.current = { text, html };
         keys.current.onChange({ text, html });
@@ -256,6 +262,9 @@ export function RichEditor({
     if (incoming === (editor.isEmpty ? "" : editor.getHTML())) return;
     emitted.current = incoming;
     editor.chain().setContent(incoming, { emitUpdate: false }).command(readParagraphsAsLines).run();
+    if (original.current !== null && historyIn(editor.state.doc) === undefined) {
+      appendHistory(editor, original.current);
+    }
   }, [editor, html, text]);
 
   /* Locked while a send is in flight: the document, the caret and the history stay; no update is emitted. */
@@ -264,18 +273,52 @@ export function RichEditor({
   }, [editor, editable]);
 
   useEffect(() => {
-    if (editor && focusAtMount) editor.commands.focus("end", { scrollIntoView: false });
+    if (editor && focusAtMount) {
+      const history = historyIn(editor.state.doc);
+      editor.commands.focus(history === undefined ? "end" : Math.max(1, history.pos - 1), {
+        scrollIntoView: false,
+      });
+    }
   }, [editor, focusAtMount]);
 
-  const handle = useMemo<EditorHandle | null>(
+  const handle = useEditorHandle(editor, asks);
+  useEffect(() => {
+    onHandle(handle);
+    return () => onHandle(null);
+  }, [handle, onHandle]);
+
+  links.useRendered(useDrawnLinks(editor, links));
+
+  return (
+    <HistoryEditorContent
+      editor={editor}
+      quotedHistory={quotedHistory}
+      editable={editable}
+      original={original}
+      historyVisible={historyVisible}
+    />
+  );
+}
+
+function useEditorHandle(editor: Editor | null, asks: Set<() => void>) {
+  return useMemo<EditorHandle | null>(
     () =>
       editor
         ? {
             marks: marksOf(editor, asks),
             focus: () => editor.commands.focus(null, { scrollIntoView: false }),
             insert: (text, how) => {
-              if (how === "replace") editor.commands.setContent(richToHtml(text), { emitUpdate: true });
-              else
+              if (how === "replace") {
+                const history = historyIn(editor.state.doc);
+                editor
+                  .chain()
+                  .setContent(richToHtml(text), { emitUpdate: true })
+                  .command(({ tr }) => {
+                    if (history !== undefined) tr.insert(tr.doc.content.size, history.node);
+                    return true;
+                  })
+                  .run();
+              } else
                 editor
                   .chain()
                   .focus(null, { scrollIntoView: false })
@@ -286,14 +329,20 @@ export function RichEditor({
         : null,
     [editor, asks],
   );
-  useEffect(() => {
-    onHandle(handle);
-    return () => onHandle(null);
-  }, [handle, onHandle]);
+}
 
-  links.useRendered(useDrawnLinks(editor, links));
-
-  return <EditorContent editor={editor} />;
+function readEditorValue(
+  editor: Editor,
+  original: ProseMirrorNode | null,
+  visible: boolean,
+  before: ProseMirrorNode,
+): RichValue {
+  // Selecting all while the history is folded selects the written note.
+  if (!visible && historyIn(editor.state.doc) === undefined) {
+    const folded = historyIn(before);
+    if (folded !== undefined) appendHistory(editor, folded.node);
+  }
+  return historyValue(editor.state.doc, original);
 }
 
 /** The links the text draws, on the shell's list while it is mounted; a keystroke that keeps them reports none. */

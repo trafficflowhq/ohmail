@@ -23,6 +23,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  :root[data-device="phone"] .oh-tag[data-truncate] {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .oh-tagdot {
     --oh-tagdot-size: 8px;
     --oh-tagdot-gap: 0 6px;

@@ -798,6 +798,9 @@ export default defineConfig({
       // Inline code, extended in `rich-editor-marks.ts` (`keepOnSplit`/`exitable`), pinned for
       // the same reason as the link extension beside it.
       { find: "@tiptap/extension-code", replacement: r("./node_modules/@tiptap/extension-code") },
+      // The composer's heading and divider formats; declared in this manifest like the two above.
+      { find: "@tiptap/extension-heading", replacement: r("./node_modules/@tiptap/extension-heading") },
+      { find: "@tiptap/extension-horizontal-rule", replacement: r("./node_modules/@tiptap/extension-horizontal-rule") },
       /* The ProseMirror surface under the editor — RichEditor.tsx's line-scoped block
          commands import NodeSelection/TextSelection and the node/position types from
          these two subpaths, from apps/webapp/app/** like the entries above. This pair
@@ -812,6 +815,8 @@ export default defineConfig({
       // `rich-editor-marks.ts` reads `ReplaceStep` off the transform subpath; same proxy-dir rule.
       { find: "@tiptap/pm/transform", replacement: r("./node_modules/@tiptap/pm/transform") },
       { find: "@tiptap/pm/view", replacement: r("./node_modules/@tiptap/pm/view") },
+      // The quoted history's Restore closes the undo group through the history subpath; same proxy-dir rule.
+      { find: "@tiptap/pm/history", replacement: r("./node_modules/@tiptap/pm/history") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       { find: "parse5", replacement: r("./node_modules/parse5") },
       /* Each host loads the emitted pdf.js library and worker on the first PDF. tsconfig still

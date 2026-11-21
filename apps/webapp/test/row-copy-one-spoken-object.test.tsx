@@ -22,7 +22,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 describe("the words the row takes are one object, not a fresh one per render", () => {
   it("hands back the SAME spoken object across renders, which is what a row memo compares on", async () => {
-    const { useRowBadgeCopy } = await import("../app/shell/row-copy.js");
+    const { useRowBadgeCopy } = await import("@ohmail/app-logic/text/row-copy");
     const seen: unknown[] = [];
     function Probe({ tick }: { tick: number }) {
       const copy = useRowBadgeCopy(useTranslations("message"));

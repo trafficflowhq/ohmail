@@ -1,5 +1,28 @@
 {
   "settingsMenu": {
-    "desktop": "Desktop"
+    "faceOh": "oh",
+    "desktop": "Desktop",
+    "mailboxFull": "Full",
+    "mailboxConnecting": "Connecting",
+    "mailboxConnected": "Connected",
+    "screenerDecided": "All decided",
+    "screenerWaiting": "{count, number} waiting",
+    "screenerScreened": "{count, number} screened out",
+    "screenerSpam": "{count, number} in Spam",
+    "on": "On",
+    "off": "Off",
+    "none": "None",
+    "folderMailboxes": "{count, plural, one {# mailbox} other {# mailboxes}}",
+    "awayEveryone": "Everyone",
+    "awayScreened": "People I’ve let in",
+    "awayDetail": "{audience} · {schedule}",
+    "ruleCount": "{place} {count, number}",
+    "rulePlace": {
+      "ohbox": "Ohbox",
+      "reads": "News",
+      "receipts": "Receipts",
+      "screened": "Screened out",
+      "spam": "Spam"
+    }
   }
 }

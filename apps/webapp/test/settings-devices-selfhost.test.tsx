@@ -11,6 +11,7 @@
  * `api.ohmail.app` would point a household's phone at the managed service — the wrong server,
  * with somebody else's sign-in — which is the failure this file makes unrepresentable.
  */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -80,7 +81,7 @@ describe("the self-host devices pane mints on the page origin", () => {
       root!.render(
         h(NextIntlClientProvider, {
           locale: "en", messages, timeZone: "UTC",
-          children: h(ThemeProvider, null, h(ToastHost, null, h(DevicesSection))),
+          children: h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DevicesSection }))),
         }),
       );
       await Promise.resolve();

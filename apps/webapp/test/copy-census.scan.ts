@@ -322,7 +322,7 @@ export interface KeyRead {
  */
 type MountedReader =
   | "junk" | "composer" | "press" | "ohbox" | "cursorKeys" | "cursorHint" | "ohboxWords"
-  | "contact" | "verdict" | "stream" | "trash";
+  | "contact" | "verdict" | "stream" | "trash" | "search";
 
 export interface HandedReaders {
   /** Identifier in the file → the namespace of the reader it holds ("" is the catalogue root). */
@@ -337,7 +337,7 @@ export interface HandedReaders {
     | { file: string }
     | { call: string }
     | { calls: readonly string[] }
-    | { mountedSuggestions: true }
+    | { mountedScreener: "state" | "suggestions" }
     | { mounted: MountedReader };
 }
 
@@ -347,7 +347,7 @@ const SCREENER_MOUNT = "packages/app/src/mail/ground/ScreenerMount.tsx";
 export const HANDED_READERS: Record<string, HandedReaders> = {
   "packages/app-logic/src/screener/screener-state.ts": {
     readers: { t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session" },
-    glue: { file: "apps/webapp/app/shell/screener-text.ts" },
+    glue: { mountedScreener: "state" },
   },
   "packages/app-logic/src/screener/junk-window.ts": {
     readers: { t: "screener" },
@@ -355,7 +355,7 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   },
   "packages/app-logic/src/screener/screener-suggest.ts": {
     readers: { t: "screener", tAi: "aiRefusal" },
-    glue: { mountedSuggestions: true },
+    glue: { mountedScreener: "suggestions" },
   },
   /* The send machine's words are made from the composer's own reader (`useSendText`), chosen where the composer is called. */
   "packages/app-logic/src/writing/mail-send.ts": {
@@ -428,11 +428,11 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
   },
   "packages/app-logic/src/search/facets.ts": {
     readers: { t: "search" },
-    glue: { call: "useSearchList" },
+    glue: { mounted: "search" },
   },
   "packages/app-logic/src/search/keys.ts": {
     readers: { t: "search" },
-    glue: { call: "useSearchList" },
+    glue: { mounted: "search" },
   },
 };
 
@@ -644,6 +644,13 @@ function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | n
       'const receipts = useText("receipts");', 'return place === "news" ? news : receipts;');
     return new Set(["news", "receipts"]);
   }
+  if (mounted === "search") {
+    source(`${app}/search/Seat.tsx`, 'const t = useText("search");',
+      "(): SearchLiveOwn => ({", "useSearchLive(args, useOwn())");
+    source(`${logic}/search/live.ts`, "const model = useSearchList({", "t: own.t,");
+    source(`${logic}/search/search-list.ts`, "const facets = useFacets({", "useSearchKeys({", "t,");
+    return new Set(["search"]);
+  }
   if (mounted === "trash") {
     source(`${app}/trash/Seat.tsx`, 'shortcuts: useText("shortcuts")', "useTrashLive(args, useOwn())");
     source(`${logic}/trash/live.ts`, "useKeyBindings(noEraseKeys(own.shortcuts));");
@@ -665,7 +672,7 @@ function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | n
  */
 export function handedReaderNamespaces(repo: string, roots: string[], glue: HandedReaders["glue"]): Set<string | null> {
   if ("mounted" in glue) return mountedNamespaces(repo, glue.mounted);
-  if ("mountedSuggestions" in glue) return new Set(Object.values(mountedScreenerReaderBindings(repo).suggestions));
+  if ("mountedScreener" in glue) return new Set(Object.values(mountedScreenerReaderBindings(repo)[glue.mountedScreener]));
   const out = new Set<string | null>();
   const files = "file" in glue ? [path.join(repo, glue.file)] : sourceFiles(repo, roots);
   for (const file of files) {

@@ -17,6 +17,35 @@ function owned(record: CalendarEventRecord, own: readonly string[] | null) {
     : record.myAnswer === null && record.invitees.length === 0;
 }
 
+function writableRecord(record: CalendarEventRecord, own: readonly string[] | null) {
+  return (
+    !record.heldBack &&
+    !record.cut &&
+    record.status !== "cancelled" &&
+    record.recurrenceId === "" &&
+    (record.invitees.length === 0 || record.organizer !== null) &&
+    owned(record, own)
+  );
+}
+
+function editableSeries(record: CalendarEventRecord, connection: CalendarConnectionRecord | undefined) {
+  return (
+    !record.repeat ||
+    (record.personalSeries &&
+      connection?.provider === "caldav" &&
+      !record.organizer &&
+      record.invitees.length === 0)
+  );
+}
+
+export function canEditRecord(
+  record: CalendarEventRecord,
+  connection: CalendarConnectionRecord | undefined,
+  own: readonly string[] | null,
+) {
+  return writableRecord(record, own) && editableSeries(record, connection);
+}
+
 /** A stored event this account can change. A changed day must be written through its series. */
 export function writableEvent(
   host: HostContract,
@@ -25,16 +54,7 @@ export function writableEvent(
   own: readonly string[] | null,
 ) {
   const record = port.events().find((item) => item.record.id === id)?.record;
-  if (
-    !record ||
-    record.heldBack ||
-    record.cut ||
-    record.status === "cancelled" ||
-    record.recurrenceId !== "" ||
-    (record.invitees.length > 0 && !record.organizer)
-  )
-    return null;
-  if (!owned(record, own)) return null;
+  if (!record || !writableRecord(record, own)) return null;
   const calendar = calendarRecord<CalendarRecord>(host, "calendar", record.calendarId);
   if (!calendar?.shown) return null;
   const connection = calendarRecord<CalendarConnectionRecord>(
@@ -93,15 +113,7 @@ export function editableEvent(
   own: readonly string[] | null,
 ) {
   const current = writableEvent(host, port, id, own);
-  if (
-    current?.record.repeat &&
-    (!current.record.personalSeries ||
-      current.connection?.provider !== "caldav" ||
-      current.record.organizer ||
-      current.record.invitees.length > 0)
-  )
-    return null;
-  return current;
+  return current && editableSeries(current.record, current.connection) ? current : null;
 }
 
 function calendarRecord<T extends { id: string }>(host: HostContract, kind: string, key: string) {

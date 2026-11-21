@@ -170,3 +170,31 @@ describe("German on every Screener state at text size 1.5", () => {
     expect(found).toEqual([]);
   }, 2_400_000);
 });
+
+it("keeps room around each Screener segment's label and count on touch and desktop", async () => {
+  for (const [device, width, height] of ROOMS) {
+    const page = await browser!.newPage({ viewport: { width, height }, hasTouch: device !== "desktop" });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?device=${device}`);
+      const sections = page.getByRole("group", { name: "Screener sections" });
+      await sections.waitFor();
+      for (const listWidth of device === "desktop" ? [400, 320] : [null]) {
+        if (listWidth !== null)
+          await page.evaluate((px) => {
+            document.documentElement.style.setProperty("--split-user", `${px}px 1fr`);
+          }, listWidth);
+        const padding = await sections
+          .getByRole("button")
+          .evaluateAll((buttons) =>
+            buttons.map((button) => Number.parseFloat(getComputedStyle(button).paddingInlineStart)),
+          );
+        expect(padding).toHaveLength(3);
+        if (device === "desktop") expect(padding).toEqual([10, 10, 10]);
+        else expect(Math.min(...padding)).toBeGreaterThanOrEqual(8);
+      }
+    } finally {
+      await page.close();
+    }
+  }
+}, 60_000);

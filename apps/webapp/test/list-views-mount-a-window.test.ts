@@ -7,7 +7,7 @@ import ts from "typescript";
  * EVERY LIST VIEW MOUNTS ITS WINDOW, NOT ITS LIST. A switch into the Screener mounted all its
  * waiting senders and the Windows reading paid for it on every visit (switch p95 1 394 ms against
  * 200). This reads each view's `<ListRows>` or `<Rows>` as an AST: every row-producing `.map(` inside one is
- * over a `.slice(…)` whose bounds come from `useListWindow`, or is named below with its bound. A
+ * over a `.slice(…)` whose bounds come from the list window, or is named below with its bound. A
  * doctored source runs through the same reader first, so a reader that finds nothing cannot pass.
  * And a view that windows renders ONE top spacer carrying `data-window-top`, never behind a
  * `padTop` condition: slot 0 starts where it stands, so a list that marks none counts its rows
@@ -15,6 +15,11 @@ import ts from "typescript";
  */
 
 const VIEWS_DIR = resolve(process.cwd(), "apps/webapp/app/views");
+const TRASH = "TrashList.tsx";
+const JUNK = "Junk.tsx";
+const STREAM = "StreamList.tsx";
+const WINDOW_CALLS = new Set(["useListWindow", "useCursorWindow"]);
+const WINDOW_ACCESS = /\b(?:win|window)\./;
 const DRAFTS = "DraftsList.tsx";
 const DRAFTS_SOURCE = resolve(process.cwd(), "packages/app/src/drafts/DraftsList.tsx");
 
@@ -23,14 +28,13 @@ const DRAFTS_SOURCE = resolve(process.cwd(), "packages/app/src/drafts/DraftsList
  * read; an entry that no longer matches a map in its file refuses as stale.
  */
 const BOUNDED: readonly { file: string; receiver: string; bound: string }[] = [
-  { file: "FolderView.tsx", receiver: "olderRows", bound: "server pages past the mirror, one per Load older press" },
-  { file: "TrashView.tsx", receiver: "byDateDesc(live.items)", bound: "the server's own Trash, one page per press" },
-  { file: "ScreenerView.tsx", receiver: "junk.visible.slice(0, localCount)", bound: "the live Junk window: one provider page per press" },
-  { file: "ScreenerView.tsx", receiver: "junk.visible.slice(localCount)", bound: "the Junk search's appended server hits, one page" },
+  { file: TRASH, receiver: "live.items", bound: "the server's own Trash, one page per press" },
+  { file: JUNK, receiver: "kept", bound: "the live Junk window: one provider page per press" },
+  { file: JUNK, receiver: "found", bound: "the Junk search's appended server hits, one page" },
 ];
 
 /** Files with a `<ListRows>` that call no `useListWindow`, and why. */
-const NO_WINDOW: readonly { file: string; why: string }[] = [];
+const NO_WINDOW: readonly { file: string; why: string }[] = [{ file: JUNK, why: "server-sized Junk and search pages" }];
 
 interface Finding {
   line: number;
@@ -59,7 +63,7 @@ function windowNames(file: ts.SourceFile): Set<string> {
   walk(file);
   const names = new Set<string>();
   const reads = (text: string): boolean =>
-    /\bwin\./.test(text) || [...names].some((n) => new RegExp(`\\b${n}\\b`).test(text));
+    WINDOW_ACCESS.test(text) || [...names].some((n) => new RegExp(`\\b${n}\\b`).test(text));
   for (let grew = true; grew;) {
     grew = false;
     for (const d of decls) {
@@ -83,7 +87,7 @@ function readListViews(source: string, name = "View.tsx"): Reading {
   const names = windowNames(file);
   const fromWindow = (arg: ts.Expression): boolean => {
     const text = arg.getText(file);
-    return /\bwin\./.test(text) || [...names].some((n) => new RegExp(`\\b${n}\\b`).test(text));
+    return WINDOW_ACCESS.test(text) || [...names].some((n) => new RegExp(`\\b${n}\\b`).test(text));
   };
   const fromWindowSlice = (expr: ts.Expression): boolean =>
     ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression)
@@ -110,7 +114,7 @@ function readListViews(source: string, name = "View.tsx"): Reading {
     return false;
   };
   const walk = (node: ts.Node, inRows: boolean): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "useListWindow") {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && WINDOW_CALLS.has(node.expression.text)) {
       callsWindow = true;
     }
     if (ts.isJsxAttribute(node) && node.name.getText(file) === "data-window-top") {
@@ -164,6 +168,9 @@ function refusals(file: string, r: Reading): string[] {
 
 const viewFiles = readdirSync(VIEWS_DIR).filter((f) => f.endsWith(".tsx")).sort();
 const readings = new Map(viewFiles.map((f) => [f, readListViews(readFileSync(join(VIEWS_DIR, f), "utf8") + (f === "OhboxView.tsx" ? readFileSync(resolve(process.cwd(), "packages/app-logic/src/ohbox/window.ts"), "utf8") : ""), f)]));
+readings.set(JUNK, readListViews(readFileSync("packages/app/src/screener/list/Junk.tsx", "utf8"), JUNK));
+readings.set(STREAM, readListViews(readFileSync("packages/app/src/stream/StreamList.tsx", "utf8"), STREAM));
+readings.set(TRASH, readListViews(readFileSync("packages/app/src/trash/TrashList.tsx", "utf8"), TRASH));
 readings.set(DRAFTS, readListViews(readFileSync(DRAFTS_SOURCE, "utf8"), DRAFTS));
 
 describe("every list view mounts its window", () => {
@@ -263,15 +270,55 @@ describe("every list view mounts its window", () => {
   });
 
   it("reads the views it is about", () => {
-    for (const f of ["ScreenerView.tsx", "HistoryView.tsx", "TagView.tsx", "TriageView.tsx", DRAFTS]) {
+    for (const f of [STREAM, DRAFTS]) {
       expect(readings.get(f)?.listRows ?? 0, `${f} holds no row list — the census reads nothing there`).toBeGreaterThan(0);
       expect(readings.get(f)?.callsWindow, `${f} calls no useListWindow`).toBe(true);
     }
-    const screener = readings.get("ScreenerView.tsx")!.maps;
-    expect(screener.filter((m) => m.windowed).map((m) => m.receiver)).toEqual([
-      "items.slice(itemsFrom, itemsTo)",
-      "decidedRows.slice(decidedFrom, decidedTo)",
+    const tags = readFileSync("packages/app/src/tags/TagsList.tsx", "utf8");
+    const tagRows = readFileSync("packages/app/src/place-list/LetterRows.tsx", "utf8");
+    expect(tags).toMatch(/const win = useListWindow\(/);
+    expect(tags).toMatch(/<OneTag[^>]*win=\{win\}/);
+    expect(tags).toMatch(/<LetterRows[\s\S]*?slots: model\.list\.rows\.slice\(win\.start, win\.end\)/);
+    const window = readListViews(tagRows, "LetterRows.tsx");
+    expect(window.origins).toBe(1);
+    expect(window.gatedOrigins).toBe(0);
+    expect(window.maps.map(({ receiver }) => receiver)).toEqual(["(windowed?.slots ?? rows)"]);
+    const folder = readFileSync("packages/app/src/folder/FolderList.tsx", "utf8");
+    expect(folder).toMatch(/const \{ scroller, window \} = useCursorWindow\(/);
+    expect(folder).toMatch(/const first = Math\.max\(0, window\.start - index\)/);
+    expect(folder).toMatch(/const slice = list\.slice\(first, Math\.max\(0, window\.end - index\)\)/);
+    expect(folder).toMatch(/<LetterRows[\s\S]*?rows=\{slice\}/);
+    expect(folder).toMatch(/rows\(t\("group\.earlier"\), model\.earlier,/);
+    const folderWindow = readListViews(folder, "FolderList.tsx");
+    expect(folderWindow.origins).toBe(1);
+    expect(folderWindow.gatedOrigins).toBe(0);
+    const history = readFileSync("packages/app-logic/src/history/live.ts", "utf8");
+    expect(history).toMatch(/const window = useListWindow\(/);
+    expect(history).toMatch(/for \(let i = window\.start; i < window\.end; i\+\+\)/);
+    const historyList = readFileSync("packages/app/src/history/HistoryList.tsx", "utf8");
+    expect(historyList).toMatch(/<LetterRows[\s\S]*?slots: windowed\.slots/);
+    const piles = readListViews(readFileSync("packages/app/src/piles/PilesList.tsx", "utf8"), "PilesList.tsx");
+    expect(piles.callsWindow).toBe(true);
+    expect(piles.maps.map(({ receiver, windowed }) => [receiver, windowed])).toEqual([
+      ["model.rows.slice(win.start, win.end)", true],
     ]);
+    expect(refusals("PilesList.tsx", piles)).toEqual([]);
+    expect(readings.get(TRASH)?.callsWindow).toBe(true);
+    expect(readings.get(TRASH)?.maps.map(({ receiver, windowed }) => [receiver, windowed])).toEqual([
+      ["page.items.slice(window.start, window.end)", true],
+      ["live.items", false],
+    ]);
+    const screener = readFileSync("packages/app/src/screener/list/Rows.tsx", "utf8");
+    expect(screener).toContain("rows.slice(win.start, Math.min(win.end, rows.length))");
+    expect(screener).toContain("decided.slice(pendingFrom, Math.max(0, win.end - pendingStart))");
+    expect(screener).toMatch(/<SenderRowsWindow[\s\S]*?scroller=\{scroller\}/);
+    expect(screener).toContain('data-window-top="" style={{ height: win.padTop }}');
+    const stream = readFileSync("packages/app/src/stream/StreamList.tsx", "utf8");
+    expect(stream).toMatch(/for \(let w = win\.start; w < win\.end; w\+\+\)/);
+    const junk = readFileSync("packages/app/src/screener/list/Junk.tsx", "utf8");
+    expect(junk).toContain("kept = junk.visible.slice(0, localCount)");
+    expect(junk).toContain("found = junk.visible.slice(localCount)");
+    expect(readings.get(JUNK)?.maps.map(({ receiver }) => receiver)).toEqual(["kept", "found"]);
     expect(readings.get(DRAFTS)?.maps.map(({ receiver, windowed }) => [receiver, windowed])).toEqual([
       ["scheduled", true],
       ["drafts", true],

@@ -20,7 +20,7 @@ import type {
   Route,
 } from "./contract.js";
 import { PLACE_IDS, RAIL_GROUPS, RAIL_ORDER } from "./contract.js";
-import { useFrame } from "./commands.js";
+import { useFrame, useRailOpen } from "./commands.js";
 import { isCalendarPlace } from "./product.js";
 import { useSignal } from "./feeds.js";
 import type { Signal } from "../host/index.js";
@@ -300,6 +300,7 @@ export function DockRail({
   switcher,
 }: Omit<RailHostProps, "plan" | "notice" | "foot"> & { upright: boolean }) {
   const model = useSignal(feed);
+  const [expanded] = useRailOpen();
   const t = useText("frame");
   const words = usePlaceWords();
   const fed = model?.groups.flatMap((g) => g.entries).filter((e) => e.kind === "place" && e.icon) ?? [];
@@ -347,9 +348,12 @@ export function DockRail({
         switcher={switcher}
         label={t("landmark.places")}
         places={shown}
-        floor={upright ? 1 : shown.length}
+        floor={upright ? 1 : 0}
+        upright={upright}
         more={{
           label: t("dock.more"),
+          expanded,
+          drawer: true,
           /* More stands for every place the dock does not show: it is current where the app stands on one. */
           current: here !== "search" && here !== "write" && !shown.some((s) => s.id === here),
           onPress: () => commands.rail(true),

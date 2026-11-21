@@ -146,6 +146,7 @@ export abstract class EngineState {
    * drive cannot latch the restore over a store that has not been read.
    */
   protected storeLoaded = false;
+  protected replacingMirror = false;
   /** See {@link OUTBOX_REPLAY_DEADLINE_MS}; overridable only through the test seam. */
   protected readonly replayDeadlineMs: number;
   /** See {@link OUTBOX_HOLD_CEILING_MS} and {@link DRAIN_REQUEST_CEILING_MS}; overridable only through the seams. */

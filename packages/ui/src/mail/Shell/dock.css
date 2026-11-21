@@ -64,6 +64,14 @@
     --oh-dock-gap: 10px;
   }
 
+  .oh-dock[data-round] .oh-dock-places > .oh-dock-entry {
+    flex: 0 0 var(--h-l);
+    width: var(--h-l);
+    min-width: 0;
+    max-width: none;
+    border-radius: var(--r-pill);
+  }
+
   .oh-dock-entry[hidden] {
     display: none;
   }

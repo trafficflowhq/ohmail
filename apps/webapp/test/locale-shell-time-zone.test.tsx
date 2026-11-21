@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -84,7 +85,7 @@ async function mountUnderTheRealShell(): Promise<HTMLElement> {
   await act(async () => {
     root!.render(h(LocaleShell, {
       initialLocale: "en", initialMessages: messages,
-      children: h(ThemeProvider, null, h(ToastHost, null, h(DevicesSection))),
+      children: h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DevicesSection }))),
     }));
     await Promise.resolve();
   });

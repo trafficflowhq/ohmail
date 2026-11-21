@@ -5,11 +5,11 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { addDays, clockOf, dayLong, isoOfDay } from "@ohmail/app-logic/calendar";
+import { addDays, clockOf, dayLong, isoOfDay, resizeSlot } from "@ohmail/app-logic/calendar";
 import { EventChip } from "@ohmail/ui/calendar";
 import type { CalendarEventFace } from "./faces.js";
 import { resizedDays, type EventActions } from "./use-event-actions.js";
-import type { DayEdge } from "./view.js";
+import type { DayEdge, TimedSegment } from "./view.js";
 import { useLocale, useText } from "../text/index.js";
 
 const DAY_MS = 86_400_000;
@@ -120,9 +120,11 @@ function trackDrag(
       : source?.dataset.calDropDay;
   if (!source || !sourceDay) return null;
   const kind = source.dataset.calDropKind;
+  const timedResize = edge !== undefined && kind === "time";
   const start = source.getBoundingClientRect();
   const doc = chip.ownerDocument;
   const touch = down.pointerType === "touch";
+  const holdToMove = touch && !timedResize;
   let held = false;
   let aborted = false;
   let target: HTMLElement | null = null;
@@ -131,7 +133,7 @@ function trackDrag(
     chip.setPointerCapture?.(down.pointerId);
     chip.dataset.drag = "lifted";
   };
-  const timer = touch ? setTimeout(activate, HOLD_MS) : null;
+  const timer = holdToMove ? setTimeout(activate, HOLD_MS) : null;
 
   const cleanup = () => {
     if (timer !== null) clearTimeout(timer);
@@ -153,14 +155,14 @@ function trackDrag(
     }
     const distance = Math.abs(point.clientY - down.clientY) + Math.abs(point.clientX - down.clientX);
     if (!held && distance < DRAG_DISTANCE) return;
-    if (!held && touch) {
+    if (!held && holdToMove) {
       cleanup();
       return;
     }
     if (!held) activate();
     point.preventDefault();
     if (target) delete target.dataset.calDropActive;
-    target = dayTarget(chip, point, kind);
+    target = timedResize ? source : dayTarget(chip, point, kind);
     if (target && face.start.kind === "date" && face.end.kind === "date") {
       const drop = destinationAt(point, target);
       const days =
@@ -181,11 +183,12 @@ function trackDrag(
       return;
     }
     const drop = destinationAt(point, target);
-    preview(drop?.time ? timePreview(target, drop.day, drop.time, face) : null);
+    preview(drop?.time ? timePreview(target, timedResize ? sourceDay : drop.day, drop.time, face) : null);
   };
   const end = (point: PointerEvent) => {
     if (point.pointerId !== down.pointerId) return;
-    const destination = held && !aborted && !point.altKey ? dayTarget(chip, point, kind) : null;
+    const destination =
+      held && !aborted && !point.altKey ? (timedResize ? source : dayTarget(chip, point, kind)) : null;
     cleanup();
     if (held) absorbClick();
     if (!destination || !chip.isConnected) return;
@@ -260,16 +263,21 @@ export function useEventDrag(actions: EventActions, page: string) {
     face: CalendarEventFace,
     press: ReactPointerEvent<HTMLButtonElement>,
     local?: (first: string, last: string) => void,
+    segment?: TimedSegment,
   ) {
     if (press.button !== 0 || press.altKey || stop.current) return;
     const expected = local ? undefined : actions.moveVersion(face);
     if (!local && !expected) return;
     const chip = press.currentTarget;
     const edge = (press.target as HTMLElement).closest<HTMLElement>("[data-cal-resize]")?.dataset.calResize;
-    const resize = edge === "start" || edge === "end" ? edge : undefined;
+    const resize: DayEdge | undefined = edge === "start" || edge === "end" ? edge : undefined;
+    const timed = resize && segment ? { edge: resize, ...segment } : null;
     stop.current = trackDrag(chip, press.nativeEvent, face, resize, {
-      moveTime: (delta) => actions.moveTime(face, delta, true),
-      preview: (next) => showGhost((was) => (was?.day === next?.day && was?.top === next?.top ? was : next)),
+      moveTime: (delta) => (timed ? resizeSlot(timed, delta) : actions.moveTime(face, delta, true)),
+      preview: (next) =>
+        showGhost((was) =>
+          was?.day === next?.day && was?.top === next?.top && was?.height === next?.height ? was : next,
+        ),
       range: showRange,
       done: () => {
         stop.current = null;
@@ -284,7 +292,11 @@ export function useEventDrag(actions: EventActions, page: string) {
         if (!local) {
           latest.current.start(
             face,
-            resize ? { kind: "resize", edge: resize, days } : { kind: "time", days, minutes },
+            timed
+              ? { kind: "resize-time", edge: timed.edge, minutes }
+              : resize
+                ? { kind: "resize", edge: resize, days }
+                : { kind: "time", days, minutes },
             chip,
             expected ?? undefined,
           );

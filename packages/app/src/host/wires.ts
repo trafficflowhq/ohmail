@@ -52,6 +52,8 @@ export interface AwayWire {
   state(): Promise<AwayState>;
   initialState?(): Promise<AwayState>;
   save(next: AwayDraft): Promise<AwaySaved>;
+  /** The account's already-read saved responder, where the host maintains one. */
+  readonly snapshot?: Signal<AwayState | null>;
 }
 
 /** Settings a mailbox arrived with. The shell's `ProfileImportTransport`. */

@@ -77,6 +77,13 @@ export interface CalendarGuest {
   readonly name: string | null;
 }
 
+export interface ReaderPosition {
+  readonly address: string;
+  readonly top: number;
+  readonly tail: string;
+  readonly square: string | null;
+}
+
 export interface FrameInner {
   readonly api: FrameApi;
   readonly initialPlace?: boolean;
@@ -90,6 +97,7 @@ export interface FrameInner {
   readonly calendarGuest: { current: CalendarGuest | null };
   /** The letter a `go` named as entered, until the place that lists it takes the word or the address moves on. */
   readonly entered: Feed<EnteredTarget | null>;
+  readonly readerPosition: { current: ReaderPosition | null };
   readonly searchQuery: { current: string };
   /** Whether the whole rail stands over the app, and its setter (`commands.rail` is the same setter). */
   readonly railOpen: readonly [boolean, Dispatch<SetStateAction<boolean>>];
@@ -110,6 +118,16 @@ export interface StageOwing {
 }
 
 export const FrameContext = createContext<FrameInner | null>(null);
+
+export function useReaderPosition() {
+  return useInner().readerPosition;
+}
+
+export function useResumingReader(): ReaderPosition | null {
+  const { api, readerPosition } = useInner();
+  const last = readerPosition.current;
+  return api.previousProduct === "cal" && last?.address === fragmentOf(api.route) ? last : null;
+}
 
 function useInner(): FrameInner {
   const inner = useContext(FrameContext);
@@ -138,6 +156,11 @@ export function useFrame(): FrameApi {
 /** The report slot: the press seam's report function, so Undo reaches it unchanged. */
 export function useReport(): ToastFn {
   return useInner().api.report;
+}
+
+/** A notice rendered on its own has no application report slot. */
+export function useOptionalReport(): ToastFn | null {
+  return useContext(FrameContext)?.api.report ?? null;
 }
 
 /** What is true for this feature now, in the one notice slot. Nothing, or an empty list, takes it away. */

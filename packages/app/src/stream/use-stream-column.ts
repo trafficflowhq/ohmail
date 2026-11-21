@@ -109,18 +109,18 @@ export function useStreamViewport(model: StreamModel) {
       observer.disconnect();
     };
   }, [model.scroller, model.place, armed, onApproach, prefetch, engine, mountedKey]);
-  return { attach, column, width, ids, start, end, padTopPx, padBottomPx, ensure, near };
+  return { attach, column, width, ids, start, end, padTopPx, padBottomPx, ensure, near, armed };
 }
 
-type Viewport = Pick<ReturnType<typeof useStreamViewport>, "ids" | "start" | "end" | "ensure">;
+type Viewport = Pick<ReturnType<typeof useStreamViewport>, "ids" | "start" | "end" | "ensure" | "armed">;
 
-function useStreamPosition(model: StreamModel, { ids, start, end, ensure }: Viewport): void {
+function useStreamPosition(model: StreamModel, { ids, start, end, ensure, armed }: Viewport): void {
   const { scroller, place } = model;
   const positions = useContext(StreamVisits)?.positions;
   const [saved] = useState(() => (model.addressedId === null ? positions?.get(place) : undefined));
   const restoredPosition = useRef(false);
   useLayoutEffect(() => {
-    if (!scroller || ids.length === 0 || restoredPosition.current) return;
+    if (!armed || !scroller || ids.length === 0 || restoredPosition.current) return;
     if (saved && model.addressedId === null) {
       const index = saved.id === null ? -1 : ids.indexOf(saved.id);
       if (index >= 0 && (index < start || index >= end)) {
@@ -140,7 +140,7 @@ function useStreamPosition(model: StreamModel, { ids, start, end, ensure }: View
       scrollProgrammatically(scroller, top);
     }
     restoredPosition.current = true;
-  }, [scroller, ids, saved, model.addressedId, ensure, start, end]);
+  }, [scroller, ids, saved, model.addressedId, ensure, start, end, armed]);
   useLayoutEffect(() => {
     if (!scroller || !positions) return;
     return () => {
@@ -253,7 +253,7 @@ function useStreamLanding({
   setLinkedOpen: Dispatch<SetStateAction<string | null>>;
   setRestored: Dispatch<SetStateAction<string | null>>;
 }): void {
-  const { start, end, ensure } = viewport;
+  const { start, end, ensure, armed } = viewport;
   /*
    * Land the addressed card once per opening. Links and Search hits expand it. A local cursor step keeps its fold.
    * Only the explicit Search entry gives this landing permission to read.
@@ -277,7 +277,7 @@ function useStreamLanding({
       setLinkedOpen(null);
       return;
     }
-    if (model.scroller === null) return;
+    if (!armed || model.scroller === null) return;
     const request = !phone && entry?.letter === openId ? entry : null;
     if (landed.current?.id === openId && (!request || landed.current.entry === request)) return;
     if (openAt < start || openAt >= end) {
@@ -328,6 +328,7 @@ function useStreamLanding({
     end,
     openId,
     model.scroller,
+    armed,
     scroll,
     entry,
     phone,

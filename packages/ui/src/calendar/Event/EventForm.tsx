@@ -13,7 +13,8 @@ export type EventFormItem =
       kind: "slot";
       value: string;
       label: string;
-      state?: "fill" | "none";
+      state?: "fill" | "none" | "done";
+      disabled?: boolean;
       hidden?: boolean;
       expanded?: boolean;
       onPress?: MouseEventHandler<HTMLButtonElement>;
@@ -61,7 +62,7 @@ export type EventFormItem =
       label?: string;
       declined?: boolean;
       expanded?: boolean;
-      onPress?: () => void;
+      onPress?: MouseEventHandler<HTMLButtonElement>;
       remove?: { label: string; onPress?: () => void };
     }
   /** A file or a link the event carries. */
@@ -89,7 +90,13 @@ export interface EventFormProps {
   /** The rows that hold something, in the form's fixed order. */
   rows: readonly EventFormRow[];
   /** What is still empty waits as a word in the last line. `label` names it where the word is shorter. */
-  adds?: readonly { id: string; word: string; label?: string; icon: IconName; onPress?: () => void }[];
+  adds?: readonly {
+    id: string;
+    word: string;
+    label?: string;
+    icon: IconName;
+    onPress?: MouseEventHandler<HTMLButtonElement>;
+  }[];
   /** The rest of what can be added, behind one glyph. */
   more?: { label: string; expanded?: boolean; onPress?: () => void };
   cancel?: { label: string; disabled?: boolean; onPress?: () => void };
@@ -217,7 +224,14 @@ function item(it: EventFormItem, key: number): ReactNode {
   switch (it.kind) {
     case "slot":
       return it.hidden ? null : (
-        <Slot key={key} kind={it.state} label={it.label} expanded={it.expanded} onPress={it.onPress}>
+        <Slot
+          key={key}
+          kind={it.state}
+          label={it.label}
+          expanded={it.expanded}
+          disabled={it.disabled}
+          onPress={it.onPress}
+        >
           {it.value}
         </Slot>
       );

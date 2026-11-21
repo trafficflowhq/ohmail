@@ -38,7 +38,7 @@ export interface GeneralSettingsProps extends Partial<PaneBodyProps> {
 
 /** Each setting uses the host's own device controls or the confirmed account row. */
 export function BrowserGeneralPane({ language, textSize, captureOwner }: GeneralSettingsProps) {
-  const { host } = useFrame();
+  const { host, report } = useFrame();
   const scope = host.session.scope;
   const t = useText("settings");
   const theme = useTheme();
@@ -57,6 +57,7 @@ export function BrowserGeneralPane({ language, textSize, captureOwner }: General
       edits: accountLook?.edits,
     },
     () => t("faceFailed"),
+    report,
   );
   const [size, showSize] = useState(textSize.read);
   const [quality, showQuality] = useState(() =>

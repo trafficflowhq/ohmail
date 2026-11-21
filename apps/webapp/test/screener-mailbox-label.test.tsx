@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
 import { within } from "@testing-library/react";
 import type { EngineMessage, Folder } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryMirrorStore, OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import {
@@ -60,7 +61,7 @@ beforeEach(() => {
   installShellEnv();
   window.localStorage.clear();
 });
-afterEach(teardownShellEnv);
+afterEach(async () => { await teardownShellEnv(); vi.unstubAllGlobals(); });
 
 async function mount(facts: MailboxFacts[] | null, select = false) {
   window.location.hash = "#/screener";
@@ -92,6 +93,21 @@ describe("the Screener list names the mailbox a stranger wrote to", () => {
     expect(drawn).toHaveLength(2);
     // The row uses the mailbox's label, or its short name when the mailbox has no label.
     expect(new Set(drawn)).toEqual(new Set(["Work", "home"]));
+  });
+
+  it("at phone width the mailbox badge yields two thirds of the row and ellipsizes a long label", async () => {
+    vi.stubGlobal("innerWidth", 414);
+    const label = "Customer enquiries for the whole company";
+    await mount([{ ...WORK, displayName: label }, HOME]);
+
+    const badge = within(row("m1")).getByTitle(`Delivered to ${label}`);
+    expect(badge.textContent).toBe(label);
+    expect(badge.classList.contains("sc-mailbox-badge")).toBe(true);
+    const screenerCss = readFileSync("packages/app/src/screener/screener.css", "utf8");
+    expect(screenerCss).toMatch(/:root\[data-device="phone"\] \.sc-mailbox-badge\s*\{[^}]*max-inline-size:\s*33\.333%/);
+    expect(within(badge).getByText(label).hasAttribute("data-truncate")).toBe(true);
+    const tagCss = readFileSync("packages/ui/src/base/Primitives/tag.css", "utf8");
+    expect(tagCss).toMatch(/:root\[data-device="phone"\] \.oh-tag\[data-truncate\]\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap/);
   });
 
   it("the badge carries the whole sentence, from the namespace that owns it", async () => {

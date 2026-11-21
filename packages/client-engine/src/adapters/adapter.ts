@@ -20,6 +20,7 @@ import type {
   MutationAnswer,
   MutationOutcome,
   MutationQueued,
+  SearchPlaceCount,
   ScreenerWaitingItemWire,
   ScreenerWaitingWire,
   StayedWhy,
@@ -102,6 +103,12 @@ export interface PullRing {
    * server, or an answer this build cannot read. Neither is "not behind".
    */
   fetching?: FetchingStanding | null;
+}
+
+/** Body read by id when a bounded sync page omits it. */
+export interface DraftBodyRead {
+  body: string;
+  html: string | null;
 }
 
 export interface EngineAdapter {
@@ -204,7 +211,7 @@ export interface EngineAdapter {
    * "unknown" and "empty" are the two states the caller has to tell apart — see
    * `EngineDraft.body`.
    */
-  fetchDraftBody?(draftId: string): Promise<string | null>;
+  fetchDraftBody?(draftId: string): Promise<DraftBodyRead | string | null>;
 
   /**
    * Fetch one message's body text, or `null` when this adapter serves no
@@ -228,6 +235,8 @@ export interface EngineAdapter {
    * never be conflated — one is a missing capability, the other is a real result.
    */
   searchServer?(query: string, opts: ServerSearchOpts): Promise<ServerSearchWire | null>;
+
+  searchPlaces?(): Promise<readonly SearchPlaceCount[] | null>;
 
   /**
    * `GET /messages/bodies?ids=…` — every body a thread needs in one request

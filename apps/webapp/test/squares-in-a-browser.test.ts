@@ -397,8 +397,15 @@ describe("a press on a square", () => {
           getComputedStyle(slot.firstElementChild!).transitionProperty,
         ];
       });
-      expect(t[0], "a slot grows and folds").toMatch(/height/);
-      expect(t[1], "and its square with it").toMatch(/width/);
+      expect(t[0].split(/,\s*/), "a slot moves and fades by compositor properties").toEqual([
+        "transform", "opacity",
+      ]);
+      expect(t[1], "the square grows and folds by transform").toBe("transform");
+      await (await squaresOf(page).elementHandle())!.evaluate((group) => {
+        group.querySelector<HTMLElement>("[aria-current=true]")!.focus();
+      });
+      await page.keyboard.press("Home");
+      await expect.poll(async () => (await read(page)).before).toBe(0);
     } finally {
       await page.close();
     }

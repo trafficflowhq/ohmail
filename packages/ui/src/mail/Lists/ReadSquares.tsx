@@ -23,6 +23,8 @@ export interface SquaresRun {
   scale: readonly number[];
   /** The room the run was fitted to, in px, where it is the column's own and not the tokens'. */
   room?: number;
+  /** An upright run has a fixed track. Its slots move by transform. */
+  column?: { pitch: number; count: number };
 }
 
 export interface ReadSquaresProps {
@@ -107,11 +109,22 @@ export function ReadSquares(props: ReadSquaresProps) {
   const before = run ? run.from : 0;
   const after = run ? squares.length - run.to : 0;
   const long = before > 0 || after > 0;
+  const track = run?.column;
+  let edge = before && track ? track.count : 0;
+  const slots = track
+    ? run.scale.map((k) => {
+        const size = Math.round(track.pitch * k);
+        const center = edge + size / 2;
+        edge += size;
+        return { "--oh-square-y": `${center}px`, "--oh-readsquares-k": k } as CSSProperties;
+      })
+    : null;
   const ring = useRef<HTMLElement>(null);
   const last = useRef<CssRect | null>(null);
 
   /* The ring is drawn in the square it stands on; when the reader moves it glides there from where it stood. */
   useLayoutEffect(() => {
+    if (track) return;
     const el = ring.current;
     const now = el ? cssRect(el) : null;
     const was = last.current;
@@ -123,7 +136,7 @@ export function ReadSquares(props: ReadSquaresProps) {
       ease: "--e-swift",
       keyframes: [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }],
     });
-  }, [here, before, after]);
+  }, [here, before, after, track]);
 
   const jump = onJump
     ? (event: MouseEvent<HTMLElement>) => {
@@ -134,7 +147,12 @@ export function ReadSquares(props: ReadSquaresProps) {
       }
     : undefined;
   const room =
-    run?.room === undefined ? undefined : ({ "--oh-readsquares-room": `${run.room}px` } as CSSProperties);
+    run?.room === undefined
+      ? undefined
+      : ({
+          "--oh-readsquares-room": `${run.room}px`,
+          ...(track ? { "--oh-square-pitch": `${track.pitch}px`, "--oh-square-end": `${edge}px` } : {}),
+        } as CSSProperties);
 
   return (
     <span
@@ -143,6 +161,7 @@ export function ReadSquares(props: ReadSquaresProps) {
       aria-label={label}
       data-axis={axis}
       data-long={long ? "" : undefined}
+      data-motion-track={track ? "" : undefined}
       data-press={onJump ? "" : undefined}
       style={room}
       onClick={jump}
@@ -175,7 +194,7 @@ export function ReadSquares(props: ReadSquaresProps) {
             data-here={index === here ? "" : undefined}
             data-small={k > 0 && k < 1 ? "" : undefined}
             data-off={k === 0 ? "" : undefined}
-            style={k === 1 ? undefined : ({ "--oh-readsquares-k": k } as CSSProperties)}
+            style={slots?.[index] ?? (k === 1 ? undefined : ({ "--oh-readsquares-k": k } as CSSProperties))}
           >
             <b className="oh-readsquares-face" />
             {index === here && k > 0 ? (

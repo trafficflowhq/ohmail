@@ -50,7 +50,8 @@ import { layoutPlan } from "./layout-plan.js";
 import { holdsItsReading, panesOf } from "./panes-of.js";
 import { RoomGate } from "./room.js";
 import type { RoomSeam } from "./room-store.js";
-import { useReportSlot, type ReportSlotApi } from "./report-slot.js";
+import type { ReportSlotApi } from "./report-slot.js";
+import { useFrameReportSlot } from "./WindowReports.js";
 import { attributesOf } from "./root-attributes.js";
 import { CALENDAR_HOME, MAIL_HOME, eventRefString, isCalendarPlace, productOf } from "./product.js";
 import { useRouteMemory } from "./route-memory.js";
@@ -260,7 +261,7 @@ function FrameBody({ host }: { host: FrameHost }) {
     stoodProduct.current = product;
   }, [product]);
   const attributes = useMemo(() => attributesOf(plan, look, facts, product), [plan, look, facts, product]);
-  const slot = useReportSlot();
+  const slot = useFrameReportSlot();
   const calendarPort = host.wires.calendar;
   const inner = useFrameStores(address);
   const { commands, railOpen, setRailOpen, held, over } = useCommands(

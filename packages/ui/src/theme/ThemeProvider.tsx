@@ -13,6 +13,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -144,6 +145,8 @@ export interface ThemeContextValue {
   persistence: ThemePersistence;
 }
 
+const useFaceStamp = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function isPreference(v: unknown): v is ThemePreference {
@@ -207,6 +210,8 @@ export function themeInitScript(
     deferLinuxFace?: boolean;
     faceStorageKey?: string;
     accountFaceStorageKey?: string;
+    /** A signed-in host's owner stamp. An owned mirror outranks an older device pin at boot. */
+    accountFaceOwner?: { storageKey: string; confirmed: { id: string; matches: string } | null };
     layoutStorageKey?: string;
   } = {},
 ): string {
@@ -217,16 +222,20 @@ export function themeInitScript(
   const faceKey = JSON.stringify(opts.faceStorageKey ?? "ohmail.face");
   const accountKey = JSON.stringify(opts.accountFaceStorageKey ?? "ohmail.face.account");
   const layoutKey = JSON.stringify(opts.layoutStorageKey ?? "ohmail.layout");
-  /* The face half re-encodes the provider's resolution order verbatim: device pin, account
-     mirror, Linux-desktop detection (see linuxDesktopDevice — the regexes here must match
-     it), paper. Only the "ohmarchy" outcome stamps; paper is absence. EACH STORAGE READ SITS
-     IN ITS OWN try (review-caught): a blocked jar must fall through to the detection, not
-     skip it — otherwise a sandboxed context flashes paper and re-skins after hydration. */
+  const owner = opts.accountFaceOwner;
+  const ownFace = owner?.confirmed
+    ? `try{if((${owner.confirmed.matches})&&localStorage.getItem(${JSON.stringify(owner.storageKey)})===${JSON.stringify(owner.confirmed.id)})f=localStorage.getItem(${accountKey})}catch(e){}`
+    : "";
+  const deviceFace = `try{f=localStorage.getItem(${faceKey})}catch(e){}`;
+  const faceHalf = "var f=null;" + (owner
+    ? ownFace + `if(f!=="paper"&&f!=="ohmarchy"){${deviceFace}}`
+    : deviceFace + `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem(${accountKey})}catch(e){}}`);
   return (
     themeHalf +
-    `var f=null;try{f=localStorage.getItem(${faceKey})}catch(e){}` +
-    `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem(${accountKey})}catch(e){}}` +
-    (opts.deferLinuxFace ? "" : `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";`) +
+    faceHalf +
+    (opts.deferLinuxFace
+      ? ""
+      : `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";`) +
     `if(f==="ohmarchy")try{document.documentElement.dataset.face="ohmarchy"}catch(e){}` +
     `var l=null;try{l=localStorage.getItem(${layoutKey})}catch(e){}` +
     `if(l==="zero")try{document.documentElement.dataset.layout="zero"}catch(e){}})()`
@@ -266,6 +275,10 @@ export interface ThemeProviderProps {
   faces?: boolean;
   /** Defer automatic Linux styling until the host supplies the account's face or confirms there is none. */
   deferLinuxFace?: boolean;
+  /** Let the account face supersede a stored device pin until a new device choice is made. */
+  preferAccountFace?: boolean;
+  /** A host may fence adopted account appearance to its current browser owner. */
+  accountFaceScope?: string | null;
   /**
    * THE DOOR EVERY WRITE GOES THROUGH, handed in by the host — see {@link StorageDoor}. Omit it and this provider
    * persists nothing ({@link ThemePersistence} `unpersisted`): the choice holds for the session, no jar is touched,
@@ -293,6 +306,8 @@ export function ThemeProvider({
   layoutStorageKey = "ohmail.layout",
   faces = false,
   deferLinuxFace = false,
+  preferAccountFace = false,
+  accountFaceScope,
   storage,
   systemScheme,
 }: ThemeProviderProps) {
@@ -330,8 +345,16 @@ export function ThemeProvider({
   // undefined = not yet hydrated (the same contract as `stored === null` above; the face
   // needs a third state because null is meaningful — "adopted, and no pin exists").
   const [devicePin, setDevicePin] = useState<FaceName | null | undefined>(undefined);
+  const [deviceFaceChanged, setDeviceFaceChanged] = useState(false);
   // Undefined means the account look is still unknown; null is a confirmed absence.
   const [accountFace, setAccountFaceState] = useState<FaceName | null>();
+  const activeFaceScope = useRef(accountFaceScope);
+  useFaceStamp(() => { activeFaceScope.current = accountFaceScope; }, [accountFaceScope]);
+  const [faceScope, setFaceScope] = useState(accountFaceScope);
+  if (faceScope !== accountFaceScope) {
+    setFaceScope(accountFaceScope);
+    setAccountFaceState(undefined);
+  }
   const [linux, setLinux] = useState(false);
   // undefined = not yet hydrated, devicePin's contract; null = adopted, no stored layout.
   const [layoutPin, setLayoutPin] = useState<LayoutName | null | undefined>(undefined);
@@ -369,7 +392,7 @@ export function ThemeProvider({
       return isLayout(raw) ? raw : null;
     });
     setLinux(linuxDesktopDevice());
-  }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey]);
+  }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey, accountFaceScope]);
 
   // Stamp <html data-theme> exactly like the prototype: absent = system.
   // Skipped until adoption so hydration never clobbers the pre-paint stamp.
@@ -427,13 +450,15 @@ export function ThemeProvider({
   const next = nextSchemePreference(preference, systemNow);
   const nextResolved: ResolvedTheme = next === "system" ? systemNow : next;
   const useLinuxDefault = linux && (!deferLinuxFace || accountFace !== undefined);
-  const face: FaceName = devicePin ?? accountFace ?? (useLinuxDefault ? "ohmarchy" : "paper");
+  const savedAccountFace = preferAccountFace && !deviceFaceChanged ? accountFace : null;
+  const face: FaceName =
+    savedAccountFace ?? devicePin ?? accountFace ?? (useLinuxDefault ? "ohmarchy" : "paper");
   const layout: LayoutName = layoutPin ?? "classic";
   const teach: 0 | 1 = face === "ohmarchy" ? 1 : 0;
 
   // Stamp <html data-face> — absent = paper. Skipped until adoption, so the init script's
   // pre-paint stamp is never clobbered by a hydrating render that has not read storage yet.
-  useEffect(() => {
+  useFaceStamp(() => {
     if (!faces || devicePin === undefined) return;
     const root = document.documentElement;
     if (face === "ohmarchy") root.dataset.face = "ohmarchy";
@@ -457,6 +482,7 @@ export function ThemeProvider({
 
   const setFace = useCallback(
     (next: FaceName | null) => {
+      setDeviceFaceChanged(true);
       setDevicePin(next);
       // The in-memory choice applies either way; "lost" is what the host's notice is for.
       if (next === null) doorRef.current.remove(faceStorageKey);
@@ -476,13 +502,14 @@ export function ThemeProvider({
 
   const adoptAccountFace = useCallback(
     (next: FaceName | null) => {
+      if (accountFaceScope === null || activeFaceScope.current !== accountFaceScope) return;
       setAccountFaceState(next);
       // A lost mirror write means the NEXT boot's init script cannot stamp the account's face
       // pre-paint; the account answer itself lives on the server and is re-adopted then.
       if (next === null) doorRef.current.remove(accountFaceStorageKey);
       else doorRef.current.set(accountFaceStorageKey, next);
     },
-    [storageKey, accountFaceStorageKey],
+    [storageKey, accountFaceStorageKey, accountFaceScope],
   );
 
   const value = useMemo(

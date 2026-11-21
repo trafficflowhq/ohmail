@@ -315,6 +315,12 @@
     "subjectAria": "Betreff dieser Antwort"
   },
   "write": {
+    "history": {
+      "show": "Zitierte Nachrichten anzeigen",
+      "hide": "Zitierte Nachrichten ausblenden",
+      "restore": "Original wiederherstellen",
+      "unavailable": "Zitierte Nachrichten sind nicht verfügbar"
+    },
     "held": {
       "sendAgain": "Noch einmal senden",
       "itWasSent": "Es wurde gesendet"
@@ -378,7 +384,14 @@
       "italic": "Kursiv",
       "underline": "Unterstrichen",
       "strike": "Durchgestrichen",
-      "code": "Code",
+      "code": "Inline-Code",
+      "codeBlock": "Codeblock",
+      "divider": "Trennlinie",
+      "paragraphStyle": "Absatzformat",
+      "paragraph": "Absatz",
+      "heading1": "Große Überschrift",
+      "heading2": "Mittlere Überschrift",
+      "heading3": "Kleine Überschrift",
       "link": "Link",
       "bullets": "Aufzählung",
       "numbers": "Nummerierte Liste",

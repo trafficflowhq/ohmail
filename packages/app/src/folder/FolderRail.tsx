@@ -45,6 +45,7 @@ export interface FolderRailShelf {
 }
 
 export interface FolderRailProps {
+  readonly narrow?: boolean;
   readonly writable?: FolderCommands;
   readonly tapMenus?: boolean;
   /** The frame owner's branch preferences. Without a scope the branches live for the mount alone. */
@@ -327,6 +328,7 @@ export function FolderRail(props: FolderRailProps) {
       >
         {all ? (
           <FolderFold
+            narrow={props.narrow}
             label={t("rail.all")}
             find={canFind ? { label: t("rail.find"), value: find, onChange: setFind } : undefined}
             none={query === "" ? undefined : t("rail.none")}

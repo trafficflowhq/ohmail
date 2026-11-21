@@ -22,16 +22,23 @@ import { useStreamText } from "./words.js";
 
 import { useHoldForReply, useStreamClips, useStreamViewport } from "./use-stream-column.js";
 
+import type { RowSelection } from "../place-list/use-row-selection.js";
 import { StreamItem } from "./StreamItem.js";
 import { StreamReplyContext } from "./StreamAbove.js";
 
-export function StreamColumn(props: { phone: boolean; keysHere: boolean }) {
+interface StreamColumnProps {
+  phone: boolean;
+  keysHere: boolean;
+  selection?: RowSelection;
+}
+
+export function StreamColumn(props: StreamColumnProps) {
   const { place } = useStreamModel();
   const column = <StreamColumnBody {...props} />;
   return place === "receipts" ? <ReceiptEvents>{column}</ReceiptEvents> : column;
 }
 
-function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boolean }) {
+function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
   const state = useStreamColumnModel({ phone, keysHere });
   const {
     model,
@@ -52,18 +59,19 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
     clip,
     viewport,
   } = state;
-  const { start, end, attach, column, width, padTopPx, padBottomPx, near } = viewport;
+  const { armed, start, end, attach, column, width, padTopPx, padBottomPx, near } = viewport;
   const open = useStableCallback(model.open);
   const closeAddress = useStableCallback((id: string) => {
     if (model.addressedId === id) commands.open(null);
   });
   if (model.mayState && model.items.length === 0) return <BlankColumn>{blank("blank.clear")}</BlankColumn>;
-  const shown = model.items.slice(start, end);
+  const shown = armed ? model.items.slice(start, end) : [];
   const panel = streamPanel(state, phone);
   return (
     <Sheet
       kind="reading"
       label={t("stream.label")}
+      head={<h2 className="oh-vh">{t("title")}</h2>}
       scroller={attach}
       manualScrollAnchor={shown.length > 0}
       extendTop={!phone}
@@ -75,9 +83,10 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
         data-stream-window=""
         data-receipts={model.place === "receipts" ? "" : undefined}
       >
-        {padTopPx > 0 ? <div aria-hidden data-stream-head style={{ height: padTopPx }} /> : null}
+        {armed && padTopPx > 0 ? <div aria-hidden data-stream-head style={{ height: padTopPx }} /> : null}
         {shown.map((m, i) => {
           const conversation = reply?.conversations.get(m.id);
+          const pick = selection?.rowProps(m.id);
           const folded = clip.linked !== m.id && !clip.whole.has(m.id) && conversation === undefined;
           const text = model.textOf(m.id);
           const estimate = estimateCardHeight({
@@ -102,6 +111,9 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
               ) : null}
               <StreamItem
                 m={m}
+                selection={
+                  pick?.selection ? { control: pick.selection, picked: pick.picked ?? false } : undefined
+                }
                 reader={reader}
                 t={t}
                 locale={locale}
@@ -127,9 +139,12 @@ function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boole
             </div>
           );
         })}
-        {padBottomPx > 0 ? <div aria-hidden data-stream-tail style={{ height: padBottomPx }} /> : null}
+        {armed && padBottomPx > 0 ? (
+          <div aria-hidden data-stream-tail style={{ height: padBottomPx }} />
+        ) : null}
       </div>
-      {model.place === "receipts" &&
+      {armed &&
+      model.place === "receipts" &&
       host.features.places.search !== NONE &&
       model.items.length > 0 &&
       end === model.items.length ? (

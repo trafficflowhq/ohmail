@@ -31,9 +31,11 @@
  * (`test/host-client-secure-context.test.ts`); opt-in, address CHOSEN from
  * `GET /local/lan/candidates`, and the no-Tailscale path — no tailnet needed. */
 
+import type { ToastFn } from "@ohmail/app-logic/press/report";
+import { useReport } from "@ohmail/app/frame";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFormatter, useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSubhead, Switch, useToast } from "@ohmail/ui";
+import { Button, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 
 import { isPairPin, pairLink } from "@ohmail/client-engine";
@@ -216,10 +218,13 @@ type Busy =
  */
 const HOST_POLL_MS = 5000;
 
-export function DesktopDevices() {
+export function DesktopPairingDevices() {
+  return <DesktopDevices report={useReport()} />;
+}
+
+export function DesktopDevices({ report }: { report: ToastFn }) {
   const t = useTranslations("host");
   const format = useFormatter();
-  const toast = useToast();
 
   /** Host mode as the shell last reported it; `undefined` = not asked yet, `null` = no shell. */
   const [host, setHost] = useState<HostState | null | undefined>(undefined);
@@ -671,7 +676,7 @@ export function DesktopDevices() {
         setProblem(await refusalText(res));
         return;
       }
-      toast(t("revoked"));
+      report(t("revoked"));
       await refreshLists();
     } catch (err) {
       if (alive.current) setProblem(sentence(err));
@@ -691,7 +696,7 @@ export function DesktopDevices() {
         return;
       }
       setRemoving(null);
-      toast(t("removed"));
+      report(t("removed"));
       await refreshLists();
     } catch (err) {
       if (alive.current) setProblem(sentence(err));
@@ -721,7 +726,7 @@ export function DesktopDevices() {
     void (async () => {
       try {
         await navigator.clipboard.writeText(link);
-        if (alive.current) toast(t("copied"));
+        if (alive.current) report(t("copied"));
       } catch {
         if (alive.current) setProblem(t("copyFailed"));
       }
@@ -733,7 +738,7 @@ export function DesktopDevices() {
     void (async () => {
       try {
         await navigator.clipboard.writeText(address);
-        if (alive.current) toast(t("copied"));
+        if (alive.current) report(t("copied"));
       } catch {
         if (alive.current) setProblem(t("copyFailed"));
       }

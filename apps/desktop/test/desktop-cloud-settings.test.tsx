@@ -141,6 +141,13 @@ function engineAnswering(): void {
         changes: { creates: heldChanges, updates: [], moves: [], deletes: [] },
         cursor: "3", hasMore: false, serverTime: new Date().toISOString(),
       }));
+      if (url === "/account/screening") {
+        return encode(200, JSON.stringify({
+          ohboxPolicy: "people_only",
+          ohboxBar: null,
+          defaultBar: "Keep mail you act on in the Ohbox.",
+        }));
+      }
       if (url === CONSENT_PATH) {
         return encode(200, JSON.stringify({
           seedConfirmedAt: STORED_AT,
@@ -403,6 +410,17 @@ async function approveQuote() {
   expect(wire()).not.toContain(`PATCH ${CONSENT_SETTINGS_PATH}`);
   await click(button("Get a quote"));
 }
+
+describe("SET-P — the two surfaces offer the same panes", () => {
+  it("the Screener pane on the desktop carries the three controls it used to be short of", async () => {
+    await mountHostedOptIn();
+    const pane = within(within(el).getByRole("region", { name: messages.settings.screener }));
+    expect(await pane.findByRole("switch", { name: messages.desktopScreener.postureLabel })).toBeTruthy();
+    expect(pane.getByRole("group", { name: messages.settings.dormancy.ariaLabel })).toBeTruthy();
+    expect(pane.getByRole("switch", { name: messages.screener.suggest.autoTitle })).toBeTruthy();
+    expect(pane.getByRole("switch", { name: messages.settings.autoUnsub.title })).toBeTruthy();
+  });
+});
 
 describe("the hosted door's auto-suggest opt-in, over the bridge", () => {
   it("reads the account's consent row down the pipe and offers the row", async () => {

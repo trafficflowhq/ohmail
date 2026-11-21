@@ -38,6 +38,21 @@
   .oh-scrim:not([data-scrim-motion="backdrop"]) {
     background: var(--scrim);
   }
+  .oh-scrim[data-place="start"] {
+    background: none;
+  }
+  .oh-scrim[data-place="start"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-layer-recessed);
+    background: var(--scrim);
+    opacity: var(--oh-drawer-scrim, 1);
+    pointer-events: none;
+  }
+  .oh-scrim[data-place="start"][data-drawer-snap]::before {
+    transition: opacity var(--d-pop) var(--e-out);
+  }
   .oh-scrim[data-scrim-motion="backdrop"]::before {
     /* Fade the backdrop independently of the sheet above it. The scrim keeps the same hit area. */
     content: "";

@@ -32,6 +32,18 @@ import { EngineTrash } from "./trash.js";
 export abstract class EngineLifecycle extends EngineTrash {
   // ── lifecycle ────────────────────────────────────────────────────────────
 
+  private localReadFinished = false;
+
+  /** The first local read has published its rows or reported a storage failure. */
+  localCopyRead(): boolean {
+    return this.localReadFinished;
+  }
+
+  /** An expired cursor's old presentation may stay visible until the authoritative copy lands. */
+  mirrorIsReplacing(): boolean {
+    return this.replacingMirror;
+  }
+
   /**
    * Read the device's copy of the mailbox into memory — and SAY SO. `store.load()` reads the whole
    * persisted mirror and notifies nobody (the listener set lives here, not in the store), so a
@@ -73,13 +85,15 @@ export abstract class EngineLifecycle extends EngineTrash {
         // OhmailEngine.countRestoredBodies}.
         this.countRestoredBodies();
         await this.trimBodyCache();
+        this.localReadFinished = true;
         this.notify();
       })
       .catch((err: unknown) => {
-        if (!this.storeLoaded && !this.loadFailed) {
-          this.loadFailed = true;
-          this.notify();
-        }
+        const reportFailure = !this.storeLoaded && !this.loadFailed;
+        if (reportFailure) this.loadFailed = true;
+        const firstRead = !this.localReadFinished;
+        this.localReadFinished = true;
+        if (firstRead || reportFailure) this.notify();
         throw err;
       })
       .finally(() => {
@@ -718,7 +732,9 @@ export abstract class EngineLifecycle extends EngineTrash {
     try {
       await this.drain(owed);
     } catch (err) {
-      if (owed.rows) this.notify();
+      const wasReplacing = this.replacingMirror;
+      this.replacingMirror = false;
+      if (owed.rows || wasReplacing) this.notify();
       throw err;
     }
   }
@@ -856,6 +872,8 @@ export abstract class EngineLifecycle extends EngineTrash {
           // a durable zero-row window in which a kill, or one refused re-put, lost every queued
           // verb and every abandoned record. It was also a second writer of a rule the store
           // already owned for the cross-tab case.
+          this.replacingMirror = true;
+          this.notify();
           await this.store.resetForBootstrap(); // cursor → "0"
           // The wipe re-put every carried row on disk, a closed tab's among them: adopt what is orphaned.
           await this.adoptOrphanedOutbox();
@@ -965,6 +983,7 @@ export abstract class EngineLifecycle extends EngineTrash {
       this.drainsDone += 1;
       this.reaskInlineParts();
       this.settledEpoch = epoch;
+      this.replacingMirror = false;
       // THE SETTLE'S ONE PUBLISH, after the stamp {@link OhmailEngine.freshness} reads: the last
       // page, the prune, the retired copies and overlays and the stamp are one snapshot, never
       // the new rows under the old "as of". `one-notify-per-poll.test.ts` and

@@ -15,13 +15,17 @@
  * credential-free) says otherwise. THE GATE NEVER ROUTES A FAULT TO A WRITE: with the marker, no
  * token or a CODED 401 means resume (the splash spends the refresh token); a present token the API
  * could not vouch for — timeout, network, 5xx, 429, an uncoded 401 — means `app`, whose own check
- * verifies with backoff and keeps the warm mirror. A throttled token-holder is served `app` without
+ * verifies with backoff before showing the warm mirror. A throttled token-holder is served `app` without
  * a probe. No marker: the landing, whatever the fault. `?demo=1` is answered before the cookie.
  */
+import { isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
 import { isDemoBuild, isDemoRequested } from "./demo-mode";
 
 /** The access-token cookie. Set by the API, host-only, `SameSite=Strict`. */
 export const SESSION_COOKIE = "tf_session";
+
+/** Written only by middleware after a full session probe. */
+export const FIRST_PAGE_OWNER_HEADER = "x-ohmail-first-page-owner";
 
 /**
  * The INTERNAL route the signed-in `/` is rewritten to.
@@ -168,13 +172,20 @@ export interface GateInput {
  */
 interface SessionBody {
   scope?: unknown;
-  user?: { userId?: unknown } | null;
+  user?: { userId?: unknown; accountId?: unknown } | null;
 }
 
 /**
  * Decide what `/` serves. Never throws: every failure is an answer of `"marketing"`.
  */
 export async function resolveSurface(input: GateInput): Promise<Surface> {
+  const answer = await resolveFirstPage(input);
+  return typeof answer === "string" ? answer : "app";
+}
+
+export type FirstPageAnswer = Surface | { account: string };
+
+export async function resolveFirstPage(input: GateInput): Promise<FirstPageAnswer> {
   const env = input.env ?? {};
 
   // 1. The demo wins over everything and costs nothing. Before the cookie, before the
@@ -239,7 +250,7 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   } catch {
     // Timeout, DNS, TLS, an aborted edge invocation: the API did not ANSWER, so nothing about the
     // session was learned. The shell asks again on the browser's own clock and keeps the warm
-    // mirror; the splash would spend a rotation the jar did not need and, while the API stays
+    // mirror behind its check; the splash would spend a rotation the jar did not need and, while the API stays
     // busy, loop into a sign-in card over a live session. Without the marker there is no
     // standing to assume a session, which also keeps this branch worthless to a cookie sprayer.
     return resumable ? "app" : "marketing";
@@ -271,7 +282,8 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   // make it full, and mid-onboarding belongs on `/join`, not in a resume loop.
   if (body?.scope !== "full") return "marketing";
   if (typeof body?.user?.userId !== "string") return "marketing";
-  return "app";
+  const account = body.user.accountId;
+  return typeof account === "string" && isOwnerShaped(account) ? { account } : "app";
 }
 
 /** Did this 401 come from OUR envelope (`{error: {code}}`) rather than from a platform? */
