@@ -36,6 +36,8 @@ export type DeleteAccountState =
     }
   | {
       readonly at: "done";
+      /** The server’s description of the records the erase leaves. */
+      readonly retained?: string;
       /** What the erase did to the subscription. */
       readonly subscription: "none" | "cancelled" | "cancel_failed";
       /** The copy in this browser could not be removed: another tab holds it open. */

@@ -363,6 +363,11 @@ jobs:
             list=$FILES
           else
             list=$(node test/support/ci-shards.mjs --shard "$SHARD")
+            # Record the guest's memory budget before this long-running shard starts.
+            if [ "$SHARD" = 12 ] && [ "${RUNNER_ENVIRONMENT:-}" = self-hosted ]; then
+              awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ { print }' /proc/meminfo || true
+              df -k --output=size,used,avail /tmp || true
+            fi
           fi
           mapfile -t files <<< "$list"
           echo "shard $SHARD runs ${#files[@]} file(s)"

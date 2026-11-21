@@ -133,6 +133,13 @@ describe("engineLogout(press)", () => {
     expect(out.stillListedFrom).toEqual(MANAGED);
   });
 
+  it.each([true, false])("an unread Cloud session still asks the server to revoke it (confirmed: %s)", async (confirmed) => {
+    const shell = fakeShell(MANAGED, { status: "signed_out", revokedAtHost: confirmed });
+    const out = await engineLogout({ status: MANAGED, session: "unknown" });
+    expect(shell.asked).toEqual(["DELETE /cloud/session", "engine_logout"]);
+    expect(out).toEqual({ status: SIGNED_OUT, stillListedFrom: confirmed ? null : MANAGED, waiting: null });
+  });
+
   it("THE FENCE: a press over a pending switch or a pending door asks the engine nothing first", async () => {
     for (const pending of [{ switchPending: true }, { identityPending: true }]) {
       const shell = fakeShell(MANAGED);

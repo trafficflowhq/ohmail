@@ -296,6 +296,34 @@ describe("the suite workflow", () => {
     expect(run).toContain("node test/support/ci-shards.mjs --needs-dovecot \"$SHARD\"");
   });
 
+  it.each([
+    ["12", "self-hosted", "", true],
+    ["11", "self-hosted", "", false],
+    ["12", "github-hosted", "", false],
+    ["12", "self-hosted", "test/selected.test.ts", false],
+  ] as const)("records resources for the full VM shard (shard %s, %s, selected files %s)", (shard, runner, files, diagnostic) => {
+    const run = wf.jobs.suite.steps.find((s) => s.name?.startsWith("Test shard "))!.run!;
+    const script = [
+      'node() { printf "%s\\n" test/first.test.ts test/second.test.ts; }',
+      'mkdir() { :; }',
+      'awk() { printf "guest memory\\n"; }',
+      'df() { printf "guest disk\\n"; }',
+      'npx() { printf "arg=%s\\n" "$@"; }',
+      run,
+    ].join("\n");
+    const output = execFileSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: { ...process.env, SHARD: shard, RUNNER_ENVIRONMENT: runner, FILES: files },
+    });
+    expect(output.includes("guest memory\n")).toBe(diagnostic);
+    expect(output.includes("guest disk\n")).toBe(diagnostic);
+    const args = output.split("\n").filter((line) => line.startsWith("arg=")).map((line) => line.slice(4));
+    expect(args).toEqual([
+      "vitest", "run", "--reporter=default", "--reporter=json", `--outputFile=build/ci-suite-${shard}.json`,
+      ...(files ? [files] : ["test/first.test.ts", "test/second.test.ts"]),
+    ]);
+  });
+
   it("splits the SQLite run by its own map, over the file set vitest lists for it, and reads each report back", () => {
     expect(wf.jobs.sqlite.name).toBe("suite · sqlite (${{ matrix.shard }})");
     const run = wf.jobs.sqlite.steps.map((s) => s.run ?? "").join("\n");

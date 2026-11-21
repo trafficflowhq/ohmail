@@ -22,7 +22,12 @@ const leaveFor = (to: string) => (): void => { window.location.assign(to); };
 /** What the ceremony holds, as the page's state, in the order the pane drew it. */
 function stateOf(c: DeleteAccountCeremony, say: (err: unknown) => string): DeleteAccountState {
   if (c.stage === "done" && c.result) {
-    return { at: "done", subscription: c.cancelledEarlier ? "cancelled" : c.result.subscription, unclean: c.eraseMirrorBlocked };
+    return {
+      at: "done",
+      retained: c.result.retained,
+      subscription: c.cancelledEarlier ? "cancelled" : c.result.subscription,
+      unclean: c.eraseMirrorBlocked,
+    };
   }
   if (c.settled.kind === "refused") return { at: "refused", said: say(c.settled.refusal) };
   if (c.settled.kind === "unchecked") return { at: "unchecked" };

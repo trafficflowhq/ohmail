@@ -27,6 +27,7 @@ export interface OhboxVerbsInput {
   readonly mirror: OhboxMirror;
   /** The sentences the verbs say, by `namespace.key`. */
   readonly words: Translator;
+  readonly zone: string;
   /** The one composer's doors for a letter, and the place's tag picker. */
   readonly answer: (how: ListAnswer, m: EngineMessage) => void;
   readonly pickTags: (ids: string[], anchor: HTMLElement | null) => void;
@@ -66,6 +67,7 @@ export function useOhboxVerbs(input: OhboxVerbsInput): OhboxVerbs {
     consent,
     demo,
     nowAt,
+    zone: input.zone,
     tags: mirror.tags,
     ownAddresses,
     firstImportDoneAt,

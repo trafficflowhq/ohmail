@@ -152,7 +152,11 @@ describe("signOut", () => {
 });
 
 describe("the sign-out CONTROL is wired", () => {
-  const account = readFileSync(`${APP}/(product)/mailbox/AccountSection.tsx`, "utf8");
+  const account = readFileSync(`${APP}/(product)/mailbox/account-door.ts`, "utf8");
+  const pane = readFileSync("packages/app/src/account/account/AccountPane.tsx", "utf8");
+  const erase = readFileSync(`${APP}/(product)/account/delete/use-delete-account-door.ts`, "utf8");
+  const erasePage = readFileSync("packages/app/src/doors/delete-account/DeleteAccountPage.tsx", "utf8");
+  const body = sliceOfDeclaration(account, "accountDoor");
   /* THE ARMS AND THEIR ORDER LIVE IN ONE READER since the lock screen said them too
      (ACCESS-LOCK-REFUSED-SIGN-OUT-IS-SILENT): the pane asks it once and gates the navigation on
      its answer. The pins below read the reader for the order and the pane for the gate. */
@@ -163,47 +167,23 @@ describe("the sign-out CONTROL is wired", () => {
     // The helper existed for weeks with zero callers — correct, tested and unreachable. That
     // is the failure this asserts against, and it is the same shape as the refresh route and
     // `flagChanges`: built, verified, never wired.
-    // `forgetThisBrowser` rides the same import: the erasure door needs the LOCAL half without
-    // the server logout (that door revokes by erasing the account), and both come from the one
-    // module so the two cannot drift apart.
-    expect(account).toMatch(/import \{ forgetThisBrowser, signOut, signOutStayReason \} from "\.\.\/\.\.\/sign-out"/);
-    expect(account).toMatch(/signOut\(owner, \{ expectedFamily \}\)/);
+    expect(account).toMatch(/import \{ [^}]*\bsignOut\b[^}]* \} from "\.\.\/\.\.\/sign-out"/);
+    expect(account).toMatch(/signOut\(account, \{ expectedFamily: family \}\)/);
     expect(account).not.toMatch(/\bauth\.logout\s*\(/);
   });
 
   it("passes the storage owner, so the right mirror is the one wiped", () => {
     // `clearAllMirrors(undefined)` would be a best-effort sweep rather than this account's
     // database. The account is read from state that was loaded before the call.
-    expect(account).toMatch(/doSignOut\(who\.accountId, who\.familyId\)/);
+    expect(body).toMatch(/named = \{ account: user\.accountId, family: familyId \?\? heldFamily \?\? undefined \}/);
+    expect(body).toMatch(/const session = named \?\? confirmedSignOutSession\(\)/);
+    expect(body).toMatch(/const \{ account, family \} = session;[\s\S]*signOut\(account, \{ expectedFamily: family \}\)/);
   });
 
   it("leaves the SPA after signing out — the session is gone, the server must re-decide", () => {
     // A router push would keep the signed-in React tree alive on a dead session. This is the
     // same class of mistake as the resume `location.replace` that never re-requested.
     expect(account).toMatch(/window\.location\.assign\("\/"\)/);
-  });
-
-  it("SIGN OUT IS NOT INSIDE THE DELETE CARD, and that is the whole of this fix", () => {
-    /**
-     * Reported from a signed-in walk of the shipped build. The reading order was:
-     *
-     *   "Delete your account" → "Signed in as x@y. This cannot be undone." → "Sign out" [button]
-     *   → the Erased/Kept columns → type-to-confirm
-     *
-     * So the one REVERSIBLE control on the screen sat directly under the words "This cannot
-     * be undone", inside the destructive card, wearing its frame and its language. Separating
-     * the CARDS is what fixes it — a rule inside one panel still reads as two parts of one
-     * ceremony, which is what it had before and why it was still wrong.
-     */
-    const signOutCard = account.indexOf('<SettingsSheet title={t("signOutTitle")}>');
-    const signOutEnd = account.indexOf("</SettingsSheet>", signOutCard);
-    const deleteCard = account.indexOf('<Pane>\n      <Sentence level={2}>{t("title")}</Sentence>');
-    const button = account.indexOf("doSignOut(who.accountId, who.familyId)", signOutCard);
-    expect(signOutCard, "the sign-out card must exist").toBeGreaterThan(-1);
-    expect(deleteCard, "the delete card must exist").toBeGreaterThan(-1);
-    expect(button, "the button must be inside the sign-out card").toBeGreaterThan(signOutCard);
-    expect(button).toBeLessThan(signOutEnd);
-    expect(signOutEnd, "the sign-out card must end before the delete card").toBeLessThan(deleteCard);
   });
 
   it("`This cannot be undone` attaches to DELETION, not to being signed in", () => {
@@ -224,7 +204,6 @@ describe("the sign-out CONTROL is wired", () => {
     // `tf_session` is HttpOnly and server-set — nothing this page can do expires it — so a
     // refused logout leaves a live credential the next reachable request authenticates with,
     // while this control's own copy says "Ends this session".
-    const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(outcome\.serverRefused !== null\) return \{ key: "signOutServerRefused"/);
     expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
     expect(stayReason).toMatch(/const trouble = signOutTrouble\(outcome\);/);
@@ -235,13 +214,13 @@ describe("the sign-out CONTROL is wired", () => {
     // use. The browser is wiped and marked `signed_out_pending`, so `/` never serves it the app or a
     // resume (`session-gate.ts`): it sends it to the sign-in page, which presents the session at the
     // sign-out door behind its form, on the confirm ladder. The pane claims nothing either way.
-    const gate = body.indexOf("if (stay !== null) {");
+    const gate = body.indexOf("if (stay !== null) return stay;");
     const leave = body.indexOf("window.location.assign");
     expect(gate).toBeGreaterThan(-1);
     expect(leave, "leaving must come after the reader's gate").toBeGreaterThan(gate);
-    expect(body.slice(gate, leave)).toMatch(/return;/);
+    expect(body.slice(gate, leave)).toMatch(/return stay;/);
     expect(body.slice(leave), "the press leaves for anything but the front door").toMatch(/window\.location\.assign\("\/"\)/);
-    expect(account, "the pane still claims to say the server refused").not.toContain('t("signOutServerRefused"');
+    expect(pane, "the pane still claims to say the server refused").not.toContain('t("signOutServerRefused"');
     // …and it is finished where the form is, never behind a page with nothing on it: the sign-in
     // page asks the sign-out door under the marker, and so do the sign-up and confirmation pages one
     // link away (one hook, `pending-sign-out.tsx`); the splash never finishes a sign-out.
@@ -278,13 +257,13 @@ describe("the sign-out CONTROL is wired", () => {
     // A blocked wipe means another tab is holding the database: close it and press again. An
     // unverifiable inventory means nothing is holding anything — this browser simply will not
     // say what it has — and "close your other tabs" would be a false instruction.
-    const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
     expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
     expect(stayReason).toMatch(/return trouble\.key === "signOutUnverified" \? "unverified" : "blocked";/);
     expect(reader).toMatch(/if \(!outcome\.inventoryComplete\) return \{ key: "signOutUnverified" \};/);
-    expect(body).toContain("setSignOutUnverified(true)");
-    expect(account).toContain('t("signOutUnverified")');
+    expect(body).toContain("if (stay !== null) return stay;");
+    expect(pane).toContain("t(ACCOUNT_REFUSALS.account[model.stayed].key)");
+    expect(read("../../../packages/app/src/account/contract.ts")).toMatch(/unverified: at\("account", "signOutUnverified"\)/);
     // ── AND THE ORDER, because one of these is a SUBSET of the other ────────────────────────
     //
     // `cleared` is false whenever the inventory is partial, so checking `!cleared` first made
@@ -316,22 +295,21 @@ describe("the sign-out CONTROL is wired", () => {
     // the person will ever see for that account. The receipt still shows — refusing to show a
     // completed, irreversible act would be worse — and the sentence sits next to it.
     // The erased door's scope: this account's copy, never another account's in the browser.
-    expect(account).toMatch(/const local = await forgetThisBrowser\(owner, \{ only: true, erased: true \}\)/);
-    expect(account).toContain("setEraseMirrorBlocked(unclean)");
+    expect(erase).toMatch(/const local = await forgetThisBrowser\(owner, \{ only: true, erased: true \}\)/);
+    expect(erase).toContain("setEraseMirrorBlocked(unclean)");
     // …and the verdict DEFAULTS to unclean. Initialising it clean made every exception before or
     // during the wipe read as a verified clean browser, on the one screen nobody can come back to.
-    expect(account).toMatch(/let unclean = true;/);
+    expect(erase).toMatch(/let unclean = true;/);
     // BOTH halves of the verdict — an empty list from a browser that cannot be asked what it
     // holds proves only that the names we already knew are gone.
-    expect(account).toMatch(/local\.remaining\.length > 0 \|\| !local\.inventoryComplete/);
-    expect(account).toContain('t("erasedMirrorBlocked")');
+    expect(erase).toMatch(/local\.remaining\.length > 0 \|\| !local\.inventoryComplete/);
+    expect(erasePage).toMatch(/state\.unclean \? t\("erasedMirrorBlocked"\)/);
     const copy = JSON.parse(read("../messages/en.json")) as Record<string, Record<string, string>>;
     expect(copy.account!.erasedMirrorBlocked).toMatch(/could not be removed/i);
     expect(copy.account!.erasedMirrorBlocked).toMatch(/other tabs/i);
   });
 
   it("STAYS when the mail is still here — and says which server it is still on", () => {
-    const body = sliceOfDeclaration(account, "doSignOut");
 
     // ── WHAT THIS CASE USED TO ASSERT, AND WHY IT IS NOW WRONG ───────────────────────────
     //
@@ -343,19 +321,20 @@ describe("the sign-out CONTROL is wired", () => {
     // a live HttpOnly session this page cannot expire. `signOut` no longer throws at all (both
     // failures ride its result), so a `catch` here would be dead code standing in for a
     // property it no longer holds. Its sibling case above pins the server half.
-    expect(body).toMatch(/const outcome = await signOut\(owner, \{ expectedFamily \}\)/);
+    expect(body).toMatch(/const outcome = await signOut\(account, \{ expectedFamily: family \}\)/);
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
     expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
     expect(stayReason).toMatch(/return trouble\.key === "signOutUnverified" \? "unverified" : "blocked";/);
-    const gate = body.indexOf("if (stay !== null) {");
+    const gate = body.indexOf("if (stay !== null) return stay;");
     const leave = body.indexOf("window.location.assign");
     expect(gate, "the wipe verdict must be checked before leaving").toBeGreaterThan(-1);
     expect(leave, "and leaving must come after it").toBeGreaterThan(gate);
     // The blocked arm returns rather than falling through to the navigation…
-    expect(body.slice(gate, leave)).toMatch(/return;/);
+    expect(body.slice(gate, leave)).toMatch(/return stay;/);
     // …and it SAYS SO. A stay with no sentence is a frozen button.
-    expect(body).toContain("setSignOutBlocked(true)");
-    expect(account).toContain('t("signOutBlocked")');
+    expect(body).toContain("if (stay !== null) return stay;");
+    expect(pane).toContain("t(ACCOUNT_REFUSALS.account[model.stayed].key)");
+    expect(read("../../../packages/app/src/account/contract.ts")).toMatch(/blocked: at\("account", "signOutBlocked"\)/);
   });
 });
 

@@ -77,7 +77,7 @@ const RETAINED_UNMETERED =
 const RETAINED_METERED = "billing records and any refund still owed to you, under a pseudonymous account id";
 
 /**
- * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `AccountSection.tsx`. `stepUp:
+ * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `/account/delete`. `stepUp:
  * true`: the most destructive call in the API. Not `idempotent`: the second call deletes nothing.
  * The account row survives as a random uuid with a blank name — the `credit_ledger` FK forbids
  * deletion and financial records carry a retention obligation (Art. 17(3)(b)); see

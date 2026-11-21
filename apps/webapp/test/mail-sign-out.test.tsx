@@ -203,7 +203,12 @@ describe("the way out, on the new shell", () => {
     await settle();
     expect(window.location.hash).toBe("#/settings/account");
     expect(screen.getAllByText(ADDRESS).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: en.account.signOut }).closest(".oh-sheet-foot")).toBeTruthy();
+    const signOut = screen.getByRole("button", { name: en.account.signOut });
+    const erase = screen.getByRole("button", { name: en.account.begin });
+    const deleteSheet = erase.closest(".oh-settingssheet")!;
+    expect(deleteSheet.textContent).toContain(en.account.lead);
+    expect(deleteSheet.contains(signOut)).toBe(false);
+    expect(signOut.closest(".oh-sheet-foot")).toBeTruthy();
   });
 
   it("Sign out revokes at the server, wipes this browser's copy, and leaves by a full load of the front door", async () => {

@@ -361,7 +361,7 @@ describe("the Ohbox's own seat, over the mail ground", () => {
   });
 
   it("one column, no letter over the list: the cursor row's verbs are the list's own (e parks, a queues, b books tomorrow at the account's hour), each through the one seam with its sentence", async () => {
-    setFormatWords({ locale: () => "en", zone: () => "Europe/Zurich", translatorOf: () => null });
+    setFormatWords({ locale: () => "en", zone: () => "UTC", translatorOf: () => null });
     /* The afternoon where the reader is: "tomorrow" is the next day (the small hours have a case of their own). */
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-17T13:00:00.000Z"));
@@ -393,8 +393,26 @@ describe("the Ohbox's own seat, over the mail ground", () => {
     expect(screen.getByText(/^Resurfaces /)).toBeTruthy();
   });
 
+  it("b books every selected letter for tomorrow at 09:00 in the reader's time zone", async () => {
+    setFormatWords({ locale: () => "en", zone: () => "UTC", translatorOf: () => null });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-17T22:30:00Z"));
+    const { mail } = seat({ room: "phone" });
+    press("j");
+    press("x");
+    press("j");
+    press("x");
+    press("b");
+    await settle();
+    expect(sent(mail).sort()).toEqual(["triage_set b bubbled_up", "triage_set c bubbled_up"]);
+    const times = mail.mutations.map((m) => (m.kind === "triage_set" ? m.bubbleUpAt : undefined));
+    // 08:00 UTC is 09:00 in Zurich on 18 November.
+    expect(times).toEqual(["2026-11-18T08:00:00.000Z", "2026-11-18T08:00:00.000Z"]);
+    expect(said()).toBe("2 messages resurface Wed 09:00.");
+  });
+
   it("b in the small hours books the coming morning where the reader is, not the day after: either side of midnight", async () => {
-    setFormatWords({ locale: () => "en", zone: () => "Europe/Zurich", translatorOf: () => null });
+    setFormatWords({ locale: () => "en", zone: () => "UTC", translatorOf: () => null });
     const zurich = (iso: string) =>
       new Intl.DateTimeFormat("en-GB", {
         timeZone: "Europe/Zurich",

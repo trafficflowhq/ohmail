@@ -12,8 +12,7 @@ import en from "../messages/en.json";
  * `/account/delete` — THE ACCOUNT ERASED FROM A PAGE OF ITS OWN, through the real route, the real client, the real
  * step-up dialog and the real wipe; only `fetch` and the IndexedDB factory are stand-ins. The page settles whose
  * browser this is, shows what is erased and kept before anything is typed, asks the second factor on EVERY press and
- * erases only once it verifies, exactly once; it says each outcome in the account pane's own sentences, and a test
- * holds the two erases equal while the pane keeps its own.
+ * erases only once it verifies, exactly once, and says the outcome using the account's established refusal copy.
  */
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -415,64 +414,26 @@ describe("the outcomes, in the pane's own sentences", () => {
   });
 });
 
-/**
- * PARITY WITH THE PANE. Settings › Account keeps its own erase until it moves here; for every answer the server can
- * give the erase, the page and the pane say the same sentence. The pane tries the erase first and asks the factor on
- * a closed window; the page asks the factor first: the answer after the factor is the one compared.
- */
-describe("the page and Settings › Account say the same outcome", () => {
-  async function throughThePane(): Promise<HTMLElement> {
-    const client = await import("../app/api-client.js");
-    client.bindApiOwner(OWNER);
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    const c = await mountIn(h(AccountSection));
-    await waitFor(() => c.querySelector("#acct-typed") != null, "the pane's facts");
-    await type(c.querySelector<HTMLInputElement>("#acct-typed")!, EMAIL);
-    await submit(c.querySelector("form:has(#acct-typed)")!);
-    await waitFor(() => c.querySelector('[role="dialog"] input[autocomplete="one-time-code"]') != null, "the pane's prompt");
-    await type(c.querySelector<HTMLInputElement>('[role="dialog"] input[autocomplete="one-time-code"]')!, "123456");
-    await submit(c.querySelector('[role="dialog"] input[autocomplete="one-time-code"]')!.closest("form")!);
-    return c;
-  }
-  async function throughThePage(): Promise<HTMLElement> {
-    const c = await mountPage();
-    await pressDelete(c);
-    await verify(c);
-    return c;
-  }
-  const said = (c: HTMLElement): string | null => c.querySelector('[role="alert"]')?.textContent ?? null;
-
-  const ANSWERS: [string, () => Response][] = [
-    ["a refusal", () => refusedWith()],
-    ["a refusal after the subscription was cancelled", () => refusedWith("cancelled")],
-    ["a refusal whose cancel failed", () => refusedWith("cancel_failed")],
-    ["an erasure nobody confirmed", () => json({ error: { code: "erasure_unconfirmed", message: "unconfirmed" } }, 500)],
-    ["a platform 5xx with no envelope", () => new Response("<html>504</html>", { status: 504, headers: { "content-type": "text/html" } })],
-    ["no answer at all", () => { throw new TypeError("network down"); }],
+describe("the delete page says the account erasure outcome", () => {
+  const answers: [string, () => Response, string][] = [
+    ["a refusal", () => refusedWith(), A.eraseRefused],
+    ["a refusal after the subscription was cancelled", () => refusedWith("cancelled"), A.eraseRefusedSubCancelled],
+    ["a refusal whose cancel failed", () => refusedWith("cancel_failed"), A.eraseRefusedSubFailed],
+    ["an erasure nobody confirmed", () => json({ error: { code: "erasure_unconfirmed", message: "unconfirmed" } }, 500),
+      A.eraseUnconfirmed],
+    ["a platform 5xx with no envelope", () => new Response("<html>504</html>", {
+      status: 504, headers: { "content-type": "text/html" },
+    }), A.eraseUnconfirmed],
+    ["no answer at all", () => { throw new TypeError("network down"); }, en.session.refusedOffline],
   ];
-  for (const [what, answer] of ANSWERS) {
+  for (const [what, answer, sentence] of answers) {
     it(what, async () => {
       rig.erase = answer;
-      const pane = await throughThePane();
-      await waitFor(() => said(pane) !== null, "the pane's sentence");
-      const paneSaid = said(pane);
-      cleanup();
-      rig.asked = [];
-      rig.windowClosed = true;
-      document.cookie = `tf_owner=${OWNER}; Path=/`;
-      document.cookie = "tf_csrf=csrf-under-test; Path=/";
-      vi.resetModules();
-      (await import("../app/api-client.js")).setAccountHeaderCapability(true);
-      const page = await throughThePage();
+      const page = await mountPage();
+      await pressDelete(page);
+      await verify(page);
       await waitFor(() => pageAlert(page) !== null, "the page's sentence");
-      expect(pageAlert(page)).toBe(paneSaid);
+      expect(pageAlert(page)).toBe(sentence);
     });
   }
 });
-
-/** Unmount what a case mounted, so the next mount in the same case starts clean. */
-function cleanup(): void {
-  for (const root of roots) root.unmount();
-  roots = [];
-  document.body.innerHTML = "";
-}

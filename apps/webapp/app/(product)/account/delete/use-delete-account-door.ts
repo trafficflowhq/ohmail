@@ -1,9 +1,7 @@
 "use client";
 
 /**
- * `/account/delete` — the account erased from a page of its own, the ceremony beside its route. Settings › Account
- * keeps its own erase until that pane moves here; this one is written from it, its order and its sentences kept
- * (`mailbox/AccountSection.tsx`, `erase`), and the two are held equal by a test.
+ * `/account/delete` — the account erasure ceremony reached from Settings › Account.
  *
  * What a page of its own adds: it settles whose browser this is first, as `/approve` does (`approve/settle-owner.ts`),
  * and reads the session's own address only while settled on that account; the press always asks the second factor

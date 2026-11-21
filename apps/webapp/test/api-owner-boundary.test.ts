@@ -405,7 +405,7 @@ describe("the storage-owner boundary", () => {
    * The FRONT DOOR asks it to find out whether this browser holds a session at all — necessarily
    * before anybody could be bound, so it must be exempt. Six ORDINARY SHELL READS ask it for the
    * signed-in person's email, account id and enrolled factors: `MailboxSection`,
-   * `AccountSection`, `LinkDesktopScreen`, `StepUpPrompt`, `SecuritySection` — and, while the
+   * the delete account page, `LinkDesktopScreen`, `StepUpPrompt`, `SecuritySection` — and, while the
    * defect stood, the Subscription pane that has since left.
    * While the exemption was on the PATH, all six got the other account's answer whenever the
    * browser had become somebody else — email and account id are not mail, and they are not

@@ -35,6 +35,15 @@ import { fixturesPlanter } from "./vocabulary/world.js";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const SELF = "guards.test.ts";
 
+/**
+ * A journeys file's module, loaded by its plain path. A file URL's href percent-encodes a
+ * space in the checkout path ("Macintosh%20SSD"), which the module loader reads literally —
+ * the guard loader then looks for a file named "Macintosh%20SSD" and finds nothing.
+ */
+function guardModule(file: string): Promise<{ GUARDS?: Guard[] }> {
+  return import(fileURLToPath(pathToFileURL(file))) as Promise<{ GUARDS?: Guard[] }>;
+}
+
 function files(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith(".ts") && e.name !== SELF ? [join(dir, e.name)] : []);
@@ -188,6 +197,19 @@ describe("the journeys' own rules", () => {
     expect(Object.keys(NOT_YET_A_PLACE).filter((id) => reached.has(id as FramePlaceId) || !(PLACE_IDS as readonly string[]).includes(id))).toEqual([]);
   });
 
+  it("a journeys file under a path with a space is read through the decoded path, not the href's %20", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "guard path-"));
+    try {
+      const file = join(dir, "gate.journeys.test.ts");
+      writeFileSync(file, "export const GUARDS = [{ title: 'the space in the path', surfaces: ['W-i'], rows: ['a-b'] }];\n");
+      expect(pathToFileURL(file).href).toContain("%20"); // the space really is encoded here
+      const mod = await guardModule(file);
+      expect(mod.GUARDS?.[0]?.title).toBe("the space in the path");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("every journeys file names what it guards: a title once, and plain keys for the faults", async () => {
     (globalThis as { __journeysNamesOnly?: boolean }).__journeysNamesOnly = true;
     const titles: string[] = [];
@@ -201,7 +223,7 @@ describe("the journeys' own rules", () => {
       const [place = "", set, ...more] = name.replace(".journeys.test.ts", "").split(".");
       if (!(place in PLACES)) bad.push(`${name}: no place called ${place}`);
       if (more.length > 0 || (set !== undefined && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(set))) bad.push(`${name}: not <place>[.<set>].journeys.test.ts`);
-      const mod = await import(pathToFileURL(join(dir, name)).href) as { GUARDS?: Guard[] };
+      const mod = await guardModule(join(dir, name));
       if (!Array.isArray(mod.GUARDS) || mod.GUARDS.length === 0) {
         bad.push(`${name}: exports no GUARDS`);
         continue;

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { deleteAddress, deleteButton, deleteCode } from "./fixtures/delete-account-controls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -33,7 +34,8 @@ vi.mock("../app/sign-out", async (original) => ({
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));
 
-vi.mock("../app/api-client", () => {
+vi.mock("../app/api-client", async (original) => {
+  const actual = await original<typeof import("../app/api-client")>();
   // A scripted answer is our server's envelope unless it says `coded: false` (a platform's own 5xx).
   class ApiError extends Error {
     constructor(readonly status: number, readonly code: string, message: string, readonly details?: unknown,
@@ -43,6 +45,7 @@ vi.mock("../app/api-client", () => {
     }
   }
   return {
+    ...actual,
     ApiError,
     apiConfigured: () => true,
     accessFeedFor: () => null,
@@ -52,6 +55,8 @@ vi.mock("../app/api-client", () => {
     codeOf: (e: unknown) => (e as { code?: string }).code ?? null,
     messageOf: (e: unknown) => (e as { message?: string }).message ?? String(e),
     auth: {
+      ...actual.auth,
+      stepUpTotp: async () => ({ ok: true }),
       session: async () => ({
         user: { accountId: "acct-under-test", email: "person@example.test", twofaEnrolled: { webauthn: false, totp: true } },
         scope: "full",
@@ -81,6 +86,8 @@ afterEach(async () => {
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
   document.body.innerHTML = "";
+  (await import("@ohmail/app-logic/session/account-erased")).clearAccountErased();
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
   vi.restoreAllMocks();
 });
 
@@ -94,7 +101,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 async function mount(locale: "en" | "de"): Promise<HTMLElement> {
-  const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
+  const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -102,28 +109,38 @@ async function mount(locale: "en" | "de"): Promise<HTMLElement> {
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale, messages: locale === "en" ? en : de, timeZone: "UTC",
-      now: new Date("2026-10-03T09:00:00.000Z"), children: h(AccountSection),
+      now: new Date("2026-10-03T09:00:00.000Z"), children: h(DeleteAccountRoute),
     }));
   });
-  await waitFor(() => container.querySelector("#acct-typed") != null, "the facts step");
+  await waitFor(() => deleteAddress(container) !== null, "the facts step");
   return container;
 }
 
-/** Type the address and press: one `DELETE /account`, on a fresh window. */
-async function press(container: HTMLElement): Promise<void> {
+/** Type the address and verify the factor: one erase attempt. */
+async function press(container: HTMLElement, locale: "en" | "de" = "en"): Promise<void> {
+  const words = (locale === "en" ? en : de).deleteAccount;
   const before = rig.presses;
-  const input = container.querySelector<HTMLInputElement>("#acct-typed")!;
+  const input = deleteAddress(container)!;
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
   await act(async () => {
     setter.call(input, "person@example.test");
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await act(async () => {
-    container.querySelector("form:has(#acct-typed)")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    deleteButton(container, words.begin)!.click();
+  });
+  await waitFor(() => deleteCode(container) !== null, "the factor");
+  const code = deleteCode(container)!;
+  await act(async () => {
+    setter.call(code, "123456");
+    code.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    code.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
   await waitFor(() => rig.presses === before + 1, "the erase to be sent");
-  await waitFor(() => container.querySelector("#acct-typed") != null
-    || container.textContent!.includes(en.account.doneTitle) || container.textContent!.includes(de.account.doneTitle),
+  await waitFor(() => deleteAddress(container) !== null
+    || container.textContent!.includes(words.doneTitle.replace(/\.$/, "")),
   "the press to settle");
 }
 
@@ -138,13 +155,13 @@ describe("a failed erase names what the release did", () => {
         { kind: "ok", subscription: "none" },
       ];
       const c = await mount(locale);
-      await press(c);
+      await press(c, locale);
       expect(text(c)).toContain(m.account.eraseRefusedSubCancelled);
       expect(text(c)).not.toContain(m.account.eraseRefused);
-      await press(c);
-      await waitFor(() => text(c).includes(m.account.doneTitle), "the receipt");
-      expect(text(c), "the retry's release answered none; the first press cancelled").toContain(m.account.doneSubCancelled);
-      expect(text(c)).not.toContain(m.account.doneSubFailed);
+      await press(c, locale);
+      await waitFor(() => text(c).includes(m.deleteAccount.doneTitle.replace(/\.$/, "")), "the receipt");
+      expect(text(c), "the retry's release answered none; the first press cancelled").toContain(m.deleteAccount.doneSubCancelled);
+      expect(text(c)).not.toContain(m.deleteAccount.doneSubFailed);
     });
   }
 
@@ -184,14 +201,14 @@ describe("a failed erase names what the release did", () => {
         { kind: "ok", subscription: "none" },
       ];
       const c = await mount(locale);
-      await press(c);
+      await press(c, locale);
       expect(text(c), "the unconfirmed sentence carries the cancel the 503 carried").toContain(m.account.eraseUnconfirmedSubCancelled);
       for (const notDeleted of [m.account.eraseRefused, m.account.eraseRefusedSubCancelled, m.account.eraseRefusedSubFailed]) {
         expect(text(c)).not.toContain(notDeleted);
       }
-      await press(c);
-      await waitFor(() => text(c).includes(m.account.doneTitle), "the receipt");
-      expect(text(c)).toContain(m.account.doneSubCancelled);
+      await press(c, locale);
+      await waitFor(() => text(c).includes(m.deleteAccount.doneTitle.replace(/\.$/, "")), "the receipt");
+      expect(text(c)).toContain(m.deleteAccount.doneSubCancelled);
     });
   }
 
@@ -200,7 +217,7 @@ describe("a failed erase names what the release did", () => {
     it(`${locale}: a 5xx no envelope of ours carries (the function cut mid-erasure) is unconfirmed, never "not deleted"`, async () => {
       rig.answers = [{ kind: "fail", status: 504, code: "internal", coded: false }];
       const c = await mount(locale);
-      await press(c);
+      await press(c, locale);
       expect(text(c)).toContain(m.account.eraseUnconfirmed);
       for (const notDeleted of [m.account.eraseRefused, m.account.eraseRefusedSubCancelled, m.account.eraseRefusedSubFailed]) {
         expect(text(c)).not.toContain(notDeleted);

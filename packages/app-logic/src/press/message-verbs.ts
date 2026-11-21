@@ -151,13 +151,13 @@ function pressResurface(cx: VerbContext, m: EngineMessage): void {
     );
     return;
   }
-  const when = tomorrowAt(nowAt(), cx.consent.resurfaceTime).iso;
+  const when = tomorrowAt(nowAt(), cx.consent.resurfaceTime, cx.zone).iso;
   resurfaceRow(
     cx,
     m.id,
     "bubbled_up",
     when,
-    t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt()) }),
+    t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt(), cx.zone) }),
   );
 }
 

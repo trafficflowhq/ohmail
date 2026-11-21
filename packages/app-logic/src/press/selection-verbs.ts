@@ -132,7 +132,7 @@ function pileSet(cx: VerbContext, action: "later" | "aside" | "resurface", ids: 
   const { t, nowAt, pileSetFor } = cx;
   const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
   // The same default the single-message verb uses: the picker's first dated preset, at the account's own hour.
-  const when = action === "resurface" ? tomorrowAt(nowAt(), cx.consent.resurfaceTime).iso : null;
+  const when = action === "resurface" ? tomorrowAt(nowAt(), cx.consent.resurfaceTime, cx.zone).iso : null;
   const subjects =
     !cx.offOhbox && pileSetFor
       ? [...new Set(ids.flatMap((id) => pileSetFor(id, true)))]
@@ -146,7 +146,7 @@ function pileSet(cx: VerbContext, action: "later" | "aside" | "resurface", ids: 
     })),
     (applied) =>
       action === "resurface"
-        ? t("ohbox.toastBulkResurface", { count: applied, when: resurfaceLabel(when!, nowAt()) })
+        ? t("ohbox.toastBulkResurface", { count: applied, when: resurfaceLabel(when!, nowAt(), cx.zone) })
         : t(action === "later" ? "ohbox.toastBulkLater" : "ohbox.toastBulkAside", { count: applied }),
   );
   return true;

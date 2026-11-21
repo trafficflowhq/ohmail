@@ -192,6 +192,7 @@ export function useOhboxLive(
     args,
     mirror,
     words: own.words,
+    zone: own.zone,
     answer: own.answer,
     pickTags: own.pickTags,
     ownFaceFor: where.ownFaceFor,
