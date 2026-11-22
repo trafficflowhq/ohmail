@@ -6,6 +6,7 @@ import "./quick-add.css";
 export interface QuickAddProps {
   /** Its name: "New event". */
   label: string;
+  ref?: Ref<HTMLDivElement>;
   /** The calendar the draft goes to: the line stands on its colour. */
   tone: CalendarTone;
   line: {
@@ -53,7 +54,7 @@ function marked(value: string, found: readonly (readonly [number, number])[]): R
  * same draft; the words that filled a field are marked in the line. Esc and the close leave it;
  * what becomes of the typed words is the app's to say.
  */
-export function QuickAdd({ label, tone, line, close, onAdd, children, still, busy }: QuickAddProps) {
+export function QuickAdd({ label, tone, line, close, onAdd, children, still, busy, ref }: QuickAddProps) {
   const own = toneOf(tone);
   const keys = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
@@ -78,11 +79,13 @@ export function QuickAdd({ label, tone, line, close, onAdd, children, still, bus
   return (
     <div className="oh-qa-wrap">
       <div
+        ref={ref}
         className={cx("oh-qa", own.className)}
         data-tone={own["data-tone"]}
         data-still={still ? "" : undefined}
         style={toneStyle(tone)}
         role="dialog"
+        tabIndex={-1}
         aria-label={label}
         aria-busy={busy || undefined}
         onKeyDown={keys}

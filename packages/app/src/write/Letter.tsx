@@ -263,6 +263,7 @@ function useLetterSend(attaching: boolean) {
       state: compose.sig,
       mailboxId: w.composeFrom.mailboxId,
       set: (sig) => w.onComposeFields({ ...compose, sig }),
+      remove: w.removeComposeSig,
     },
     go,
   );

@@ -1,6 +1,6 @@
 import { Fragment, useId, type KeyboardEvent } from "react";
 import { Button } from "../Primitives/Button.js";
-import { Dot } from "../Primitives/Dot.js";
+import { EndDot } from "../Primitives/EndDot.js";
 import { KeyHint } from "../Primitives/KeyHint.js";
 import "./key-help.css";
 import { Overlay } from "./Overlay.js";
@@ -61,8 +61,7 @@ export function KeyHelp({
     >
       <header className="oh-keyhelp-head">
         <h2 id={name} className="oh-text oh-display oh-keyhelp-title">
-          {title}
-          <Dot kind="ink" />
+          <EndDot kind="ink">{title}</EndDot>
         </h2>
         <Button kind="quiet" icon="x" label={close} onPress={onClose} />
       </header>
@@ -73,8 +72,7 @@ export function KeyHelp({
               <Fragment key={group.title}>
                 <h3 className="oh-text oh-display oh-keyhelp-group">
                   <span>
-                    {group.title}
-                    <Dot kind="ink" />
+                    <EndDot kind="ink">{group.title}</EndDot>
                   </span>
                 </h3>
                 {group.rows.map((row) => (

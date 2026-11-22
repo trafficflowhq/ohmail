@@ -264,6 +264,31 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect(await changesOf(w, seeded.accountId)).toMatchObject({ "calendar_event:create": 2, "calendar_event:update": 3 });
   }, 60_000);
 
+  it("echoes a finite series unchanged when a separate exception moves past its range", async () => {
+    const seeded = await seedConnection(w, { provider: "google", credential: google });
+    const series = eventOf(["UID:finite-series", "DTSTAMP:20261113T120000Z", "DTSTART:20231114T180000Z",
+      "DTEND:20231114T190000Z", "RRULE:FREQ=WEEKLY;COUNT=3", "SUMMARY:Wheel class"]);
+    const exception = eventOf(["UID:finite-series", "DTSTAMP:20261113T130000Z", "RECURRENCE-ID:20231121T180000Z",
+      "DTSTART:20261125T180000Z", "DTEND:20261125T190000Z", "SUMMARY:Wheel class, moved"]);
+    const readings = new Map<string, readonly ScriptedPage[]>([
+      ["", [{ items: [upsert("master", "first", series)] }]],
+      ["ready", [{ items: [upsert("changed", "moved", exception)] }]],
+    ]);
+    const reader = scriptedReader("google", { readings, endToken: (since) => since === null ? "ready" : "done" });
+    const deps = depsFor(w, providersOf({ google: { reader, http: silentHttp() } }), { oauth: { google: GOOGLE_REGISTRATION, microsoft: null } });
+    const master = async () => (await w.db.select({ id: calEvents.id, updatedAt: calEvents.updatedAt, version: calEvents.versionTag })
+      .from(calEvents).where(and(eq(calEvents.accountId, seeded.accountId), eq(calEvents.providerId, "master"))))[0];
+    expect(await calendarSyncPass(deps, seeded.due, never)).toMatchObject({ kind: "synced" });
+    const before = await master();
+    await makeDue(seeded.accountId);
+    expect(await calendarSyncPass(deps, seeded.due, never)).toMatchObject({ kind: "synced" });
+    expect(await master()).toEqual(before);
+    const matches = await w.db.select({ op: changeLog.op }).from(changeLog)
+      .where(and(eq(changeLog.accountId, seeded.accountId), eq(changeLog.entityType, "calendar_event"), eq(changeLog.entityId, before!.id)))
+      .orderBy(changeLog.seq);
+    expect(matches.map((row) => row.op)).toEqual(["create", "update"]);
+  });
+
   it("Microsoft: a whole reading excludes a day its window should show and no page did; a delta reading compares nothing", async () => {
     const seeded = await seedConnection(w, { provider: "microsoft", credential: { kind: "oauth", provider: "microsoft", refreshToken: new Secret(["lasting", "ms", "fixture"].join("-")) } });
     const series = (summary: string) => eventOf(["UID:wheel@x.test", "DTSTAMP:20261113T120000Z", "DTSTART;TZID=Europe/Zurich:20261117T180000",

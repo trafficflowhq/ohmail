@@ -31,8 +31,9 @@ describe("the read slot off the Ohbox", () => {
       window.location.hash = hash;
       await mountThread([tag, msg("a1", 0, { unread: false, labels: ["tg1"] }), msg("x2", 60, { labels: ["tg1"] })]);
       const pane = openLetter(document);
-      const opened = pane?.querySelector('[data-conv-id="a1"][aria-current="true"]');
+      const opened = pane?.querySelector('[data-conv-id="a1"]');
       expect(opened, `the premise: ${label} opens a1 in its conversation`).toBeTruthy();
+      expect(pane?.querySelector('[data-conv-id][aria-current="true"]')?.getAttribute("data-conv-id")).toBe("x2");
       expect(letterShown(document, "x2")?.hasAttribute("data-unseen"), "x2 is an unread panel").toBe(true);
       expect(readSlot(document)?.getAttribute("aria-label")).toBe("Mark unread");
       await click(readSlot(document), "the read slot");

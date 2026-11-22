@@ -122,5 +122,5 @@ small company in Zürich and we answer mail. A reasonable request gets a yes.
 ---
 
 Trademark policy for [ohmail](https://ohmail.app) · TrafficFlow GmbH, Zürich ·
-Questions: support@ohmail.app · Code licence: [LICENSE](LICENSE) ·
+Questions: support@ohmail.app · Code licence: [LICENSE](../../LICENSE) ·
 Copyright and third parties: [COPYRIGHT](COPYRIGHT)

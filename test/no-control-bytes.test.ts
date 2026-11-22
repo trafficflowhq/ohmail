@@ -34,10 +34,11 @@ import { offenderIn, TEXT, walk } from "./support/control-bytes.js";
  *
  *   1. THE PUBLISHED PAYLOAD — every root the publish script copies, filtered to the text kinds it
  *      treats as text. Anything else (images, fonts, archives) is binary by nature.
- *   2. THE ROOT DOCUMENTS the project is run from: `CLAUDE.md`, `README.md`, and every `.md` under
+ *   2. THE ROOT DOCUMENTS the project is run from: `AGENTS.md`, `README.md`, and every `.md` under
  *      the project's design notes and handoff documents. These are outside every payload root, and the cost of a
- *      control byte in them is exactly the cost this guard exists for: `CLAUDE.md` is the file
- *      everybody greps. Measured 2026-09-09 by planting a NUL in `CLAUDE.md` — the guard stayed
+ *      control byte in them is exactly the cost this guard exists for: `AGENTS.md` is the file
+ *      everybody greps. Measured 2026-09-09 by planting a NUL in the root assistant guide (then
+ *      `CLAUDE.md`) — the guard stayed
  *      GREEN, one test passing, because the file is in no payload root. 443 `.md` files, 0 hits.
  *
  * What this still does NOT cover, said out loud so the next reader does not assume it: the kit's own

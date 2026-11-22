@@ -4,7 +4,7 @@ import { NONE } from "../host/index.js";
 import { useText } from "../text/index.js";
 import type { CalendarEventFace } from "./faces.js";
 
-function verifiedCallLink(value: string | null | undefined): string | null {
+export function verifiedCallLink(value: string | null | undefined): string | null {
   if (!value || !/^https:\/\/[^/]/.test(value) || /[\s\p{Cc}\\]/u.test(value)) return null;
   try {
     const url = new URL(value);

@@ -142,7 +142,7 @@ describe("a file that migrates, in a checkout with no lane database", () => {
     await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
     const port = (srv.address() as { port: number }).port;
     try {
-      for (const e of ["apps", "packages", "node_modules", "test", "scripts", "tsconfig.base.json", "tsconfig.json"]) {
+      for (const e of ["apps", "packages", "node_modules", "test", "scripts", "tools", "tsconfig.json"]) {
         symlinkSync(join(REPO, e), join(root, e));
       }
       copyFileSync(join(REPO, "package.json"), join(root, "package.json"));

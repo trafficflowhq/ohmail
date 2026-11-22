@@ -165,6 +165,11 @@ const madeOf = (text: string, o: { readonly rule: string; readonly exdates?: rea
   return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ohmail//calendar//EN", ...zone, "BEGIN:VEVENT", ...event, "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
 };
 
+function isLegacySplit(body: unknown): boolean {
+  const act = body as { kind?: string; scope?: { kind?: string }; audience?: unknown } | null;
+  return act?.kind === "calendar_event_update" && act.scope?.kind === "following" && act.audience === undefined;
+}
+
 describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", () => {
   let w: World;
   const servers: StandIn[] = [];
@@ -183,6 +188,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     readonly autoSchedule?: boolean; readonly mailboxes?: readonly string[]; readonly proven?: ProvenRepeats;
     /** The shapes proven at this stand-in's place, in place of the bench's row. */
     readonly shapes?: readonly RepeatShape[];
+    readonly currentQueue?: boolean;
     readonly wrap?: (real: CalendarWriter) => CalendarWriter;
     /** Whom the connection signs in as, as its sign-in check stored it. */
     readonly principal?: string | null;
@@ -229,6 +235,11 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       door: async (key: string, act: unknown): Promise<string> => {
         try {
           const r = await recordCalendarWrite(ctx(), key, act, { proven });
+          // Preserve the queue format the legacy recovery journeys exercise.
+          if (!o.currentQueue && r.seq !== null && isLegacySplit(act)) {
+            await w.db.update(calWrites).set({ payload: sql`${calWrites.payload} #- '{part,from,confirmed}'` })
+              .where(and(eq(calWrites.accountId, t.accountId), eq(calWrites.idempotencyKey, `${key}:2`)));
+          }
           return `${r.answer.write?.state}${r.answer.write?.reason == null ? "" : ` ${r.answer.write.reason}`}`;
         } catch (err) {
           if (err instanceof ServiceError) return `${err.httpStatus} ${err.code}`;
@@ -297,6 +308,49 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
   /** What a change of the series' times rewrites in its own component, and nothing else. */
   const unchanged = (l: string) => !/^(DTSTART|DTEND|DTSTAMP|SEQUENCE|LAST-MODIFIED|RRULE)[;:]/.test(l);
 
+  it.each(["occurrence", "record", "following"] as const)("writes %s from the exact reviewed CalDAV exception", async (kind) => {
+    const at = String(Date.UTC(2026, 11, 15, 23));
+    const original = memberText({
+      uid: "weekly-clay", tz: NY, start: "20261124T180000", end: "20261124T190000",
+      rule: "FREQ=WEEKLY;BYDAY=TU;UNTIL=20270119T230000Z", summary: "Weekly clay",
+      days: [{ was: "20261215T180000", start: "20261215T200000", end: "20261215T210000", summary: "Moved lesson" }],
+    }).replace("SUMMARY:Moved lesson", "SUMMARY:Moved lesson\r\nDESCRIPTION:Keep the exception note");
+    const b = await bench({ "scope.ics": original }, { shapes: [], currentQueue: true });
+    const [master, child] = await b.rows("scope.ics");
+    expect(child?.recurrenceId).toBe(at);
+    const from = b.dav.seen.length;
+    const scope = kind === "record" ? { kind } : kind === "occurrence" ? { kind, at } : { kind, at, newEventId: randomUUID() };
+    const act = { kind: "calendar_event_update", eventId: child!.id, scope,
+      base: kind === "occurrence" ? child!.updatedAt.toISOString() : `${child!.updatedAt.toISOString()}/${master!.updatedAt.toISOString()}`,
+      audience: { organizer: null, guests: [] }, change: { title: "Reviewed lesson" } };
+    expect(await b.door("reviewed", act)).toBe("pending");
+    expect(await b.turn()).toBe("synced");
+    const sent = b.sent(from, "scope.ics");
+    if (kind === "following") {
+      expect(await b.writes()).toEqual(["reviewed applied", "reviewed:2 applied"]);
+      expect(sent.map((request) => [request.method, request.member, request.ifMatch, request.ifNoneMatch])).toEqual([
+        ["PUT", "a new member", null, "*"], ["PUT", "scope.ics", '"scope.ics-1"', null],
+      ]);
+      expect(daysOf(sent[0]!.body)).toEqual(daysOf(NINE_TUESDAYS).slice(3));
+      expect(sent[1]!.body).not.toContain("RECURRENCE-ID");
+      expect(await b.rows("scope.ics")).toHaveLength(1);
+    } else {
+      expect(await b.writes()).toEqual(["reviewed applied"]);
+      expect(sent.map((request) => [request.method, request.member, request.ifMatch])).toEqual([
+        ["PUT", "scope.ics", '"scope.ics-1"'],
+      ]);
+      const components = partsOf(sent[0]!.body).components.filter((component) => component.name === "VEVENT");
+      expect(components).toHaveLength(2);
+      expect(components[0]!.lines).toContain(kind === "record" ? "SUMMARY:Reviewed lesson" : "SUMMARY:Weekly clay");
+      expect(components[1]!.lines).toEqual(expect.arrayContaining([
+        "SUMMARY:Reviewed lesson", "DESCRIPTION:Keep the exception note", "DTSTART;TZID=America/New_York:20261215T200000",
+      ]));
+    }
+    expect(await b.door("reviewed", act)).toBe("applied");
+    expect(await b.turn()).toBe("synced");
+    expect(b.sent(from, "scope.ics")).toEqual(sent);
+  });
+
   describe("a new time for a series that ends on a day (UNTIL)", () => {
     it("moves the series' end with its start: nine Tuesdays at 18:00 become nine at 19:00, 19 January among them", async () => {
       const b = await bench({ "d.ics": NINE_TUESDAYS });
@@ -348,6 +402,29 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       expect(daysOf(sent[0]!.body).length).toBe(3);
       expect(masterOf(sent[1]!.body).find((l) => l.startsWith("RRULE"))).toBe("RRULE:FREQ=WEEKLY;UNTIL=20270120T000000Z;BYDAY=TU");
       expect(daysOf(sent[1]!.body)).toEqual(daysOf(NINE_TUESDAYS).slice(3).map((d) => new Date(Date.parse(d) + 3_600_000).toISOString()));
+    });
+
+    it.each([false, true])("creates the continuation before shortening the series and deduplicates Save (explicit audience: %s)", async (confirmAudience) => {
+      const b = await bench({ "d.ics": NINE_TUESDAYS }, { ...(confirmAudience ? { shapes: [] } : {}), currentQueue: true });
+      const [series] = await b.rows("d.ics");
+      const from = b.dav.seen.length;
+      const act = {
+        kind: "calendar_event_update", ...on(series!), scope: { kind: "following", at: String(Date.UTC(2026, 11, 15, 23)), newEventId: randomUUID() },
+        change: { title: "Updated term" }, ...(confirmAudience ? { audience: { organizer: null, guests: [] } } : {}),
+      };
+      expect(await b.door("confirmed", act)).toBe("pending");
+      expect(await b.turn()).toBe("synced");
+      expect(await b.writes()).toEqual(["confirmed applied", "confirmed:2 applied"]);
+      const sent = b.sent(from, "d.ics");
+      expect(sent.map((s) => [s.method, s.member, s.ifMatch, s.ifNoneMatch])).toEqual([
+        ["PUT", "a new member", null, "*"], ["PUT", "d.ics", '"d.ics-1"', null],
+      ]);
+      expect(daysOf(sent[0]!.body)).toEqual(daysOf(NINE_TUESDAYS).slice(3));
+      expect(daysOf(sent[1]!.body)).toEqual(daysOf(NINE_TUESDAYS).slice(0, 3));
+      expect(b.held().size).toBe(2);
+      expect(await b.door("confirmed", act)).toBe("applied");
+      expect(await b.turn()).toBe("synced");
+      expect(b.sent(from, "d.ics")).toEqual(sent);
     });
 
     it("refuses a new start on another day with no repeat named, at the door and past it, and the server is asked nothing", async () => {
@@ -514,6 +591,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       /** The second part as the door would record it, for the run past the door. */
       readonly second: Record<string, unknown>;
       readonly autoSchedule?: boolean;
+      readonly audience?: { organizer: string; guests: string[] };
       /** The drain's word for the first part. */
       readonly word: string;
     }
@@ -532,7 +610,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       {
         name: "weekly with no weekday named and an invitee, at a server that sends invitations itself; the same day excluded, the same move",
         text: memberText(Z("h1g", "FREQ=WEEKLY;COUNT=10", { excluded: ["20261228T090000"], more: [`ORGANIZER;CN=Mila:mailto:${MILA}`, `ATTENDEE;CN=Giulia;PARTSTAT=ACCEPTED:mailto:${GIULIA}`] })),
-        at: DEC_14, change: toTuesday, autoSchedule: true,
+        at: DEC_14, change: toTuesday, autoSchedule: true, audience: { organizer: MILA, guests: [GIULIA] },
         second: made({ ...toTuesday, repeat: "FREQ=WEEKLY;COUNT=7", invitees: [{ address: GIULIA, name: "Giulia", role: "required" }] }), word: "field_unwritable",
       },
       {
@@ -568,10 +646,10 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     /** A press recorded past the door, as the door records it: its first part, and its second naming where it comes from. */
     const plant = async (b: Awaited<ReturnType<typeof bench>>, c: Case, series: { id: string; updatedAt: Date }) => {
       const newEventId = randomUUID();
-      const first = await b.plant("k", { kind: "calendar_event_update", ...on(series), scope: { kind: "following", at: c.at, newEventId }, change: c.change }, { part: { of: "k", n: 1 } });
+      const first = await b.plant("k", { kind: "calendar_event_update", ...on(series), scope: { kind: "following", at: c.at, newEventId }, change: c.change, ...(c.audience ? { audience: c.audience } : {}) }, { part: { of: "k", n: 1 } });
       const named = ["title", "notes", "place", "callLink", "busy", "private", "alarms"].filter((f) => c.change[f] !== undefined) as "title"[];
       await b.plant("k:2", { kind: "calendar_event_create", eventId: newEventId, calendarId: await b.calendarId(), event: c.second }, {
-        after: first.id, part: { of: "k", n: 2, from: { eventId: series.id, at: c.at, named } },
+        after: first.id, part: { of: "k", n: 2, from: { eventId: series.id, at: c.at, named, ...(c.audience ? { confirmed: true as const } : {}) } },
       });
     };
 
@@ -580,7 +658,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       for (const c of REFUSED) {
         const atDoor = await bench({ "s.ics": c.text }, { autoSchedule: c.autoSchedule ?? false, mailboxes: [MILA] });
         const [series] = await atDoor.rows("s.ics");
-        const door = await atDoor.door("term", { kind: "calendar_event_update", ...on(series!), scope: { kind: "following", at: c.at, newEventId: randomUUID() }, change: c.change });
+        const door = await atDoor.door("term", { kind: "calendar_event_update", ...on(series!), scope: { kind: "following", at: c.at, newEventId: randomUUID() }, change: c.change, ...(c.audience ? { audience: c.audience } : {}) });
         const doorTurn = door === "pending" ? await atDoor.turn() : "(no turn)";
         const past = await bench({ "s.ics": c.text }, { autoSchedule: c.autoSchedule ?? false, mailboxes: [MILA] });
         const [planted] = await past.rows("s.ics");
@@ -643,10 +721,11 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     const GIULIA = "giulia@example.test";
     /** The organizer and invitee lines of a text's series, unfolded. */
     const peopleOf = (text: string) => masterOf(text).filter((l) => /^(ORGANIZER|ATTENDEE)[;:]/.test(l));
-    const split = async (b: Awaited<ReturnType<typeof bench>>, member: string, change: Record<string, unknown> = { title: "Glaze critique, the new term" }) => {
+    const split = async (b: Awaited<ReturnType<typeof bench>>, member: string, audience: { organizer: string; guests: string[] }) => {
       const [series] = await b.rows(member);
       return b.door("term", {
-        kind: "calendar_event_update", ...on(series!), scope: { kind: "following", at: String(Date.UTC(2026, 11, 14, 8)), newEventId: randomUUID() }, change,
+        kind: "calendar_event_update", ...on(series!), scope: { kind: "following", at: String(Date.UTC(2026, 11, 14, 8)), newEventId: randomUUID() },
+        change: { title: "Glaze critique, the new term" }, audience,
       });
     };
 
@@ -659,14 +738,14 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       for (const boxes of [[MILA, MILA_2], [MILA_2, MILA]]) {
         const b = await bench({ "critique.ics": TWO }, { autoSchedule: true, mailboxes: boxes });
         const from = b.dav.seen.length;
-        expect(await split(b, "critique.ics")).toBe("pending");
+        expect(await split(b, "critique.ics", { organizer: MILA_2, guests: [GIULIA] })).toBe("pending");
         expect(await b.turn()).toBe("synced");
         expect(await b.writes()).toEqual(["term applied", "term:2 applied"]);
         const sent = b.sent(from, "critique.ics");
-        expect(sent.map((x) => [x.method, x.member, x.ifMatch, x.ifNoneMatch])).toEqual([["PUT", "critique.ics", '"critique.ics-1"', null], ["PUT", "a new member", null, "*"]]);
+        expect(sent.map((x) => [x.method, x.member, x.ifMatch, x.ifNoneMatch])).toEqual([["PUT", "a new member", null, "*"], ["PUT", "critique.ics", '"critique.ics-1"', null]]);
         // The series' end leaves its people as they were; the new series goes out under the series' own organizer, its own line not asked.
-        expect(peopleOf(sent[0]!.body)).toEqual(peopleOf(TWO));
-        expect(peopleOf(sent[1]!.body)).toEqual([
+        expect(peopleOf(sent[1]!.body)).toEqual(peopleOf(TWO));
+        expect(peopleOf(sent[0]!.body)).toEqual([
           `ORGANIZER;CN=Mila:mailto:${MILA_2}`, `ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED:mailto:${MILA_2}`,
           `ATTENDEE;CN=Giulia;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${GIULIA}`,
         ]);
@@ -683,11 +762,11 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       });
       const b = await bench({ "roles.ics": ROLES }, { autoSchedule: true, mailboxes: [MILA] });
       const from = b.dav.seen.length;
-      expect(await split(b, "roles.ics")).toBe("pending");
+      expect(await split(b, "roles.ics", { organizer: MILA, guests: [GIULIA, ["ben", "example.test"].join("@")] })).toBe("pending");
       expect(await b.turn()).toBe("synced");
       expect(await b.writes()).toEqual(["term applied", "term:2 applied"]);
       const sent = b.sent(from, "roles.ics");
-      expect(peopleOf(sent[1]!.body)).toEqual([
+      expect(peopleOf(sent[0]!.body)).toEqual([
         `ORGANIZER;CN=Mila:mailto:${MILA}`, `ATTENDEE;CN=Giulia;ROLE=NON-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${GIULIA}`,
         "ATTENDEE;CN=Ben;ROLE=CHAIR;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:ben@example.test",
       ]);
@@ -700,11 +779,11 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       });
       const b = await bench({ "chair.ics": CHAIR }, { autoSchedule: true, mailboxes: [MILA] });
       const from = b.dav.seen.length;
-      expect(await split(b, "chair.ics")).toBe("pending");
+      expect(await split(b, "chair.ics", { organizer: MILA, guests: [GIULIA] })).toBe("pending");
       expect(await b.turn()).toBe("synced");
       const sent = b.sent(from, "chair.ics");
-      expect(sent.map((x) => [x.method, x.member])).toEqual([["PUT", "chair.ics"], ["PUT", "a new member"]]);
-      expect(peopleOf(sent[1]!.body)).toEqual([
+      expect(sent.map((x) => [x.method, x.member])).toEqual([["PUT", "a new member"], ["PUT", "chair.ics"]]);
+      expect(peopleOf(sent[0]!.body)).toEqual([
         `ORGANIZER;CN=Mila:mailto:${MILA}`, `ATTENDEE;CN=Mila;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:${MILA}`,
         `ATTENDEE;CN=Giulia;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${GIULIA}`,
       ]);
@@ -786,7 +865,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
         uid: "kiln@studio.example.test", tz: ZH, start: "20261123T090000", end: "20261123T100000", rule: "FREQ=WEEKLY;BYDAY=MO", summary: "Kiln rota",
         more: [`ORGANIZER;CN=Mila:mailto:${MILA_OLD}`, `ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED:mailto:${MILA_OLD}`, `ATTENDEE;CN=Giulia;PARTSTAT=ACCEPTED:mailto:${GIULIA}`],
       });
-      const retitle = (s: { id: string; updatedAt: Date }) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change: { title: "Kiln rota, renamed" } });
+      const retitle = (s: { id: string; updatedAt: Date }) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change: { title: "Kiln rota, renamed" }, audience: { organizer: MILA_OLD, guests: [GIULIA] } });
       // While that mailbox is the account's, the series is its own.
       const kept = await bench({ "kiln.ics": KILN }, { autoSchedule: true, mailboxes: [MILA, MILA_OLD] });
       const [own] = await kept.rows("kiln.ics");
@@ -1035,10 +1114,10 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     const one = (uid: string, people: readonly string[]) => series(uid, people).replace("RRULE:FREQ=WEEKLY;BYDAY=MO\r\n", "");
     type Row = { id: string; updatedAt: Date };
     const ACTS: Record<string, (s: Row, newEventId: string, audience?: { organizer: string; guests: string[] }) => unknown> = {
-      retitle: (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change: { title: "Renamed by the account" } }),
-      "new time": (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change: { start: zoned("20261123T140000", ZH), end: zoned("20261123T150000", ZH) } }),
+      retitle: (s, _id, audience) => ({ kind: "calendar_event_update", ...on(s), ...(audience ? { audience } : {}), scope: { kind: "record" }, change: { title: "Renamed by the account" } }),
+      "new time": (s, _id, audience) => ({ kind: "calendar_event_update", ...on(s), ...(audience ? { audience } : {}), scope: { kind: "record" }, change: { start: zoned("20261123T140000", ZH), end: zoned("20261123T150000", ZH) } }),
       "cancel-a-day": (s, _id, audience) => ({ kind: "calendar_event_delete", ...on(s), ...(audience ? { audience } : {}), scope: { kind: "occurrence", at: DEC_7 } }),
-      split: (s, newEventId) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "following", at: DEC_14, newEventId }, change: { title: "My way from 14 December" } }),
+      split: (s, newEventId, audience) => ({ kind: "calendar_event_update", ...on(s), ...(audience ? { audience } : {}), scope: { kind: "following", at: DEC_14, newEventId }, change: { title: "My way from 14 December" } }),
       remove: (s, _id, audience) => ({ kind: "calendar_event_delete", ...on(s), ...(audience ? { audience } : {}), scope: { kind: "record" } }),
       answer: (s) => ({ kind: "calendar_event_answer", ...on(s), scope: { kind: "record" }, answer: "accepted" }),
     };
@@ -1137,21 +1216,23 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       const act = ACTS[name]!(row!, newEventId, audience);
       const door = await b.door("k", act);
       if (door !== "pending") {
+        const key = door === "refused version_stale" ? "drain" : "k";
         if (name === "split") {
-          const first = await b.plant("k", act, { part: { of: "k", n: 1 } });
-          await b.plant("k:2", { kind: "calendar_event_create", eventId: newEventId, calendarId: await b.calendarId(), event: madeFields }, {
-            after: first.id, part: { of: "k", n: 2, from: { eventId: row!.id, at: DEC_14, named: ["title"] } },
+          const first = await b.plant(key, act, { part: { of: key, n: 1 } });
+          await b.plant(`${key}:2`, { kind: "calendar_event_create", eventId: newEventId, calendarId: await b.calendarId(), event: madeFields }, {
+            after: first.id, part: { of: key, n: 2, from: { eventId: row!.id, at: DEC_14, named: ["title"] } },
           });
-        } else await b.plant(door === "refused version_stale" ? "drain" : "k", act);
+        } else await b.plant(key, act);
       }
       const from = b.dav.seen.length;
       expect(await b.turn()).toBe("synced");
       return { door, past: `${(await b.writes()).join("; ")} | ${b.sent(from, "s.ics").map((x) => x.method).join(", ") || "nothing written"}` };
     };
-    const expected = ({ whose, deletionUnconfirmed }: Case, name: string): { door: string; past: string } => {
-      // Ownership still permits edits here, but a cancellation cannot confirm its guests without an organizer.
-      if (deletionUnconfirmed && (name === "remove" || name === "cancel-a-day")) {
-        return { door: "refused version_stale", past: "k refused version_stale; drain refused version_stale | nothing written" };
+    const expected = ({ whose, deletionUnconfirmed, single }: Case, name: string): { door: string; past: string } => {
+      // Without an organizer, neither recurring changes nor cancellations can confirm the audience.
+      if (deletionUnconfirmed && (name === "remove" || name === "cancel-a-day" || (!single && (name === "retitle" || name === "split")))) {
+        const refusedSplit = name === "split" ? "; drain:2 refused earlier_refused" : "";
+        return { door: "refused version_stale", past: `k refused version_stale; drain refused version_stale${refusedSplit} | nothing written` };
       }
       const theirs = whose !== "own";
       if (name === "answer") {
@@ -1305,11 +1386,11 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
   describe("a press on a day and the days after it, made on a copy someone else has since ended earlier", () => {
     const GIULIA = "giulia@example.test";
     const MILA = "mila@studio.example.test";
-    const press = async (b: Awaited<ReturnType<typeof bench>>, member: string) => {
+    const press = async (b: Awaited<ReturnType<typeof bench>>, member: string, audience?: { organizer: string; guests: string[] }) => {
       const [series] = await b.rows(member);
       return b.door("term", {
         kind: "calendar_event_update", ...on(series!), scope: { kind: "following", at: String(Date.UTC(2026, 11, 14, 8)), newEventId: randomUUID() },
-        change: { title: "From 14 December" },
+        change: { title: "From 14 December" }, ...(audience ? { audience } : {}),
       });
     };
     const MONDAYS = memberText({ uid: "n@studio.example.test", tz: ZH, start: "20261123T090000", end: "20261123T100000", rule: "FREQ=WEEKLY;BYDAY=MO", summary: "N weekly" });
@@ -1365,13 +1446,13 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
         more: [`ORGANIZER;CN=Mila:mailto:${MILA}`, `ATTENDEE;CN=Giulia;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${GIULIA}`],
       });
       const b = await bench({ "critique.ics": OWN }, { autoSchedule: true, mailboxes: [MILA] });
-      expect(await press(b, "critique.ics")).toBe("pending");
+      expect(await press(b, "critique.ics", { organizer: MILA, guests: [GIULIA] })).toBe("pending");
       const their = OWN.replace("RRULE:FREQ=WEEKLY;BYDAY=MO\r\n", "RRULE:FREQ=WEEKLY;UNTIL=20261130T090000Z;BYDAY=MO\r\n");
       b.dav.put("studio", "critique.ics", their, '"critique.ics-2"');
       const from = b.dav.seen.length;
       expect(await b.turn()).toBe("synced");
       expect(await b.writes()).toEqual(["term refused version_stale", "term:2 refused earlier_refused"]);
-      expect(b.sent(from, "critique.ics").map((x) => [x.method, x.member, x.ifMatch, x.ifNoneMatch])).toEqual([["PUT", "critique.ics", '"critique.ics-1"', null]]);
+      expect(b.sent(from, "critique.ics")).toEqual([]);
       expect([b.held().get("critique.ics") === their, [...b.held().keys()]]).toEqual([true, ["critique.ics"]]);
     });
   });
@@ -1707,7 +1788,10 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
         async continueSeries(...args: Parameters<CalendarWriter["continueSeries"]>) {
           const how = plan[n++] ?? "real";
           if (how === "cut") throw new Error("the connection is down");
-          if (how === "refused") at.b!.dav.answerNext(403);
+          if (how === "refused") {
+            const uid = args[2].key.hex.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+            at.b!.dav.refuseNextWriteOf(`${uid}.ics`, 403);
+          }
           return real.continueSeries(...args);
         },
       };
@@ -3523,13 +3607,14 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     /** One event with the same invitee, no repeat. */
     const ONE = OWN.replace("RRULE:FREQ=WEEKLY;BYDAY=MO\r\n", "").replace("UID:critique@", "UID:one@");
     const DEC_7 = String(Date.UTC(2026, 11, 7, 8));
+    const audience = { organizer: MILA, guests: [GIULIA] };
     const ACTS: Record<string, { readonly member: "own" | "one"; readonly act: (s: { id: string; updatedAt: Date }) => unknown }> = {
-      "the whole series retitled": { member: "own", act: (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change: { title: "Renamed" } }) },
-      "the whole series at a new time": { member: "own", act: (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change: { start: zoned("20261123T110000", ZH), end: zoned("20261123T120000", ZH) } }) },
-      "the whole series removed": { member: "own", act: (s) => ({ kind: "calendar_event_delete", ...on(s), scope: { kind: "record" }, audience: { organizer: MILA, guests: [GIULIA] } }) },
-      "one day moved": { member: "own", act: (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "occurrence", at: DEC_7 }, change: { start: zoned("20261207T140000", ZH), end: zoned("20261207T150000", ZH) } }) },
-      "one day cancelled": { member: "own", act: (s) => ({ kind: "calendar_event_delete", ...on(s), scope: { kind: "occurrence", at: DEC_7 }, audience: { organizer: MILA, guests: [GIULIA] } }) },
-      "a repeat put on one event": { member: "one", act: (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change: { repeat: "FREQ=WEEKLY;BYDAY=MO" } }) },
+      "the whole series retitled": { member: "own", act: (s) => ({ kind: "calendar_event_update", ...on(s), audience, scope: { kind: "record" }, change: { title: "Renamed" } }) },
+      "the whole series at a new time": { member: "own", act: (s) => ({ kind: "calendar_event_update", ...on(s), audience, scope: { kind: "record" }, change: { start: zoned("20261123T110000", ZH), end: zoned("20261123T120000", ZH) } }) },
+      "the whole series removed": { member: "own", act: (s) => ({ kind: "calendar_event_delete", ...on(s), scope: { kind: "record" }, audience }) },
+      "one day moved": { member: "own", act: (s) => ({ kind: "calendar_event_update", ...on(s), audience, scope: { kind: "occurrence", at: DEC_7 }, change: { start: zoned("20261207T140000", ZH), end: zoned("20261207T150000", ZH) } }) },
+      "one day cancelled": { member: "own", act: (s) => ({ kind: "calendar_event_delete", ...on(s), scope: { kind: "occurrence", at: DEC_7 }, audience }) },
+      "a repeat put on one event": { member: "one", act: (s) => ({ kind: "calendar_event_update", ...on(s), audience, scope: { kind: "record" }, change: { repeat: "FREQ=WEEKLY;BYDAY=MO" } }) },
     };
 
     for (const autoSchedule of [false, true]) {
@@ -3622,11 +3707,12 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
         more: [`ORGANIZER;CN=Mila:mailto:${MILA}`, `ATTENDEE;CN=Giulia;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${GIULIA}`],
       });
       const DEC_7 = String(Date.UTC(2026, 11, 7, 8));
+      const audience = { organizer: MILA, guests: [GIULIA] };
       const acts: Record<string, (s: Row) => unknown> = {
-        "the series' reminders alone": (s) => record(s, { alarms: [30] }),
-        "one day's reminders alone": (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "occurrence", at: DEC_7 }, change: { alarms: [30] } }),
-        "the series' reminders and its title": (s) => record(s, { alarms: [30], title: "Renamed" }),
-        "one day's reminders and its place": (s) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "occurrence", at: DEC_7 }, change: { alarms: [30], place: "Studio 3" } }),
+        "the series' reminders alone": (s) => ({ ...record(s, { alarms: [30] }), audience }),
+        "one day's reminders alone": (s) => ({ kind: "calendar_event_update", ...on(s), audience, scope: { kind: "occurrence", at: DEC_7 }, change: { alarms: [30] } }),
+        "the series' reminders and its title": (s) => ({ ...record(s, { alarms: [30], title: "Renamed" }), audience }),
+        "one day's reminders and its place": (s) => ({ kind: "calendar_event_update", ...on(s), audience, scope: { kind: "occurrence", at: DEC_7 }, change: { alarms: [30], place: "Studio 3" } }),
       };
       const seen: Record<string, string> = {};
       for (const [name, act] of Object.entries(acts)) {
@@ -3847,6 +3933,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       }), at: zh(12, 14), autoSchedule: true, days: [10, 3, 7] },
     ];
     /** What a new series of the days writes anew in the series' own component; every other line is carried as it is. */
+    const audience = { organizer: MILA, guests: [GIULIA] };
     const anew = /^(UID|DTSTAMP|DTSTART|DTEND|RRULE|EXDATE|SEQUENCE|CREATED|LAST-MODIFIED|SUMMARY|ATTENDEE)[;:]/;
 
     it("ends the series and makes the days after it a series of their own: two writes, no day lost, none come back, every line carried", async () => {
@@ -3858,24 +3945,27 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
         const from = b.dav.seen.length;
         const door = await b.door("term", {
           kind: "calendar_event_update", ...on(series!), scope: { kind: "following", at: k.at, newEventId: randomUUID() },
-          change: { title: "Kiln, the new term", ...k.change },
+          change: { title: "Kiln, the new term", ...k.change }, ...(k.autoSchedule ? { audience } : {}),
         });
         const turn = door === "pending" ? await b.turn() : "(no turn)";
         const sent = b.sent(from, "s.ics");
-        const made = sent[1]?.body ?? "";
+        const made = sent[k.autoSchedule ? 0 : 1]?.body ?? "";
+        const shortened = sent[k.autoSchedule ? 1 : 0]?.body;
         seen[k.name] = {
           door, turn, writes: await b.writes(),
           requests: sent.map((x) => [x.method, x.member, x.ifMatch === null ? null : "the press's own", x.ifNoneMatch]),
-          days: [daysOf(text).length, sent[0] === undefined ? null : daysOf(sent[0].body).length, made === "" ? null : daysOf(made).length],
+          days: [daysOf(text).length, shortened === undefined ? null : daysOf(shortened).length, made === "" ? null : daysOf(made).length],
           // Every line of the series' own component, but what a new series writes anew, is in the new one as it was.
           carried: made === "" ? null : masterOf(text).filter((l) => !anew.test(l)).every((l) => masterOf(made).includes(l)),
           // The series' end leaves the object outside its own component as it was, but the changed days from that day on.
-          zones: sent[0] === undefined ? null : JSON.stringify(partsOf(sent[0].body).components.filter((c) => c.name === "VTIMEZONE")) === JSON.stringify(partsOf(text).components.filter((c) => c.name === "VTIMEZONE")),
+          zones: shortened === undefined ? null : JSON.stringify(partsOf(shortened).components.filter((c) => c.name === "VTIMEZONE")) === JSON.stringify(partsOf(text).components.filter((c) => c.name === "VTIMEZONE")),
         };
       }
       expect(seen).toEqual(Object.fromEntries(KINDS.map((k) => [k.name, {
         door: "pending", turn: "synced", writes: ["term applied", "term:2 applied"],
-        requests: [["PUT", "s.ics", "the press's own", null], ["PUT", "a new member", null, "*"]],
+        requests: k.autoSchedule
+          ? [["PUT", "a new member", null, "*"], ["PUT", "s.ics", "the press's own", null]]
+          : [["PUT", "s.ics", "the press's own", null], ["PUT", "a new member", null, "*"]],
         days: [...k.days], carried: true, zones: true,
       }])));
       // No day is lost and none comes back: the series' days are its end's and the new series'.
@@ -3981,7 +4071,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       { name: "a day and the days after it: from the first day", member: "plain", act: (s) => splitAct(s, NOV_23), plant: (s, b) => plantSplit(b, s, NOV_23, { title: "From that day on" }, fields({ start: zoned("20261123T090000", ZH), end: zoned("20261123T100000", ZH), repeat: "FREQ=WEEKLY;COUNT=10;BYDAY=MO" })) },
       { name: "a day and the days after it: from a moment before the first day", member: "plain", act: (s) => splitAct(s, at(2026, 11, 16)), plant: (s, b) => plantSplit(b, s, at(2026, 11, 16), { title: "From that day on" }, fields()) },
       { name: "a day and the days after it: under a key of 63 characters", member: "plain", key: "k".repeat(63), act: (s) => splitAct(s, DEC_14), plant: async (s, b) => { await b.plant("k".repeat(63), splitAct(s, DEC_14), { part: { of: "k".repeat(63), n: 1 } }); } },
-      { name: "a day and the days after it: of a series whose organizer's own line chairs it", member: "chair", act: (s) => splitAct(s, DEC_14) },
+      { name: "a day and the days after it: of a series whose organizer's own line chairs it", member: "chair", act: (s) => ({ ...splitAct(s, DEC_14), audience: { organizer: MILA, guests: [GIULIA] } }) },
       { name: "a day and the days after it: with no repeat for the days after", member: "plain", act: (s) => splitAct(s, DEC_14, { repeat: null }), plant: (s, b) => plantSplit(b, s, DEC_14, { repeat: null }, fields()) },
       { name: "a day and the days after it: with invitees named in the change", member: "plain", act: (s) => splitAct(s, DEC_14, { invitees: [{ address: GIULIA, name: null, role: "required" }] }), plant: (s, b) => plantSplit(b, s, DEC_14, { invitees: [{ address: GIULIA, name: null, role: "required" }] }, fields()) },
       { name: "a day and the days after it: at a day that is none of the series'", member: "plain", act: (s) => splitAct(s, DEC_8), plant: (s, b) => plantSplit(b, s, DEC_8, { title: "From that day on" }, fields({ start: zoned("20261208T090000", ZH), end: zoned("20261208T100000", ZH), repeat: "FREQ=WEEKLY;COUNT=7;BYDAY=MO" })) },

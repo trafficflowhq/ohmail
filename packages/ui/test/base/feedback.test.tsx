@@ -400,8 +400,9 @@ describe("Empty, WaitRow, RefusalLine", () => {
   });
 
   it("the mark is named as the product's name with its full stop", () => {
-    render(<Empty mark="oh" label="6 decided" />);
+    render(<Empty mark="oh" label="6 decided." />);
     expect(screen.getByLabelText("oh.")).toBeTruthy();
+    expect(screen.getByText("decided", { exact: true }).parentElement?.textContent).toBe("6 decided");
   });
 
   it("an empty place draws the kit's one mark: the same node a page's mark is, hot while something waits", () => {

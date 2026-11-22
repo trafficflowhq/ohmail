@@ -103,6 +103,7 @@
     "toastAlreadySent": "This message had already been sent. It went once.",
     "toastUseDraft": "Draft moved to the editor.",
     "toastDiscard": "Discarded",
+    "signatureRemoved": "Signature removed",
     "cancel": "Cancel",
     "cancelWhat": "This deletes what you've written, here and on your account. It isn't recoverable.",
     "cancelWhatLocal": "This deletes what you've written. It isn't recoverable.",

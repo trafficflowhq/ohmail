@@ -1,6 +1,6 @@
 import { useRef, useState, type RefObject } from "react";
 import { clockTime, dayOfIso, type CalendarPort } from "@ohmail/app-logic/calendar";
-import { Button, Field, Menu, MenuItem } from "@ohmail/ui/base";
+import { Button, Field, Menu, MenuItem, MenuRule } from "@ohmail/ui/base";
 import { Hours } from "../calsettings/view/Hours.js";
 import { useCalendarSettings } from "../calsettings/settings-read.js";
 import type { CalendarPlaceId } from "../frame/contract.js";
@@ -22,6 +22,7 @@ interface CalendarHeadMenuProps {
   anchors: Readonly<Record<Exclude<HeadMenu, "hours">, ButtonRef>>;
   views: readonly { value: ViewId; label: string; keyHint: string }[];
   dated: boolean;
+  desktop: boolean;
   toDate: (day: string) => void;
   goToView: (view: ViewId, day: string) => void;
   select: Select;
@@ -43,6 +44,7 @@ export function CalendarHeadMenu({
   anchors,
   views,
   dated,
+  desktop,
   toDate,
   goToView,
   select,
@@ -57,11 +59,8 @@ export function CalendarHeadMenu({
 }: CalendarHeadMenuProps) {
   const t = useText("calendar");
   const ts = useText("calsettings");
-  const locale = useLocale();
-  const check = useCalendarCheck();
-  const reading = useCalendarSettings(port, "none");
   const { place } = where;
-  const timed = place === "day" || place === "week";
+  const reading = useCalendarSettings(port, "none");
   const run = (act: () => void) => () => {
     onClose();
     act();
@@ -97,61 +96,139 @@ export function CalendarHeadMenu({
   return (
     <Menu key={menu} open label={t(menu)} anchor={anchors[menu]} right onClose={onClose}>
       {menu === "more" ? (
-        <>
-          {dated ? (
-            <>
-              <MenuItem icon="back" keyHint="[" onPress={run(() => step(-1))}>
-                {t("before")}
-              </MenuItem>
-              <MenuItem icon="fwd" keyHint="]" onPress={run(() => step(1))}>
-                {t("after")}
-              </MenuItem>
-              <MenuItem icon="calendar" keyHint="t" onPress={run(today)}>
-                {t("today")}
-              </MenuItem>
-              <MenuItem icon="day" keyHint="g d" onPress={() => onOpen("date")}>
-                {t("goToDate")}
-              </MenuItem>
-            </>
-          ) : null}
-          <MenuItem icon="search" keyHint="/" onPress={run(search)}>
-            {t("search")}
+        <MoreItems
+          {...{
+            where,
+            settings,
+            port,
+            dated,
+            desktop,
+            run,
+            today,
+            onOpen,
+            search,
+            step,
+            invitations,
+            agenda,
+            openSettings,
+          }}
+        />
+      ) : null}
+      {(!desktop || menu !== "more") &&
+        views.map(({ value, label, keyHint }) => (
+          <MenuItem
+            key={value}
+            checked={value === place}
+            keyHint={keyHint}
+            onPress={run(() => select(value))}
+          >
+            {label}
           </MenuItem>
+        ))}
+    </Menu>
+  );
+}
+
+function MoreItems({
+  where,
+  settings,
+  port,
+  dated,
+  desktop,
+  run,
+  today,
+  onOpen,
+  search,
+  step,
+  invitations,
+  agenda,
+  openSettings,
+}: Pick<
+  CalendarHeadMenuProps,
+  | "where"
+  | "settings"
+  | "port"
+  | "dated"
+  | "desktop"
+  | "today"
+  | "onOpen"
+  | "search"
+  | "step"
+  | "invitations"
+  | "agenda"
+  | "openSettings"
+> & { run: (act: () => void) => () => void }) {
+  const t = useText("calendar");
+  const ts = useText("calsettings");
+  const locale = useLocale();
+  const check = useCalendarCheck();
+  const reading = useCalendarSettings(port, "none");
+  const { place } = where;
+  const timed = place === "day" || place === "week";
+  const unit = place === "year" || place === "month" || place === "week" ? place : "day";
+  return (
+    <>
+      {dated ? (
+        <>
+          <MenuItem icon="calendar" keyHint="t" onPress={run(today)}>
+            {t("today")}
+          </MenuItem>
+          <MenuItem icon="day" keyHint="g d" onPress={() => onOpen("date")}>
+            {t("goToDate")}
+          </MenuItem>
+        </>
+      ) : null}
+      <MenuItem icon="search" keyHint="/" onPress={run(search)}>
+        {t("search")}
+      </MenuItem>
+      {!desktop && dated && (
+        <>
+          <MenuItem icon="back" keyHint="[" onPress={run(() => step(-1))}>
+            {t("stepBefore", { unit })}
+          </MenuItem>
+          <MenuItem icon="fwd" keyHint="]" onPress={run(() => step(1))}>
+            {t("stepAfter", { unit })}
+          </MenuItem>
+        </>
+      )}
+      {!desktop && (
+        <>
           <MenuItem icon="invite" keyHint="g i" onPress={run(invitations)}>
             {t("invitations")}
           </MenuItem>
           <MenuItem icon="agenda" keyHint="g a" onPress={run(agenda)}>
             {t("agenda")}
           </MenuItem>
-          {timed ? (
-            <MenuItem
-              icon="clock"
-              note={ts("view.hourRange", {
-                from: clockTime(settings.hours.from, locale),
-                to: settings.hours.to === 1440 ? "24:00" : clockTime(settings.hours.to, locale),
-              })}
-              disabled={reading.said === null || reading.save === "none"}
-              onPress={() => onOpen("hours")}
-            >
-              {ts("view.hours")}
-            </MenuItem>
-          ) : null}
-          {check ? (
-            <MenuItem icon="pull" keyHint="p" disabled={check.busy} onPress={run(check.run)}>
-              {ts("accounts.checkNow")}
-            </MenuItem>
-          ) : null}
-          <MenuItem icon="settings" keyHint="g ," onPress={run(openSettings)}>
-            {t("settings")}
+        </>
+      )}
+      {(timed || check) && <MenuRule />}
+      {timed ? (
+        <MenuItem
+          icon="clock"
+          note={ts("view.hourRange", {
+            from: clockTime(settings.hours.from, locale),
+            to: settings.hours.to === 1440 ? "24:00" : clockTime(settings.hours.to, locale),
+          })}
+          disabled={reading.said === null || reading.save === "none"}
+          onPress={() => onOpen("hours")}
+        >
+          {ts("view.hours")}
+        </MenuItem>
+      ) : null}
+      {check ? (
+        <>
+          {timed && <MenuRule />}
+          <MenuItem icon="pull" keyHint="p" disabled={check.busy} onPress={run(check.run)}>
+            {ts("accounts.checkNow")}
           </MenuItem>
         </>
       ) : null}
-      {views.map(({ value, label, keyHint }) => (
-        <MenuItem key={value} checked={value === place} keyHint={keyHint} onPress={run(() => select(value))}>
-          {label}
+      {!desktop && (
+        <MenuItem icon="settings" keyHint="g ," onPress={run(openSettings)}>
+          {t("settings")}
         </MenuItem>
-      ))}
-    </Menu>
+      )}
+    </>
   );
 }
 

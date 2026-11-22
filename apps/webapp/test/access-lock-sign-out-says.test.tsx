@@ -28,7 +28,7 @@ const FINISHED: SignOutResult = { cleared: true, remaining: [], inventoryComplet
 let outcome: SignOutResult = FINISHED;
 vi.mock("../app/sign-out", async (original) => ({
   ...await original<typeof import("../app/sign-out")>(),
-  signOut: vi.fn(async () => outcome),
+  signOutAndSettle: vi.fn(async () => outcome),
 }));
 
 const account = (messages as unknown as { account: Record<string, string> }).account;

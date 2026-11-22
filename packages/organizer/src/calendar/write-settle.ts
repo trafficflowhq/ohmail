@@ -23,10 +23,13 @@ export interface ClaimedWrite {
   readonly op: string;
   readonly calendarId: string;
   readonly calendarProviderId: string;
+  readonly calendarAccess?: string;
+  readonly createdAt?: Date;
   readonly eventId: string | null;
   readonly baseVersionTag: string | null;
   /** The stored event is still the one the write stood in for (a new event not yet named by the provider). */
   readonly provisional: boolean;
+  readonly series?: boolean;
   readonly toCalendarId: string | null;
   /** What its row keeps once applied, in place of its act (`appliedPayloadOf`): at most the day a series' end ended it at. */
   readonly kept: Readonly<Record<string, string>>;
@@ -148,7 +151,9 @@ export async function settleGivenBack(ctx: SettleContext, w: ClaimedWrite, cut =
 /** The provider's version of the object as its answer names it, for the writes that wait behind this one. */
 function versionIn(items: readonly ChangeItem[], providerId: string | null): string | null {
   const ups = items.filter((i): i is Upsert => i.kind === "upsert");
-  const own = ups.find((u) => u.id === providerId && u.event.recurrenceId === null) ?? ups.find((u) => u.event.recurrenceId === null) ?? ups[0];
+  const own = providerId === null
+    ? ups.find((u) => u.event.recurrenceId === null)
+    : ups.find((u) => u.id === providerId && u.event.recurrenceId === null);
   return own === undefined || own.version === "" ? null : own.version;
 }
 
@@ -203,6 +208,7 @@ export async function settleApplied(
         eq(calWrites.accountId, ctx.key.accountId), eq(calWrites.eventId, w.eventId), eq(calWrites.state, "pending"),
         ne(calWrites.op, "delete"),
         sql`${calWrites.id} <> ${w.id}`, sql`(${calWrites.payload}->'act'->>'personalSeries') is null`,
+        ...(w.series ? [sql`(${calWrites.payload}->'act'->'audience') is null`] : []),
         sql`${calWrites.baseVersionTag} is not distinct from ${w.provisional ? null : w.baseVersionTag}`,
       ));
     }

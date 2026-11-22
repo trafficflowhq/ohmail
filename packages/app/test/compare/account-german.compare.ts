@@ -11,7 +11,7 @@ import { accountStatesIn } from "../states/account-states.js";
  * Held: no box of the pane runs its words out of it, and nothing scrolls sideways. The pane is measured, the frame and
  * the menu around it are not (they are their own tasks'). Run with the comparison, on the workstation, never the
  * farm (its machine lays words out by other measures):
- * `npx vitest run --config vitest.compare.config.ts packages/app/test/compare/account-german.compare.ts`.
+ * `npx vitest run --config test/compare/vitest.compare.config.ts packages/app/test/compare/account-german.compare.ts`.
  */
 
 const ROOMS = [

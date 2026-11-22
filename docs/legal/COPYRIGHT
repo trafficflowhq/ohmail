@@ -12,7 +12,7 @@ PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>.
 
-The full licence text is in ./LICENSE, byte-for-byte the Free Software
+The full licence text is in ../../LICENSE, byte-for-byte the Free Software
 Foundation's published AGPL-3.0 (sha256
 0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0). It is a
 verbatim copy on purpose: the licence document itself may not be modified, so
@@ -30,8 +30,8 @@ projects that "Third parties" below names:
   packages/**              design tokens, UI components, fixtures, client engine
   scripts/**, .github/**   packaging and CI
 
-…together with this file, LICENSE, TRADEMARK.md, CONTRIBUTING.md, SECURITY.md
-and README.md.
+…together with this file, docs/legal/TRADEMARK.md, and the root files LICENSE,
+AGENTS.md, CONTRIBUTING.md, SECURITY.md and README.md.
 
 The screenshots and recordings under docs/assets/readme/ are renders of this
 source tree over an invented mailbox seeded for them, and are covered by the

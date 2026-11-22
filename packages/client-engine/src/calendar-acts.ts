@@ -11,7 +11,7 @@
  * Behind an entry of its own: the phone's engine, which keeps no calendar, never reaches it.
  */
 import type {
-  CalendarEventAct, CalendarRemoveScope, CalendarEventFields, CalendarEventRecord, CalendarReason, CalendarTime, CalendarWriteFault, ISODateTime,
+  CalendarEventAct, CalendarRemoveScope, CalendarEventFields, CalendarEventRecord, CalendarWriteMark, CalendarReason, CalendarTime, CalendarWriteFault, ISODateTime,
 } from "@ohmail/wire";
 
 /** The instant a record this device made stands at until our server has it. */
@@ -92,7 +92,7 @@ function made(act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>)
 /**
  * THE ONE OVERLAY: `acts` laid over `records` in order. A new event appears; a change is written onto
  * the record whole; a removal takes it out; a move gives it its new calendar; an answer is the
- * account's own. An act on one day of a series is not laid over (no build takes it yet).
+ * account's own. An existing changed occurrence can take its own edit while it waits.
  */
 export function applyCalendarActs(records: readonly CalendarEventRecord[], acts: readonly CalendarEventAct[]): CalendarEventRecord[] {
   const byId = new Map(records.map((r) => [r.id, r] as const));
@@ -102,7 +102,13 @@ export function applyCalendarActs(records: readonly CalendarEventRecord[], acts:
       continue;
     }
     const r = byId.get(act.eventId);
-    if (r === undefined || ("scope" in act && act.scope.kind !== "record")) continue;
+    if (!r) continue;
+    if (act.kind === "calendar_event_update" && r.recurrenceId !== "") {
+      if (act.scope.kind === "occurrence" && act.scope.at === r.recurrenceId)
+        byId.set(r.id, withFields(r, act.change));
+      continue;
+    }
+    if ("scope" in act && act.scope.kind !== "record") continue;
     switch (act.kind) {
       case "calendar_event_update": byId.set(r.id, withFields(r, act.change)); break;
       case "calendar_event_delete":
@@ -146,12 +152,22 @@ export function eventsWithWrites(
   records: readonly CalendarEventRecord[], device: readonly DeviceAct[],
   refused: ReadonlyMap<string, CalendarReason | CalendarWriteFault> = new Map(),
 ): EventWithWrites[] {
-  const marked = records.map((r) => {
-    const pending = r.writes.filter((w) => w.state === "pending" && w.act !== null).map((w) => w.act!);
-    return { r, pending };
-  });
-  const atProvider = new Set(marked.filter((m) => m.r.writes.some((w) => w.state === "pending")).map((m) => m.r.id));
-  const pending = marked.flatMap((item) => item.pending);
+  const original = new Map(records.map((r) => [r.id, r] as const));
+  const exceptionMarks = new Map<string, CalendarWriteMark[]>();
+  for (const r of records) {
+    if (!r.repeat) continue;
+    for (const mark of r.writes) {
+      const act = mark.act;
+      const child = act?.kind === "calendar_event_update" ? original.get(act.eventId) : undefined;
+      if (!child?.recurrenceId || child.uid !== r.uid || child.calendarId !== r.calendarId) continue;
+      const previous = exceptionMarks.get(child.id);
+      if (previous) previous.push(mark);
+      else exceptionMarks.set(child.id, [mark]);
+    }
+  }
+  const pending = records.flatMap((r) =>
+    r.writes.filter((w) => w.state === "pending" && w.act !== null).map((w) => w.act!),
+  );
   const base = applyCalendarActs(records, pending);
   const onDevice = new Set(device.map((d) => d.act.eventId));
   const local = device.map((d) => d.act);
@@ -163,15 +179,16 @@ export function eventsWithWrites(
     if (scopes) scopes.push(act.scope);
     else hidden.set(act.eventId, [act.scope]);
   }
-  const original = new Map(records.map((r) => [r.id, r] as const));
   return shown.map((record) => {
-    const marks = original.get(record.id)?.writes ?? [];
+    const own = original.get(record.id)?.writes ?? [];
+    const fromSeries = exceptionMarks.get(record.id);
+    const marks = fromSeries ? [...own, ...fromSeries].sort((a, b) => a.at.localeCompare(b.at)) : own;
     const lastRefused = [...marks].reverse().find((w) => w.state === "refused") ?? null;
     const removals = hidden.get(record.id);
     return {
       record,
       ...(removals && { removals }),
-      waiting: onDevice.has(record.id) ? "device" : atProvider.has(record.id) ? "provider" : null,
+      waiting: onDevice.has(record.id) ? "device" : marks.some((w) => w.state === "pending") ? "provider" : null,
       refusal: refused.get(record.id) ?? lastRefused?.reason ?? null,
       refusedWriteId: refused.has(record.id) ? null : lastRefused?.id ?? null,
     };
@@ -191,6 +208,8 @@ export class CalendarActKeys {
     const prior = this.last.get(eventId);
     this.last.set(eventId, key);
     if (act.kind === "calendar_event_create" || prior === undefined) return act;
+    // A scoped edit must still use the reviewed copies when it reaches the provider.
+    if (act.kind === "calendar_event_update" && (act.scope.kind !== "record" || act.base.includes("/"))) return act;
     return { ...act, after: prior };
   }
 

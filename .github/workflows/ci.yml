@@ -546,7 +546,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build
-          npx vitest list --config vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json
+          npx vitest list --config test/vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json
 
       - name: Test on SQLite, the second store the schema runs on, shard ${{ matrix.shard }}
         run: |
@@ -558,7 +558,7 @@ jobs:
           fi
           mapfile -t files <<< "$list"
           echo "sqlite shard $SHARD runs ${#files[@]} file(s)"
-          npx vitest run --config vitest.sqlite.config.ts --reporter=default --reporter=json --outputFile="build/ci-sqlite-$SHARD.json" "${files[@]}"
+          npx vitest run --config test/vitest.sqlite.config.ts --reporter=default --reporter=json --outputFile="build/ci-sqlite-$SHARD.json" "${files[@]}"
 
       - name: Every file of the SQLite shard ran
         if: always()

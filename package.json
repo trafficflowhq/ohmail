@@ -8,9 +8,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:sqlite": "vitest run --config vitest.sqlite.config.ts",
+    "test:sqlite": "vitest run --config test/vitest.sqlite.config.ts",
     "typecheck:mobile": "tsc --noEmit -p apps/mobile/tsconfig.json && tsc --noEmit -p apps/mobile/tsconfig.test.json && tsc --noEmit -p apps/mobile/web/tsconfig.json",
-    "test:mobile": "node scripts/apply-patches.mjs apply && vitest run apps/mobile/test packages/client-engine/test && vitest run --config vitest.sqlite.config.ts apps/mobile/test",
+    "test:mobile": "node scripts/apply-patches.mjs apply && vitest run apps/mobile/test packages/client-engine/test && vitest run --config test/vitest.sqlite.config.ts apps/mobile/test",
     "build": "tsc -b",
     "lint": "node tools/check.mjs --list",
     "format": "node tools/check.mjs --format",

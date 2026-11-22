@@ -642,7 +642,7 @@ export async function assertNoLiveTwin(input: {
 
 /**
  * A lease read, with a deadline on it — the thing a destructive pass carries instead of a boolean.
- * Exactly one active organizer per mailbox is the invariant CLAUDE.md names load-bearing, and a pass
+ * Exactly one active organizer per mailbox is the invariant AGENTS.md names load-bearing, and a pass
  * that reads the lease once and then writes for minutes is enforcing "exactly one organizer at the
  * instant this pass began" — the window a takeover lands in. So the answer carries an expiry and the
  * pass asks it at every write boundary: inside the TTL free, past it one `runLeaseGate`, which also

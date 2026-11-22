@@ -23,7 +23,7 @@ import { WRITE_CLASSES, WRITE_PARTS, type WriteDeclaredRow, type WritePart } fro
 /**
  * WRITE'S PARTS of the screen `compose`, each against the same part of the reference's picture and data file
  * (`node test/compare/fetch.mjs --from <the shards>`, then
- * `npx vitest run --config vitest.compare.config.ts packages/app/test/compare/write-parts.compare.ts`). The shard is
+ * `npx vitest run --config test/compare/vitest.compare.config.ts packages/app/test/compare/write-parts.compare.ts`). The shard is
  * named to the fetch by `test/compare/subjects/compose.ts`, whose keys are the states the page draws; a shard not in
  * build/reference is red here, never a skip.
  *

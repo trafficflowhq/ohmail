@@ -37,6 +37,7 @@ export function useWalkedSquares(
   model: WalkedRowModel,
   row: { members: readonly EngineMessage[]; openTarget: EngineMessage },
   marks?: readonly ThreadMark[],
+  newestFirst = false,
 ): WalkedSquares | null {
   const { walk, stripOpen, conversationOf } = model;
   const mine = (): ThreadWalkSnapshot | null => {
@@ -62,8 +63,8 @@ export function useWalkedSquares(
     if (drawn === null) return [];
     const anchor = drawn.openedId ?? drawn.messages[0]?.id ?? null;
     const now = anchor !== null && conversationOf ? conversationOf(anchor) : [];
-    return now.length > 0 ? now : drawn.messages;
-  }, [held, conversationOf]);
+    return now.length > 0 ? (newestFirst ? [...now].reverse() : now) : drawn.messages;
+  }, [held, conversationOf, newestFirst]);
   const kinds = useMemo(() => messages.map(threadMarkOf), [messages]);
   if (snap === null || messages.length < 2) return null;
   const at = snap.here === null ? -1 : messages.findIndex((m) => m.id === snap.here);

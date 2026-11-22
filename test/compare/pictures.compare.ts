@@ -11,7 +11,7 @@ import { launch, shoot, TOLERANCE } from "./render.mjs";
 import type { OwnRow, Subject, Variant } from "./subject.js";
 
 /**
- * Every subject against its picture (`npx vitest run --config vitest.compare.config.ts`).
+ * Every subject against its picture (`npx vitest run --config test/compare/vitest.compare.config.ts`).
  *
  * A subject of a registered screen is held against the reference picture of its key, read from the
  * archive in `build/reference/`; any other against the product's own picture in `own/`. An own picture

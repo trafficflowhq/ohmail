@@ -31,6 +31,9 @@ function useFit(
     const box = line ?? column;
     const win = box?.ownerDocument.defaultView;
     if (!box || !win) return;
+    const top =
+      axis === "head" && !capsule ? column?.closest(".oh-sheet")?.querySelector(".oh-sheet-top") : null;
+    const back = top?.querySelector(".oh-sheet-back");
     const read = (): void => {
       const cs = win.getComputedStyle(box.ownerDocument.documentElement);
       const px = (name: string): number => parseFloat(cs.getPropertyValue(name));
@@ -39,6 +42,8 @@ function useFit(
          handed that room, so the run fitted to it stands inside it. */
       const pitchY = px("--sq-y") + px("--sq-y-gap");
       const countY = px("--sq-more-y");
+      const headPitch = px("--sq-head-size") + px("--sq-head-gap");
+      const headCount = px("--sq-head-more");
       const tall = box.clientHeight;
       const desktop = box.ownerDocument.documentElement.dataset.device === "desktop";
       const next =
@@ -54,9 +59,18 @@ function useFit(
                 count: countY,
               }
             : {
-                room: px("--sq-slots") * (px("--sq") + px("--sq-gap")) + px("--sq-more"),
-                pitch: px("--sq") + px("--sq-gap"),
-                count: px("--sq-more"),
+                room: top?.clientWidth
+                  ? Math.max(
+                      3 * headPitch + headCount,
+                      top.clientWidth -
+                        (back?.clientWidth ?? 0) -
+                        2 * px("--sq-head-pad") -
+                        px("--s3") -
+                        3 * px("--s2"),
+                    )
+                  : 0,
+                pitch: headPitch,
+                count: headCount,
               };
       const ok = next.room > 0 && next.pitch > 0 && next.count >= 0;
       setFit((was) =>
@@ -71,6 +85,8 @@ function useFit(
     win.addEventListener("resize", read);
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(read);
     ro?.observe(box);
+    if (top) ro?.observe(top);
+    if (back) ro?.observe(back);
     return () => {
       win.removeEventListener("resize", read);
       ro?.disconnect();
@@ -83,8 +99,8 @@ function fitInHeading(styles: CSSStyleDeclaration, width: number): Fit {
   const px = (name: string): number => parseFloat(styles.getPropertyValue(name));
   return {
     room: Math.min(px("--sq-head-max-w"), width - px("padding-left") - px("padding-right")),
-    pitch: px("--oh-readsquares-pitch"),
-    count: px("--oh-readsquares-count"),
+    pitch: px("--sq-head-size") + px("--sq-head-gap"),
+    count: px("--sq-head-more"),
   };
 }
 
@@ -157,10 +173,10 @@ export function Squares({
       from: w.from,
       to: w.to,
       scale: w.scale,
-      room: axis === "column" || fitToHead ? fit.room : undefined,
-      column: axis === "column" ? { pitch: fit.pitch, count: fit.count } : undefined,
+      room: fit.room,
+      ...(axis === "column" ? { column: { pitch: fit.pitch, count: fit.count } } : { pitch: fit.pitch }),
     };
-  }, [fit, n, current, focus, axis, fitToHead]);
+  }, [fit, n, current, focus, axis]);
   // Mount the run at its measured size so its transitions only animate subsequent changes.
   if (waitForFit && !fitToHead && fit === undefined) return null;
   return (

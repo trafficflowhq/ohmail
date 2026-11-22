@@ -3,7 +3,6 @@ import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
   markSeenOver,
-  OPEN_TAIL,
   useColumnVisit,
   useConversationBodies,
   useStoreLetterBody,
@@ -34,6 +33,7 @@ import { useOpenCard } from "./contact/Contact.js";
 import { useParts, useReplyVerbs } from "./parts.js";
 import { READER_DOM, scrollerOf } from "./read-dom.js";
 import { useSentInView } from "./sent-in-view.js";
+import { readThreadOrder } from "./thread-order.js";
 import { useReaderKeys } from "./keys.js";
 
 const nameOf = (m: EngineMessage): string => m.from.name?.trim() || m.from.address;
@@ -49,6 +49,8 @@ export function useConversationColumn(
   const press = usePress();
   const { shown, opened, state, offMirrorRow, fromStore } = useShownConversation(openId, route);
   const { messages, presentedIds } = shown;
+  const newestFirst = readThreadOrder(host.session.scope) === "top";
+  const ordered = useMemo(() => (newestFirst ? [...messages].reverse() : messages), [messages, newestFirst]);
   useConversationBodies(opened === null || offMirrorRow !== null || fromStore ? null : openId, messages);
   const storeBody = useStoreLetterBody(fromStore ? opened : null);
   const visit = useListVisit(openId);
@@ -73,16 +75,16 @@ export function useConversationColumn(
   const sentJoined = useSentInView({ openId, messages, replying: replyVerbs !== null, column: columnEl });
   const walk = useThreadWalk({
     scroller: scroller.current,
-    messages,
+    messages: ordered,
+    newestFirst,
     openedId: openId,
     channel: column.wiring?.walk,
     onEnter: column.enter,
     names: READER_DOM,
     anchor: !resumed,
-    wholeThread: route.wholeThread,
     standsDown: sentJoined,
   });
-  const verbs = useVerbs(opened, visit, column.owner === "column" ? column.wiring : null);
+  const verbs = useVerbs(opened, visit, column.owner === "column" ? column.wiring : null, messages.at(-1));
   useReaderKeys(keysHere && opened !== null, { verbs, visit });
   const [person, onPerson, closeCard] = useOpenCard();
   const screeningId = useId();
@@ -119,7 +121,8 @@ export function useConversationColumn(
     state,
     offMirrorRow,
     storeBody,
-    messages,
+    messages: ordered,
+    newestFirst,
     presentedIds,
     visit,
     column,
@@ -131,7 +134,7 @@ export function useConversationColumn(
     person,
     onPerson,
     closeCard,
-    screeningId,
+    screeningDialog: canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined,
     canScreen,
     screenSender,
     screenByKey,
@@ -155,14 +158,12 @@ function useReadingPosition(route: Route, scroller: HTMLElement | null, walk?: T
     if (!offered || !scroller) return;
     if (!applied.current && resume?.address === address) {
       applied.current = true;
-      if (resume.tail) scroller.style.setProperty(OPEN_TAIL, resume.tail);
       scrollProgrammatically(scroller, resume.top);
     }
     const remember = () => {
       memory.current = {
         address,
         top: scroller.scrollTop,
-        tail: scroller.style.getPropertyValue(OPEN_TAIL),
         square: walk?.get()?.here ?? null,
       };
     };

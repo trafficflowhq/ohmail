@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { Button, Dialog } from "@ohmail/ui/base";
+import { useState, type RefObject } from "react";
+import { Button } from "@ohmail/ui/base";
+import { QuestionBeforeAct } from "@ohmail/ui/calendar";
+import { draftWhen, guestNames } from "./event-words.js";
 import type { CalendarGuest } from "../frame/commands.js";
 import { useLocale, useText } from "../text/index.js";
 import type { EventDraft } from "./event-draft.js";
@@ -40,6 +42,7 @@ export function DraftInvitation({
 }
 
 export function useGuestConfirmation(
+  anchor: RefObject<HTMLDivElement | null>,
   draft: EventDraft,
   selected: readonly CalendarGuest[],
   canAdd: () => boolean,
@@ -59,8 +62,10 @@ export function useGuestConfirmation(
   }
   const guests = [...guestsByAddress.values()];
   const fromLetter = selected.length > 0;
-  const names = new Intl.ListFormat(locale).format(
+  const names = guestNames(
     (confirm ?? []).map((guest) => guest.name || guest.address),
+    locale,
+    t,
   );
   const add = () => {
     if (!canAdd()) return;
@@ -69,27 +74,36 @@ export function useGuestConfirmation(
   };
   const close = () => setConfirm(undefined);
   const confirmation = confirm && (
-    <Dialog
+    <QuestionBeforeAct
       open
-      product="cal"
-      title={
+      anchor={anchor}
+      question={
         fromLetter
           ? mail(confirm.length > 1 ? "confirmGuests" : "confirmGuest", { name: names })
           : t("edit.confirmInvite", { guests: names })
       }
-      keysOn="cancel"
+      follows={
+        fromLetter
+          ? undefined
+          : t("edit.inviteFollows", { title: draft.title.trim(), when: draftWhen(draft, locale) })
+      }
+      focusCancel
       onClose={close}
-      cancel={{ label: fromLetter ? mail("cancelGuest") : t("edit.cancel") }}
-      confirm={{
-        label: fromLetter ? mail(confirm.length > 1 ? "sendGuests" : "sendGuest") : t("edit.invite"),
-        onPress: () => {
-          close();
-          create({ ...draft, invitees: confirm });
+      cancel={fromLetter ? mail("cancelGuest") : t("edit.cancel")}
+      answers={[
+        {
+          id: "send",
+          label: fromLetter
+            ? mail(confirm.length > 1 ? "sendGuests" : "sendGuest")
+            : t("edit.sendInvitation", { count: confirm.length }),
+          keyHint: "↵",
+          onPress: () => {
+            close();
+            create({ ...draft, invitees: confirm });
+          },
         },
-      }}
-    >
-      {fromLetter ? null : t("edit.inviteFollows", { title: draft.title.trim() })}
-    </Dialog>
+      ]}
+    />
   );
   return { add, confirmation };
 }

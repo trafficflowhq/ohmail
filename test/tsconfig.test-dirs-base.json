@@ -3,7 +3,7 @@
   "//paths": "THE ROOT VITEST ALIAS TABLE, MIRRORED, AND IT IS NOT DECORATION - the same reasoning `apps/sidecar/tsconfig.tests.json` spells out. Without it `@trafficflow/core` in a test resolves through node_modules to `packages/core/dist/*.d.ts`, the BUILT declarations, so these programs would check the tests against whatever was last compiled instead of against the source vitest runs: a stale dist hides the errors this exists to find, and a fresh one reports errors against a different program than the suite executes. `scripts/typecheck-test-dirs.mjs` imports `vitest.config.ts` and refuses to run when one `find` in that table has no key here or points at a different file. The paths are relative to THIS file (`test/`), because TypeScript resolves a relative path against the config it is written in, not against the one that extends it.",
   "//composite": "`false`, overriding the base. A composite project may not disable emit (TS6304), and these programs emit nothing.",
   "//noEmit": "Nothing is written. These are readers.",
-  "extends": "../tsconfig.base.json",
+  "extends": "../tools/tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
     "composite": false,

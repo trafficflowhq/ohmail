@@ -32,7 +32,7 @@ import type { ServiceContext } from "../src/index.js";
  *     the old one. A read-then-write would have checked `draft` before blocking and written
  *     anyway.
  *
- * ## Why REAL Postgres (CLAUDE.md)
+ * ## Why REAL Postgres (AGENTS.md)
  * Both cases are about what happens ACROSS a held row lock — one connection blocking another,
  * then re-reading. PGlite is a single connection; nothing can hold a lock against anything.
  */

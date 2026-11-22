@@ -40,7 +40,7 @@ import {
  *
  * The transactional claims are NOT here. `FOR UPDATE`, two concurrent drivers and the gap-free
  * seq are green-by-construction under PGlite, which is single-connection; they live in
- * `rule-retro.pg.test.ts` against real Postgres on :5433, per CLAUDE.md.
+ * `rule-retro.pg.test.ts` against real Postgres on :5433, per AGENTS.md.
  */
 
 const OHBOX = "INBOX";

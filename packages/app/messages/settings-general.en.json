@@ -7,6 +7,9 @@
     "subject": "Subject",
     "subjectHead": "One heading",
     "subjectEach": "On each message",
+    "threadOrder": "Conversation order",
+    "threadOrderBottom": "Latest at the bottom",
+    "threadOrderTop": "Latest at the top",
     "subjectSample": "Glaze order #2291",
     "subjectReplySample": "Re: Glaze order #2291",
     "picture": {

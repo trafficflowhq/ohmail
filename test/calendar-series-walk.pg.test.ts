@@ -272,6 +272,11 @@ interface Seen {
 }
 type Bench = Awaited<ReturnType<typeof benchOf>>;
 
+function isLegacySplit(body: unknown): boolean {
+  const act = body as { kind?: string; scope?: { kind?: string }; audience?: unknown } | null;
+  return act?.kind === "calendar_event_update" && act.scope?.kind === "following" && act.audience === undefined;
+}
+
 async function benchOf(w: World, world: WorldName) {
   const place = PLACES[world];
   const dav = await startCalDavStandIn({ autoSchedule: false });
@@ -413,6 +418,11 @@ async function benchOf(w: World, world: WorldName) {
     door: async (key: string, act: unknown): Promise<string> => {
       try {
         const done = await recordCalendarWrite(ctx(), key, act, { proven });
+        // Preserve the queue format the legacy recovery journeys exercise.
+        if (done.seq !== null && isLegacySplit(act)) {
+          await w.db.update(calWrites).set({ payload: sql`${calWrites.payload} #- '{part,from,confirmed}'` })
+            .where(and(eq(calWrites.accountId, t.accountId), eq(calWrites.idempotencyKey, `${key}:2`)));
+        }
         return `${done.answer.write?.state}${done.answer.write?.reason == null ? "" : ` ${done.answer.write.reason}`}`;
       } catch (err) {
         return refusalOf(err);

@@ -1,16 +1,58 @@
 import {
   addDays,
+  dayNumberOf,
   storedTimeOf,
   type CalendarEventRecord,
   type CalendarRecord,
 } from "@ohmail/app-logic/calendar";
-import type { CalendarEventFields, CalendarTime } from "@ohmail/wire";
-import { draftTimes, type EventDraft } from "./event-draft.js";
+import type { CalendarChangeScope, CalendarEventFields, CalendarTime } from "@ohmail/wire";
+import { draftCallLink, draftTimes, type EventDraft } from "./event-draft.js";
 import type { CalendarEventFace } from "./faces.js";
 
 const dayOf = (time: CalendarTime) =>
   time.value.slice(0, 4) + "-" + time.value.slice(4, 6) + "-" + time.value.slice(6, 8);
 const clockOf = (time: CalendarTime) => time.value.slice(9, 11) + ":" + time.value.slice(11, 13);
+
+export function editCopy(record: CalendarEventRecord, face: CalendarEventFace): CalendarEventRecord {
+  return record.repeat && face.ref.occurrence
+    ? { ...record, start: storedTimeOf(face.start), end: storedTimeOf(face.end) }
+    : record;
+}
+
+/** The form shows the selected occurrence. An all-events edit applies its civil day shift to the master. */
+export function patchOnScope(
+  patch: Partial<CalendarEventFields>,
+  scope: CalendarChangeScope | undefined,
+  master: CalendarEventRecord,
+  shown: CalendarEventRecord,
+): Partial<CalendarEventFields> {
+  if (scope?.kind !== "record" || !master.repeat || !patch.start || !patch.end || !master.end || !shown.end)
+    return patch;
+  const shift = (time: CalendarTime, first: CalendarTime, occurrence: CalendarTime): CalendarTime => {
+    const days = dayNumberOf(dayOf(first))! - dayNumberOf(dayOf(occurrence))!;
+    const date = addDays(dayOf(time), days);
+    if (
+      shown.recurrenceId &&
+      time.kind !== "date" &&
+      time.kind === first.kind &&
+      time.kind === occurrence.kind &&
+      time.zone === first.zone &&
+      time.zone === occurrence.zone
+    ) {
+      const clock = (value: CalendarTime) =>
+        Number(value.value.slice(9, 11)) * 60 + Number(value.value.slice(11, 13));
+      const shifted = new Date(Date.parse(date) + (clock(first) + clock(time) - clock(occurrence)) * 60_000);
+      const wall = shifted.toISOString().slice(0, 16).replaceAll("-", "").replaceAll(":", "");
+      return { ...time, value: wall + time.value.slice(13) };
+    }
+    return { ...time, value: date.replaceAll("-", "") + time.value.slice(8) };
+  };
+  return {
+    ...patch,
+    start: shift(patch.start, master.start, shown.start),
+    end: shift(patch.end, master.end, shown.end),
+  };
+}
 
 export function draftOfRecord(record: CalendarEventRecord, viewerZone?: string) {
   const { start, end } = record;
@@ -44,6 +86,7 @@ export function draftOfRecord(record: CalendarEventRecord, viewerZone?: string) 
     title: record.title,
     place: record.place,
     notes: record.notes,
+    callLink: record.callLink,
     busy: record.busy,
     private: record.private,
   };
@@ -56,7 +99,7 @@ export function draftForDuplicate(
   zone: string,
 ): EventDraft {
   if (occurrence.ref.occurrence === null) {
-    return { ...draftOfRecord(record, zone).draft, invitees: [] };
+    return { ...draftOfRecord(record, zone).draft, callLink: null, invitees: [] };
   }
   const { draft } = draftOfRecord(
     {
@@ -68,6 +111,7 @@ export function draftForDuplicate(
   );
   return {
     ...draft,
+    callLink: null,
     invitees: draft.invitees
       ?.filter(({ role }) => role === "required" || role === "optional")
       .map((guest) => ({ ...guest, answer: "none" })),
@@ -93,6 +137,7 @@ export function eventChanges(
   draft: EventDraft,
   _calendar: CalendarRecord,
   viewerZone: string,
+  canWriteCall = false,
 ): Partial<CalendarEventFields> | null {
   const baseline = draftOfRecord(record, viewerZone);
   const first = baseline.draft;
@@ -102,6 +147,11 @@ export function eventChanges(
   if (draft.title !== first.title && title !== first.title) patch.title = title;
   for (const k of ["notes", "place"] as const) {
     if (draft[k] !== first[k] && (draft[k]?.trim() || null) !== first[k]) patch[k] = draft[k]?.trim() || null;
+  }
+  if (draft.callLink !== undefined && draft.callLink !== first.callLink) {
+    const link = draftCallLink(draft.callLink);
+    if (!canWriteCall || link === undefined) return null;
+    if (link !== first.callLink) patch.callLink = link;
   }
   if (draft.busy !== first.busy) patch.busy = draft.busy;
   if (draft.private !== first.private) patch.private = draft.private;

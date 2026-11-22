@@ -522,7 +522,7 @@ export class KnownSetCache {
       const idx = new Set<string>();
       // `\u0000` as the folder/epoch separator — WRITTEN AS AN ESCAPE, never as a raw byte: a
       // literal NUL in source makes `file` classify this module as data and the repository's
-      // grep tooling silently skip the whole file (the CLAUDE.md trap, and a review caught this
+      // grep tooling silently skip the whole file (the AGENTS.md trap, and a review caught this
       // very line carrying the raw byte). The value itself is right because no IMAP folder name
       // can contain NUL, so the key cannot collide with a folder that merely contains spaces.
       for (const e of this.entries) idx.add(`${e.folder}\u0000${e.uidValidity}:${e.uid}`);

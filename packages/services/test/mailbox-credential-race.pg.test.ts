@@ -35,7 +35,7 @@ import { makeMailboxService, ServiceError, type ServiceContext } from "@trafficf
  * ## Why real Postgres, and why the timings
  *
  * PGlite is single-connection and cannot express one transaction blocking on another's row lock,
- * which IS the mechanism (CLAUDE.md's rule). Two independent `postgres()` pools make the
+ * which IS the mechanism (AGENTS.md's rule). Two independent `postgres()` pools make the
  * concurrency genuine rather than one driver's queue, and the interleaving is forced rather than
  * hoped for: `SlowKeyProvider` stalls 400 ms inside the PATCH's transaction, AFTER it has taken
  * the row lock, so the other actor is guaranteed to arrive while the lock is held. The

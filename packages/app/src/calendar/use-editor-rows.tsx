@@ -1,18 +1,21 @@
-import { useState, type MouseEvent } from "react";
+import { useRef, useState, type MouseEvent, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { calendarInviteeSuggestions } from "@ohmail/app-logic/calendar";
 import { parseRecipients } from "@ohmail/app-logic/writing/compose";
 import type { CalendarInvitee } from "@ohmail/wire";
-import { Button, Field, Menu, MenuItem } from "@ohmail/ui/base";
+import { Avatar, Field, Menu, MenuItem } from "@ohmail/ui/base";
 import type { EventFormProps, EventFormRow } from "@ohmail/ui/calendar";
 import { useFrame } from "../frame/commands.js";
 import { useOwnAddresses } from "../frame/room.js";
-import { useText } from "../text/index.js";
+import { useText, type Text } from "../text/index.js";
 import type { EventDraft } from "./event-draft.js";
 
 export interface EditorRows {
   readonly canInvite: boolean;
   readonly canAddAlert: boolean;
   readonly canAddSecondAlert: boolean;
+  readonly showCall: boolean;
+  readonly inviteesAbove?: RefObject<HTMLElement | null>;
 }
 
 type Picker = { anchor: HTMLElement; kind: "invitees" | "alert" | "role"; index: number };
@@ -80,6 +83,18 @@ export function useEditorRows(draft: EventDraft, change: Change, editor?: Editor
   } else if (editor.canInvite) {
     adds.push({ id: "invitees", word: t("edit.invitees"), icon: "people", onPress: open("invitees") });
   }
+  const call = draft.callLink;
+  if (editor.showCall && call != null) {
+    beforePlace.push(callRow(call, change, t));
+  } else if (editor.showCall) {
+    adds.push({
+      id: "call",
+      word: t("call.label"),
+      label: t("call.video"),
+      icon: "video",
+      onPress: () => change({ callLink: "" }),
+    });
+  }
   if (alarms.length || alertsShown) {
     const slots = editor.canAddSecondAlert ? Math.max(2, alarms.length) : Math.max(1, alarms.length);
     afterPlace.push({
@@ -108,11 +123,34 @@ export function useEditorRows(draft: EventDraft, change: Change, editor?: Editor
 
   const menu =
     picker?.kind === "invitees" ? (
-      <InviteePicker anchor={picker.anchor} guests={guests} change={change} close={close} />
+      <InviteePicker
+        anchor={picker.anchor}
+        guests={guests}
+        change={change}
+        close={close}
+        above={editor.inviteesAbove}
+      />
     ) : (
       picker && <EditorPicker picker={picker} guests={guests} alarms={alarms} change={change} close={close} />
     );
   return { beforePlace, afterPlace, adds, menu };
+}
+
+function callRow(call: string, change: Change, t: Text): EventFormRow {
+  return {
+    id: "call",
+    icon: "video",
+    items: [
+      {
+        kind: "text",
+        label: t("call.link"),
+        placeholder: t("call.paste"),
+        value: call,
+        onChange: (callLink) => change({ callLink }),
+      },
+      { kind: "remove", label: t("call.remove"), onPress: () => change({ callLink: null }) },
+    ],
+  };
 }
 
 function InviteePicker({
@@ -120,61 +158,84 @@ function InviteePicker({
   guests,
   change,
   close,
+  above,
 }: {
   anchor: HTMLElement;
   guests: readonly CalendarInvitee[];
   change: Change;
   close: () => void;
+  above?: RefObject<HTMLElement | null>;
 }) {
-  const { host } = useFrame();
+  const { host, plan } = useFrame();
   const own = useOwnAddresses();
   const t = useText("calendar");
   const [typed, type] = useState("");
-  const exclude = [...own, ...guests.map((guest) => guest.address)].map((address) => address.toLowerCase());
-  const found = calendarInviteeSuggestions(host.engine.read(), typed, exclude);
+  const input = useRef<HTMLInputElement>(null);
+  const exclude = [...own, ...guests.map((guest) => guest.address)].map((address) =>
+    address.trim().toLowerCase(),
+  );
   const parsed = parseRecipients(typed);
   const typedOne =
     parsed.addresses.length === 1 && parsed.invalid.length === 0 ? parsed.addresses[0] : undefined;
-  function add(person: { address: string; name: string | null }) {
-    if (exclude.includes(person.address.toLowerCase())) return;
-    change({ invitees: [...guests, { ...person, role: "required", answer: "none" }] });
+  const found = calendarInviteeSuggestions(host.engine.read(), typedOne?.address ?? typed, exclude);
+  const address = typedOne?.address.toLowerCase();
+  const known = address ? found.find((person) => person.address.toLowerCase() === address) : undefined;
+  const offered = address && !exclude.includes(address) && !known ? typedOne : undefined;
+  const label = t("edit.inviteeAddress");
+  const card = plan.device === "phone" ? null : above?.current;
+  function add({ address, name }: { address: string; name: string | null }) {
+    if (exclude.includes(address.toLowerCase())) return;
+    change({ invitees: [...guests, { address, name: name || null, role: "required", answer: "none" }] });
     close();
   }
-  return (
+  const menu = (
     <Menu
       open
+      up
+      upFrom={card ?? undefined}
       anchor={anchor}
-      kind="card"
+      kind="picker"
       label={t("edit.addInvitees")}
       onClose={close}
+      initialFocus={plan.device === "phone" ? undefined : input}
+      fit="beside"
       onKey={(event) => {
-        if (
-          event.key !== "Enter" ||
-          event.nativeEvent.isComposing ||
-          !(event.target instanceof HTMLInputElement)
-        )
-          return false;
+        if (event.target !== input.current || event.nativeEvent.isComposing) return false;
+        if (event.key === "Home" || event.key === "End") return true;
+        if (event.key !== "Enter") return false;
         event.preventDefault();
-        if (typedOne) add(typedOne);
+        const person = address ? (known ?? offered) : typed.trim() ? found[0] : undefined;
+        if (person) add(person);
         return true;
       }}
     >
-      <Field label={t("edit.inviteeAddress")} value={typed} onChange={type} bare sign="search" />
+      <div className="cal-invitee-search">
+        <Field ref={input} label={label} placeholder={label} value={typed} onChange={type} bare />
+      </div>
       {found.map((person) => (
-        <MenuItem key={person.address} onPress={() => add(person)}>
+        <MenuItem
+          key={person.address}
+          leading={<Avatar name={person.name} address={person.address} size="s" />}
+          note={person.name ? person.address.slice(person.address.lastIndexOf("@") + 1) : undefined}
+          onPress={() => add(person)}
+        >
           {person.name || person.address}
         </MenuItem>
       ))}
-      <Button
-        kind="two"
-        size="s"
-        disabled={!typedOne || exclude.includes(typedOne.address.toLowerCase())}
-        onPress={() => typedOne && add(typedOne)}
-      >
-        {t("edit.addPerson")}
-      </Button>
+      {offered && (
+        <MenuItem
+          leading={<Avatar name={offered.name ?? ""} address={offered.address} size="s" />}
+          note={offered.name ? offered.address : undefined}
+          onPress={() => add(offered)}
+        >
+          {offered.name || offered.address}
+        </MenuItem>
+      )}
+      {found.length === 0 && !offered && <p className="oh-menu-note">{t("edit.noInviteesFound")}</p>}
     </Menu>
   );
+  // Quick Add's arrival animation contains fixed-position descendants. Keep the menu in the wrapper.
+  return card?.parentElement ? createPortal(menu, card.parentElement) : menu;
 }
 
 function EditorPicker({
@@ -195,18 +256,34 @@ function EditorPicker({
   if (picker.kind === "role") {
     return (
       <Menu open anchor={picker.anchor} label={t("edit.invitees")} onClose={close}>
-        {(["required", "optional"] as const).map((role) => (
-          <MenuItem
-            key={role}
-            checked={guests[index]?.role === role}
-            onPress={() => {
-              change({ invitees: guests.map((guest, i) => (i === index ? { ...guest, role } : guest)) });
-              close();
-            }}
-          >
-            {t(`edit.${role}`)}
-          </MenuItem>
-        ))}
+        <MenuItem
+          checked={guests[index]?.role === "optional"}
+          many
+          onPress={() => {
+            change({
+              invitees: guests.map((guest, i) =>
+                i !== index
+                  ? guest
+                  : {
+                      ...guest,
+                      role: guest.role === "optional" ? "required" : "optional",
+                    },
+              ),
+            });
+            close();
+          }}
+        >
+          {t("edit.optionalAction")}
+        </MenuItem>
+        <MenuItem
+          icon="x"
+          onPress={() => {
+            change({ invitees: guests.filter((_, i) => i !== index) });
+            close();
+          }}
+        >
+          {t("edit.remove")}
+        </MenuItem>
       </Menu>
     );
   }

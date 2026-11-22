@@ -32,9 +32,9 @@ export interface MenuProps {
   label: string;
   /**
    * `context`: the verbs about the thing under the pointer, with their keys. `card`: a card of a few
-   * lines and controls. `ask`: a question before an act. Left out: a short list.
+   * lines and controls. `picker`: a field followed by choices. `ask`: a question before an act.
    */
-  kind?: "context" | "card" | "ask";
+  kind?: "context" | "card" | "ask" | "picker";
   /**
    * A title over the whole list, and for a card a note at its right. A menu of more than one titled group leaves
    * it out and holds a `MenuGroup` for each, so that each group is said by its own title.
@@ -43,6 +43,8 @@ export interface MenuProps {
   aside?: string;
   /** Open upwards; align its right edge to the anchor's; twice as wide. */
   up?: boolean;
+  /** Open above this element while keeping the trigger's horizontal alignment and focus. */
+  upFrom?: Element;
   right?: boolean;
   wide?: boolean;
   /** Fit an ask to its contents within the available viewport. */
@@ -121,7 +123,7 @@ export function Menu(props: MenuProps) {
   const closeBar = useRef<HTMLDivElement | null>(null);
   const lastItem = useRef<HTMLElement | null>(null);
   const [full, setFull] = useState(false);
-  const dialog = kind === "card" || kind === "ask";
+  const dialog = kind === "card" || kind === "ask" || kind === "picker";
   const from = returnFocus ?? (anchor && !("x" in anchor) ? anchor : null);
   useOverlayFocus(
     open,
@@ -215,7 +217,7 @@ export function Menu(props: MenuProps) {
 }
 
 function useMenuPosition(
-  { open, anchor, up, right, fit, closeWhenFull }: MenuProps,
+  { open, anchor, up, upFrom, right, fit, closeWhenFull }: MenuProps,
   box: RefObject<HTMLDivElement | null>,
   closeBar: RefObject<HTMLDivElement | null>,
   setFull: (full: boolean) => void,
@@ -252,12 +254,12 @@ function useMenuPosition(
           ? { x: x - room.left, y: y - room.top }
           : r && {
               left: r.left - room.left,
-              top: r.top - room.top,
+              top: (upFrom ? cssRect(upFrom).top : r.top) - room.top,
               right: r.right - room.left,
               bottom: r.bottom - room.top,
             };
       if (!at) return;
-      const to = placeMenu(at, { width: el.offsetWidth, height }, room, { up, right, fit });
+      const to = placeMenu(at, { width: el.offsetWidth, height }, room, { up: up || !!upFrom, right, fit });
       el.style.left = `${to.left}px`;
       el.style.top = `${to.top}px`;
       if (fit) el.style.maxHeight = to.maxHeight === undefined ? "" : `${to.maxHeight}px`;
@@ -269,11 +271,12 @@ function useMenuPosition(
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(position) : null;
     observer?.observe(el);
     observer?.observe(stage);
+    if (upFrom) observer?.observe(upFrom);
     const window = el.ownerDocument.defaultView;
     window?.addEventListener("resize", position);
     return () => {
       observer?.disconnect();
       window?.removeEventListener("resize", position);
     };
-  }, [open, x, y, from, up, right, fit, closeWhenFull, box, closeBar, setFull]);
+  }, [open, x, y, from, up, upFrom, right, fit, closeWhenFull, box, closeBar, setFull]);
 }

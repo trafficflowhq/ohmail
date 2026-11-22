@@ -31,6 +31,11 @@ describe("the calendar's head", () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  it("draws one full stop after a date even when the month is abbreviated", () => {
+    render(<CalendarHead title="1. – 7. Dez." hot todayNumber="7" />);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("1. – 7. Dez");
+  });
+
   it("carries the two arrows, Today, Search and More, each a named button that reaches the app", () => {
     const calls: string[] = [];
     const press = (name: string) => () => calls.push(name);

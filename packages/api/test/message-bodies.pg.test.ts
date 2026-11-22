@@ -58,7 +58,7 @@ import type { Change } from "@trafficflow/core/mail";
  * ── WHY THIS CANNOT BE A PGlite TEST ──────────────────────────────────────────────────────
  *
  * Two reasons. The pipeline persist path is transactional (`allocateSeq` under a row lock, the
- * `message_bodies` upsert, threading) and CLAUDE.md's rule is not a style preference — three
+ * `message_bodies` upsert, threading) and AGENTS.md's rule is not a style preference — three
  * production bugs here were invisible to PGlite. And the endpoint is exercised over the REAL
  * router + middleware stack (`createApp`), so the route-resolution claim below — that
  * `/messages/bodies` is not swallowed by `/messages/:id` — is proven against the shipped

@@ -14,7 +14,7 @@
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !tsconfig.json
-!tsconfig.base.json
+!tools/tsconfig.base.json
 !apps/*/package.json
 !packages/*/package.json
 

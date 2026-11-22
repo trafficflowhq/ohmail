@@ -23,7 +23,7 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
  * implementation makes the same claim and is wrong, and **PGlite cannot tell them apart**: it is a
  * single in-process connection, so there is nothing to interleave and the read-then-write version
  * passes there identically. This repository has spent three production bugs on precisely that
- * blindness (CLAUDE.md: *"PGlite green means nothing for transactional code"*).
+ * blindness (AGENTS.md: *"PGlite green means nothing for transactional code"*).
  *
  * So the decisive case runs here, on :5433, over SEPARATE CONNECTIONS, and the mutation that proves
  * it is a real guard is stated in the test: rewrite the consume as a read-then-write and the

@@ -57,7 +57,7 @@ function dayOf(value: string): EventTime | null {
  * the clock time in that zone is worked out from the moment, never cut out of the text. A zone the
  * platform does not know, and a clock time its zone shows twice, stay the moment they are.
  */
-function timeOf(v: unknown, zones: ZoneSource): EventTime | null | "zone_name_too_long" {
+export function googleTimeOf(v: unknown, zones: ZoneSource): EventTime | null | "zone_name_too_long" {
   if (!isRecord(v)) return null;
   if (typeof v.date === "string") return dayOf(v.date);
   const at = typeof v.dateTime === "string" ? instantOfRfc3339(v.dateTime) : null;
@@ -159,7 +159,7 @@ export function convertEvent(raw: unknown, zones: ZoneSource, nowMs: number): Co
   const written = text(raw.iCalUID);
   if (written !== undefined && written.length > MAX_UID_CHARS) return left(id, "uid_too_long");
 
-  const original = master === undefined ? null : timeOf(raw.originalStartTime, zones);
+  const original = master === undefined ? null : googleTimeOf(raw.originalStartTime, zones);
   if (original === "zone_name_too_long") return left(id, original);
   if (raw.status === "cancelled") {
     if (master === undefined) return { kind: "item", item: { kind: "gone", id } };
@@ -168,8 +168,8 @@ export function convertEvent(raw: unknown, zones: ZoneSource, nowMs: number): Co
   // A changed day that does not say which day it changes cannot be put with its series.
   if (master !== undefined && original === null) return left(id, "unreadable");
 
-  const start = timeOf(raw.start, zones);
-  const end = timeOf(raw.end, zones);
+  const start = googleTimeOf(raw.start, zones);
+  const end = googleTimeOf(raw.end, zones);
   if (start === "zone_name_too_long" || end === "zone_name_too_long") return left(id, "zone_name_too_long");
   if (start === null) return left(id, "unreadable");
   const [summary, description, location] = [text(raw.summary), text(raw.description), text(raw.location)];

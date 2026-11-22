@@ -4,7 +4,7 @@
  * The Delete verb ships (a user-commanded move to the provider's native \Trash), so the
  * ABSOLUTE claim is false the moment a user presses it: something IS deleted — by them. What
  * stays true, and what the copy must now say, is that ohmail deletes nothing ON ITS OWN
- * INITIATIVE. `CLAUDE.md`: claims are contracts; the sweep ships in the same wave as the verb.
+ * INITIATIVE. `AGENTS.md`: claims are contracts; the sweep ships in the same wave as the verb.
  *
  * Found by the sweep and reworded here:
  *   · `screener.empty.spam.hint`               — was "… nothing is deleted unseen."

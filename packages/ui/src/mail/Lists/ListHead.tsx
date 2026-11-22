@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
-import { Dot } from "../../base/index.js";
+import { EndDot } from "../../base/index.js";
 import { cssRect } from "../../base/ui-zoom.js";
 import "./list-head.css";
 
@@ -90,8 +90,7 @@ export function ListHead({
     <header className="oh-listhead" data-way={way ? "" : undefined} data-sections={sections ? "" : undefined}>
       {lead}
       <h1 className="oh-text oh-display oh-listhead-title">
-        {title}
-        <Dot kind={hot ? "hot" : "ink"} />
+        <EndDot kind={hot ? "hot" : "ink"}>{title}</EndDot>
       </h1>
       {sections ? <div className="oh-listhead-sections">{sections}</div> : null}
       {!sections || count || aside ? (

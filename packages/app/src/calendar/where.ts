@@ -92,6 +92,11 @@ export function useSettings(port: CalendarPort | typeof NONE): CalendarViewSetti
   );
 }
 
+/** Calendar Search includes the mirrored past and the same upcoming span from either product. */
+export function calendarSearchSpan(today: string, daysBack: number) {
+  return { first: addDays(today, -daysBack), last: addDays(today, AHEAD_DAYS) };
+}
+
 /** The first and last day each place but the Agenda draws, around its anchor. */
 function spanOf(
   place: CalendarPlaceId,
@@ -100,7 +105,7 @@ function spanOf(
   weekStart: number,
   held: number,
 ): { first: string; last: string } {
-  if (place === "calsearch") return { first: addDays(today, -held), last: addDays(today, AHEAD_DAYS) };
+  if (place === "calsearch") return calendarSearchSpan(today, held);
   if (place === "month") {
     const first = weekStartOf(`${monthOfDay(anchor)}-01`, weekStart);
     return { first, last: addDays(first, 41) };

@@ -3,7 +3,7 @@
  * typing narrows them, Enter takes the first that fits. With none offered it says so in one line.
  */
 import { useState, type ReactNode } from "react";
-import { Blank, Button, Dot, Page, Sentence } from "@ohmail/ui/base";
+import { Blank, Button, Dot, EndDot, Page, Sentence } from "@ohmail/ui/base";
 import type { SteppedWay } from "@ohmail/app-logic/calendar/setup";
 import { useText } from "../text/index.js";
 
@@ -29,8 +29,9 @@ export function WayStep({ offered, leave, pick }: WayStepProps) {
     return (
       <Page acts={leave}>
         <Sentence size="xl" level={1}>
-          {t("way.none")}
-          <Dot kind="ink" product="cal" />
+          <EndDot kind="ink" product="cal">
+            {t("way.none")}
+          </EndDot>
         </Sentence>
       </Page>
     );

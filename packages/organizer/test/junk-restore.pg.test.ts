@@ -26,7 +26,7 @@ import { junkRestorePass } from "../src/junk-restore.js";
  * Real Postgres (:5433), because every claim here is transactional bookkeeping — the FOR UPDATE
  * lock-and-recheck, `reserveBodyBytes`' counter row lock, the savepoint the shared rewrite opens
  * inside the caller's transaction — which is exactly the class PGlite has been shown not to
- * witness (CLAUDE.md). The control flow around the rewrite (budgets, refusal memory, the epoch
+ * witness (AGENTS.md). The control flow around the rewrite (budgets, refusal memory, the epoch
  * guard) is `junk-restore.test.ts`'s; this file is the half that touches the database.
  *
  * It also carries mail 0071's MEASUREMENT: the candidate read

@@ -45,7 +45,7 @@ import { freshDataDir } from "./_datadir.js";
  *
  * The adapter advertises `move`, `uidplus`, `condstore` and `specialUse`, so the passes take the
  * branches the shipped engine takes rather than a degraded fixture's. A ratchet measured against
- * a fixture that cannot do what production does pins the fixture (CLAUDE.md, and the round-trip
+ * a fixture that cannot do what production does pins the fixture (AGENTS.md, and the round-trip
  * ratchet's own scar: a fixture with no `moveMany` pinned one question per message where
  * production batches fifty).
  */

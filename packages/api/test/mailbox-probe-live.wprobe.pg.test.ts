@@ -21,7 +21,7 @@ const KEYS = StaticKeyProvider.fromSecret(Buffer.alloc(32, 5));
  * Everything in `imap-probe-classify.wprobe.test.ts` is a fabricated error object, which proves
  * the ORDER of the classifier and nothing about whether a real server produces the shapes it
  * reads. And PGlite is a single connection, so the admission counter's whole subject — one
- * claimant blocking on another's row lock — is unreachable there. CLAUDE.md's rule, both halves.
+ * claimant blocking on another's row lock — is unreachable there. AGENTS.md's rule, both halves.
  *
  * So this file dials for real:
  *

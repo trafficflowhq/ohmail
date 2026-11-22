@@ -136,7 +136,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
   const step = run?.at === reply.messageId ? run : null;
   const go = useReplyActions(reply, gate, w, step?.exit ?? w.closeReply);
   const { signature, then } = useSignature(
-    { state: w.replySig, mailboxId: reply.from.mailboxId, set: w.onReplySig },
+    { state: w.replySig, mailboxId: reply.from.mailboxId, set: w.onReplySig, remove: w.removeReplySig },
     go,
   );
   const marks = useMarks(handle, !going);

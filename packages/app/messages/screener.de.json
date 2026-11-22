@@ -226,7 +226,7 @@
     "impersonationPutBackAll": "Alle {count} zurücklegen",
     "impersonationFailed": "Konnte nicht zurückgelegt werden — versuch es noch einmal.",
     "impersonationRequested": "Wer dieses Postfach organisiert, legt sie zurück.",
-    "heldReleaseFailed": "Freigabe nicht m\u00f6glich. Versuch es noch einmal.",
+    "heldReleaseFailed": "Mails von Absendern, über die du schon entschieden hast, konnten nicht einsortiert werden. ohmail versucht es erneut, wenn du den Screener öffnest",
     "unscreenedLead": "{count, plural, one {1 Nachricht von einem Absender, über den du nie entschieden hast, liegt noch in der Inbox auf deinem Mailserver.} other {# Nachrichten von Absendern, über die du nie entschieden hast, liegen noch in der Inbox auf deinem Mailserver.}}",
     "unscreenedLeadAtLeast": "Mindestens {count, number} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch in der Inbox auf deinem Mailserver.",
     "unscreenedAll": "{count} in den Screener",

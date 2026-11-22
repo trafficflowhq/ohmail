@@ -24,7 +24,7 @@ import type { FolderStateRow, MoveEvidence, StoredMessage } from "../../src/port
  * omission invisible to every test. A caller who MEANT to pass `correlated_move` and forgot would
  * silently stop adopting real user moves, and nothing would go red.
  *
- * CLAUDE.md, gap almost no test file is typechecked, and `packages/core/test` is one of the
+ * AGENTS.md, gap almost no test file is typechecked, and `packages/core/test` is one of the
  * ones that is not — a `@ts-expect-error` written in `dedup.test.ts` would be inert. This directory
  * is compiled by the package's contract tsconfig, the root tsconfig references that project,
  * and the rules contract test invokes the same build so a failure arrives with a

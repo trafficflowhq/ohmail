@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Dot, Tag } from "../../base/index.js";
+import { EndDot, Tag } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
 import "./group-heading.css";
 
@@ -29,8 +29,7 @@ export function GroupHeading(props: GroupHeadingProps) {
   const name = (
     <>
       <span>
-        {children}
-        <Dot kind={hot ? "hot" : "ink"} />
+        <EndDot kind={hot ? "hot" : "ink"}>{children}</EndDot>
       </span>
       {count === undefined ? null : <span className="oh-groupheading-count">{count}</span>}
     </>

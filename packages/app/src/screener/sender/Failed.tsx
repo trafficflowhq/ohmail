@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { FailedAtGateDTO } from "@ohmail/wire";
 import { senderCheckSentence, useHeldBodies, type ScreenerView } from "@ohmail/app-logic/screener";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { Dot, Icon, Sentence } from "@ohmail/ui/base";
+import { EndDot, Icon, Sentence } from "@ohmail/ui/base";
 import { ActionPanel, ContactCard, Sheet, type PanelNote, type PanelVerb } from "@ohmail/ui/mail";
 import { useFrame } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
@@ -66,8 +66,7 @@ export function Failed({ view, letter }: { view: ScreenerView; letter: FailedAtG
       head={
         <div>
           <Sentence level={2}>
-            {t("place.checkFailedTitle")}
-            <Dot kind="ink" />
+            <EndDot kind="ink">{t("place.checkFailedTitle")}</EndDot>
           </Sentence>
           <p className="oh-text sc-sentence-tools">
             <Icon name="warn" size={18} />

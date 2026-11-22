@@ -35,7 +35,7 @@ import { schema } from "../src/schema.js";
  * chunk boundary, which proves the loop runs twice and that nothing is dropped at the seam, and
  * which review correctly refused: that many rows is bind values comfortably UNDER the limit,
  * so restoring the single `values(rows)` statement left this file GREEN. A regression test that
- * stays green with the fix removed is not a guard, whatever its name says (CLAUDE.md). The count
+ * stays green with the fix removed is not a guard, whatever its name says (AGENTS.md). The count
  * now sits past the wall, so the committed test fails against the committed bug — which is the
  * only version of this file worth having.
  *

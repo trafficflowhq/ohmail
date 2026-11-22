@@ -327,9 +327,9 @@ describe("the suite workflow", () => {
   it("splits the SQLite run by its own map, over the file set vitest lists for it, and reads each report back", () => {
     expect(wf.jobs.sqlite.name).toBe("suite · sqlite (${{ matrix.shard }})");
     const run = wf.jobs.sqlite.steps.map((s) => s.run ?? "").join("\n");
-    expect(run).toContain("npx vitest list --config vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json");
+    expect(run).toContain("npx vitest list --config test/vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json");
     expect(run).toContain("node test/support/ci-shards.mjs --sqlite-shard \"$SHARD\" build/sqlite-files.json");
-    expect(run).toMatch(/npx vitest run --config vitest\.sqlite\.config\.ts [^\n]*"\$\{files\[@\]\}"/);
+    expect(run).toMatch(/npx vitest run --config test\/vitest\.sqlite\.config\.ts [^\n]*"\$\{files\[@\]\}"/);
     expect(run).toContain("node test/support/ci-shards.mjs --verify-sqlite-report \"$SHARD\" build/sqlite-files.json");
     const plan = wf.jobs.plan.steps.map((s) => s.run ?? "").join("\n");
     expect(plan).toContain("node test/support/ci-shards.mjs --sqlite-indexes");
@@ -718,7 +718,7 @@ describe("the SQLite shard map of this tree", () => {
   });
 
   it("runs every file of the sqlite project exactly once, and names no file outside it", async () => {
-    const config = (await import("../vitest.sqlite.config.ts")).default as { test: { include: string[] } };
+    const config = (await import("./vitest.sqlite.config.ts")).default as { test: { include: string[] } };
     const listed = [...config.test.include].sort();
     expect(listed.length).toBeGreaterThan(100);
     const seen = new Map<string, number>();

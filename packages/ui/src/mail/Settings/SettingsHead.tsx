@@ -1,4 +1,4 @@
-import { Dot } from "../../base/index.js";
+import { EndDot } from "../../base/index.js";
 import "./settings-head.css";
 
 export interface SettingsHeadProps {
@@ -17,8 +17,7 @@ export function SettingsHead({ title, hot, count }: SettingsHeadProps) {
       <div className="oh-settingshead-line">
         <span className="oh-settingshead-name">
           <h1 className="oh-text oh-display oh-settingshead-title">
-            {title}
-            <Dot kind={hot ? "hot" : "ink"} />
+            <EndDot kind={hot ? "hot" : "ink"}>{title}</EndDot>
           </h1>
           {count ? <span className="oh-settingshead-count">{count}</span> : null}
         </span>

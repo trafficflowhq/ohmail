@@ -27,7 +27,7 @@ import {
 /**
  * Every state of the kit against the sheet's specimen of the same state
  * (`node packages/ui/test/compare/fetch-kit.mjs --from <the pictures>`, then
- * `npx vitest run --config vitest.compare.config.ts packages/ui/test/compare`).
+ * `npx vitest run --config test/compare/vitest.compare.config.ts packages/ui/test/compare`).
  *
  * `test/reference/<entry>/states.json` is the one list. Each row is drawn from props by its subject in
  * `subjects/<entry>` and held against its data file (names, boxes, drawn values) and its picture. A

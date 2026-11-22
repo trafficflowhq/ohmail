@@ -1,6 +1,5 @@
 import type { IconName } from "../../icons/Icon.js";
 import { Button } from "../Primitives/Button.js";
-import { Dot } from "../Primitives/Dot.js";
 import { EndDot } from "../Primitives/EndDot.js";
 import { Mark } from "../Primitives/Mark.js";
 import "./empty.css";
@@ -32,14 +31,7 @@ export function Empty({ label, line, hot, mark, act }: EmptyProps) {
     <div className="oh-empty">
       {mark ? <Mark hot={hot}>{mark}</Mark> : null}
       <p className="oh-text oh-display oh-empty-label">
-        {mark ? (
-          <>
-            {label}
-            <Dot kind="ink" />
-          </>
-        ) : (
-          <EndDot kind={hot ? "hot" : "ink"}>{label}</EndDot>
-        )}
+        <EndDot kind={hot && !mark ? "hot" : "ink"}>{label}</EndDot>
       </p>
       {line ? <p className="oh-text oh-empty-line">{line}</p> : null}
       {act ? (

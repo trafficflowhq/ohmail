@@ -1,14 +1,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import {
-  addDays,
-  isoOfDay,
   eventTimeOf,
   deleteAudienceOf,
   pressAndHear,
   moveTime,
-  reschedule,
-  resizeTime,
-  type CalendarEventRecord,
   type CalendarPort,
   type ZoneSource,
 } from "@ohmail/app-logic/calendar";
@@ -19,52 +14,47 @@ import { useFrame, useReport } from "../frame/commands.js";
 import { useKnownOwnAddresses } from "../frame/room.js";
 import { fragmentOf } from "../frame/route.js";
 import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
-import { editableEvent, moveDestinations, removableEvent } from "./editable-event.js";
+import {
+  editBase,
+  editSchedule,
+  editVersions,
+  editableEvent,
+  eventOwned,
+  moveDestinations,
+  removableEvent,
+  type EditableEvent,
+} from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
 import { useCalendarGestureReport } from "./update-report.js";
-import type { DayEdge } from "./view.js";
-import { eventUpdate, guestUpdate } from "./guest-update.js";
+import { canStartTimeChange, changedTimes, resizedDays, type EventChange } from "./event-time-change.js";
+import { eventWhen } from "./event-words.js";
+import { editGuestUpdate, eventUpdate, guestUpdate } from "./guest-update.js";
 
-type Change =
-  | { kind: "delete" }
-  | { kind: "calendar"; target: string }
-  | { kind: "time"; days: number; minutes: number }
-  | { kind: "resize"; edge: DayEdge; days: number }
-  | { kind: "resize-time"; edge: DayEdge; minutes: number };
+const versionOf = (current: EditableEvent) => `${editVersions(current)}\n${editSchedule(current)}`;
 
-export function resizedDays(
-  start: CalendarEventFace["start"],
-  end: CalendarEventFace["end"],
-  edge: DayEdge,
-  days: number,
-) {
-  if (start.kind !== "date" || end.kind !== "date") return null;
-  const first = isoOfDay(start);
-  const last = addDays(isoOfDay(end), -1);
-  const shifted = addDays(edge === "start" ? first : last, days);
-  return edge === "start"
-    ? { first: shifted > last ? last : shifted, last }
-    : { first, last: shifted < first ? first : shifted };
-}
-
-const versionOf = (record: CalendarEventRecord) =>
-  JSON.stringify([record.updatedAt, record.calendarId, record.start, record.end]);
+const needsFreshSeriesQuestion = (current: EditableEvent, change: EventChange, version: string) =>
+  !!current.record.repeat &&
+  change.kind !== "delete" &&
+  change.kind !== "calendar" &&
+  version !== versionOf(current) &&
+  version.split("\n")[1] === editSchedule(current);
 
 type Request = {
-  change: Change;
+  change: EventChange;
   face: CalendarEventFace;
   anchor: HTMLElement;
-  base: string;
   version: string;
   scope: CalendarRemoveScope | null;
   scopes: readonly CalendarRemoveScope["kind"][];
   repeatRule: string | undefined;
   repeatStart: string;
+  changedOccurrence: boolean;
+  firstOccurrence: boolean;
   guests: readonly string[];
   audience: ReturnType<typeof guestUpdate>["audience"];
 };
 
-function deleteScopesAt(record: CalendarEventRecord, occurrence: string | null) {
+function deleteScopesAt(record: EditableEvent["record"], occurrence: string | null) {
   const scopes = record.deleteScopes ?? [];
   const rangeAnchor =
     occurrence !== null &&
@@ -75,18 +65,18 @@ function deleteScopesAt(record: CalendarEventRecord, occurrence: string | null) 
 }
 
 function requestFor(
-  record: CalendarEventRecord,
+  current: EditableEvent,
   face: CalendarEventFace,
-  change: Change,
+  change: EventChange,
   anchor: HTMLElement,
 ): Request {
-  const { names, audience } = guestUpdate(record, {});
+  const { record, exception } = current;
+  const { names, audience } = guestUpdate(exception ?? record, {});
   return {
     face,
     change,
     anchor,
-    base: record.updatedAt,
-    version: versionOf(record),
+    version: versionOf(current),
     scope: record.repeat && change.kind !== "calendar" ? null : { kind: "record" },
     scopes:
       change.kind === "delete" && record.repeat
@@ -94,40 +84,48 @@ function requestFor(
         : ["occurrence", "following", "record"],
     repeatRule: record.repeat?.rules[0],
     repeatStart: record.start.value,
+    changedOccurrence: exception !== null,
+    firstOccurrence: Number(face.ref.occurrence) === Date.parse(record.startsAt),
     guests: names,
     audience,
   };
 }
 
 function guestsFor(
-  record: CalendarEventRecord,
-  change: Change,
+  current: EditableEvent,
+  change: EventChange,
   scope: CalendarRemoveScope,
   own: readonly string[] | null,
 ) {
-  if (change.kind !== "delete" || !record.repeat) return guestUpdate(record, {});
+  const { record } = current;
+  if (!record.repeat) return guestUpdate(record, {});
+  if (change.kind !== "delete") return editGuestUpdate(current, {}, scope);
   const audience = record.deleteMembers && deleteAudienceOf(record.deleteMembers, scope);
   if (
     !audience ||
     (audience.audience.organizer !== null &&
-      !own?.some((address) => address.trim().toLowerCase() === audience.audience.organizer))
+      !own?.some((address) => address.trim().toLowerCase() === audience.audience.organizer) &&
+      !(
+        eventOwned(record, own) &&
+        record.organizer?.address.trim().toLowerCase() === audience.audience.organizer
+      ))
   )
     return null;
   return audience;
 }
 
 function actionFor(
-  change: Change,
+  change: EventChange,
   face: CalendarEventFace,
-  record: CalendarEventRecord,
-  base: string,
+  current: EditableEvent,
   scope: CalendarRemoveScope,
   zone: string,
   zones: ZoneSource,
   newId: () => string,
   audience: Request["audience"],
 ): CalendarAct | null {
-  const stamped = { eventId: record.id, base };
+  const { record, exception } = current;
+  const stamped = { eventId: record.id, base: record.updatedAt };
   if (change.kind === "delete")
     return {
       kind: "calendar_event_delete",
@@ -143,28 +141,19 @@ function actionFor(
   const start = wholeSeries ? eventTimeOf(record.start) : face.start;
   const end = wholeSeries ? record.end && eventTimeOf(record.end) : face.end;
   if (!start || !end) return null;
-  const range = change.kind === "resize" ? resizedDays(start, end, change.edge, change.days) : null;
-  const times =
-    change.kind === "time"
-      ? reschedule(start, end, change.days, change.minutes, zone, zones)
-      : change.kind === "resize-time"
-        ? resizeTime({ id: face.id, start, end }, change.edge, change.minutes, zone, zones)
-        : range && {
-            start: { kind: "date" as const, value: range.first.replaceAll("-", "") },
-            end: { kind: "date" as const, value: addDays(range.last, 1).replaceAll("-", "") },
-          };
+  const times = changedTimes(change, { ...face, start, end }, zone, zones);
   if (!times) return null;
   if (change.kind === "resize-time" && (!record.repeat || wholeSeries) && record.end) {
     if (change.edge === "start") times.end = record.end;
     else times.start = record.start;
   }
   const updateScope = scope.kind === "following" ? { ...scope, newEventId: newId() } : scope;
-  return eventUpdate(record, base, times, updateScope);
+  return eventUpdate(exception ?? record, editBase(current, updateScope), times, updateScope, { audience });
 }
 
 function refreshedAction(
-  { change, face, base, version, scope, audience }: Request,
-  current: NonNullable<ReturnType<typeof removableEvent>>,
+  { change, face, version, scope, audience }: Request,
+  current: EditableEvent,
   host: Parameters<typeof removableEvent>[0],
   own: readonly string[] | null,
   zone: string,
@@ -179,18 +168,16 @@ function refreshedAction(
     !deleteScopesAt(record, face.ref.occurrence).includes(scope.kind)
   )
     return "refusal.readOnly";
-  const live = guestsFor(record, change, scope, own);
-  if (versionOf(record) !== version || !live || JSON.stringify(live.audience) !== JSON.stringify(audience))
+  const live = guestsFor(current, change, scope, own);
+  if (versionOf(current) !== version || !live || JSON.stringify(live.audience) !== JSON.stringify(audience))
     return "refusal.changed";
-  if (
-    change.kind === "calendar" &&
-    !moveDestinations(host, current).some((target) => target.id === change.target)
-  )
-    return "refusal.readOnly";
-  return (
-    actionFor(change, face, record, base, scope, zone, zones, () => port.newId(), audience) ??
-    "refusal.invalid"
-  );
+  const destination =
+    change.kind === "calendar"
+      ? moveDestinations(host, current).find((target) => target.id === change.target)
+      : undefined;
+  if (change.kind === "calendar" && !destination) return "refusal.readOnly";
+  const act = actionFor(change, face, current, scope, zone, zones, () => port.newId(), audience);
+  return act ? { act, destination } : "refusal.invalid";
 }
 
 function scopeOf(kind: CalendarRemoveScope["kind"], at: string | null, first: string): CalendarRemoveScope {
@@ -201,13 +188,13 @@ function scopeOf(kind: CalendarRemoveScope["kind"], at: string | null, first: st
 
 function scopedRequest(
   question: Request,
-  record: CalendarEventRecord,
+  current: EditableEvent,
   kind: CalendarRemoveScope["kind"],
   at: string | null,
   own: readonly string[] | null,
 ): Request | null {
-  const scope = scopeOf(kind, at, record.startsAt);
-  const found = guestsFor(record, question.change, scope, own);
+  const scope = scopeOf(kind, at, current.record.startsAt);
+  const found = guestsFor(current, question.change, scope, own);
   return found ? { ...question, scope, guests: found.names, audience: found.audience } : null;
 }
 
@@ -221,6 +208,7 @@ async function commitAction(
   current: () => boolean,
   close: () => void,
   updated?: (act: Extract<CalendarAct, { kind: "calendar_event_update" }>) => void,
+  destination?: string,
 ) {
   if (act.kind === "calendar_event_delete" && guests.length === 0 && port.holdDelete) {
     const held = await port.holdDelete(act, UNDO_MS);
@@ -256,6 +244,8 @@ async function commitAction(
   else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_delete" && guests.length)
     report(e("taken.deleteAudience", { guests: new Intl.ListFormat(locale).format(guests) }));
   else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_update" && updated) updated(act);
+  else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_move" && destination)
+    report(destination);
   else if (heard.say) report(e(heard.say));
   if (heard.verdict?.kind !== "refused") close();
 }
@@ -275,23 +265,29 @@ function useEventActionState(page: string, engine: object, port: CalendarPort, z
   return { question, ask, busy, setBusy, ticket };
 }
 
+function whenFor(question: Request, zone: string, zones: ZoneSource, locale: string) {
+  const { change, face } = question;
+  const times = changedTimes(change, face, zone, zones);
+  return times && eventWhen(times, zone, zones, locale, change.kind === "resize-time");
+}
+
 export function useEventActions(port: CalendarPort, zones: ZoneSource) {
   const { host, commands, route } = useFrame();
   const own = useKnownOwnAddresses();
   const zone = useTimeZone();
   const e = useText("event");
   const locale = useLocale();
-  const reportUpdate = useCalendarGestureReport(port);
+  const reportUpdate = useCalendarGestureReport(port, zone, zones);
   const report = useReport();
   const page = fragmentOf(route);
   const { question, ask, busy, setBusy, ticket } = useEventActionState(page, host.engine, port, zone);
 
-  const canWrite = (face: CalendarEventFace, change: Change) =>
-    face.viewOnly
-      ? null
-      : change.kind === "delete"
-        ? removableEvent(host, port, face, own, zones)
-        : editableEvent(host, port, face.recordId, own);
+  const canWrite = (face: CalendarEventFace, change: EventChange): EditableEvent | null => {
+    if (face.viewOnly) return null;
+    if (change.kind !== "delete") return editableEvent(host, port, face, own);
+    const current = removableEvent(host, port, face, own, zones);
+    return current && { ...current, exception: null };
+  };
 
   const allowed = !question || canWrite(question.face, question.change) !== null;
   useLayoutEffect(() => {
@@ -303,17 +299,12 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
     if (ticket.current || !scope) return;
     ask(null);
     const current = canWrite(face, change);
-    if (!current) {
-      report(e("refusal.readOnly"));
-      return;
-    }
-    const act = refreshedAction(request, current, host, own, zone, zones, port);
-    if (typeof act === "string") {
-      report(e(act));
-      return;
-    }
+    if (!current) return report(e("refusal.readOnly"));
+    if (needsFreshSeriesQuestion(current, change, request.version))
+      return ask(requestFor(current, face, change, request.anchor));
+    const outcome = refreshedAction(request, current, host, own, zone, zones, port);
+    if (typeof outcome === "string") return report(e(outcome));
     const range = change.kind === "resize" && resizedDays(face.start, face.end, change.edge, change.days);
-    const before = { ...current.record };
     const currentRecord = () => canWrite(face, change)?.record ?? null;
     const stamp = Symbol();
     ticket.current = stamp;
@@ -321,7 +312,7 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
     try {
       await commitAction(
         port,
-        act,
+        outcome.act,
         guests,
         locale,
         e,
@@ -330,7 +321,8 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
         () => {
           if (route.open === face.id) commands.event(null);
         },
-        reportUpdate(range, change.kind === "resize-time" || change.kind === "time", before, currentRecord),
+        reportUpdate(range, change.kind === "resize-time" || change.kind === "time", current, currentRecord),
+        outcome.destination?.name,
       );
     } catch {
       if (ticket.current === stamp) report(e("refusal.unknown"));
@@ -342,19 +334,19 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
     }
   };
 
-  const start = (face: CalendarEventFace, change: Change, anchor: HTMLElement, expectedVersion?: string) => {
-    if (ticket.current || question || (change.kind === "time" && !change.days && !change.minutes)) return;
-    if (change.kind === "resize") {
-      const range = resizedDays(face.start, face.end, change.edge, change.days);
-      const before = resizedDays(face.start, face.end, change.edge, 0);
-      if (!range || (range.first === before?.first && range.last === before.last)) return;
-    }
-    if (change.kind === "resize-time" && !resizeTime(face, change.edge, change.minutes, zone, zones)) return;
+  const start = (
+    face: CalendarEventFace,
+    change: EventChange,
+    anchor: HTMLElement,
+    expectedVersion?: string,
+  ) => {
+    if (ticket.current || question || !canStartTimeChange(face, change, zone, zones)) return;
     const current = canWrite(face, change);
     if (!current) return;
-    const request = requestFor(current.record, face, change, anchor);
+    const request = requestFor(current, face, change, anchor);
     if (expectedVersion !== undefined && request.version !== expectedVersion) {
-      report(e("refusal.changed"));
+      if (needsFreshSeriesQuestion(current, change, expectedVersion)) ask(request);
+      else report(e("refusal.changed"));
       return;
     }
     if (!request.scope || request.guests.length) ask(request);
@@ -369,7 +361,7 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
       ask(null);
       return;
     }
-    const next = scopedRequest(question, current.record, kind, at, own);
+    const next = scopedRequest(question, current, kind, at, own);
     if (!next) {
       ask(null);
       report(e("refusal.changed"));
@@ -381,15 +373,14 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
 
   return {
     busy,
-    question: allowed ? question : null,
+    question: allowed && question ? { ...question, when: whenFor(question, zone, zones, locale) } : null,
     start,
     chooseScope,
     moveTime: (face: CalendarEventFace, delta: number, snap: boolean) =>
       moveTime(face, delta, snap, zone, zones),
     moveVersion: (face: CalendarEventFace) => {
-      if (busy || question) return undefined;
-      const event = canWrite(face, { kind: "time", days: 0, minutes: 0 });
-      return event && versionOf(event.record);
+      const event = !busy && !question && canWrite(face, { kind: "time", days: 0, minutes: 0 });
+      return event ? versionOf(event) : undefined;
     },
     cancel: () => ask(null),
     confirm: () => question && void send(question),

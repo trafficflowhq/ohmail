@@ -9,7 +9,7 @@ import { NONE } from "../host/index.js";
 
 const noChanges = () => () => undefined;
 
-export function useNewEvent(seed?: CalendarDraftSeed) {
+export function useNewEvent(seed?: CalendarDraftSeed, accountsFallback = false) {
   const { host, route, commands } = useFrame();
   const draftSeed = useCalendarDraftSeed();
   const port = host.wires.calendar;
@@ -31,7 +31,10 @@ export function useNewEvent(seed?: CalendarDraftSeed) {
     },
     () => false,
   );
-  if (!canCreate) return null;
+  if (!canCreate) {
+    if (!accountsFallback || port === NONE) return null;
+    return () => commands.go({ place: "calsettings" });
+  }
   return (day?: string, from?: number, to?: number) => {
     const here = isCalendarPlace(route.place) && route.place !== "calsettings" && route.place !== "frommail";
     const place = here ? route.place : "week";

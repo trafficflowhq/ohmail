@@ -34,7 +34,7 @@ export function useViewSummary(): PaneSummary | null {
     to: to === 1440 ? "24:00" : clockTime(to, locale),
   });
   return {
-    value: t(said.weekNumbers ? "view.weekNumbersOn" : "view.weekNumbersOff"),
+    value: t("view.summary"),
     detail: calendar ? t("view.scheduleSummary", { hours, calendar: calendar.name }) : hours,
   };
 }
@@ -88,8 +88,7 @@ export function ViewPane(_: PaneBodyProps) {
         <Hours said={said} save={save} />
       </SettingsSheet>
       <SettingsSheet title={t("view.time")}>
-        <SettingLine label={t("view.zone")} value={zoneName(zone)} />
-        <SettingNote>{t("view.zoneNote")}</SettingNote>
+        <SettingLine label={t("view.zone")} value={t("view.followsDevice")} />
         <Choice
           label={t("view.secondZone")}
           value={

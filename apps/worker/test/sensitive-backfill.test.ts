@@ -25,7 +25,7 @@ import { htmlWordsBackfillPass } from "@ohmail/organizer/html-words-backfill";
  *
  * The transactional claims are NOT here. `FOR UPDATE`, two concurrent drivers, and "one repair
  * writes exactly one delta" are green-by-construction under PGlite, which is single-connection.
- * They live in `sensitive-backfill.pg.test.ts` against real Postgres on :5433, per CLAUDE.md.
+ * They live in `sensitive-backfill.pg.test.ts` against real Postgres on :5433, per AGENTS.md.
  *
  * ── MUTATIONS WATCHED FOR THE MARKER-HONESTY RULING (2026-09-01, each restored, suite green) ──
  *

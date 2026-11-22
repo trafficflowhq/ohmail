@@ -226,7 +226,7 @@
     "impersonationPutBackAll": "Put back all {count}",
     "impersonationFailed": "Couldn't put that back — try again.",
     "impersonationRequested": "Whoever organizes this mailbox puts them back.",
-    "heldReleaseFailed": "Could not release that mail. Try again.",
+    "heldReleaseFailed": "Mail from senders you’ve already decided on couldn’t be filed. ohmail tries again when you open the Screener",
     "unscreenedLead": "{count, plural, one {1 message from a sender you have not decided about is still in the Inbox on your mail server.} other {# messages from senders you have not decided about are still in the Inbox on your mail server.}}",
     "unscreenedLeadAtLeast": "At least {count, number} messages from senders you have not decided about are still in the Inbox on your mail server.",
     "unscreenedAll": "Screen {count}",

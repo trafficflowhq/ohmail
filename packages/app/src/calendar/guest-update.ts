@@ -1,5 +1,11 @@
-import type { CalendarEventRecord } from "@ohmail/app-logic/calendar";
-import type { CalendarAct, CalendarChangeScope, CalendarEventFields } from "@ohmail/wire";
+import { deleteAudienceOf, type CalendarEventRecord } from "@ohmail/app-logic/calendar";
+import type {
+  CalendarAct,
+  CalendarChangeScope,
+  CalendarEventFields,
+  CalendarRemoveScope,
+} from "@ohmail/wire";
+import type { EditableEvent } from "./editable-event.js";
 
 function guestsOf(record: CalendarEventRecord) {
   const normalized = (address: string) => address.trim().toLowerCase();
@@ -23,7 +29,15 @@ export interface GuestUpdate {
   readonly invited: readonly string[];
 }
 
-export function guestUpdate(record: CalendarEventRecord, change: Partial<CalendarEventFields>) {
+export function guestUpdate(
+  record: CalendarEventRecord,
+  change: Partial<CalendarEventFields>,
+  scope?: CalendarChangeScope | CalendarRemoveScope,
+): GuestUpdate {
+  const scoped = scope && record.deleteMembers && deleteAudienceOf(record.deleteMembers, scope);
+  if (scoped && !change.invitees) {
+    return { ...scoped, invited: [], proposal: JSON.stringify(change) };
+  }
   const guests = guestsOf(record);
   const invited =
     change.invitees?.filter((person) => {
@@ -39,11 +53,26 @@ export function guestUpdate(record: CalendarEventRecord, change: Partial<Calenda
   };
 }
 
+export function editGuestUpdate(
+  { record, exception, connection }: EditableEvent,
+  change: Partial<CalendarEventFields>,
+  scope?: CalendarChangeScope | CalendarRemoveScope,
+): GuestUpdate {
+  if (
+    exception &&
+    scope?.kind === "occurrence" &&
+    !(connection?.provider === "caldav" && record.deleteMembers)
+  )
+    return guestUpdate(exception, change);
+  return guestUpdate(record, change, scope);
+}
+
 export function eventUpdate(
   record: CalendarEventRecord,
   base: string,
   change: Partial<CalendarEventFields>,
   scope: CalendarChangeScope,
+  update: Pick<GuestUpdate, "audience"> = guestUpdate(record, change, scope),
 ): CalendarAct {
   return {
     kind: "calendar_event_update",
@@ -51,6 +80,6 @@ export function eventUpdate(
     eventId: record.id,
     base,
     change,
-    ...(record.repeat ? { personalSeries: true } : { audience: guestUpdate(record, change).audience }),
+    audience: update.audience,
   };
 }

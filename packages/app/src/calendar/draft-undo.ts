@@ -1,3 +1,4 @@
+import { NONE } from "../host/index.js";
 import { useLayoutEffect } from "react";
 import type { CalendarEventRecord, CalendarPort } from "@ohmail/app-logic/calendar";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
@@ -73,9 +74,10 @@ export function useDraftRestore<K extends Recovery["kind"]>(
 }
 
 /** Open a new, unsent copy. The same draft restore seam keeps the transfer within this account and port. */
-export function useDuplicateDraft(port: CalendarPort) {
+export function useDuplicateDraft(port: CalendarPort | typeof NONE) {
   const { commands, route, host } = useFrame();
-  return (draft: EventDraft, calendar: string) => {
+  return (draft: EventDraft, calendar: string | null) => {
+    if (port === NONE) return;
     const target: Route = {
       ...route,
       sub: draft.day,

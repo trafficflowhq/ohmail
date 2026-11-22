@@ -49,10 +49,25 @@ export type ContinuedField = (typeof CONTINUED_FIELDS)[number];
  * fields only these, its start, its end and its repeat are written anew.
  */
 export interface CalendarWriteContinuation {
+  /** A split recorded with a version-bound audience, whose continuation is created before its end. */
+  readonly confirmed?: true;
   readonly eventId: string;
   readonly at: string;
   readonly named: readonly ContinuedField[];
   readonly personalSeries?: true;
+}
+
+/** The provider copy of a separately changed occurrence reviewed by the person. */
+export interface CalendarWriteException {
+  readonly id: string;
+  readonly providerId: string;
+  readonly version: string;
+  readonly occurrence: string;
+  readonly masterReceipt?: {
+    readonly version: string;
+    readonly exceptionEndMs?: number;
+    readonly exceptionSnapshot?: string;
+  };
 }
 
 /**
@@ -69,6 +84,7 @@ export interface CalendarWritePayload {
   readonly part: { readonly of: string; readonly n: 1 | 2; readonly from?: CalendarWriteContinuation } | null;
   /** A cancellation may already have landed before its explicit retry reset the attempt counter. */
   readonly cancellationAttempted?: true;
+  readonly exception?: CalendarWriteException;
 }
 
 type Obj = Record<string, unknown>;
@@ -109,6 +125,13 @@ const textOrNull = (v: unknown, max: number): v is string | null => v === null |
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
 const isIso = (v: unknown): v is string => typeof v === "string" && ISO.test(v) && Number.isFinite(Date.parse(v));
+
+/** An exception's broader scopes review both copies, carried in the existing base stamp. */
+export function exceptionBaseOf(base: unknown): readonly [string, string] | null {
+  if (typeof base !== "string" || base.length > 55) return null;
+  const [occurrence, series, ...extra] = base.split("/");
+  return extra.length === 0 && isIso(occurrence) && isIso(series) ? [occurrence, series] : null;
+}
 
 const TIME_VALUE: Readonly<Record<CalendarTime["kind"], RegExp>> = {
   date: /^\d{8}$/,
@@ -206,9 +229,9 @@ function removeScopeOf(v: unknown): CalendarRemoveScope | null {
 }
 
 /** The parts every act on an existing event names, checked: its id, the copy's time, the key it follows. */
-function based(v: Obj, own: readonly string[], optional: readonly string[] = []): { eventId: string; base: string; after?: string } | null {
+function based(v: Obj, own: readonly string[], optional: readonly string[] = [], pairedBase = false): { eventId: string; base: string; after?: string } | null {
   if (!closed(v, ["kind", "eventId", "base", ...own], ["after", ...optional])) return null;
-  if (!isWriteUuid(v.eventId) || !isIso(v.base)) return null;
+  if (!isWriteUuid(v.eventId) || !(isIso(v.base) || (pairedBase && typeof v.base === "string" && exceptionBaseOf(v.base)))) return null;
   if (Object.hasOwn(v, "after") && !isWriteKey(v.after)) return null;
   return { eventId: v.eventId, base: v.base, ...(Object.hasOwn(v, "after") ? { after: v.after as string } : {}) };
 }
@@ -238,8 +261,9 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
       return event === null ? null : { kind: v.kind, eventId: v.eventId, calendarId: v.calendarId, event };
     }
     case "calendar_event_update": {
-      const b = based(v, ["scope", "change"], ["audience", "personalSeries"]);
       const scope = changeScopeOf(v.scope);
+      const pairedBase = scope !== null && scope.kind !== "occurrence" && Object.hasOwn(v, "audience") && !Object.hasOwn(v, "after");
+      const b = based(v, ["scope", "change"], ["audience", "personalSeries"], pairedBase);
       const change = fieldsOf(v.change, false);
       if (b === null || scope === null || change === null) return null;
       if (Object.hasOwn(v, "personalSeries")) {
@@ -249,7 +273,7 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
       }
       if (!Object.hasOwn(v, "audience")) return { kind: v.kind, ...b, scope, change };
       const audience = audienceOf(v.audience);
-      return scope.kind !== "record" || change.invitees !== undefined || !audience ? null
+      return (scope.kind !== "record" && change.invitees !== undefined) || !audience ? null
         : { kind: v.kind, ...b, scope, change, audience };
     }
     case "calendar_event_delete": {
@@ -400,6 +424,7 @@ export interface CalendarWriteActRefusal {
  */
 export function writeActRefusal(
   row: CalendarWriteRowFacts, act: Exclude<CalendarEventAct, { kind: "calendar_event_create" }>, changedDays: number, own: ReadonlySet<string>,
+  reviewedException = false,
 ): CalendarWriteActRefusal | null {
   const readOnly = (why: string): CalendarWriteActRefusal => ({ word: "read_only", why });
   const shape = (why: string): CalendarWriteActRefusal => ({ word: "repeat_unsupported", why });
@@ -410,6 +435,8 @@ export function writeActRefusal(
   const kind = writeRowOf(row);
   if (kind === "listed") return shape("a series with days listed, or with more than one rule, is not written");
   if (kind === "day") return shape("one day of a series is written through its series");
+  if (kind === "series" && act.kind === "calendar_event_update" && act.change.invitees !== undefined)
+    return shape("editing an existing repeat keeps its confirmed invitees");
   const scope = "scope" in act ? act.scope.kind : "record";
   if (scope !== "record" && kind !== "series") return shape("only a series has days to name");
   if ("scope" in act && act.scope.kind !== "record" && !isOccurrenceKey(act.scope.at)) return shape("a day of a series is named by its key");
@@ -431,7 +458,7 @@ export function writeActRefusal(
   }
   if (kind === "series" && changedDays > 0 && act.kind === "calendar_event_update" && scope === "record") {
     const c = act.change;
-    if (c.repeat !== undefined || c.invitees !== undefined || (c.start !== undefined && !sameStart(c.start, row))) {
+    if (c.repeat !== undefined || c.invitees !== undefined || (c.start !== undefined && !sameStart(c.start, row) && !(reviewedException && changedDays === 1))) {
       return shape("a series with changed days keeps its start, its repeat and its invitees");
     }
   }
@@ -439,8 +466,8 @@ export function writeActRefusal(
 }
 
 /** The payload a row is recorded with. */
-export function writePayloadOf(act: CalendarEventAct, after: string | null, part: CalendarWritePayload["part"]): CalendarWritePayload {
-  return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after, part };
+export function writePayloadOf(act: CalendarEventAct, after: string | null, part: CalendarWritePayload["part"], exception?: CalendarWriteException): CalendarWritePayload {
+  return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after, part, ...(exception && { exception }) };
 }
 
 /**
@@ -461,15 +488,43 @@ export function endedDayOf(payload: unknown): string | null {
 }
 
 function continuationOf(v: unknown): CalendarWriteContinuation | null {
-  if (!isObject(v) || !closed(v, ["eventId", "at", "named"], ["personalSeries"]) || (Object.hasOwn(v, "personalSeries") && v.personalSeries !== true) || !isWriteUuid(v.eventId) || !occurrenceKey(v.at) || !Array.isArray(v.named)) return null;
+  if (!isObject(v) || !closed(v, ["eventId", "at", "named"], ["personalSeries", "confirmed"]) ||
+    (Object.hasOwn(v, "personalSeries") && v.personalSeries !== true) ||
+    (Object.hasOwn(v, "confirmed") && v.confirmed !== true) ||
+    !isWriteUuid(v.eventId) || !occurrenceKey(v.at) || !Array.isArray(v.named)) return null;
   const allowed: ReadonlySet<string> = new Set(CONTINUED_FIELDS);
   const named = v.named.filter((n): n is ContinuedField => typeof n === "string" && allowed.has(n));
-  return named.length === v.named.length && new Set(named).size === named.length ? { eventId: v.eventId, at: v.at, named, ...(v.personalSeries === true && { personalSeries: true }) } : null;
+  return named.length === v.named.length && new Set(named).size === named.length
+    ? { eventId: v.eventId, at: v.at, named, ...(v.personalSeries === true && { personalSeries: true }),
+      ...(v.confirmed === true && { confirmed: true }) }
+    : null;
+}
+
+function storedExceptionOf(v: unknown): CalendarWriteException | null {
+  if (!isObject(v) || !closed(v, ["id", "providerId", "version", "occurrence"], ["masterReceipt"]) ||
+    !isWriteUuid(v.id) || !text(v.providerId, 8192) || !v.providerId ||
+    !text(v.version, 8192) || !v.version || !occurrenceKey(v.occurrence)) return null;
+  let masterReceipt: CalendarWriteException["masterReceipt"];
+  if (Object.hasOwn(v, "masterReceipt")) {
+    const r = v.masterReceipt;
+    if (!isObject(r) || !closed(r, ["version"], ["exceptionEndMs", "exceptionSnapshot"]) || !text(r.version, 8192) || !r.version)
+      return null;
+    const end = r.exceptionEndMs;
+    if (Object.hasOwn(r, "exceptionEndMs") &&
+      (typeof end !== "number" || !Number.isSafeInteger(end) || Math.abs(end) > 8.64e15)) return null;
+    const snapshot = r.exceptionSnapshot;
+    if (Object.hasOwn(r, "exceptionSnapshot") &&
+      (typeof snapshot !== "string" || !/^[0-9a-f]{64}$/.test(snapshot))) return null;
+    masterReceipt = { version: r.version, ...(typeof end === "number" && { exceptionEndMs: end }),
+      ...(typeof snapshot === "string" && { exceptionSnapshot: snapshot }) };
+  }
+  return { id: v.id, providerId: v.providerId, version: v.version, occurrence: v.occurrence,
+    ...(masterReceipt && { masterReceipt }) };
 }
 
 /** A row's payload as this version reads it, or `null` for one it does not know: an applied row's, another version's, a damaged one. */
 export function parseWritePayload(v: unknown): CalendarWritePayload | null {
-  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"], ["cancellationAttempted"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
+  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"], ["cancellationAttempted", "exception"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
   const act = parseCalendarAct(v.act);
   if (act === null) return null;
   if (Object.hasOwn(v, "cancellationAttempted") && (v.cancellationAttempted !== true || act.kind !== "calendar_event_delete")) return null;
@@ -484,5 +539,10 @@ export function parseWritePayload(v: unknown): CalendarWritePayload | null {
       part = { of: v.part.of, n: v.part.n, from };
     }
   }
-  return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after: v.after, part, ...(v.cancellationAttempted === true && { cancellationAttempted: true }) };
+  const exception = Object.hasOwn(v, "exception") ? storedExceptionOf(v.exception) : undefined;
+  if (exception === null || (exception && (act.kind !== "calendar_event_update" || !act.audience ||
+    exception.id !== act.eventId || (act.scope.kind !== "record" && (act.scope.at !== exception.occurrence ||
+      exception.masterReceipt !== undefined))))) return null;
+  return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after: v.after, part, ...(exception && { exception }),
+    ...(v.cancellationAttempted === true && { cancellationAttempted: true }) };
 }

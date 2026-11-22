@@ -64,8 +64,11 @@ function PanelOn({ port, route, onClose }: CalendarPanelProps & { readonly port:
       out.current.delete(row.recordId);
     }
     if (!outcome.pressed) return commands.event(null);
-    if (outcome.say !== null) report(e(outcome.say));
-    if (outcome.verdict?.kind !== "taken") return;
+    if (outcome.verdict?.kind !== "taken") {
+      if (outcome.say !== null) report(e(outcome.say));
+      return;
+    }
+    report(t(`answer.${value}`));
     const waiting = (latest.current?.groups.toAnswer ?? []).filter((r) => r.recordId !== row.recordId);
     const next = waiting[Math.max(0, was)] ?? waiting[0];
     if (next) show(next);

@@ -41,7 +41,7 @@ inert() {
 shared() {
   case "$1" in
     apps/sidecar/* | apps/worker/* | packages/* | patches/* | scripts/*) return 0 ;;
-    package.json | package-lock.json | tsconfig*.json) return 0 ;;
+    package.json | package-lock.json | tsconfig*.json | tools/tsconfig*.json | test/tsconfig.test-dirs.json) return 0 ;;
     .github/scripts/pr-build-scope.sh | .github/scripts/retry-infra.sh | .gitattributes) return 0 ;;
   esac
   return 1

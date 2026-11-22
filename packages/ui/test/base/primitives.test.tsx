@@ -261,7 +261,7 @@ describe("EndDot", () => {
     ["Is it ready?", "Is it ready?"],
     ["Loading...", "Loading..."],
   ])("uses the drawn stop after %s", (words, expected) => {
-    const { container } = render(<EndDot>{words}</EndDot>);
+    const { container } = render(<EndDot kind="hot">{words}</EndDot>);
     expect(container.textContent).toBe(expected);
     expect(container.querySelector("[aria-hidden='true']")).toBeTruthy();
   });

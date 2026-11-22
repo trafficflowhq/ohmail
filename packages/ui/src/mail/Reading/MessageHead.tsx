@@ -327,7 +327,7 @@ function Recipients({ groups, details }: { groups: readonly HeadGroup[]; details
               <span>{group.word} </span>
               {people.map((person, at) => (
                 <Fragment key={at}>
-                  {at ? <span>, </span> : null}
+                  {at ? <span className="oh-messagehead-sep">, </span> : null}
                   {person.textOnly ? (
                     <span className="oh-messagehead-person">{person.name}</span>
                   ) : (

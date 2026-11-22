@@ -3,35 +3,92 @@ import { pressAndHear, type CalendarEventRecord, type CalendarPort } from "@ohma
 import type { CalendarChangeScope, CalendarEventFields } from "@ohmail/wire";
 import { useFrame, useReport } from "../frame/commands.js";
 import { fragmentOf } from "../frame/route.js";
-import { eventUpdate, guestUpdate, type GuestUpdate } from "./guest-update.js";
-import { reportCalendarUpdate } from "./update-report.js";
+import { editGuestUpdate, eventUpdate, type GuestUpdate } from "./guest-update.js";
+import { reportCalendarUpdate, useSentUpdateLabel } from "./update-report.js";
 import { useText } from "../text/index.js";
+import { patchOnScope } from "./edit-draft.js";
+import { editBase, editSchedule, editVersions, type EditableEvent } from "./editable-event.js";
 
 type Choice = "save" | "mine" | "theirs";
+type Consent = {
+  readonly choice: Choice;
+  readonly update: GuestUpdate;
+  readonly scope?: CalendarChangeScope;
+  readonly scopeVersion?: string;
+};
 
 const needsConfirmation = (update: GuestUpdate, approved?: GuestUpdate) =>
   update.names.length > 0 &&
   (update.proposal !== approved?.proposal ||
     JSON.stringify(update.audience) !== JSON.stringify(approved.audience));
 
+function useEditQuestions(
+  occurrence: string | null,
+  fail: (message: string) => void,
+  schedule: string | null,
+) {
+  const e = useText("event");
+  const [scopeChoice, askScope] = useState<{ choice: Choice; version: string } | null>(null);
+  const [question, ask] = useState<Consent | null>(null);
+  const clear = () => {
+    askScope(null);
+    ask(null);
+  };
+  const review = (
+    current: EditableEvent,
+    change: Partial<CalendarEventFields>,
+    choice: Choice,
+    approved?: GuestUpdate,
+    scope?: CalendarChangeScope,
+    scopeVersion?: string,
+  ) => {
+    if (schedule !== null && (change.start || change.end) && editSchedule(current) !== schedule) {
+      clear();
+      fail(e("refusal.changed"));
+      return false;
+    }
+    const version = editVersions(current);
+    if (current.record.repeat && (!scope || scopeVersion !== version)) {
+      if (!occurrence) fail(e("refusal.invalid"));
+      else {
+        ask(null);
+        askScope({ choice, version });
+      }
+      return false;
+    }
+    askScope(null);
+    const update = editGuestUpdate(current, change, scope);
+    if (needsConfirmation(update, approved)) {
+      ask({ choice, update, scope, scopeVersion });
+      return false;
+    }
+    ask(null);
+    return true;
+  };
+  return { scopeChoice, question, clear, review };
+}
+
 function useEventSave(
   port: CalendarPort,
   original: CalendarEventRecord,
-  current: () => CalendarEventRecord | null,
+  shown: CalendarEventRecord,
+  current: () => EditableEvent | null,
   patch: Partial<CalendarEventFields> | null,
   occurrence: string | null,
   finish: () => void,
 ) {
   const e = useText("event");
   const report = useReport();
-  const [scopeChoice, askScope] = useState<{ choice: Choice; version: string } | null>(null);
-  const [question, ask] = useState<{ choice: Choice; update: GuestUpdate } | null>(null);
+  const sentLabel = useSentUpdateLabel();
   const [failure, fail] = useState<string | null>(null);
+  const initial = { record: original, exception: shown.recurrenceId ? shown : null };
+  const questions = useEditQuestions(occurrence, fail, original.repeat ? editSchedule(initial) : null);
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
   const ticket = useRef<symbol | null>(null);
   const refusedId = useRef<string | null>(null);
   const base = useRef(original.updatedAt);
+  const shownException = initial.exception?.id;
   const save = async (
     choice: Choice,
     approved?: GuestUpdate,
@@ -39,28 +96,16 @@ function useEventSave(
     scopeVersion?: string,
   ) => {
     if (ticket.current || (conflict && choice === "save")) return;
-    const record = current();
-    if ((!record || !patch) && choice !== "theirs") {
-      fail(e(record ? "refusal.invalid" : "refusal.readOnly"));
-      return;
-    }
-    if (choice !== "theirs" && record?.repeat && (!scope || scopeVersion !== record.updatedAt)) {
-      if (!occurrence) {
-        fail(e("refusal.invalid"));
+    const selected = current();
+    const change = patch && patchOnScope(patch, scope, original, shown);
+    if (choice === "theirs") questions.clear();
+    else {
+      if (!selected || !change || selected.exception?.id !== shownException) {
+        fail(e(selected ? "refusal.invalid" : "refusal.readOnly"));
         return;
       }
-      askScope({ choice, version: record.updatedAt });
-      return;
+      if (!questions.review(selected, change, choice, approved, scope, scopeVersion)) return;
     }
-    askScope(null);
-    if (choice !== "theirs" && patch && record) {
-      const update = guestUpdate(record, patch);
-      if (needsConfirmation(update, approved)) {
-        ask({ choice, update });
-        return;
-      }
-    }
-    ask(null);
     const request = Symbol();
     ticket.current = request;
     setBusy(true);
@@ -82,26 +127,29 @@ function useEventSave(
         return;
       }
       const latest = current();
-      if (!latest || !patch || !!latest.repeat !== !!original.repeat) {
+      if (
+        !latest ||
+        !change ||
+        latest.exception?.id !== shownException ||
+        !!latest.record.repeat !== !!original.repeat
+      ) {
         fail(e("refusal.readOnly"));
         return;
       }
-      if (latest.repeat && (!scope || scopeVersion !== latest.updatedAt)) {
-        askScope({ choice, version: latest.updatedAt });
-        return;
-      }
-      if (latest !== record) {
-        const update = guestUpdate(latest, patch);
-        if (needsConfirmation(update, approved)) {
-          ask({ choice, update });
-          return;
-        }
-      }
-      if (choice === "mine") base.current = latest.updatedAt;
-      const before = { ...latest };
+      if (!questions.review(latest, change, choice, approved, scope, scopeVersion)) return;
+      const update = editGuestUpdate(latest, change, scope);
+      if (choice === "mine") base.current = latest.record.updatedAt;
+      const target = latest.exception ?? latest.record;
+      const before = { ...latest.record };
       const heard = await pressAndHear(
         port,
-        eventUpdate(latest, base.current, patch, scope ?? { kind: "record" }),
+        eventUpdate(
+          target,
+          scopeVersion ? editBase(latest, scope) : base.current,
+          change,
+          scope ?? { kind: "record" },
+          update,
+        ),
       );
       if (ticket.current !== request) return;
       if (heard.verdict?.kind === "refused") {
@@ -116,7 +164,18 @@ function useEventSave(
         fail(e(heard.say!));
         return;
       }
-      if (heard.say) reportCalendarUpdate(report, e(heard.say), port, before, patch, current, e);
+      if (heard.say) {
+        const sent = heard.verdict?.kind === "taken" ? sentLabel(before, change, update) : undefined;
+        reportCalendarUpdate(
+          report,
+          sent ?? e(heard.say),
+          port,
+          before,
+          change,
+          () => current()?.record ?? null,
+          e,
+        );
+      }
       finish();
     } catch {
       if (ticket.current === request) fail(e("refusal.unknown"));
@@ -127,13 +186,14 @@ function useEventSave(
       }
     }
   };
-  return { busy, failure, conflict, scopeChoice, askScope, question, ask, fail, ticket, save };
+  return { busy, failure, conflict, ...questions, fail, ticket, save };
 }
 
 export function useEditLeave(
   port: CalendarPort,
   original: CalendarEventRecord,
-  current: () => CalendarEventRecord | null,
+  shown: CalendarEventRecord,
+  current: () => EditableEvent | null,
   patch: Partial<CalendarEventFields> | null,
   occurrence: string | null,
   dirty: boolean,
@@ -141,9 +201,10 @@ export function useEditLeave(
   onLeave: () => void,
 ) {
   const { host, route } = useFrame();
-  const { busy, failure, conflict, scopeChoice, askScope, question, ask, fail, ticket, save } = useEventSave(
+  const { busy, failure, conflict, scopeChoice, question, clear, fail, ticket, save } = useEventSave(
     port,
     original,
+    shown,
     current,
     patch,
     occurrence,
@@ -178,19 +239,16 @@ export function useEditLeave(
     scopeAsked: scopeChoice !== null,
     chooseScope: (kind: CalendarChangeScope["kind"]) => {
       if (!scopeChoice || !occurrence) return;
-      const first = Number(occurrence) === Date.parse(current()?.startsAt ?? "");
+      const first = Number(occurrence) === Date.parse(current()?.record.startsAt ?? "");
       let scope: CalendarChangeScope = { kind: "record" };
       if (kind === "occurrence") scope = { kind, at: occurrence };
       if (kind === "following" && !first) scope = { kind, at: occurrence, newEventId: port.newId() };
       void save(scopeChoice.choice, undefined, scope, scopeChoice.version);
     },
     question: question?.update ?? null,
-    cancel: () => {
-      askScope(null);
-      ask(null);
-    },
+    cancel: clear,
     confirm: () => {
-      if (question) void save(question.choice, question.update);
+      if (question) void save(question.choice, question.update, question.scope, question.scopeVersion);
     },
     mine: () => void save("mine"),
     discard: conflict ? () => void save("theirs") : finish,

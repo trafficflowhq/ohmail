@@ -1,9 +1,11 @@
 import { useState, type MouseEvent } from "react";
 import { DatePicker } from "./DatePicker.js";
-import { Menu, MenuItem, SuggestionCredit, SuggestionList } from "@ohmail/ui/base";
+import { SuggestionCredit, SuggestionList } from "@ohmail/ui/base";
 import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } from "@ohmail/ui/calendar";
 import { addDays, clockOf, dayShort, readQuickEntry, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
+import { ShowAsMenu } from "./ShowAsMenu.js";
+import { DraftCalendarMenu } from "./DraftCalendarMenu.js";
 import { ZoneMenu } from "./ZoneMenu.js";
 import { useEditorRows, type EditorRows } from "./use-editor-rows.js";
 import { zoneForCity, zoneName } from "./zone-names.js";
@@ -188,15 +190,13 @@ export function DraftFields({
             label: t("create.calendar"),
             value: calendar?.name ?? "",
           },
-      edit && !choose
-        ? {
-            kind: "slot",
-            label: t("create.showAs"),
-            value: t(draft.busy ? "create.busy" : "create.free"),
-            expanded: menu?.kind === "busy",
-            onPress: (event) => setMenu({ kind: "busy", anchor: event.currentTarget }),
-          }
-        : { kind: "toggle", label: t("create.busy"), on: draft.busy, onChange: (busy) => change({ busy }) },
+      {
+        kind: "slot",
+        label: t("create.showAs"),
+        value: t(draft.busy ? "create.busy" : "create.free"),
+        expanded: menu?.kind === "busy",
+        onPress: (event) => setMenu({ kind: "busy", anchor: event.currentTarget }),
+      },
       {
         kind: "toggle",
         label: t("create.private"),
@@ -282,8 +282,8 @@ function DraftMenus({
           anchor={menu.anchor}
           labels={{
             dialog: t(menu.kind === "end" ? "create.endDate" : "create.date"),
-            prevMonth: t("before"),
-            nextMonth: t("after"),
+            prevMonth: t("mini.before"),
+            nextMonth: t("mini.after"),
             today: t("today"),
           }}
           onPick={(day) => {
@@ -298,20 +298,12 @@ function DraftMenus({
         />
       )}
       {menu?.kind === "busy" && (
-        <Menu open anchor={menu.anchor} label={t("create.showAs")} onClose={() => setMenu(null)}>
-          {[true, false].map((busy) => (
-            <MenuItem
-              key={String(busy)}
-              checked={busy === draft.busy}
-              onPress={() => {
-                change({ busy });
-                setMenu(null);
-              }}
-            >
-              {t(busy ? "create.busy" : "create.free")}
-            </MenuItem>
-          ))}
-        </Menu>
+        <ShowAsMenu
+          anchor={menu.anchor}
+          busy={draft.busy}
+          choose={(busy) => change({ busy })}
+          close={() => setMenu(null)}
+        />
       )}
       {menu?.kind === "zone" && timeZone && (
         <ZoneMenu
@@ -322,20 +314,16 @@ function DraftMenus({
         />
       )}
       {choose && menu?.kind === "calendar" && (
-        <Menu open anchor={menu.anchor} label={t("create.calendar")} onClose={() => setMenu(null)}>
-          {choices.map((c) => (
-            <MenuItem
-              key={c.id}
-              checked={c.id === calendar?.id}
-              onPress={() => {
-                choose(c.id);
-                setMenu(null);
-              }}
-            >
-              {c.name}
-            </MenuItem>
-          ))}
-        </Menu>
+        <DraftCalendarMenu
+          anchor={menu.anchor}
+          choices={choices}
+          current={calendar?.id}
+          choose={(id) => {
+            choose(id);
+            setMenu(null);
+          }}
+          close={() => setMenu(null)}
+        />
       )}
     </>
   );

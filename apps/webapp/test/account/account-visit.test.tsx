@@ -21,7 +21,7 @@ import { usePasswordDoor } from "../../app/(product)/mailbox/password-door";
 const wipe = vi.hoisted(() => ({ handed: [] as (string | undefined)[] }));
 vi.mock("../../app/sign-out", async (original) => ({
   ...await original<typeof import("../../app/sign-out")>(),
-  signOut: async (owner?: string) => {
+  signOutAndSettle: async (owner?: string) => {
     wipe.handed.push(owner);
     await fetch("/auth/refresh/logout", { method: "POST" });
     return { cleared: true, remaining: [], inventoryComplete: true, serverRefused: null };

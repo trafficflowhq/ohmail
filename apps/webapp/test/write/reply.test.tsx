@@ -13,6 +13,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
+import { UNDO_MS } from "@ohmail/app-logic/press";
 import en from "../../messages/en.json";
 import { act, message, replyDraft, stubDom, waitFor } from "../_draft-shell.js";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
@@ -948,5 +949,61 @@ describe("the person's own text: a draft over no words, and a discard", () => {
       yours: true,
       own: "A second answer",
     });
+  });
+});
+
+describe("the reply's signature, off with its Undo", () => {
+  it("taking the signature off a reply says so with Undo, and Undo writes it back as it was written", async () => {
+    const w = await mountWriting({
+      messages: [message("m1")],
+      hash: "#/ohbox",
+      sheet: ["m1"],
+      signatures: { mb1: "Lena\nMakers Fest" },
+    });
+    await act(async () => w.now().openReply("m1"));
+    await rounds(6);
+    expect((screen.getByRole("textbox", { name: W.signature.label }) as HTMLElement).textContent).toBe("Lena\nMakers Fest");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.signature.remove }));
+    });
+    await rounds(2);
+    expect(w.now().replySig).toEqual({ kind: "removed" });
+    const said = w.reports.find((r) => r.message === en.compose.signatureRemoved);
+    expect(said?.options?.action).toBe(en.ohbox.undo);
+    expect(said?.options?.duration).toBe(UNDO_MS);
+    await act(async () => said!.options!.onAction!());
+    await rounds(4);
+    const back = screen.getByRole("textbox", { name: W.signature.label });
+    expect(back.textContent).toBe("Lena\nMakers Fest");
+  });
+
+  it("the Undo of one reply's removal does not touch another reply opened after it", async () => {
+    const w = await mountWriting({
+      messages: [message("m1"), message("m2")],
+      hash: "#/ohbox",
+      sheet: ["m1", "m2"],
+      signatures: { mb1: "Lena\nMakers Fest" },
+    });
+    await act(async () => w.now().openReply("m1"));
+    await rounds(6);
+    const signed = screen.getByRole("textbox", { name: W.signature.label }) as HTMLElement;
+    await act(async () => {
+      signed.focus();
+      signed.textContent = "The first reply's own words";
+      fireEvent.input(signed);
+    });
+    await rounds(2);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.signature.remove }));
+    });
+    await rounds(2);
+    const said = w.reports.find((r) => r.message === en.compose.signatureRemoved);
+    // Within the undo window the composition answers a different letter instead.
+    await act(async () => w.now().openReply("m2"));
+    await rounds(6);
+    await act(async () => said!.options!.onAction!());
+    await rounds(4);
+    expect(w.now().replySig).toEqual({ kind: "following" });
+    expect((screen.getByRole("textbox", { name: W.signature.label }) as HTMLElement).textContent).toBe("Lena\nMakers Fest");
   });
 });

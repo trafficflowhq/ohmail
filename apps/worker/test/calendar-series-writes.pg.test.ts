@@ -148,13 +148,13 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
      * A press on a day and the days after it, as the door records it: the series' end (`key`), then the new series (`key:2`, after
      * it), which names the series it comes from, the day, and the fields the person named.
      */
-    const split = async (key: string, series: { id: string; updatedAt: Date }, at: string, change: Record<string, unknown>, fields: Record<string, unknown>) => {
+    const split = async (key: string, series: { id: string; updatedAt: Date }, at: string, change: Record<string, unknown>, fields: Record<string, unknown>, audience?: { organizer: string; guests: string[] }) => {
       const newEventId = randomUUID();
       const [cal] = await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, t.accountId));
-      const first = await press(key, { kind: "calendar_event_update", eventId: series.id, base: series.updatedAt.toISOString(), scope: { kind: "following", at, newEventId }, change }, { part: { of: key, n: 1 } });
+      const first = await press(key, { kind: "calendar_event_update", eventId: series.id, base: series.updatedAt.toISOString(), scope: { kind: "following", at, newEventId }, change, ...(audience && { audience }) }, { part: { of: key, n: 1 } });
       const named = CONTINUED_FIELDS.filter((f) => change[f] !== undefined);
       const second = await press(`${key}:2`, { kind: "calendar_event_create", eventId: newEventId, calendarId: cal!.id, event: fields }, {
-        after: first.id, part: { of: key, n: 2, from: { eventId: series.id, at, named } },
+        after: first.id, part: { of: key, n: 2, from: { eventId: series.id, at, named, ...(audience && { confirmed: true }) } },
       });
       return { first, second, newEventId };
     };
@@ -751,11 +751,11 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
     it("ends the series and makes the new one with the series' invitees, at a server that sends invitations itself; each part once", async () => {
       const b = await bench({ "critique.ics": OWN }, undefined, { autoSchedule: true, mailbox: MILA });
       const [series] = await b.rows("critique.ics");
-      await b.split("term", series!, DEC_14, { title: "Glaze critique, the new term" }, newTerm);
+      await b.split("term", series!, DEC_14, { title: "Glaze critique, the new term" }, newTerm, { organizer: MILA, guests: newTerm.invitees.map((person) => person.address) });
       const from = b.dav.seen.length;
       expect((await b.turn()).kind).toBe("synced");
       expect(await b.writes()).toEqual([["term", "applied", null], ["term:2", "applied", null]]);
-      const [end, made] = b.written(from);
+      const [made, end] = b.written(from);
       expect([end!.method, end!.headers["if-match"], made!.method, made!.headers["if-none-match"]]).toEqual(["PUT", '"critique.ics-1"', "PUT", "*"]);
       // The new series keeps the series' own organizer line as it is, and asks the series' invitee again, as the server is to send it.
       const people = made!.body.replace(/\r\n[ \t]/g, "").split("\r\n").filter((l) => /^(ORGANIZER|ATTENDEE)[;:]/.test(l));
@@ -767,7 +767,7 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
     it("writes neither part at a server that does not send invitations itself", async () => {
       const b = await bench({ "critique.ics": OWN }, undefined, { autoSchedule: false, mailbox: MILA });
       const [series] = await b.rows("critique.ics");
-      await b.split("term", series!, DEC_14, { title: "Glaze critique, the new term" }, newTerm);
+      await b.split("term", series!, DEC_14, { title: "Glaze critique, the new term" }, newTerm, { organizer: MILA, guests: newTerm.invitees.map((person) => person.address) });
       const from = b.dav.seen.length;
       expect((await b.turn()).kind).toBe("synced");
       expect(b.written(from)).toEqual([]);

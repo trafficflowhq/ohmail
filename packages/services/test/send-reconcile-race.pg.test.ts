@@ -24,7 +24,7 @@ import type { ServiceContext } from "../src/index.js";
  * sent, recorded as one we could not confirm, with the reader told to go and look for it in a
  * folder it is already in.
  *
- * ## Why REAL Postgres, and not PGlite (CLAUDE.md)
+ * ## Why REAL Postgres, and not PGlite (AGENTS.md)
  *
  * PGlite is ONE connection. The interleaving under test — a probe in flight on connection A
  * while connection B commits a terminal state — cannot occur there at all, so a green run would

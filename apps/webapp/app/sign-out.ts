@@ -590,7 +590,10 @@ export async function signOut(
     postSessionChange();
   }
   const mayWipeJar = () => readSessionFamily() === family && mayProceed() && ownsOperation(true);
-  if (family !== null && departed !== undefined && provedOwner && mayWipeJar() && auth.clearLogoutCookies) {
+  // An older pending sign-out may have a family cookie but no saved account. Once its
+  // revocation is confirmed, only the exclusive jar cleanup can finish that operation.
+  const recoveredFamily = finishing && operation?.account === null && operation.revoked === true;
+  if (family !== null && (provedOwner || recoveredFamily) && mayWipeJar() && auth.clearLogoutCookies) {
     const shared = await new Promise<SignOutResult | null>((done) => {
       void withSessionCookieLock(async () => {
         if (!mayWipeJar() || !await clearBrowserWakeNotices() || !mayWipeJar()) return;
@@ -673,6 +676,13 @@ export async function signOut(
     remaining: [...local.remaining, ...tab.survivors],
     inventoryComplete: false,
   });
+}
+
+/** A page leaving after sign-out gives its bounded cache clear time to settle. */
+export async function signOutAndSettle(owner?: string, options?: { expectedFamily?: string }): Promise<SignOutResult> {
+  const result = await signOut(owner, options);
+  await result.cacheCleanup?.settled;
+  return result;
 }
 
 async function forgetDepartedScope(departed: string, isolatedScope: string | undefined, reach: () => WipeReach) {

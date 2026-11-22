@@ -5,6 +5,12 @@ Zürich. This repository is the free desktop client — one application on macOS
 Windows and Linux. Contributions are welcome, and so is a plain "this is wrong" —
 the client is early enough that direction still moves.
 
+## Using coding assistants
+
+Contributions made with automated coding assistants are welcome and encouraged. If you submit a
+pull request or issue, you must understand and personally test what you submit, take responsibility
+for it, and review any generated material before submitting.
+
 ## What is most useful right now
 
 Every build now connects to a real mailbox
@@ -375,7 +381,7 @@ weekend on a patch. These trees are **shared with the Cloud web client**:
 
 They are published here under AGPL-3.0 and used in the hosted Cloud client,
 which TrafficFlow can do because it holds the copyright on all of it
-([COPYRIGHT](COPYRIGHT)). A contribution from you into one of those files would
+([COPYRIGHT](docs/legal/COPYRIGHT)). A contribution from you into one of those files would
 break that arrangement — we could only ship it on the Cloud side by publishing
 that client's source, or with your separate permission.
 
@@ -398,8 +404,7 @@ first — that is true for the whole repository, and doubly so here.
 
 ## Conduct
 
-Be direct, be technical, be decent. Harassment or discrimination gets you
-removed from the repository, and there is no appeal process.
+Be direct, be technical.
 
 ## Contact
 

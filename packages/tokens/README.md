@@ -30,7 +30,7 @@ Imports: `@ohmail/tokens/design.css`, `@ohmail/tokens/design/motion.css`, `@ohma
 `@ohmail/tokens/design`, `@ohmail/tokens/design/fonts` and `@ohmail/tokens/design/tokens.json`.
 
 The fonts are under the SIL Open Font License, not under this package's licence (`fonts/FONTS.md`, and
-`COPYRIGHT` at the root). Whatever copies a font file out of `fonts/` copies its family's licence text with it;
+[COPYRIGHT](../../docs/legal/COPYRIGHT)). Whatever copies a font file out of `fonts/` copies its family's licence text with it;
 a copy of `src/` alone has no fonts, and `fonts.css` then points at nothing.
 
 ### Changing a value

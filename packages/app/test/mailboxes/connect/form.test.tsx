@@ -54,6 +54,11 @@ const SUBJECT: ConnectSubject = {
 };
 const SHA = `${"7A:".repeat(31)}7A`;
 const SHA_NEW = `${"3C:".repeat(31)}3C`;
+/* What the control's accessible description carries: the text of the element it points to. */
+const described = (el: HTMLElement): string | null => {
+  const id = el.getAttribute("aria-describedby");
+  return id ? (document.getElementById(id)?.textContent?.trim() ?? null) : null;
+};
 
 /** The join's form on the manual entry, filled. */
 function fillJoin(imap = A, smtp = B): void {
@@ -371,19 +376,38 @@ describe("a consent is a press, for one server", () => {
     type(O.password, MARKER);
     press(O.connect);
     await settle();
-    const first = screen.getByRole("switch", { name: M.trustCertificateLabel.replace("{fingerprint}", SHA) });
+    const first = screen.getByRole("switch", { name: M.trustCertificateLabel });
+    expect(described(first), "the switch carries no shown fingerprint").toBe(SHA);
     fireEvent.click(first);
     expect(first.getAttribute("aria-checked")).toBe("true");
     press(O.connect);
     await settle();
     expect(of("connect")[1]!.sent).toMatchObject({ input: { imap: { trustCertificate: SHA } } });
-    const changed = screen.getByRole("switch", {
-      name: M.trustCertificateLabel.replace("{fingerprint}", SHA_NEW),
-    });
+    const changed = screen.getByRole("switch", { name: M.trustCertificateLabel });
+    expect(changed, "the changed fingerprint is gone").toBeTruthy();
+    expect(described(changed), "the switch carries no changed fingerprint").toBe(SHA_NEW);
     expect(changed.getAttribute("aria-checked")).toBe("false");
     press(O.connect);
     await settle();
     expect(of("connect")[2]!.sealed).not.toContain("trustCertificate");
+  });
+
+  it("the fingerprint stands on its own line under the trust line, as whole readable text", async () => {
+    const { door } = fakeDoor({ connect: [ownCertificate("imap", SHA)] });
+    draw(door, { purpose: { kind: "add" } });
+    type(O.address, ADDRESS);
+    press(P.otherLabel);
+    type(O.imapHost, A);
+    type(O.smtpHost, B);
+    type(O.password, MARKER);
+    press(O.connect);
+    await settle();
+    const trust = screen.getByRole("switch", { name: M.trustCertificateLabel });
+    const print = screen.getByText(SHA);
+    expect(print.tagName).toBe("P");
+    expect(print.textContent).toBe(SHA);
+    expect(trust.contains(print), "the fingerprint sits inside the trust line, not on its own").toBe(false);
+    expect(described(trust), "the trust line carries no fingerprint").toBe(SHA);
   });
 });
 

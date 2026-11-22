@@ -6,6 +6,7 @@
  */
 import {
   DEFAULT_LIMITS,
+  dayNumber,
   eventOf,
   expandSeries,
   instant,
@@ -23,7 +24,9 @@ import {
   seriesOf,
   timeProperty,
   wall,
+  wallFromSeconds,
   wallIn,
+  wallSeconds,
   zoned,
   type CalEvent,
   type EventTime,
@@ -38,9 +41,12 @@ const DAY_MS = 86_400_000;
 
 type Day = { readonly year: number; readonly month: number; readonly day: number };
 
-/** A time's day on its own clock: a whole day's, or a clock time's; none for a time told in UTC. */
+const utcWall = (ms: number): Wall => wallFromSeconds(Math.floor(ms / 1_000));
+
+/** A time's day on its own clock, including UTC for an instant. */
 function dayOf(t: EventTime): Day | null {
   if (t.kind === "date") return t;
+  if (t.kind === "instant") return Number.isFinite(t.epochMs) ? utcWall(t.epochMs) : null;
   return t.kind === "zoned" || t.kind === "floating" ? t.wall : null;
 }
 
@@ -53,6 +59,15 @@ const sameWall = (a: Wall, b: Wall): boolean =>
   a.hour === b.hour &&
   a.minute === b.minute &&
   a.second === b.second;
+
+/** Put a series' clock time on a different calendar day without changing the kind of time. */
+function onDay(day: Day, time: EventTime): EventTime | null {
+  if (time.kind === "date") return plainDate(day.year, day.month, day.day);
+  if (time.kind === "floating") return null;
+  const clock = time.kind === "instant" ? utcWall(time.epochMs) : time.wall;
+  const at = wall(day.year, day.month, day.day, clock.hour, clock.minute, clock.second);
+  return time.kind === "instant" ? instant(wallSeconds(at) * 1_000) : zoned(at, time.tzid);
+}
 
 /** The same time, told the same way. */
 export function sameTime(a: EventTime, b: EventTime): boolean {
@@ -70,13 +85,15 @@ export function sameTime(a: EventTime, b: EventTime): boolean {
 
 /**
  * A moment as the series whose first day is `first` tells its days: a whole day's (a whole day's key
- * is its UTC midnight), or a clock time in the series' zone; none for a series told otherwise.
+ * is its UTC midnight), an instant in UTC, or a clock time in the series' zone.
  */
 export function clockOf(first: EventTime, ms: number, zones: ZoneSource): EventTime | null {
+  if (!Number.isFinite(ms)) return null;
   if (first.kind === "date") {
     const d = new Date(ms);
     return plainDate(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
   }
+  if (first.kind === "instant") return instant(ms);
   if (first.kind !== "zoned") return null;
   const w = wallIn(ms, first.tzid, zones);
   return w === null ? null : zoned(w, first.tzid);
@@ -135,10 +152,11 @@ export function endsBeforeDay(
   zones: ZoneSource,
 ): boolean {
   const until = rule.until;
-  if (until !== null)
-    return until.kind === "date"
-      ? at >= Date.UTC(until.year, until.month - 1, until.day + 1)
-      : until.kind === "instant" && at > until.epochMs;
+  if (until?.kind === "date") {
+    const local = first?.kind === "zoned" ? wallIn(at, first.tzid, zones) : utcWall(at);
+    return local !== null && dayNumber(local) > dayNumber(until);
+  }
+  if (until !== null) return until.kind === "instant" && at > until.epochMs;
   if (rule.count === null || first === null) return false;
   const made = daysOf(rule, first, firstEnd, momentOrUtc(first, zones) - DAY_MS, at, zones);
   return made !== null && made.filter((d) => momentOrUtc(d, zones) < at).length >= rule.count;
@@ -160,7 +178,7 @@ export function endedRule(rule: RRule, first: EventTime, at: number, zones: Zone
  * takes, so that no day falls off its end and none is added. A rule without UNTIL, and one whose
  * day does not move, are as they are. `null` where the end cannot be moved so: `to` is on another
  * day than `from` (where its last day went is then the person's to say, by naming the repeat), or
- * is a time told in UTC or on no zone, or the core finds no last day, or the end lies in the stretch
+ * has no zone, or the core finds no last day, or the end lies in the stretch
  * its zone skips on a night the series' clock time is skipped ({@link untilSkipped}: whether that
  * night is the series' last day, the server and the core may disagree).
  */
@@ -176,17 +194,16 @@ export function movedRule(
   if (untilSkipped({ first, firstEnd, rule }, zones)) return null;
   const was = dayOf(from);
   const now = dayOf(to);
-  if (was === null || now === null || !sameDay(was, now)) return null;
+  if (was === null || now === null || to.kind === "floating" || !sameDay(was, now)) return null;
+  // Graph's timed recurrence has a local end date. Its last date is independent of its clock time.
+  if (rule.until.kind === "date" && (first.kind === "zoned" || first.kind === "instant")) return rule;
   const untilMs = momentOrUtc(rule.until, zones);
   const days = daysOf(rule, first, firstEnd, momentOrUtc(first, zones) - DAY_MS, untilMs + 2 * DAY_MS, zones);
   const last = days === null || days.length === 0 ? null : dayOf(days[days.length - 1]!);
-  if (last === null) return null;
-  if (to.kind === "date") return { ...rule, until: plainDate(last.year, last.month, last.day) };
-  if (to.kind !== "zoned") return null;
-  const at = momentOrUtc(
-    zoned(wall(last.year, last.month, last.day, to.wall.hour, to.wall.minute, to.wall.second), to.tzid),
-    zones,
-  );
+  const moved = last === null ? null : onDay(last, to);
+  if (moved === null) return null;
+  if (moved.kind === "date") return { ...rule, until: moved };
+  const at = momentOrUtc(moved, zones);
   return Number.isFinite(at) ? { ...rule, until: instant(at) } : null;
 }
 
@@ -270,7 +287,7 @@ export interface ContinuedChange {
  * from that day (at the series' own time, or at the change's), with the series' own repeat, a count
  * going on with what is left of it and an end (UNTIL) moved with the time ({@link movedRule}), or the
  * repeat the change names. `null` where those days cannot go on so: a series neither of whole days
- * nor of a clock time in a zone, a count with nothing left, or an end that cannot be moved.
+ * nor of a clock time with a zone or UTC, a count with nothing left, or an end that cannot be moved.
  */
 export function continuedSeries(
   series: StoredSeries,
@@ -279,7 +296,7 @@ export function continuedSeries(
   zones: ZoneSource,
 ): { readonly start: EventTime; readonly end: EventTime; readonly rule: RRule } | null {
   const { first, firstEnd, rule } = series;
-  if (first.kind !== "zoned" && first.kind !== "date") return null;
+  if (first.kind === "floating") return null;
   // The day it goes on from, at the time the series keeps.
   const clock = (ms: number): EventTime | null => clockOf(first, ms, zones);
   const cut = clock(at);
@@ -307,7 +324,7 @@ export function continuedSeries(
 
 /**
  * The days a series excludes from its day `cut` on (`cut`: that day on the series' own clock, a
- * clock time in its zone or a whole day; `excluded`: each told as the stored object tells it), as a
+ * clock time in its zone or UTC, or a whole day; `excluded`: each told as the stored object tells it), as a
  * series of their own that starts at `start` has them: as they are where its days keep their time;
  * at the new time where it starts later or earlier on the very day `cut` names (an excluded day that
  * names none of the series' days excludes nothing, and is not carried). `null` where they cannot be
@@ -325,22 +342,20 @@ export function carriedExclusions(
   const from = momentOrUtc(cut, zones);
   const kept = excluded.filter((e) => momentOrUtc(e, zones) >= from);
   if (kept.length === 0 || sameTime(cut, start)) return [...kept];
-  if (cut.kind !== "zoned" || (start.kind !== "zoned" && start.kind !== "date")) return null;
-  if (!sameDay(cut.wall, start.kind === "zoned" ? start.wall : start)) return null;
+  if ((cut.kind !== "zoned" && cut.kind !== "instant") || start.kind === "floating") return null;
+  const clock = cut.kind === "instant" ? utcWall(cut.epochMs) : cut.wall;
+  const startDay = dayOf(start);
+  if (startDay === null || !sameDay(clock, startDay)) return null;
   const out: EventTime[] = [];
   for (const e of kept) {
     // The excluded day on the series' own clock: one of its days is at the series' time.
-    const w = wallIn(momentOrUtc(e, zones), cut.tzid, zones);
+    const at = momentOrUtc(e, zones);
+    const w = cut.kind === "instant" ? utcWall(at) : wallIn(at, cut.tzid, zones);
     if (w === null) return null;
-    if (w.hour !== cut.wall.hour || w.minute !== cut.wall.minute || w.second !== cut.wall.second) continue;
-    out.push(
-      start.kind === "date"
-        ? plainDate(w.year, w.month, w.day)
-        : zoned(
-            wall(w.year, w.month, w.day, start.wall.hour, start.wall.minute, start.wall.second),
-            start.tzid,
-          ),
-    );
+    if (w.hour !== clock.hour || w.minute !== clock.minute || w.second !== clock.second) continue;
+    const moved = onDay(w, start);
+    if (moved === null) return null;
+    out.push(moved);
   }
   return out;
 }

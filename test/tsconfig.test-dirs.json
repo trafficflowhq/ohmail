@@ -1,5 +1,6 @@
 {
   "//": "THE REPOSITORY'S OWN test/ - checks that belong to no single workspace. The base as it stands, with no override: `module: NodeNext` is what the root package.json's `type: module` actually declares, so the two TS2835 in here (a relative import of an apps/webapp file without the extension NodeNext requires) are an honest reading of this program and are pinned as such. Switching this dir to `bundler` would retire them and would be choosing a looser program to lower a count, which is the ratchet's own hard stop. The six TS7016 are the untyped scripts/*.mjs these guards drive; test/typecheck-test-dirs.test.ts drives its own script through a subprocess and a declared payload type for exactly that reason, and contributes none.",
-  "extends": "./test/tsconfig.test-dirs-base.json",
-  "include": ["test"]
+  "extends": "./tsconfig.test-dirs-base.json",
+  "include": ["."],
+  "exclude": ["node_modules", "compare/vitest.compare.config.ts", "vitest.sqlite.config.ts"]
 }

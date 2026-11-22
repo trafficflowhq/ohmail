@@ -235,6 +235,25 @@ describe("the calendar's phase follows the mail's", () => {
     expect(ofKind(pages, "calendar_connection")).toEqual([w.connectionId]);
   });
 
+  it("loads a moved exception with its finite series from the same calendar", async () => {
+    const w = await world();
+    const master = await event(w.db, w, { startsAt: day(-800), endsAt: day(-790) });
+    const changed = await event(w.db, w, { startsAt: day(1), endsAt: day(1.1), occurrenceAt: day(-792) });
+    await event(w.db, w, { startsAt: day(60), endsAt: day(60.1) });
+    const otherCalendar = randomUUID();
+    await w.db.insert(calCalendars).values({
+      id: otherCalendar, accountId: w.accountId, connectionId: w.connectionId, providerId: "work", name: "Work", access: "owner",
+    });
+    const unrelated = await event(w.db, { ...w, calendarId: otherCalendar }, { startsAt: day(-800), endsAt: day(-790) });
+    const uid = "finite-series";
+    for (const id of [master, unrelated]) await w.db.update(calEvents).set({ uid, repeatRule: "FREQ=DAILY;COUNT=11" }).where(eq(calEvents.id, id));
+    await w.db.update(calEvents).set({ uid }).where(eq(calEvents.id, changed));
+    const near = { fromMs: day(0).getTime(), toMs: day(10).getTime() };
+    expect(ofKind(await walk(w.ctx, { ...served, phase: "calendar", span: near, limit: 1 }), "calendar_event")).toEqual([changed, master]);
+    const window: CalendarWindow = { ...calendarFeed.window, maxRows: 2 };
+    expect(ofKind(await walk(w.ctx, { ...served, calendar: { ...calendarFeed, window } }), "calendar_event")).toEqual([changed, master]);
+  });
+
   it("past its row ceiling the window leaves out the events farthest from today first", async () => {
     const w = await world();
     const near = [await event(w.db, w, { startsAt: day(1), endsAt: day(1.1) }), await event(w.db, w, { startsAt: day(-2), endsAt: day(-1.9) })];

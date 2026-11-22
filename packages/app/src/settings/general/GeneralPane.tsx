@@ -127,7 +127,7 @@ function AppearanceSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Tex
 }
 
 function MessagesSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Text }) {
-  const { imageQuality, afterVerb, subject, images, pixels } = model;
+  const { imageQuality, afterVerb, subject, threadOrder, images, pixels } = model;
   const imagesWrite = useServerWrite();
   const pixelsWrite = useServerWrite();
   const failed = imagesWrite.failed ? t("images.failed") : pixelsWrite.failed ? t("pixels.failed") : null;
@@ -150,6 +150,17 @@ function MessagesSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Text 
           <SubjectPicture each g={g} />
         </SettingTile>
       </SettingTiles>
+      <SettingLine label={g("threadOrder")} narrow="under">
+        <Seg
+          label={g("threadOrder")}
+          value={threadOrder.value}
+          onChange={threadOrder.set}
+          options={[
+            { value: "bottom", label: g("threadOrderBottom") },
+            { value: "top", label: g("threadOrderTop") },
+          ]}
+        />
+      </SettingLine>
       <SettingLine label={t("imageQuality")} narrow="under">
         <Seg
           label={t("imageQualityAria")}

@@ -232,7 +232,7 @@ describe("the Ohbox and the reader, joined through the frame", () => {
     const outside = letter("z", { subject: "Not in the list" });
     const { mail, spies } = join({ letters: [...LETTERS, outside], listed: LETTERS, open: "z" });
     const article = within(pane()).getByRole("article");
-    expect(within(pane()).getByText("Not in the list")).toBeTruthy();
+    expect(within(pane()).getByRole("heading", { name: "Not in the list" })).toBeTruthy();
     layOut("z");
     pass(900);
     expect(reads(mail.mutations)).toEqual([]);

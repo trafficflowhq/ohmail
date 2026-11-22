@@ -76,7 +76,7 @@ export interface EventCardProps {
   /** Which side of its event it stands on, as the app placed it. */
   side?: "r" | "l" | "b" | "t" | "o";
   /** Where the app placed it, and how wide where it had to narrow it to fit. */
-  style?: Pick<CSSProperties, "left" | "top" | "width">;
+  style?: Pick<CSSProperties, "left" | "top" | "width" | "clipPath">;
   /** Where it grows from as it arrives, from its own corner: the middle of the bridge to its event. */
   origin?: { x: number; y: number };
   /** It stood already: it does not arrive again. */

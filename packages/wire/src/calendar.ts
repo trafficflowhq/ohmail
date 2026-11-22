@@ -181,7 +181,7 @@ export interface CalendarEventRecord {
   /** The moment of the occurrence this record replaces; `null` when it replaces none. */
   occurrenceAt: ISODateTime | null;
   repeat: CalendarRepeat | null;
-  /** The original is a personal series whose simple whole-day repeat this server can edit. */
+  /** An owned series whose organizer is confirmed by the connection, or a legacy personal series. */
   personalSeries?: true;
   /** Delete scopes proven by the service for this stored series. */
   deleteScopes?: readonly CalendarRemoveScope["kind"][];

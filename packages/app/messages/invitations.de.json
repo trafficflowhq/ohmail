@@ -22,7 +22,7 @@
     "span": "{from}–{to}",
     "from": "Von",
     "calendar": "Kalender",
-    "sendAgain": "Erneut senden",
+    "sendAgain": "Erneut versuchen",
     "letGo": "Verwerfen"
   }
 }

@@ -23,7 +23,7 @@ import { ServiceError } from "../src/errors.js";
  *
  * A partial unique index on a functional expression is precisely the kind of object PGlite has
  * been wrong about here before, and the 23505 error SHAPE (`code`, `constraint`) is a driver
- * detail — the mapping to 409 is only real if a real driver raised it. CLAUDE.md's rule.
+ * detail — the mapping to 409 is only real if a real driver raised it. AGENTS.md's rule.
  */
 /**
  * The seam, satisfied rather than exercised.

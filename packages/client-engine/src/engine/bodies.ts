@@ -1001,6 +1001,8 @@ export abstract class EngineBodies extends EngineWindowed {
   }
 
   private async releaseDecidedGroups(filing: { canFile: () => boolean; onFailure: () => void }): Promise<void> {
+    const press = this.adapter.releaseHeld;
+    if (!press) return;
     const h = this.heldRelease;
     while (h.filing === filing && filing.canFile()) {
       // Name only fresh server rule groups. A contact line would make a new decision, and an
@@ -1015,12 +1017,13 @@ export abstract class EngineBodies extends EngineWindowed {
       if (ids.length === 0) return;
       for (const id of ids) h.attempted.add(id);
       try {
-        // This action also reads the next set. A group that still appears cannot loop this pass.
-        await this.releaseHeldMail(ids);
+        await press.call(this.adapter, ids);
       } catch {
         if (h.filing === filing && filing.canFile()) filing.onFailure();
         return;
       }
+      // Read the next set. The bell marks a failed read as owed.
+      await this.refreshHeldReleases();
     }
   }
 

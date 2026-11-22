@@ -305,6 +305,9 @@ export interface Writing {
   /* The two doors that discard with Undo. */
   readonly discardCompose: () => void;
   readonly discardReply: () => void;
+  /* Taking the signature off this letter, or off this reply: each with its Undo. */
+  readonly removeComposeSig: () => void;
+  readonly removeReplySig: () => void;
 }
 
 export type RecipientRow = "to" | "cc" | "bcc";

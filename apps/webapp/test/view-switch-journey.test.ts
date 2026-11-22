@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -85,7 +85,8 @@ describe("the Screener's segments, in Chromium", () => {
     try {
       const skip = (p: string) => !/\/(node_modules|dist|\.next|test)$/.test(p);
       for (const d of ["apps/webapp", "apps/desktop/src", "packages"]) cpSync(join(ROOT, d), join(tree, d), { recursive: true, filter: skip });
-      for (const f of ["package.json", "tsconfig.base.json"]) cpSync(join(ROOT, f), join(tree, f));
+      mkdirSync(join(tree, "tools"), { recursive: true });
+      for (const f of ["package.json", "tools/tsconfig.base.json"]) cpSync(join(ROOT, f), join(tree, f));
       symlinkSync(join(ROOT, "node_modules"), join(tree, "node_modules"));
       await harness.build(out, tree);
       const run = await harness.runArm({

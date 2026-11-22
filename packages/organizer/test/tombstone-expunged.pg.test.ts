@@ -35,7 +35,7 @@ import { trashGonePass } from "../src/trash-gone.js";
  *
  * Real Postgres (:5433), because every claim here is transactional bookkeeping — seq
  * allocation, the storage counter's row lock, the husk/change ordering — which is exactly the
- * class PGlite has been shown not to witness (CLAUDE.md).
+ * class PGlite has been shown not to witness (AGENTS.md).
  *
  * Mutations watched (each restored, 2026-08-22):
  *  · drop the junk-parked exclusion (the reconciled-while-divergent NOT EXISTS) from

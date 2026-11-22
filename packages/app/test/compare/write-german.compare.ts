@@ -4,7 +4,7 @@
  * English, with the web door's text size at 150 %, in a real browser. Inside the place (the rail is the frame's, the list beside the letter the places') German cuts nothing English does not (told apart by the element, never by its words):
  * no box clips its words or ends them in an ellipsis while they are wider than it, and nothing runs past its box; no
  * control is left without a name, and no catalogue key is shown. The page is served on a routed origin; nothing
- * leaves the machine. It runs with the comparison (`npx vitest run --config vitest.compare.config.ts
+ * leaves the machine. It runs with the comparison (`npx vitest run --config test/compare/vitest.compare.config.ts
  * packages/app/test/compare/write-german.compare.ts`), as the screen's pictures do: what it finds is the screen's
  * and the kit's to mend, named in write's handover until it reads green.
  */

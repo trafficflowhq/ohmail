@@ -1,6 +1,7 @@
 /* The bridge takes the open event's fill and joins the two rings along its sides. */
 @layer oh {
   .oh-bridge {
+    --oh-bridge-tint: var(--oh-cal-open, var(--oh-cal-open-plain));
     --oh-bridge-edge: var(--oh-cal-mark, var(--ink));
     --oh-bridge-grow: scale(1, 0);
     --oh-bridge-seen: var(--o-pop);
@@ -41,6 +42,12 @@
       animation-duration: var(--d-reduced) !important;
       animation-timing-function: var(--e-std);
     }
+  }
+  .oh-bridge-skin-event {
+    stop-color: var(--oh-bridge-tint);
+  }
+  .oh-bridge-skin-sheet {
+    stop-color: var(--sheet);
   }
   .oh-bridge-edge-start {
     stop-color: var(--oh-bridge-edge);

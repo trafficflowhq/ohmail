@@ -29,8 +29,91 @@ afterAll(async () => {
 
 type Read = { kind: string; messageIds?: string[]; unread?: boolean };
 
+describe("opening a conversation in a real browser", () => {
+  it.each([
+    { width: 1440, height: 900, device: "desktop", face: "paper" },
+    { width: 1440, height: 900, device: "desktop", face: "ohmarchy" },
+    { width: 390, height: 844, device: "phone", face: "paper" },
+    { width: 390, height: 844, device: "phone", face: "ohmarchy" },
+  ])(
+    "opens an older link on the latest letter at $width in $face",
+    async ({ width, height, device, face }) => {
+      const page = await browser!.newPage({ viewport: { width, height } });
+      try {
+        await page.route(`${ORIGIN}/**`, (route) =>
+          route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+        );
+        await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading&device=${device}&face=${face}`);
+        const letters = page.locator("[data-reading-scroll] [data-conv-id]");
+        await letters.last().waitFor({ timeout: 5000 });
+        expect(
+          await letters.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-conv-id"))),
+        ).toEqual(["rd-a", "rd-b", "rd-c"]);
+        const latestSquare = page.getByRole("button", { name: /^Message 3 of 3/ });
+        expect.soft(await latestSquare.getAttribute("aria-current")).toBe("true");
+        expect(await letters.last().getAttribute("aria-current")).toBe("true");
+        const layout = await letters.last().evaluate((letter) => {
+          const port = letter.closest("[data-reading-scroll]")!;
+          const view = port.getBoundingClientRect();
+          const head = port.querySelector(".oh-readinghead");
+          const top =
+            head && getComputedStyle(head).position === "sticky"
+              ? Math.max(view.top, head.getBoundingClientRect().bottom)
+              : view.top;
+          const box = letter.getBoundingClientRect();
+          return { scroll: port.scrollTop, visible: box.top >= top - 1 && box.top < view.bottom };
+        });
+        expect(layout.scroll).toBeGreaterThan(1000);
+        expect(layout.visible).toBe(true);
+      } finally {
+        await page.close();
+      }
+    },
+    30_000,
+  );
+});
+
+it("changes the opening and the squares when Conversation order is switched in Settings", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+    );
+    const thread = `${ORIGIN}/?open=rd-a&read=1&screen=reading`;
+    const letters = page.locator("[data-reading-scroll] [data-conv-id]");
+    const ids = () => letters.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-conv-id")));
+    await page.goto(thread);
+    await expect.poll(ids).toEqual(["rd-a", "rd-b", "rd-c"]);
+    expect(await letters.last().getAttribute("aria-current")).toBe("true");
+    await page.goto(`${ORIGIN}/?preferences=1`);
+    await page.getByRole("button", { name: "One heading" }).waitFor();
+    const bottom = page.getByRole("button", { name: "Latest at the bottom" });
+    await bottom.waitFor({ timeout: 3000 });
+    expect(await bottom.getAttribute("aria-pressed")).toBe("true");
+    await page.getByRole("button", { name: "Latest at the top" }).click();
+
+    await page.goto(thread);
+    await expect.poll(ids).toEqual(["rd-c", "rd-b", "rd-a"]);
+    expect(await letters.first().getAttribute("aria-current")).toBe("true");
+    const first = page.getByRole("button", { name: /^Message 1 of 3 from Flurina/ });
+    expect(await first.getAttribute("aria-current")).toBe("true");
+    const port = page.locator("[data-reading-scroll]");
+    expect(await port.evaluate((el) => el.scrollTop)).toBe(0);
+    await first.press("ArrowDown");
+    const second = page.getByRole("button", { name: /^Message 2 of 3 from Nadja/ });
+    expect(await second.evaluate((el) => el === document.activeElement)).toBe(true);
+    await second.press("Enter");
+    expect(await second.getAttribute("aria-current")).toBe("true");
+    expect(await port.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    await page.goto(`${ORIGIN}/?preferences=1&otherAccount=1`);
+    expect(await bottom.getAttribute("aria-pressed")).toBe("true");
+  } finally {
+    await page.close();
+  }
+}, 30_000);
+
 describe("the read rule in a real browser", () => {
-  it("the opened letter turns read once, after the dwell; the letters below the fold never do", async () => {
+  it("a letter chosen by square turns read once, after the dwell; the letters below the fold never do", async () => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(String(e)));
@@ -39,6 +122,7 @@ describe("the read rule in a real browser", () => {
     );
     await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading`);
     await page.waitForSelector('[data-conv-id="rd-a"][data-body-ready]', { timeout: 15_000 });
+    await page.getByRole("button", { name: /^Message 1 of 3/ }).click();
     const reads = (): Promise<Read[]> =>
       page.evaluate(() =>
         ((globalThis as { readerMutations?: Read[] }).readerMutations ?? []).filter(
@@ -262,6 +346,18 @@ describe("the panel's menus in a real browser", () => {
     await page.evaluate(() => document.fonts.ready);
     // Widen the list if necessary so Tag folds into More while Resurface stays on the toolbar.
     const tag = panel.getByRole("button", { name: "Tag", exact: true });
+    if (await tag.isVisible()) {
+      const trigger = (await tag.boundingBox())!;
+      await tag.click();
+      const menu = page.getByRole("menu", { name: "Tag", exact: true });
+      const edge = (await menu.boundingBox())!;
+      expect(
+        Math.abs(edge.x + edge.width - (trigger.x + trigger.width)),
+        "the Tag menu ends at the Tag button that opened it",
+      ).toBeLessThanOrEqual(1);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+    }
     const listWidth = page.getByRole("separator", { name: "List width" });
     for (let step = 0; step < 8 && (await tag.isVisible()); step++) {
       await listWidth.press("ArrowRight");
@@ -352,7 +448,59 @@ it.each([540, 1000])(
   20_000,
 );
 
-it("fades the sticky Paper heading only while it covers the letter", async () => {
+it.each([
+  ["paper", "single"],
+  ["paper", "thread"],
+  ["ohmarchy", "single"],
+  ["ohmarchy", "thread"],
+])(
+  "uses the compact display face and solid ground for %s %s at 540 high",
+  async (face, kind) => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 540 }, reducedMotion: "reduce" });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      const fixture = kind === "single" ? "open=rd-a&read=1&solo=1" : "open=rd-a&read=1";
+      await page.goto(`${ORIGIN}/?${fixture}&screen=reading&face=${face}`);
+      const port = page.locator("[data-reading-scroll]");
+      const head = port.locator(".oh-readinghead[data-back]");
+      await port.locator(".oh-readinghead-subject").waitFor();
+      await port.evaluate((el) => {
+        el.scrollTop = 315;
+      });
+      await head.waitFor();
+      const compact = head.locator(".oh-readinghead-short-text");
+      expect.soft(await compact.evaluate((el) => el.classList.contains("oh-display"))).toBe(true);
+      const style = await head.evaluate((el) => {
+        const full = getComputedStyle(el.querySelector(".oh-readinghead-subject")!);
+        const compact = getComputedStyle(el.querySelector(".oh-readinghead-short-text")!);
+        const port = el.closest("[data-reading-scroll]")!;
+        const header = el.getBoundingClientRect();
+        const view = port.getBoundingClientRect();
+        return {
+          display: [compact.fontFamily, compact.fontWeight, compact.color],
+          full: [full.fontFamily, full.fontWeight, full.color],
+          size: compact.fontSize,
+          title: getComputedStyle(el).getPropertyValue("--t-title").trim(),
+          truncation: [compact.whiteSpace, compact.textOverflow],
+          overlay: getComputedStyle(el, "::after").content,
+          edges: [Math.abs(header.left - view.left), Math.abs(header.right - (view.left + port.clientWidth))],
+        };
+      });
+      expect.soft(style.display).toEqual(style.full);
+      expect.soft(style.size).toBe(style.title);
+      expect.soft(style.overlay).toBe("none");
+      expect(style.truncation).toEqual(["nowrap", "ellipsis"]);
+      for (const edge of style.edges) expect(edge).toBeLessThanOrEqual(1);
+    } finally {
+      await page.close();
+    }
+  },
+  20_000,
+);
+
+it("keeps the full sticky Paper heading solid while letter text passes underneath", async () => {
   const page = await browser!.newPage({
     viewport: { width: 1440, height: 900 },
     reducedMotion: "reduce",
@@ -363,16 +511,41 @@ it("fades the sticky Paper heading only while it covers the letter", async () =>
     );
     await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading`);
     const heading = page.getByRole("heading", { name: "Open studio: the plan" });
+    await page.getByRole("button", { name: /^Message 1 of 3/ }).click();
     const fade = () =>
       heading.evaluate((heading) => {
         const edge = getComputedStyle(heading.parentElement!, "::after");
         return edge.content === "none" ? null : [edge.height, edge.backgroundImage];
       });
-    expect(await fade()).toBeNull();
+    await expect.poll(fade).toBeNull();
     await heading.evaluate((heading) => heading.parentElement!.parentElement!.scrollBy(0, 300));
-    await expect.poll(fade).toEqual(["24px", expect.stringContaining("linear-gradient(")]);
+    await expect
+      .poll(() => heading.evaluate((el) => el.closest("[data-reading-scroll]")!.scrollTop))
+      .toBeGreaterThan(200);
+    expect(await fade()).toBeNull();
     await heading.evaluate((heading) => heading.parentElement!.parentElement!.scrollTo(0, 0));
     await expect.poll(fade).toBeNull();
+  } finally {
+    await page.close();
+  }
+}, 20_000);
+
+it("preserves the spaces after commas in folded recipients", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+    );
+    await page.goto(`${ORIGIN}/?all=1&open=lt-log&screen=reading`);
+    const recipients = page.locator(".oh-messagehead-to[data-folded]");
+    await recipients.waitFor();
+    const separators = await recipients
+      .locator("span")
+      .evaluateAll((nodes) =>
+        nodes.filter((node) => node.textContent === ", ").map((node) => getComputedStyle(node).whiteSpace),
+      );
+    expect(separators).toContain("pre");
+    expect(separators.every((value) => value === "pre")).toBe(true);
   } finally {
     await page.close();
   }
@@ -454,7 +627,7 @@ it.each([
   20_000,
 );
 
-it("aligns the first unread letter when the rest of the thread is short and can still scroll to the last", async () => {
+it("opens a short final letter at the bottom and can still scroll to the first", async () => {
   const { readerStatesPage } = await import("./reader-states.mjs");
   const threadHtml = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");
   const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
@@ -463,31 +636,34 @@ it("aligns the first unread letter when the rest of the thread is short and can 
       route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: threadHtml }),
     );
     await page.goto(`${ORIGIN}/?n=6&whole=1&open=5&firstUnread=4`);
-    const heading = page.getByRole("heading", { name: "Q3 plan" });
     const group = page.getByRole("group", { name: /^6 messages,/ });
     const here = (position: number) =>
       group
         .getByRole("button", { name: new RegExp(`^Message ${position} of 6 `) })
         .and(group.locator('[aria-current="true"]'));
-    const letter = page.locator('[data-conv-id="w4"]');
-    await here(5).waitFor();
-    const gap = () =>
-      heading.evaluate((h) => {
-        const panel = h.closest("[data-reading-scroll]")!.querySelector('[data-conv-id="w4"]')!;
-        return panel.getBoundingClientRect().top - h.parentElement!.getBoundingClientRect().bottom;
-      });
-    await expect.poll(gap).toBeLessThanOrEqual(16);
-    expect(await gap()).toBeGreaterThanOrEqual(13);
+    const letter = page.locator('[data-conv-id="w5"]');
+    await here(6).waitFor();
+    const at = await letter.evaluate((panel) => {
+      const scroll = panel.closest("[data-reading-scroll]")!;
+      const head = scroll.querySelector(".oh-readinghead")!;
+      const top = panel.getBoundingClientRect().top;
+      return {
+        fromEnd: scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop,
+        visible: top >= head.getBoundingClientRect().bottom && top < scroll.getBoundingClientRect().bottom,
+      };
+    });
+    expect(at.fromEnd).toBeLessThanOrEqual(1);
+    expect(at.visible).toBe(true);
 
     await letter.hover();
-    await page.mouse.wheel(0, 10_000);
-    await here(6).waitFor();
+    await page.mouse.wheel(0, -10_000);
+    await here(1).waitFor();
   } finally {
     await page.close();
   }
 }, 60_000);
 
-it("lands the last message on the reading line after jumping away in a short thread", async () => {
+it("lands the last message at the bottom after jumping away in a short thread", async () => {
   const { readerStatesPage } = await import("./reader-states.mjs");
   const threadHtml = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");
   const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
@@ -500,17 +676,24 @@ it("lands the last message on the reading line after jumping away in a short thr
     const group = page.getByRole("group", { name: /^6 messages,/ });
     const square = (position: number) =>
       group.getByRole("button", { name: new RegExp(`^Message ${position} of 6 `) });
-    await expect.poll(() => square(5).getAttribute("aria-current")).toBe("true");
+    await expect.poll(() => square(6).getAttribute("aria-current")).toBe("true");
     await square(1).click();
     await expect.poll(() => square(1).getAttribute("aria-current")).toBe("true");
     await square(6).click();
     await expect.poll(() => square(6).getAttribute("aria-current")).toBe("true");
-    const gap = await heading.evaluate((h) => {
-      const panel = h.closest("[data-reading-scroll]")!.querySelector('[data-conv-id="w5"]')!;
-      return panel.getBoundingClientRect().top - h.parentElement!.getBoundingClientRect().bottom;
+    const landing = await heading.evaluate((h) => {
+      const scroll = h.closest("[data-reading-scroll]")!;
+      const panel = scroll.querySelector('[data-conv-id="w5"]')!;
+      const top = panel.getBoundingClientRect().top;
+      return {
+        fromEnd: scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop,
+        visible:
+          top >= h.parentElement!.getBoundingClientRect().bottom &&
+          top < scroll.getBoundingClientRect().bottom,
+      };
     });
-    expect(gap).toBeGreaterThan(100);
-    expect(gap).toBeLessThan(300);
+    expect(landing.fromEnd).toBeLessThanOrEqual(1);
+    expect(landing.visible).toBe(true);
   } finally {
     await page.close();
   }
@@ -548,6 +731,17 @@ it.each([
       );
       const group = page.getByRole("group", { name: new RegExp(`^${mailCount} messages, \\d+ unread$`) });
       const here = () => group.locator("[data-here]").getAttribute("data-square").then(Number);
+      await expect.poll(here).toBe(mailCount - 1);
+      // The reader opens on the newest letter. Scroll to the interior before exercising the drag.
+      await page.locator("[data-reading-scroll]").evaluate((port, start) => {
+        const top = port.getBoundingClientRect().top;
+        const stop = port.closest("[data-read-column]")?.querySelector("[data-read-stop]");
+        const bottom = Math.min(top + port.clientHeight, stop?.getBoundingClientRect().top ?? Infinity);
+        const letter = port.querySelector(`[data-conv-id="w${start}"]`)!;
+        const line = top + (bottom - top) * 0.3;
+        port.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+        port.scrollTop += letter.getBoundingClientRect().top - line + 2;
+      }, start);
       await expect.poll(here).toBe(start);
       expect(await page.locator("html").getAttribute("data-touch")).toBe(pointer === "coarse" ? "1" : "0");
       expect(await group.getAttribute("data-axis")).toBe(axis);
@@ -559,7 +753,9 @@ it.each([
         }));
       const before = await state();
       const cdp = await page.context().newCDPSession(page);
-      const current = (await group.locator("[data-here]").boundingBox())!;
+      const currentSquare = group.locator("[data-here]");
+      await currentSquare.tap({ trial: true });
+      const current = (await currentSquare.boundingBox())!;
       const pitch = axis === "head" ? current.width : current.height;
       const x = current.x + current.width / 2;
       const y = current.y + current.height / 2;

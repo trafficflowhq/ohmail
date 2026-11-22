@@ -1,5 +1,6 @@
 import { useLayoutEffect, useState, type KeyboardEvent, type RefObject } from "react";
 import {
+  readerZones,
   type CalendarConnectionRecord,
   type CalendarEventRecord,
   type CalendarPort,
@@ -15,17 +16,22 @@ import { useEditLeave } from "./use-edit-leave.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { DraftFields } from "./DraftFields.js";
 import { useDiscardReport, useDuplicateDraft } from "./draft-undo.js";
-import { draftForDuplicate, draftOfRecord, draftTimeChanged, eventChanges } from "./edit-draft.js";
+import { draftForDuplicate, draftOfRecord, draftTimeChanged, editCopy, eventChanges } from "./edit-draft.js";
 import { draftTimes, type EventDraft } from "./event-draft.js";
 import { DraftTimeNotice } from "./DraftTimeNotice.js";
+import { draftWhen, eventWhen, guestNames } from "./event-words.js";
+import { editScopeLine, repeatLine } from "./EventActionQuestion.js";
+import type { EditableEvent } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
 
 interface Props {
   readonly port: CalendarPort;
   readonly actionItems: readonly PanelVerb[];
   readonly provider: CalendarConnectionRecord["provider"] | undefined;
+  readonly scopeAnchor?: HTMLElement;
   readonly original: CalendarEventRecord;
-  readonly allowed: () => { record: CalendarEventRecord; calendar: CalendarRecord } | null;
+  readonly exception: CalendarEventRecord | null;
+  readonly allowed: () => EditableEvent | null;
   readonly calendar: CalendarRecord;
   readonly face: CalendarEventFace;
   readonly when: string;
@@ -42,6 +48,7 @@ export function EditEvent({
   actionItems,
   provider,
   original,
+  exception,
   allowed,
   calendar,
   face,
@@ -51,34 +58,34 @@ export function EditEvent({
   beforeRestore,
   card,
   placement,
+  scopeAnchor,
   finish,
 }: Props) {
   const { commands, plan } = useFrame();
   const t = useText("calendar");
   const zone = useTimeZone();
-  const [initial] = useState(() => draftOfRecord(original, zone));
+  const [shown] = useState(() => editCopy(exception ?? original, face));
+  const [initial] = useState(() => draftOfRecord(shown, zone));
   const [draft, setDraft] = useState(recovered ?? initial.draft);
   const discardReport = useDiscardReport(port);
   const duplicate = useDuplicateDraft(port);
   const dirty = draftDiffers(draft, initial.draft);
-  const reportDraft = () => discardReport({ kind: "edit", draft, original });
-  const onLeave = () => {
-    if (dirty) reportDraft();
-  };
+  const reportDraft = () => discardReport({ kind: "edit", draft, original: exception ?? original });
+  const onLeave = dirty ? reportDraft : () => undefined;
   usePreserveEdit(beforeRestore, draftDiffers(draft, recovered ?? initial.draft), reportDraft);
-  const patch = eventChanges(original, draft, calendar, zone);
+  const patch = eventChanges(shown, draft, calendar, zone, provider === "caldav");
   const saving = useEditLeave(
     port,
     original,
-    () => allowed()?.record ?? null,
+    shown,
+    allowed,
     patch,
     face.ref.occurrence,
     dirty,
     finish,
     onLeave,
   );
-  const { busy, conflict, clear, discard, question, confirm, cancel, chooseScope, scopeAsked, submit } =
-    saving;
+  const { busy, conflict, clear, discard, question, scopeAsked, submit } = saving;
   const blocked = busy || scopeAsked || question !== null;
   const ready = !blocked && !conflict && patch !== null && Object.keys(patch).length > 0;
   const cancelEdit = () => {
@@ -95,7 +102,7 @@ export function EditEvent({
     <EditorActionBar
       items={actionItems}
       close={() => commands.event(null)}
-      duplicate={() => duplicate(draftForDuplicate(original, face, zone), calendar.id)}
+      duplicate={() => duplicate(draftForDuplicate(shown, face, zone), calendar.id)}
       blocked={blocked}
       timeZone={
         initial.timeEditable && !original.repeat && !draft.allDay
@@ -139,9 +146,10 @@ export function EditEvent({
               when,
               blocked,
               saving,
+              allowed,
             }}
             zone={draft.zone ?? sourceZone ?? zone}
-            timeEditable={initial.timeEditable && !original.repeat}
+            timeEditable={initial.timeEditable}
             issue={
               draftTimeChanged(draft, initial.draft) ? draftTimes(draft, draft.zone ?? zone).issue : null
             }
@@ -149,11 +157,7 @@ export function EditEvent({
         }
       />
       {!phone && <div className="cal-event-panel cal-edit-panel">{panel}</div>}
-      <EditQuestions
-        anchor={card}
-        title={draft.title}
-        {...{ scopeAsked, question, cancel, chooseScope, confirm }}
-      />
+      <EditQuestions anchor={card} {...saving} {...{ scopeAnchor, draft, original, exception }} />
     </>
   );
 }
@@ -171,6 +175,7 @@ function EditorContents({
   when,
   blocked,
   saving,
+  allowed,
   zone,
   timeEditable,
   issue,
@@ -182,12 +187,16 @@ function EditorContents({
   ready: boolean;
   blocked: boolean;
   saving: ReturnType<typeof useEditLeave>;
+  allowed: Props["allowed"];
   zone: string;
   timeEditable: boolean;
   issue: ReturnType<typeof draftTimes>["issue"];
 }) {
   const t = useText("calendar");
   const { failure, conflict, busy, mine, discard, submit } = saving;
+  const locale = useLocale();
+  const current = conflict ? allowed() : null;
+  const latest = current?.exception ?? current?.record;
   return (
     <>
       <div inert={blocked}>
@@ -210,12 +219,25 @@ function EditorContents({
               ),
             canAddAlert: original.alarms.every(({ method }) => method === "notice"),
             canAddSecondAlert: provider !== "microsoft" && !draft.allDay,
+            showCall: provider === "caldav",
           }}
         />
       </div>
       {failure && (
-        <>
-          <RefusalLine>{failure}</RefusalLine>
+        <div className="cal-edit-failure">
+          <RefusalLine start>{failure}</RefusalLine>
+          {latest && latest.updatedAt !== original.updatedAt && (
+            <dl className="cal-edit-conflict">
+              <dt>{t("edit.mine")}</dt>
+              <dd className="cal-edit-conflict-copy">
+                {draft.title} · {draftWhen(draft, locale)}
+              </dd>
+              <dt>{t("edit.theirs")}</dt>
+              <dd className="cal-edit-conflict-copy">
+                {latest.title} · {eventWhen(latest, zone, readerZones(), locale) ?? when}
+              </dd>
+            </dl>
+          )}
           {conflict && (
             <Button kind="two" size="s" onPress={mine} disabled={busy}>
               {t("edit.keepMine")}
@@ -224,7 +246,7 @@ function EditorContents({
           <Button kind="quiet" size="s" onPress={discard} disabled={busy}>
             {t(conflict ? "edit.keepTheirs" : "edit.discard")}
           </Button>
-        </>
+        </div>
       )}
     </>
   );
@@ -260,11 +282,20 @@ function editorKeys(
 type EditQuestionsProps = Pick<
   ReturnType<typeof useEditLeave>,
   "scopeAsked" | "question" | "cancel" | "chooseScope" | "confirm"
-> & { anchor: RefObject<HTMLDivElement | null>; title: string };
+> & {
+  anchor: RefObject<HTMLDivElement | null>;
+  scopeAnchor?: HTMLElement;
+  draft: EventDraft;
+  original: CalendarEventRecord;
+  exception: CalendarEventRecord | null;
+};
 
 function EditQuestions({
   anchor,
-  title,
+  scopeAnchor,
+  draft,
+  original,
+  exception,
   scopeAsked,
   question,
   cancel,
@@ -276,20 +307,22 @@ function EditQuestions({
   const invited = question?.invited ?? [];
   const inviting = invited.length > 0;
   const names = inviting ? invited : question?.names;
-  const list = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
-  const whom = names
-    ? list.format(
-        names.length > 2 ? [...names.slice(0, 2), t("edit.others", { count: names.length - 2 })] : names,
-      )
-    : "";
+  const whom = guestNames(names ?? [], locale, t);
+  const title = draft.title.trim();
   return (
     <>
       {scopeAsked && (
         <QuestionBeforeAct
           open
-          anchor={anchor}
+          anchor={scopeAnchor ?? anchor}
           onClose={cancel}
-          question={t("edit.whichEvents")}
+          question={t("edit.changeSeries", { title })}
+          follows={editScopeLine(
+            repeatLine(original.repeat?.rules[0], original.start.value, t, locale),
+            exception !== null,
+            Number(exception?.recurrenceId) === Date.parse(original.startsAt),
+            t,
+          )}
           cancel={t("edit.cancel")}
           scopes={[
             {
@@ -314,12 +347,12 @@ function EditQuestions({
           anchor={anchor}
           onClose={cancel}
           question={t(inviting ? "edit.confirmInvite" : "edit.tell", { guests: whom })}
-          follows={t(inviting ? "edit.inviteFollows" : "edit.tells", { title: title.trim() })}
+          follows={inviting ? t("edit.inviteFollows", { title, when: draftWhen(draft, locale) }) : title}
           cancel={t("edit.cancel")}
           answers={[
             {
               id: "send",
-              label: t(inviting ? "edit.invite" : "edit.sendUpdate"),
+              label: inviting ? t("edit.sendInvitation", { count: invited.length }) : t("edit.sendUpdate"),
               keyHint: "↵",
               onPress: confirm,
             },

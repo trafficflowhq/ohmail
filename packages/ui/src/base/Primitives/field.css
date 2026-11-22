@@ -15,7 +15,7 @@
     --oh-field-pad: 0 var(--s4);
     --oh-field-ring: var(--oh-ring-ctl);
     width: 100%;
-    height: var(--h-l);
+    height: var(--oh-field-height, var(--h-l));
     padding: var(--oh-field-pad);
     border-radius: var(--r-row);
     background: var(--oh-field-ground, var(--soft-sheet));

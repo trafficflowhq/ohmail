@@ -25,6 +25,8 @@ export interface SquaresRun {
   scale: readonly number[];
   /** The room the run was fitted to, in px, where it is the column's own and not the tokens'. */
   room?: number;
+  /** The measured square pitch for a horizontal touch walk. */
+  pitch?: number;
   /** An upright run has a fixed track. Its slots move by transform. */
   column?: { pitch: number; count: number };
 }
@@ -126,6 +128,7 @@ function useSquareDrag(props: ReadSquaresProps, cancelTip: () => void) {
     if (!touchWalk || event.pointerType !== "touch" || here === undefined) return;
     const pitch =
       run?.column?.pitch ??
+      run?.pitch ??
       parseFloat(getComputedStyle(event.currentTarget).getPropertyValue("--oh-readsquares-pitch"));
     if (!(pitch > 0)) return;
     finger.current = { ...point(event), id: event.pointerId, from: here, at: here, pitch, moving: false };

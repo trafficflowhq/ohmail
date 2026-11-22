@@ -10,7 +10,7 @@
 
   "//exclude": "node_modules and nothing else. Anything else excluded here is a file that silently stops being checked.",
 
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tools/tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
     "jsx": "react-jsx",

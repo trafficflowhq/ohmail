@@ -52,7 +52,7 @@ import type { Change } from "../../src/ports.js";
  * ── WHY REAL POSTGRES AND NOT PGlite ─────────────────────────────────────────────────────────
  *
  * The whole assertion is about `message_instances`, whose model is carried by
- * `UNIQUE (message_id) WHERE is_primary` — a PARTIAL index, the exact class of object CLAUDE.md
+ * `UNIQUE (message_id) WHERE is_primary` — a PARTIAL index, the exact class of object AGENTS.md
  * records PGlite misleading this repository about, and the class that hid the
  * `primaryInstanceVanished` correlated-subquery bug until a `*.pg.test.ts` ran. Every write below
  * touches that index: the repoint UPDATEs the primary row, the conflict path INSERTs a second

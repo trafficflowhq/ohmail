@@ -65,6 +65,7 @@ export interface ReaderEntry {
   readonly OpenCard?: ComponentType<{
     message: EngineMessage;
     opened: boolean;
+    addressed?: boolean;
     clip?: MessageClip;
     markUnread?: (id: string) => void;
     conversation?: ConversationShown;

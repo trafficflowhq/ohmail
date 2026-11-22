@@ -4,7 +4,7 @@ import { expungeLeavesThePile } from "./_pile-gone-letter.js";
 
 /**
  * An expunged letter leaves Answer Later on the embedded stores: PGlite here, the device's SQLite
- * through `vitest.sqlite.config.ts`. The real-Postgres twin is `triage-pile-gone-letter.pg.test.ts`.
+ * through `test/vitest.sqlite.config.ts`. The real-Postgres twin is `triage-pile-gone-letter.pg.test.ts`.
  * Mutation watched: dropping `isNull(messages.deletedAt)` from `listByState` reddens all three.
  */
 describe("a letter expunged on the server leaves its pile (embedded store)", () => {

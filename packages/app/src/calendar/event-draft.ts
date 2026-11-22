@@ -11,6 +11,7 @@ import {
   type CalendarRecord,
 } from "@ohmail/app-logic/calendar";
 import type { CalendarEventFields, CalendarInvitee, CalendarTime } from "@ohmail/wire";
+import { verifiedCallLink } from "./event-call.js";
 
 export interface EventDraft {
   readonly title: string;
@@ -24,6 +25,7 @@ export interface EventDraft {
   readonly private: boolean;
   readonly place: string | null;
   readonly notes: string | null;
+  readonly callLink?: string | null;
   readonly invitees?: readonly CalendarInvitee[];
   readonly alarms?: readonly number[];
 }
@@ -33,6 +35,26 @@ export function draftCalendars(
   connections: ReadonlyMap<string, CalendarConnectionRecord>,
 ): readonly CalendarRecord[] {
   return calendars.filter((c) => c.shown && !viewOnlyOf(c, connections.get(c.connectionId)));
+}
+
+export function draftCalendarIsReadOnly(
+  calendars: readonly CalendarRecord[],
+  connections: ReadonlyMap<string, CalendarConnectionRecord>,
+  choice: string | null | undefined,
+  noChoices: boolean,
+): boolean {
+  return calendars.some(
+    (calendar) =>
+      calendar.shown &&
+      (calendar.id === choice || noChoices) &&
+      viewOnlyOf(calendar, connections.get(calendar.connectionId)),
+  );
+}
+
+export function draftCallLink(value: EventDraft["callLink"]): string | null | undefined {
+  const entered = value?.trim();
+  if (!entered) return null;
+  return verifiedCallLink(entered) ?? undefined;
 }
 
 const hour = (h: number) => `${String(h % 24).padStart(2, "0")}:00`;
@@ -113,7 +135,8 @@ export function fieldsOfDraft(
 ): CalendarEventFields | null {
   const title = draft.title.trim();
   const { times } = draftTimes(draft, zone);
-  if (!title || !times) return null;
+  const callLink = draftCallLink(draft.callLink);
+  if (!title || !times || callLink === undefined) return null;
   return {
     title,
     ...times,
@@ -121,7 +144,7 @@ export function fieldsOfDraft(
     private: draft.private,
     place: draft.place?.trim() || null,
     notes: draft.notes?.trim() || null,
-    callLink: null,
+    callLink,
     repeat: null,
     invitees: [],
     alarms: [...new Set(draft.alarms ?? calendar.defaultAlarms.map((alarm) => alarm.minutesBefore))],
@@ -137,7 +160,11 @@ export function previewOfDraft(
   untitled: string,
   tone: CalendarEventFace["tone"],
 ): CalendarEventFace | null {
-  const fields = fieldsOfDraft({ ...draft, title: draft.title.trim() || untitled }, calendar, zone);
+  const fields = fieldsOfDraft(
+    { ...draft, title: draft.title.trim() || untitled, callLink: null },
+    calendar,
+    zone,
+  );
   if (!fields) return null;
   const start = eventTimeOf(fields.start);
   const end = eventTimeOf(fields.end);

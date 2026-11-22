@@ -544,6 +544,33 @@ describe("what a press inside a dialog came to", () => {
   }, 60_000);
 });
 
+describe("the padding on a standing notice", () => {
+  it.each(["paper", "ohmarchy"] as const)("matches above and below its words in %s", async (face) => {
+    for (const device of ["desktop", "phone"] as const) {
+      const place = device === "desktop" ? "rail" : "bar";
+      for (const line of [
+        undefined,
+        <span key="detail">
+          <br />
+          The connection dropped
+        </span>,
+      ]) {
+        const [top, bottom] = await drawn(
+          <Notice place={place} title="Reconnecting" line={line} />,
+          () => {
+            const card = document.querySelector('[role="status"]')!;
+            const outer = card.getBoundingClientRect();
+            const words = card.querySelector("p")!.getBoundingClientRect();
+            return [words.top - outer.top, outer.bottom - words.bottom];
+          },
+          { face, device },
+        );
+        expect(bottom).toBeCloseTo(top);
+      }
+    }
+  });
+});
+
 describe("a notice's answer that is under way", () => {
   it("is drawn off as a button that is off, still takes the keys, and is said unavailable", async () => {
     const parts = (
@@ -4062,8 +4089,9 @@ it.each(["paper", "ohmarchy"] as const)(
         const form = [...bridge.querySelectorAll(".oh-bridge-form")].find(
           (part) => getComputedStyle(part).display !== "none",
         )!;
-        const fill = form.querySelector(".oh-bridge-fill")!;
-        const edge = form.querySelector(".oh-bridge-edge")!;
+        const fill = form.querySelector('path[fill]:not([fill="none"])')!;
+        const edges = [...form.querySelectorAll<SVGPathElement>(".oh-bridge-edge")];
+        const edge = edges[0]!;
         const swatch = document.createElementNS("http://www.w3.org/2000/svg", "path");
         bridge.append(swatch);
         swatch.style.fill = "var(--oh-cal-open, var(--oh-cal-open-plain))";
@@ -4084,7 +4112,9 @@ it.each(["paper", "ohmarchy"] as const)(
           stops,
           acrossGap: gradient?.getAttribute("x1") !== gradient?.getAttribute("x2"),
           join: getComputedStyle(edge).strokeLinejoin,
-          ends: bridge.querySelectorAll(".oh-bridge-end").length,
+          ends: edges.filter(
+            (side) => side.getPointAtLength(0).x === side.getPointAtLength(side.getTotalLength()).x,
+          ).length,
         };
       },
       { entry: "calendar", face },

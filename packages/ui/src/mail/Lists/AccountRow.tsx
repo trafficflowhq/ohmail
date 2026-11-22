@@ -10,6 +10,7 @@ export interface AccountRowProps {
   address: string;
   /** What is known about it, a fact a piece: "Synced 09:23", "IMAP". */
   facts?: readonly string[];
+  marks?: ReactNode;
   /** Its state as one word: Connected, In step. Beside the row with a pointer, before the facts under a finger. */
   state?: string;
   /** Words for what the account carries: Mail, Calendar. */
@@ -28,7 +29,7 @@ export interface AccountRowProps {
 
 /** One account in Settings: who it is, what it carries, and its one action. */
 export function AccountRow(props: AccountRowProps) {
-  const { name, address, facts, state, carries, offer, expanded, onToggle, children } = props;
+  const { name, address, facts, marks, state, carries, offer, expanded, onToggle, children } = props;
   return (
     <Sheet kind="plain">
       <div className="oh-accountrow" data-open={expanded ? "" : undefined}>
@@ -53,6 +54,7 @@ export function AccountRow(props: AccountRowProps) {
                       </span>
                     </Fragment>
                   ))}
+                  {marks}
                 </span>
               ) : null}
             </span>

@@ -5,9 +5,14 @@ export interface EndDotProps extends DotProps {
   children: string;
 }
 
+/** What the written text keeps when the drawn stop supplies its punctuation. */
+export function wordsBeforeDot(written: string): string {
+  return written.trimEnd().replace(/(?<!\.)\.$/u, "");
+}
+
 /** Words that end in the full stop. */
 export function EndDot({ children, kind, product }: EndDotProps) {
-  const words = children.trimEnd().replace(/(?<!\.)\.$/u, "");
+  const words = wordsBeforeDot(children);
   const cut = words.lastIndexOf(" ");
   return (
     <>

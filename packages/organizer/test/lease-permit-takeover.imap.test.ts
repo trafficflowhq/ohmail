@@ -16,7 +16,7 @@ import { PermitClock } from "./_permit-clock.js";
  * organizing. B's gate removes A's claim from `ohmail/_meta` and starts. A holds a permit taken
  * seconds earlier, and until this fix A went on authorizing writes on the strength of it — for a
  * whole minute, or its whole budget of write boundaries, whichever came first. Two organizers across the
- * handover, on the one invariant CLAUDE.md calls load-bearing.
+ * handover, on the one invariant AGENTS.md calls load-bearing.
  *
  * The reproduction drives the REAL pipeline: two real `ImapAdapter`s against one GreenMail
  * mailbox, the worker's own door (`readMailboxLease`) for the takeover, the permit every

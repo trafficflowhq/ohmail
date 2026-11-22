@@ -123,7 +123,6 @@ export function stepsOf(drawn: Drawn, lang: Lang): readonly Step[] {
     ];
   const preset = providerById(row.preset);
   const tile = preset.manual ? said({ ns: "providerPicker", key: "otherLabel" }) : preset.label;
-  const certificate = row.refusal?.details.tls?.certificate ?? "";
   return [
     { into: said(words.address), type: ADDRESS },
     ...(row.own === "serversFound" ? [{ leave: said(words.address) }] : []),
@@ -137,9 +136,7 @@ export function stepsOf(drawn: Drawn, lang: Lang): readonly Step[] {
     { into: said(words.password), type: PASSWORD },
     { press: said(words.submit) },
     ...(row.own === "plainTicked" ? [{ tick: said({ ns: "mailboxes", key: "insecureConsentLabel" }) }] : []),
-    ...(row.own === "trustTicked"
-      ? [{ tick: said({ ns: "mailboxes", key: "trustCertificateLabel" }, { fingerprint: certificate }) }]
-      : []),
+    ...(row.own === "trustTicked" ? [{ tick: said({ ns: "mailboxes", key: "trustCertificateLabel" }) }] : []),
   ];
 }
 

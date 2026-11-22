@@ -167,7 +167,7 @@ it("creates on the signed-in calendar when the preferences request fails", async
   const create = screen.getByRole("button", { name: "New event" });
   fireEvent.click(create);
   const form = within(screen.getByRole("dialog", { name: "New event" }));
-  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Workshop" } });
+  fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Workshop" } });
   const add = form.getByRole<HTMLButtonElement>("button", { name: "Add" });
   expect(add.disabled).toBe(false);
   fireEvent.click(add);

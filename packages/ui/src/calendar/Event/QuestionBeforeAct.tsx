@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Button, EndDot, Menu, MenuItem, type MenuProps } from "../../base/index.js";
 import "./question-before-act.css";
 
@@ -19,6 +20,8 @@ export interface QuestionBeforeActProps {
   answers?: readonly { id: string; label: string; keyHint?: string; onPress?: () => void }[];
   /** The close's name. */
   cancel: string;
+  /** Put focus on the safe choice when asking to send. */
+  focusCancel?: boolean;
 }
 
 /**
@@ -35,7 +38,9 @@ export function QuestionBeforeAct({
   note,
   answers,
   cancel,
+  focusCancel,
 }: QuestionBeforeActProps) {
+  const cancelButton = useRef<HTMLButtonElement>(null);
   return (
     <Menu
       open={open}
@@ -43,6 +48,7 @@ export function QuestionBeforeAct({
       anchor={anchor}
       label={question}
       kind="ask"
+      initialFocus={focusCancel ? cancelButton : undefined}
       onKey={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return false;
         const scope = scopes?.find((choice) => choice.keyHint === event.key);
@@ -90,7 +96,7 @@ export function QuestionBeforeAct({
           </div>
         ) : null}
         <span className="oh-ask-close">
-          <Button kind="quiet" size="s" icon="x" label={cancel} onPress={onClose} />
+          <Button ref={cancelButton} kind="quiet" size="s" icon="x" label={cancel} onPress={onClose} />
         </span>
       </div>
     </Menu>

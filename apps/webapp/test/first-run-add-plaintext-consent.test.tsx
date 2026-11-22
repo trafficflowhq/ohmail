@@ -129,7 +129,7 @@ async function mount(
     el: ui.el, press: ui.press, type: ui.type, tick: ui.tick,
     consent: (label: string) => {
       const box = ui.consent(label);
-      return box === null ? null : { checked: ui.checked(box) };
+      return box === null ? null : { checked: ui.checked(box), el: box };
     },
     get probed() { return ui.probed(); },
     get connected() { return ui.connected(); },
@@ -229,18 +229,29 @@ describe("the add run and a mail server on this computer with its own certificat
     tls: { kind: "self_signed", certificate: sha256, plaintext: null, certHost: null, expectedHost: null, suggestedHost: null, trustVariable: null },
   }));
   const trusts = (block: unknown) => (block as { trustCertificate?: string } | undefined)?.trustCertificate;
-  const line = (sha256: string) => copy.trustCertificateLabelBoth.replace("{fingerprint}", sha256);
+  const LINE = copy.trustCertificateLabelBoth;
+  /* The fingerprint as its own line of plain text: a paragraph whose whole text is it. */
+  const printLine = (el: HTMLElement, sha256: string): HTMLParagraphElement | null =>
+    [...el.querySelectorAll("p")].find((p) => (p.textContent ?? "").trim() === sha256) ?? null;
+  /* What the consent's accessible description carries: the text of the element it points to. */
+  const carries = (el: HTMLElement, sha256: string): boolean => {
+    const id = el.getAttribute("aria-describedby");
+    return (document.getElementById(id ?? "")?.textContent ?? "").trim() === sha256;
+  };
 
   it("names the fingerprint unticked, and its tick claims it for both legs of the one host", async () => {
     const ui = await mount([ownCertificate(BRIDGE)], [], "127.0.0.1");
     await ui.type("imap", "127.0.0.1");
     await ui.press("Test connection");
     expect(ui.el.textContent).toContain(copy.probe_tls_self_signed_local);
-    expect(ui.consent(line(BRIDGE)), "no trust line naming the fingerprint").not.toBeNull();
-    expect(ui.consent(line(BRIDGE))!.checked, "trust offered ticked").toBe(false);
+    expect(ui.consent(LINE), "no trust line").not.toBeNull();
+    expect(ui.consent(LINE)!.checked, "trust offered ticked").toBe(false);
+    expect(printLine(ui.el, BRIDGE), "the fingerprint stands on no own line of text").not.toBeNull();
+    expect(carries(ui.consent(LINE)!.el, BRIDGE), "the trust line carries no fingerprint").toBe(true);
+    expect(ui.consent(LINE)!.el.closest("label")?.textContent ?? "", "the fingerprint sits inside the trust line, not on its own").not.toContain(BRIDGE);
     expect(trusts(ui.probed[0]!.imap)).toBeUndefined();
 
-    await ui.tick(line(BRIDGE));
+    await ui.tick(LINE);
     await ui.press("Test connection");
     expect([trusts(ui.probed[1]!.imap), trusts(ui.probed[1]!.smtp)]).toEqual([BRIDGE, BRIDGE]);
     await ui.press(messages.onboarding.connect);
@@ -251,9 +262,11 @@ describe("the add run and a mail server on this computer with its own certificat
     const ui = await mount([ownCertificate(BRIDGE), ownCertificate(OTHER)], [], "127.0.0.1");
     await ui.type("imap", "127.0.0.1");
     await ui.press("Test connection");
-    await ui.tick(line(BRIDGE));
+    await ui.tick(LINE);
     await ui.press("Test connection");
-    expect(ui.consent(line(OTHER))!.checked).toBe(false);
+    expect(ui.consent(LINE)!.checked).toBe(false);
+    expect(printLine(ui.el, OTHER), "the changed fingerprint stands on no own line of text").not.toBeNull();
+    expect(carries(ui.consent(LINE)!.el, OTHER), "the trust line carries no changed fingerprint").toBe(true);
     /* The test's press, by the word it wears now (a refused test leaves it "Test connection"). */
     await ui.press(ui.el.textContent!.includes(messages.onboarding.testAgain) ? messages.onboarding.testAgain : messages.onboarding.test);
     expect([trusts(ui.probed[2]!.imap), trusts(ui.probed[2]!.smtp)]).toEqual([undefined, undefined]);

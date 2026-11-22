@@ -46,7 +46,7 @@ import type { ServiceContext } from "../src/index.js";
  *     delivered message is the worst available ending, so the fault is logged and the send answers
  *     `sent`.
  *
- * ## WHY REAL POSTGRES AND NOT PGLITE (CLAUDE.md)
+ * ## WHY REAL POSTGRES AND NOT PGLITE (AGENTS.md)
  *
  * The claims are about TRANSACTION BOUNDARIES, which is the category PGlite has been green for and
  * wrong about three times in this repository. Specifically: claim 4 asserts that the projection's

@@ -25,7 +25,7 @@ import type { Db } from "../src/context.js";
  *
  * ── WHY THIS FILE CANNOT BE A PGLITE TEST ──────────────────────────────────────────────────
  *
- * The whole slice is transactional behaviour, and CLAUDE.md's rule is not a style preference:
+ * The whole slice is transactional behaviour, and AGENTS.md's rule is not a style preference:
  * three production bugs in this repository were invisible to PGlite and appeared only on :5433.
  * What is being claimed — that a real pass runs, writes, and leaves NOTHING durable behind —
  * is a claim about `BEGIN`/`ROLLBACK` under the real driver, the real planner and the real

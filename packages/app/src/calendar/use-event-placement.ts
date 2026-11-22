@@ -1,10 +1,10 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
-import type { EventBridgeProps, EventCardProps } from "@ohmail/ui/calendar";
+import { bridgeShape, type EventBridgeProps, type EventCardProps } from "@ohmail/ui/calendar";
 
 export type CardPlacement = Pick<EventCardProps, "style" | "side" | "origin">;
 type Bridge = Omit<EventBridgeProps, "tone">;
 type Box = Bridge["event"]["box"];
-type Seat = { card: CardPlacement; bridge?: Bridge };
+type Seat = { card: CardPlacement; anchor?: HTMLElement; bridge?: Bridge };
 
 const OPEN_EVENT = ".oh-ev[data-open], .oh-erow[data-open]";
 const GAP = 10;
@@ -90,34 +90,74 @@ function besideEvent({
 }): Seat {
   const right = box.right + GAP;
   const left = box.left - GAP - cardWidth;
-  const side = right + cardWidth <= width - EDGE ? "r" : left >= EDGE ? "l" : "o";
-  const x = side === "r" ? right : side === "l" ? left : Math.max(EDGE, width - cardWidth - EDGE);
-  const short = whole.bottom - whole.top <= SHORT_CHIP && side !== "o";
+  const min = Math.max(EDGE, bounds.top);
+  const max = Math.max(min, height - cardHeight - PANEL_ROOM);
+  const fold = card.ownerDocument.documentElement.dataset.device === "fold";
+  const below = box.bottom + GAP;
+  const above = box.top - GAP - cardHeight;
+  const side =
+    right + cardWidth <= width - EDGE
+      ? "r"
+      : left >= EDGE
+        ? "l"
+        : fold && below <= max
+          ? "b"
+          : fold && above >= min
+            ? "t"
+            : "o";
+  const beside = side === "r" || side === "l";
+  const centre = (box.left + box.right) / 2;
+  const x =
+    side === "r"
+      ? right
+      : side === "l"
+        ? left
+        : side === "o"
+          ? Math.max(EDGE, width - cardWidth - EDGE)
+          : clamp(centre - cardWidth / 2, EDGE, width - cardWidth - EDGE);
+  const short = whole.bottom - whole.top <= SHORT_CHIP && beside;
   const firstLine = short ? (box.top + box.bottom) / 2 - FIRST_LINE : box.top;
-  const min = short ? EDGE : Math.max(EDGE, bounds.top);
-  const y = clamp(firstLine, min, height - cardHeight - PANEL_ROOM);
+  const y = side === "b" ? below : side === "t" ? above : clamp(firstLine, short ? EDGE : min, max);
   const head = card.querySelector<HTMLElement>(".oh-ecard-head");
-  const placement: CardPlacement = {
+  const placement: CardPlacement = { side, style: { left: x, top: y } };
+  if (side === "o") return { card: placement, anchor };
+  const line = Number.parseFloat(getComputedStyle(card).getPropertyValue("--oh-cal-open-line")) || 1;
+  const eventRadius = rim(anchor);
+  const bridge: Bridge = {
+    width,
+    height,
     side,
-    style: { left: x, top: y },
-    origin: { x: side === "l" ? cardWidth : 0, y: clamp((box.top + box.bottom) / 2 - y, 0, cardHeight) },
-  };
-  if (side === "o") return { card: placement };
-  return {
-    card: placement,
-    bridge: {
-      width,
-      height,
-      side,
-      line: Number.parseFloat(getComputedStyle(card).getPropertyValue("--oh-cal-open-line")) || 1,
-      event: { box, whole, radius: rim(anchor) },
-      card: {
-        box: { left: x, top: y, right: x + cardWidth, bottom: y + cardHeight },
-        radius: rim(card),
-        headBottom: head ? y + head.offsetTop + head.offsetHeight - card.scrollTop : undefined,
-      },
+    line,
+    event: { box, whole, radius: eventRadius },
+    card: {
+      box: { left: x, top: y, right: x + cardWidth, bottom: y + cardHeight },
+      radius: rim(card),
+      headBottom: head ? y + head.offsetTop + head.offsetHeight - card.scrollTop : undefined,
     },
   };
+  const shape = bridgeShape(bridge);
+  if (!shape) return { card: placement, anchor };
+  return {
+    anchor,
+    card: {
+      ...placement,
+      origin: { x: shape.middle.x - x, y: shape.middle.y - y },
+      style: { ...placement.style, clipPath: shadowCut(box, whole, eventRadius, x, y) },
+    },
+    bridge,
+  };
+}
+
+/** The card's lift stops at the visible event, including when the hours cut one of its corners. */
+function shadowCut(box: Box, whole: Box, radius: number, x: number, y: number): string {
+  const l = box.left - x;
+  const r = box.right - x;
+  const t = box.top - y;
+  const b = box.bottom - y;
+  const corner = Math.min(radius, (r - l) / 2, (b - t) / 2);
+  const top = Math.abs(box.top - whole.top) > 0.5 ? 0 : corner;
+  const bottom = Math.abs(box.bottom - whole.bottom) > 0.5 ? 0 : corner;
+  return `path(evenodd, "M-4096 -4096H8192V8192H-4096Z M${l + top} ${t}H${r - top}A${top} ${top} 0 0 1 ${r} ${t + top}V${b - bottom}A${bottom} ${bottom} 0 0 1 ${r - bottom} ${b}H${l + bottom}A${bottom} ${bottom} 0 0 1 ${l} ${b - bottom}V${t + top}A${top} ${top} 0 0 1 ${l + top} ${t}Z")`;
 }
 
 export function useEventPlacement(
@@ -137,7 +177,13 @@ export function useEventPlacement(
     let frame = 0;
     const measure = () => {
       const next = locateCard(element, view, preferred);
-      setSeat((last) => next ?? (last?.bridge ? { card: last.card } : last));
+      setSeat(
+        (last) =>
+          next ??
+          (last?.bridge
+            ? { card: { ...last.card, style: { ...last.card.style, clipPath: undefined } } }
+            : last),
+      );
     };
     const schedule = () => {
       if (frame) return;

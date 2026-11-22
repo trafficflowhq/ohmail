@@ -221,8 +221,24 @@ export interface EventDraft {
 /** A change to a stored object: a field present is written, a field absent stays as the provider holds it. */
 export type EventChange = Partial<EventDraft>;
 
+export interface MasterEditReceipt {
+  readonly version: string;
+  readonly exceptionEndMs?: number;
+  /** A digest of the selected exception's fields outside the approved change. */
+  readonly exceptionSnapshot?: string;
+}
+
 /** The stored object a write is made on, as a reading handed it out. */
 export interface WriteTarget {
+  /** The separately stored occurrence the person selected, in the series' original clock. */
+  readonly exception?: { readonly id: string; readonly version: string; readonly occurrence: EventTime };
+  /** The exact version returned when the master part of this same edit was accepted. */
+  readonly masterReceipt?: MasterEditReceipt;
+  readonly rememberMasterReceipt?: (receipt: MasterEditReceipt) => Promise<void>;
+  /** A confirmed change of a stored series, rather than a single event. */
+  readonly recurringSeries?: true;
+  /** The queue's stable key for recovering a provider write after an unanswered attempt. */
+  readonly writeKey?: WriteKey;
   /** A cancellation may be checked against the provider after an unanswered attempt. Never send it again on this version. */
   readonly caldavReadOnly?: true;
   /** These scopes were chosen for a series with no guests. */
@@ -264,11 +280,20 @@ export type WriteReply = "ACCEPTED" | "TENTATIVE" | "DECLINED";
  * and the fields the person named for it. Every other line is the series' own.
  */
 export interface SeriesContinuation {
+  /** Exact provider receipt for this continuation, held by the durable second row. */
+  readonly createdVersion?: string;
+  readonly rememberCreatedVersion?: (version: string | null) => Promise<void>;
   readonly key: WriteKey;
   readonly start: EventTime;
   readonly end: EventTime;
   readonly rule: RRule;
   readonly change: EventChange;
+  /** The carried fields for a provider which exposes the master as structured data. */
+  readonly event?: EventDraft;
+  /** This split creates its continuation before trimming. Recovery must find that same object. */
+  readonly requireExisting?: true;
+  /** The continuation's stable creation time, from its queue row. */
+  readonly createdAtMs?: number;
 }
 
 /**

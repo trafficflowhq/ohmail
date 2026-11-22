@@ -22,7 +22,7 @@ import { cutScene } from "../../../ui/test/compare/cut.mjs";
 /**
  * THE SCREENER'S PARTS of the screen `screener`, each against the same part of the reference's picture and data file
  * (`node test/compare/fetch.mjs --from <the shards>`, then
- * `npx vitest run --config vitest.compare.config.ts packages/app/test/compare/screener-parts.compare.ts`). The shard
+ * `npx vitest run --config test/compare/vitest.compare.config.ts packages/app/test/compare/screener-parts.compare.ts`). The shard
  * is named to the fetch by `test/compare/subjects/screener.ts`, whose keys are the states the page draws; a shard not
  * in build/reference is red here, never a skip.
  *

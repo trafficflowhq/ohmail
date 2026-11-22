@@ -3,6 +3,7 @@
  * A control stands only where the setup's port has its door: no port, no Add, no Sign in again, no switch.
  */
 import { useState } from "react";
+import { CalendarSquare } from "@ohmail/ui/calendar";
 import { Empty } from "@ohmail/ui/base";
 import {
   AccountRow,
@@ -120,11 +121,6 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  const checked = (a: CalendarAccount) => {
-    const at = a.state === "inStep" ? when(a.connection.lastSyncedAt) : null;
-    return at === null ? [] : [t("accounts.checkedAt", { when: at })];
-  };
-
   const content = (
     <>
       {useCalendar}
@@ -134,7 +130,8 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
           name={a.connection.label}
           address={a.connection.serverHost ?? a.connection.label}
           state={t(`accounts.state.${a.state}`)}
-          facts={[wayWord(a), t("accounts.calendarCount", { count: a.calendars.length }), ...checked(a)]}
+          facts={accountFacts(a, wayWord(a), when, t)}
+          marks={accountMarks(a, mirror.tones)}
           offer={offerOf(a)}
           expanded={opened.has(a.connection.id)}
           onToggle={() => toggle(a.connection.id)}
@@ -162,6 +159,23 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
       {foot}
     </>
   );
+}
+
+function accountFacts(
+  account: CalendarAccount,
+  way: string,
+  when: ReturnType<typeof useWhen>,
+  t: ReturnType<typeof useText>,
+) {
+  const checked = account.state === "inStep" ? when(account.connection.lastSyncedAt) : null;
+  const count = t("accounts.calendarCount", { count: account.calendars.length });
+  return checked === null ? [way, count] : [way, t("accounts.checkedAt", { when: checked }), count];
+}
+
+function accountMarks(a: CalendarAccount, tones: NonNullable<ReturnType<typeof useCalendarMirror>>["tones"]) {
+  return a.calendars.map((calendar) => (
+    <CalendarSquare key={calendar.id} tone={tones.get(calendar.id)} hollow={!calendar.shown} />
+  ));
 }
 
 function AccountsToolbar({

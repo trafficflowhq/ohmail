@@ -29,7 +29,7 @@ import type { ServiceContext } from "../src/index.js";
  * use. The dedupe is what has to hold for it, and it is the same defect at 50 repeats as at
  * many more.
  *
- * ## Why REAL Postgres and not PGlite (CLAUDE.md)
+ * ## Why REAL Postgres and not PGlite (AGENTS.md)
  *
  * The claim is not "the resolver returns one attachment" — that is settled in
  * `attachment-staging-store.test.ts` against an injected port, with no database anywhere. What is

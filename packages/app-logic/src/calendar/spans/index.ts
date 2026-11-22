@@ -1,6 +1,7 @@
 /** The range views' shapes: month weeks, the year's months and runs, the agenda's days, search. Pure. */
 export {
   addDays,
+  boundariesOf,
   dayIdOf,
   dayNumberOf,
   daySpanOf,

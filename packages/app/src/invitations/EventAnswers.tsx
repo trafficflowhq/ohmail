@@ -17,6 +17,7 @@ export function useInvitationAnswer(port: CalendarPort) {
   const own = useMemo(() => addresses && new Set(addresses.map((a) => a.trim().toLowerCase())), [addresses]);
   const report = useReport();
   const e = useText("event");
+  const t = useText("invitations");
   const pending = useRef(new Map<string, symbol>());
   useLayoutEffect(
     () => () => {
@@ -45,8 +46,9 @@ export function useInvitationAnswer(port: CalendarPort) {
     pending.current.set(recordId, request);
     try {
       const outcome = await pressAnswer(port, { recordId }, value);
-      if (pending.current.get(recordId) === request && outcome.pressed && outcome.say !== null)
-        report(e(outcome.say));
+      if (pending.current.get(recordId) !== request || !outcome.pressed) return;
+      if (outcome.verdict?.kind === "taken") report(t(`answer.${value}`));
+      else if (outcome.say !== null) report(e(outcome.say));
     } catch {
       if (pending.current.get(recordId) === request) report(e("refusal.unknown"));
     } finally {

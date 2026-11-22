@@ -11,6 +11,8 @@ export interface CalendarEventFace extends CalendarEventView {
   readonly recordId: string;
   readonly people: readonly string[];
   readonly notes: string | null;
+  readonly conflict?: boolean;
+  readonly retryWriteId?: string;
 }
 
 export interface FaceWords {
@@ -62,7 +64,8 @@ export function faceOf(
   }
   const connection = connections.get(o.calendar.connectionId);
   const viewOnly = viewOnlyOf(o.calendar, connection);
-  const { waiting, refusal } = o.writes;
+  const { waiting, refusal, refusedWriteId } = o.writes;
+  const conflict = refusal === "version_stale";
   const status =
     refusal !== null
       ? { text: words.notSaved, failed: true }
@@ -81,9 +84,14 @@ export function faceOf(
     state: stateOf(o),
     repeats: o.occurrence.source === "override" ? "apart" : o.occurrence.source === "rule" ? "series" : null,
     viewOnly,
-    timeEditable: !viewOnly && o.record.end !== null && canEditRecord(o.record, connection, own),
+    timeEditable: !viewOnly && o.record.end !== null && canEditRecord(o.record, connection, own, o.series),
     waits: o.record.myAnswer === "none",
     status,
+    ...(conflict
+      ? { conflict }
+      : !viewOnly && refusedWriteId && refusal !== "earlier_refused"
+        ? { retryWriteId: refusedWriteId }
+        : {}),
     second: o.record.place,
     people,
     notes: o.record.notes,

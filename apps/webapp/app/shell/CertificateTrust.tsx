@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsNote } from "@ohmail/ui";
 
@@ -34,21 +35,27 @@ export function CertificateTrust(props: {
   return (
     <>
       {lines.map(([k, sha256]) => (
-        <label key={k} className="join-label" htmlFor={`${props.id}-${k}`}>
-          <input
-            id={`${props.id}-${k}`} type="checkbox"
-            checked={k === "both" ? props.ticked.imap === sha256 && props.ticked.smtp === sha256 : props.ticked[k] === sha256}
-            onChange={(e) => {
-              const now = e.target.checked ? sha256 : undefined;
-              if (k !== "both") { props.onChange(k, now); return; }
-              props.onChange("imap", now);
-              props.onChange("smtp", now);
-            }}
-          />{" "}
-          {t(label[k], { fingerprint: sha256 })}
-        </label>
+        <Fragment key={k}>
+          <label className="join-label" htmlFor={`${props.id}-${k}`}>
+            <input
+              id={`${props.id}-${k}`} type="checkbox"
+              aria-describedby={`${props.id}-${k}-print`}
+              checked={k === "both" ? props.ticked.imap === sha256 && props.ticked.smtp === sha256 : props.ticked[k] === sha256}
+              onChange={(e) => {
+                const now = e.target.checked ? sha256 : undefined;
+                if (k !== "both") { props.onChange(k, now); return; }
+                props.onChange("imap", now);
+                props.onChange("smtp", now);
+              }}
+            />{" "}
+            {t(label[k])}
+          </label>
+          {/* The fingerprint, on its own line under the line that asks for it: text a reader can
+            read whole, not an image; tied to the tick, so the consent says which certificate. */}
+          <p id={`${props.id}-${k}-print`} className="join-fingerprint">{sha256}</p>
+        </Fragment>
       ))}
-      <SettingsNote icon="shield">{t("trustCertificateNote")}</SettingsNote>
+      <SettingsNote icon="info">{t("trustCertificateNote")}</SettingsNote>
     </>
   );
 }

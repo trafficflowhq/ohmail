@@ -14,7 +14,7 @@ import { runSyncCycle } from "../src/sync.js";
  * `apps/worker/src/index.ts` called `runSyncCycle` with NO `leasePermit`, and the reconcile
  * backstop asked `permit.check()` at the cycle EDGE only. So a person who moved organization to
  * their own install while Cloud was scanning had BOTH installs applying moves for the rest of that
- * cycle — the invariant CLAUDE.md calls load-bearing, broken for as long as one pass takes.
+ * cycle — the invariant AGENTS.md calls load-bearing, broken for as long as one pass takes.
  *
  * Two halves, and each was enough on its own:
  *

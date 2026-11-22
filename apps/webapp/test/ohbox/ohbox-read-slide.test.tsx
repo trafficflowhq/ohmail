@@ -131,7 +131,7 @@ describe("a conversation moves as one row", () => {
        `ohboxView`'s filing; the rule itself is pinned by the engine census, where putting it back
        to per message reddens it. What this measures is the view: the read member rides the row,
        the row stays one, and it leaves New only with its last unread member. */
-    layout.heights.t1 = 900; // Opening at the first unread shows only t1.
+    layout.heights.t3 = 900; // The latest letter fills the reader when it opens.
     await mount([
       { id: "t3", unread: true, threadId: "T", n: 3 },
       { id: "t2", unread: true, threadId: "T", n: 2 },
@@ -142,7 +142,7 @@ describe("a conversation moves as one row", () => {
     expect(idsInGroup("New")).toEqual(["t3", "solo"]);
     expect(rowEl("t3").dataset.ids?.split(" ").length, "the row stands for its 3 letters").toBe(3);
 
-    // Read the first unread letter, then leave the conversation.
+    // Read the latest letter, then leave the conversation.
     await readAndLeave("t3", "solo");
     await settle();
 
@@ -156,7 +156,7 @@ describe("a conversation moves as one row", () => {
 
     // Work through the rest, read in the conversation's column. The last one takes the row with it.
     const readOnOpen = writes().flatMap((w) => w.ids);
-    expect(readOnOpen).toEqual(["t1"]);
+    expect(readOnOpen).toEqual(["t3"]);
     const rest = ["t3", "t2", "t1"].filter((id) => !readOnOpen.includes(id));
     await readInColumn(rest[0]!);
     expect(idsInGroup("New")).toEqual(["t3", "solo"]);

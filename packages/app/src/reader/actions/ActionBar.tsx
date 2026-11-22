@@ -15,8 +15,9 @@ import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
 import type { ReplyRunState } from "@ohmail/app-logic/piles";
-import { useMirror } from "@ohmail/app-logic/reader";
+import { useMirror, useOpenConversation } from "@ohmail/app-logic/reader";
 import { useListVisit } from "@ohmail/app-logic/reading";
+import { useOwnGone } from "../../frame/own-gone.js";
 import { useResurfaceTime } from "../../frame/room.js";
 import { useText } from "../../text/index.js";
 import { useCardKeys, useLetterKeys, useReaderKeys, type DeleteKeyTarget, type PanelMenu } from "../keys.js";
@@ -238,7 +239,12 @@ export function LetterActions({
   const { mirror } = useMirror();
   const message = mirror?.get<EngineMessage>("message", messageId) ?? null;
   const visit = useListVisit(messageId);
-  const verbs = useVerbs(message, visit, markUnread ? { onMarkUnread: markUnread } : null);
+  const thread = useOpenConversation(
+    showPanel !== false && message?.threadId ? messageId : null,
+    useOwnGone(),
+  );
+  const latest = thread.messages.at(-1);
+  const verbs = useVerbs(message, visit, markUnread ? { onMarkUnread: markUnread } : null, latest);
   const otherId = keysHere && deleteKeyId !== messageId ? deleteKeyId : null;
   const other = otherId === null ? null : (mirror?.get<EngineMessage>("message", otherId) ?? null);
   const otherVisit = useListVisit(otherId);

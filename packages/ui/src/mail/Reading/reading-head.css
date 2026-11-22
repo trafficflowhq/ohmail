@@ -27,18 +27,7 @@
     background: var(--ground);
   }
 
-  /* Something has scrolled under it: a short fade of the ground under its edge (none in ohmarchy). */
-  .oh-readinghead[data-under]::after {
-    content: "";
-    position: absolute;
-    top: 100%;
-    right: 0;
-    left: 0;
-    height: var(--s5);
-    background: linear-gradient(var(--ground), color-mix(in srgb, var(--ground) 0%, transparent));
-    pointer-events: none;
-  }
-  :root[data-face="ohmarchy"] .oh-readinghead[data-under]::after {
+  .oh-readinghead[data-under]:not([data-back])::after {
     content: none;
   }
 
@@ -74,8 +63,9 @@
       pointer-events: none;
       height: var(--group);
       padding: var(--s2) var(--s3) var(--s3) var(--sheet-pad);
-      font-size: var(--t-ui);
-      font-weight: var(--w-bold);
+      background: var(--ground);
+      font-size: var(--t-title);
+      line-height: var(--oh-readinghead-lh);
       visibility: hidden;
     }
     :root:not([data-device="phone"]) .oh-readinghead[data-back] .oh-readinghead-short {

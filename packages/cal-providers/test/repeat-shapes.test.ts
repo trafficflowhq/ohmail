@@ -25,7 +25,15 @@ import {
   repeatShapeOf,
   seriesProven,
 } from "../src/repeat-shapes.js";
-import { continuedSeries, movedRule, offItsClock, storedObjectFacts, untilSkipped } from "../src/series.js";
+import {
+  carriedExclusions,
+  continuedSeries,
+  endsBeforeDay,
+  movedRule,
+  offItsClock,
+  storedObjectFacts,
+  untilSkipped,
+} from "../src/series.js";
 
 const ZONES = intlZones();
 /** Today, as these cases are held: 15 November 2026. */
@@ -345,6 +353,36 @@ describe("a series' end when its first day moves, and the series its days from o
         ZONES,
       ),
     ).toBeNull();
+  });
+
+  it("splits a UTC series and keeps its final and excluded dates when the clock time changes", () => {
+    const utc = (day: number, hour: number) => instant(Date.UTC(2026, 10, day, hour));
+    const first = utc(16, 9);
+    const firstEnd = utc(16, 10);
+    const cut = utc(18, 9);
+    const start = utc(18, 11);
+    const end = utc(18, 12);
+    const counted = parseRRule("FREQ=DAILY;COUNT=5")!;
+    expect(continuedSeries({ first, firstEnd, rule: counted }, cut.epochMs, {}, ZONES)).toEqual({
+      start: cut,
+      end: utc(18, 10),
+      rule: { ...counted, count: 3 },
+    });
+    const ended = parseRRule("FREQ=DAILY;UNTIL=20261120T090000Z")!;
+    expect(
+      continuedSeries({ first, firstEnd, rule: ended }, cut.epochMs, { start, end }, ZONES)?.rule.until,
+    ).toEqual(utc(20, 11));
+    expect(carriedExclusions(cut, [utc(17, 9), utc(19, 9)], start, ZONES)).toEqual([utc(19, 11)]);
+  });
+
+  it("keeps Graph's local end date on a same-day retiming and includes the whole final local day", () => {
+    const first = ny(2026, 11, 23, 18);
+    const firstEnd = ny(2026, 11, 23, 19);
+    const rule = parseRRule("FREQ=DAILY;UNTIL=20261127")!;
+    const moved = ny(2026, 11, 23, 20);
+    expect(movedRule(rule, first, firstEnd, first, moved, ZONES)?.until).toEqual(plainDate(2026, 11, 27));
+    expect(endsBeforeDay(rule, first, firstEnd, Date.UTC(2026, 10, 28, 1), ZONES)).toBe(false);
+    expect(endsBeforeDay(rule, first, firstEnd, Date.UTC(2026, 10, 28, 5), ZONES)).toBe(true);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   type ContinuedField,
 } from "@trafficflow/db/calendar";
 import { personalSeriesOf, confirmedDeleteAudience } from "@ohmail/cal-providers/series";
+import { seriesEditShape } from "@ohmail/cal-providers/repeat-shapes";
 import { timeOfKey } from "./map.js";
 
 type Act = CalendarWritePayload["act"];
@@ -29,9 +30,14 @@ export type WriteWord = ProviderRefusal | WriteRefusal | "content_refused";
  */
 export interface StoredEvent extends CalendarWriteRowFacts {
   readonly providerId: string;
+  readonly uid?: string;
+  readonly partial?: boolean;
   readonly original: string | null;
   /** The version of the copy the store holds now: a write goes under its own recorded one. */
   readonly versionTag: string | null;
+  readonly updatedAt?: Date;
+  readonly status?: string;
+  readonly thisAndFuture?: boolean;
   /** The first day's end as the row keeps it. */
   readonly endKind: string | null;
   readonly endLocal: string | null;
@@ -62,7 +68,7 @@ export type WriteCall =
   /** The days of the series `from` names from its day `from.occurrence` on, made from that series' own component. */
   | {
       readonly kind: "continue"; readonly from: WriteTarget; readonly start: EventTime; readonly end: EventTime; readonly rule: RRule;
-      readonly change: EventChange;
+      readonly change: EventChange; readonly event: EventDraft; readonly requireExisting?: true;
     }
   | { readonly kind: "refuse"; readonly reason: WriteWord };
 
@@ -177,7 +183,9 @@ export function secondPartIsThePress(first: Extract<Act, { kind: "calendar_event
   const from = second.part?.from;
   if (made.kind !== "calendar_event_create" || first.scope.kind !== "following" || from === undefined) return false;
   const named = CONTINUED_FIELDS.filter((f) => first.change[f] !== undefined);
-  if (from.personalSeries !== first.personalSeries || from.at !== first.scope.at || from.eventId !== first.eventId || [...from.named].sort().join() !== [...named].sort().join()) return false;
+  if (from.personalSeries !== first.personalSeries || (first.audience !== undefined && !from.confirmed) ||
+    from.at !== first.scope.at || from.eventId !== first.eventId ||
+    [...from.named].sort().join() !== [...named].sort().join()) return false;
   return !named.some((f) => JSON.stringify(made.event[f]) !== JSON.stringify(first.change[f]));
 }
 
@@ -229,6 +237,9 @@ export function writeCallOf(o: {
   readonly now: number;
   readonly proven?: ProvenRepeats;
   readonly cancellationAttempted?: boolean;
+  readonly firstAttempt?: boolean;
+  readonly confirmedFollowing?: boolean;
+  readonly exception?: WriteTarget["exception"];
   /**
    * The second half of a press on a day and the days after it: where it comes from, and that series
    * as the store holds it (`null`: gone from the store). Its new series is made from that series'
@@ -237,8 +248,13 @@ export function writeCallOf(o: {
   readonly continuation?: { readonly from: CalendarWriteContinuation; readonly source: StoredEvent | null };
 }): WriteCall {
   const { act } = o;
+  const seriesEdit = act.kind === "calendar_event_update" && (act.audience !== undefined || o.confirmedFollowing) &&
+    o.event !== null && writeRowOf(o.event) === "series";
+  const editing = seriesEdit || o.continuation?.from.confirmed === true;
   const unproven = (rule: EventDraft["rule"] | undefined, start: EventTime | null): boolean =>
-    rule !== undefined && rule !== null && (start === null || !seriesProven(o.place, rule, start, o.zones, o.now, o.proven));
+    rule !== undefined && rule !== null && (start === null || !(editing
+      ? seriesEditShape(o.place, rule, start, o.zones, o.now)
+      : seriesProven(o.place, rule, start, o.zones, o.now, o.proven)));
   if (act.kind === "calendar_event_create") {
     const draft = draftOf(act.event, o.organizer);
     if (draft === null) return { kind: "refuse", reason: "content_refused" };
@@ -252,21 +268,39 @@ export function writeCallOf(o: {
     const cut = timeOfKey(from.at);
     if (draft.rule === null || cut === null) return { kind: "refuse", reason: "content_refused" };
     if (source.versionTag === null || source.versionTag === "") return { kind: "refuse", reason: "version_unknown" };
+    const organizer = source.organizer?.trim().toLowerCase() ?? null;
+    const attendees = draft.attendees.filter((person) => person.email.trim().toLowerCase() !== organizer);
+    const audience = { organizer, guests: attendees.map((person) => person.email.trim().toLowerCase()).sort() };
     return {
-      kind: "continue", from: { id: source.providerId, version: source.versionTag, text: source.original, occurrence: cut, ...(from.personalSeries && { personalSeries: true }) },
+      kind: "continue", from: { id: source.providerId, version: source.versionTag, text: source.original, occurrence: cut,
+        ...(from.confirmed ? { recurringSeries: true, audience } : from.personalSeries ? { personalSeries: true } : {}) },
       start: draft.start, end: draft.end, rule: draft.rule, change: namedChange(draft, from.named),
+      event: { ...draft, organizer, attendees },
+      ...(from.confirmed && { requireExisting: true }),
     };
   }
   if (o.event === null) return { kind: "refuse", reason: "event_gone" };
+  if (seriesEdit && o.firstAttempt && o.event.updatedAt && o.event.updatedAt.getTime() !== Date.parse(act.base))
+    return { kind: "refuse", reason: "version_stale" };
   const personal = act.kind === "calendar_event_update" && act.personalSeries;
   if (personal && (!o.place?.startsWith("caldav:") || o.event.myAnswer !== null || !personalSeriesOf(o.event.original))) return { kind: "refuse", reason: "version_stale" };
   // What the door refuses on this row as it stands is not sent either: a row recorded before a check of the door's. Someone else's
   // event takes the account's answer and nothing else, whatever the row says.
-  const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners);
+  const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners, o.exception !== undefined);
   if (why !== null) return { kind: "refuse", reason: why.word };
   // A series is written only where its own repeat, from its own start, is a shape the provider was proven to keep.
   const stored = writeRowOf(o.event) === "series" ? parseRRule(o.event.repeatRule!) : null;
   const first = startOf(o.event);
+  let updateAudience = act.kind === "calendar_event_update" ? act.audience : undefined;
+  if (stored !== null && act.kind === "calendar_event_update" && !updateAudience && (!personal || o.confirmedFollowing)) {
+    const organizer = o.event.organizer?.trim().toLowerCase() ?? null;
+    const guests = o.event.deleteGuests;
+    if (!guests || guests.some((person) => person.address.trim().toLowerCase() !== organizer) ||
+      (o.place?.startsWith("caldav:") && o.event.original !== null &&
+        !confirmedDeleteAudience(o.place, o.event, true, act.scope, undefined, o.zones)))
+      return { kind: "refuse", reason: "version_stale" };
+    if (o.place === "google" || o.place === "microsoft" || o.confirmedFollowing) updateAudience = { organizer, guests: [] };
+  }
   if (writeRowOf(o.event) === "series" && (stored === null || unproven(stored, first))) return { kind: "refuse", reason: "repeat_unsupported" };
   // A day of the series whose clock time is not the series' own (the night its zone's clocks go forward over that time) is named by
   // no write, one day or the days from it on, whatever today is: where it is written would be a guess. The door refuses the same.
@@ -289,7 +323,9 @@ export function writeCallOf(o: {
     return { kind: "refuse", reason: "version_stale" };
   }
   const target: WriteTarget = {
-    ...whole, occurrence: day, ...(personal && { personalSeries: true }),
+    ...whole, occurrence: day, ...(o.exception && { exception: o.exception }), ...(personal && { personalSeries: true }),
+    ...(stored !== null && updateAudience && { recurringSeries: true, audience: updateAudience,
+      text: o.event.versionTag === o.base ? whole.text : null }),
     ...(checkCancellation && { caldavReadOnly: true, text: null }),
   };
   // A day and the days after it: the series ends before that day. Changed, those days are the second part of the press, a new series.

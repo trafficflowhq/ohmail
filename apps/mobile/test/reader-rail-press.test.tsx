@@ -17,8 +17,8 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const nav = vi.hoisted(() => ({ focused: true, pushed: [] as string[] }));
-vi.mock("expo-router", () => ({ useIsFocused: () => nav.focused, router: { push: (to: string) => { nav.pushed.push(to); } } }));
+const nav = vi.hoisted(() => ({ focused: true, pushed: [] as unknown[] }));
+vi.mock("expo-router", () => ({ useIsFocused: () => nav.focused, router: { push: (to: unknown) => { nav.pushed.push(to); } } }));
 
 const native = vi.hoisted(() => ({
   offset: 0,
@@ -156,7 +156,6 @@ vi.mock("../src/ui/reader-verbs", () => ({ readerVerbMode: () => "compact" }));
 vi.mock("../src/ui/scaffold/plan", () => ({ scaffoldPlan: () => ({}) }));
 vi.mock("../src/ui/Sheet", () => ({ Sheet: () => null, SheetRow: () => null }));
 vi.mock("../src/ui/bottom-chrome", () => ({ useBottomChromeExtent: () => 0 }));
-vi.mock("../src/ui/thread-heading", () => ({ threadHeading: () => "" }));
 
 const require_ = createRequire(join(__dirname, "../../webapp/package.json"));
 const client = require_("react-dom/client") as { createRoot(el: Element): { render(n: ReactNode): void; unmount(): void } };
@@ -268,6 +267,38 @@ const layOut = (el: HTMLElement, n: number, room: number): void => {
   lay(v.scroll, { y: 0, height: native.view });
   act(() => { native.props!.onContentSizeChange?.(360, native.content); });
 };
+
+it.each(["ohbox", "reads"])("an older link lands on the last letter and square from %s", (place) => {
+  world.mail = {
+    ...mailOf("start", [
+      { ...memberOf("middle", "Ada"), later: true },
+      { ...memberOf("last", "Ben"), later: true },
+    ]),
+    place,
+  };
+  forgetPaneScroll("msg:start");
+  native.view = 300;
+  native.content = 700;
+  const el = mountReader("start");
+  const v = views(el);
+  lay(v.padded, { y: 0, height: 700 });
+  lay(v.opened, { y: 18, height: 200 });
+  lay(v.below, { y: 252, height: 400 });
+  lay(v.member("middle").panel, { y: 0, height: 200 });
+  lay(v.member("last").panel, { y: 210, height: 200 });
+  lay(v.scroll, { y: 0, height: native.view });
+  act(() => { native.props!.onContentSizeChange?.(360, native.content); });
+  flushNative();
+  act(() => vi.advanceTimersByTime(100));
+
+  const bodies = [...v.padded!.querySelectorAll('[data-text^="body of "]')];
+  expect(bodies.map((body) => body.getAttribute("data-text"))).toEqual([
+    "body of start", "body of middle", "body of last",
+  ]);
+  expect(native.offset).toBe(400);
+  const ringed = all(el).filter((x) => x.__props?.accessibilityState?.selected === true);
+  expect(ringed.map((x) => x.getAttribute("data-test"))).toEqual(["rail-last"]);
+});
 
 describe("a press on a rail square reaches that square", () => {
   for (const [n, room] of [[2, 580], [30, 580], [40, 600], [30, 700]] as const) {
@@ -514,10 +545,11 @@ describe("a member the phone cannot draw as words", () => {
     expect(world.glanced.flat(), "on screen as a card, never read").not.toContain("p1");
     expect(nav.pushed, "nothing opened yet").toEqual([]);
     act(() => { panel.__props!.onPress(); });
-    expect(nav.pushed, "a press on its card opens it alone").toEqual(["/message/p1"]);
+    const member = { pathname: "/message/[id]", params: { id: "p1", member: "1" } };
+    expect(nav.pushed, "a press on its card opens it alone").toEqual([member]);
     const square = el.querySelector<El>('[data-test="rail-p1"]')!;
     act(() => { square.__props!.onPress(); });
-    expect(nav.pushed, "its square opens it too").toEqual(["/message/p1", "/message/p1"]);
+    expect(nav.pushed, "its square opens it too").toEqual([member, member]);
     act(() => { (el.querySelector<El>('[data-test="rail-p2"]')!).__props!.onPress(); });
     expect(nav.pushed, "CONTROL: a drawn member's square only jumps").toHaveLength(2);
     pass(3000);

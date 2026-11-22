@@ -9,7 +9,7 @@
  * letter; now all four are stored once under their own Message-IDs and nothing is blank. The worker's
  * cycle on the same race, both servers, is `apps/worker/test/sync-flag-race.e2e.test.ts`.
  *
- * Runs under the SQLite project (`vitest.sqlite.config.ts`), like every file that composes the phone
+ * Runs under the SQLite project (`test/vitest.sqlite.config.ts`), like every file that composes the phone
  * engine over the device store; under the default project it says so in its name and skips.
  */
 import { createRequire } from "node:module";

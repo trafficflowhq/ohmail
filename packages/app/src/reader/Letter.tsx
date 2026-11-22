@@ -63,8 +63,9 @@ export interface LetterViewProps {
   readonly showSubject?: boolean;
   /** A heading inside the latest sheet when the conversation heading can scroll out of view. */
   readonly subject?: string;
-  /** The letter the column opened at: its text on screen ends the open's measure. */
+  /** The addressed letter, whose text ends the route’s opening measurement. */
   readonly opened: boolean;
+  readonly current?: boolean;
   readonly previewSelection?: string;
   /** Unread as the column presents it. */
   readonly unread: boolean;
@@ -91,6 +92,7 @@ export function Letter({
   markUnread,
   subject,
   opened,
+  current = opened,
   previewSelection,
   unread,
   look,
@@ -142,7 +144,7 @@ export function Letter({
     <div
       className="rd-letter"
       data-conv-id={message.id}
-      aria-current={opened ? "true" : undefined}
+      aria-current={current ? "true" : undefined}
       data-unseen={message.unread ? "" : undefined}
       data-body-ready={letterReady(message, body) ? "" : undefined}
     >
