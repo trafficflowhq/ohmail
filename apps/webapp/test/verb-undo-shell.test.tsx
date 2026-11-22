@@ -142,7 +142,7 @@ describe("the verb toast carries Undo, and Undo drives the engine's inverse", ()
     await flush();
     // The REAL inverse on the wire — the row had no pile state, so back to none.
     expect(kinds("triage_set")).toEqual([{ kind: "triage_set", messageId: id, state: "none" }]);
-    expect(toastText()).toBe("Undone.");
+    expect(toastText()).toBe("Undone");
   });
 
   it("Park undone from the keyboard: z presses the live offer, at most once", async () => {
@@ -208,7 +208,7 @@ describe("the verb toast carries Undo, and Undo drives the engine's inverse", ()
       { kind: "triage_set", messageId: id, state: "set_aside" },
       { kind: "triage_set", messageId: id, state: "none" },
     ]);
-    expect(toastText()).toBe("Undone.");
+    expect(toastText()).toBe("Undone");
   });
 
   it("the offer dies with its window: a late z takes nothing back and dispatches nothing", async () => {

@@ -74,17 +74,10 @@ describe("the provider form says what a draft sends", () => {
     }
   });
 
-  /* The card under "Draft reply" is the one sentence on screen at the press. On an unmetered door
-     (the desktop, a self-hosted server) it is offerBodyUnmetered, and it must say what goes to the
-     model, and that no email is sent, rather than "nothing is sent". */
   it("the draft card says what the press sends to the model, and that no email is sent", () => {
-    expect(REPLY_DRAFT).toContain('draftReply("offerBodyUnmetered")');
-    expect(en.draftReply.offerBodyUnmetered).toBe(
-      "Drafting sends this message, extracts from its thread and matching knowledge-base notes to the configured AI model. The draft lands in the editor; no email is sent.",
-    );
-    expect(de.draftReply.offerBodyUnmetered).toBe(
-      "Für den Entwurf gehen diese Nachricht, Auszüge aus ihrem Thread und passende Notizen aus der Wissensdatenbank an das eingerichtete KI-Modell. Der Entwurf landet im Editor; es wird keine E-Mail gesendet.",
-    );
+    expect(REPLY_DRAFT).toContain("title={title}");
+    expect(en.draftReply).not.toHaveProperty("offerBodyUnmetered");
+    expect(de.draftReply).not.toHaveProperty("offerBodyUnmetered");
   });
 
   it("docs/how-it-works.md lists the providers, OpenCode Go included", () => {

@@ -95,13 +95,12 @@ async function join(messages: typeof en, props: Record<string, unknown> = {}) {
   for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   const close = async () => { await act(async () => root.unmount()); host.remove(); };
   unmount = close;
-  /* What the step says of the site's choice and the trial: the sentence that begins with the choice or the trial. */
-  const says = [
-    ...[messages.join.planChosen, messages.join.planChosenMonth, messages.join.planChosenYear].map((s) => s.split("{plan}")[0]!),
-    messages.join.planTrial,
-  ];
-  const trial = () =>
-    [...host.querySelectorAll("p, span")].find((el) => says.some((s) => (el.textContent ?? "").startsWith(s)))?.textContent ?? null;
+  const trial = () => {
+    const heading = host.querySelector("h1")?.textContent?.trim();
+    const tags = [...host.querySelectorAll(".oh-page-line .oh-tag")].map((el) => el.textContent ?? "");
+    const chosen = heading && heading !== messages.join.startTrialTitle.replace(/\.$/, "") && heading !== messages.join.step_plan_title;
+    return [chosen ? heading : null, ...tags].filter(Boolean).join(" · ");
+  };
   return { host, trial, close: async () => { await close(); unmount = null; } };
 }
 
@@ -135,26 +134,26 @@ describe("/join reads ?plan and ?interval from closed sets", () => {
 describe("the plan step names the site's choice beside the trial, and the account page is asked for it", () => {
   it("en: Pro, yearly: named, 14 days free, no card, no price; the mint carries {lang, plan, interval}", async () => {
     const { trial } = await join(en, { planHint: { plan: "pro", interval: "year" } });
-    expect(trial()).toBe("You chose Pro, billed yearly. 14 days free, no card.");
+    expect(trial()).toBe("Start 14 days on Pro · Billed yearly · No card");
     expect(trial()).not.toMatch(/[$€£]|CHF|\d+[.,]\d\d/);
     expect(mints).toEqual([{ lang: "en", plan: "pro", interval: "year" }]);
   });
 
   it("de: the same choice in German, and the page is asked for in German", async () => {
     const { trial } = await join(de, { planHint: { plan: "solo", interval: "month" } });
-    expect(trial()).toBe("Du hast Solo gewählt, mit monatlicher Abrechnung. 14 Tage gratis, ohne Karte.");
+    expect(trial()).toBe("Starte 14 Tage mit Solo · Monatliche Abrechnung · Keine Karte");
     expect(mints).toEqual([{ lang: "de", plan: "solo", interval: "month" }]);
   });
 
   it("a plan without an interval is named alone; no hint at all still says what the trial is", async () => {
     const one = await join(en, { planHint: { plan: "plus" } });
-    expect(one.trial()).toBe("You chose Plus. 14 days free, no card.");
+    expect(one.trial()).toBe("Start 14 days on Plus · No card");
     expect(mints).toEqual([{ lang: "en", plan: "plus" }]);
     await one.close();
     localStorage.clear();
     mints = [];
     const none = await join(en);
-    expect(none.trial()).toBe(en.join.planTrial);
+    expect(none.trial()).toBe(en.join.planNoCard);
     expect(mints).toEqual([{ lang: "en" }]);
   });
 });
@@ -165,7 +164,7 @@ describe("the choice survives the verification mail's round trip", () => {
     await first.close();
     mints = [];
     const back = await join(en);
-    expect(back.trial()).toBe("You chose Pro, billed yearly. 14 days free, no card.");
+    expect(back.trial()).toBe("Start 14 days on Pro · Billed yearly · No card");
     expect(mints).toEqual([{ lang: "en", plan: "pro", interval: "year" }]);
   });
 
@@ -173,12 +172,12 @@ describe("the choice survives the verification mail's round trip", () => {
     const week = 7 * 24 * 60 * 60 * 1000;
     localStorage.setItem(KEY, JSON.stringify({ plan: "pro", interval: "year", at: Date.now() - week - 60_000 }));
     const stale = await join(en);
-    expect(stale.trial()).toBe(en.join.planTrial);
+    expect(stale.trial()).toBe(en.join.planNoCard);
     await stale.close();
     localStorage.setItem(KEY, JSON.stringify({ plan: "enterprise", interval: "decade", at: Date.now() }));
     mints = [];
     const odd = await join(en);
-    expect(odd.trial()).toBe(en.join.planTrial);
+    expect(odd.trial()).toBe(en.join.planNoCard);
     expect(mints).toEqual([{ lang: "en" }]);
   });
 
@@ -197,10 +196,6 @@ describe("the choice survives the verification mail's round trip", () => {
  * ended or that has paid before, which the account page then asks to pay. The words follow the one
  * predicate the lock screen's never-started state uses, read from the service's own lifecycle.
  */
-/** The plan step's lead: the line that says one of its two leads. */
-const lead = (host: HTMLElement, messages: typeof en): string | null =>
-  [...host.querySelectorAll("p, span")].map((el) => el.textContent ?? "")
-    .find((said) => [messages.join.step_plan_lead, messages.join.planLeadNoTrial].includes(said)) ?? null;
 
 describe("the plan step names a trial only for an account that never started one", () => {
   const ENDED = { ...NEVER_STARTED, closedReason: "trial_ended", closedAt: "2026-10-20T10:00:00.000Z", erasureAt: "2026-11-19T10:00:00.000Z" };
@@ -221,8 +216,8 @@ describe("the plan step names a trial only for an account that never started one
 
     it(`${lang}: never started: the trial, its button and the hint that it waits`, async () => {
       const { host, trial } = await join(messages);
-      expect(lead(host, messages)).toBe(messages.join.step_plan_lead);
-      expect(trial()).toBe(messages.join.planTrial);
+      expect(host.querySelector("h1")?.textContent).toBe(messages.join.startTrialTitle.replace(/\.$/, ""));
+      expect(trial()).toBe(messages.join.planNoCard);
       expect(button(host)).toBe(messages.join.planStartTrial);
     });
 
@@ -231,12 +226,12 @@ describe("the plan step names a trial only for an account that never started one
         lifecycle = block;
         const { host, trial } = await join(messages, { planHint: { plan: "pro", interval: "year" } });
         expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_plan_title);
-        expect(lead(host, messages)).toBe(messages.join.planLeadNoTrial);
+        expect(host.textContent).not.toContain(messages.join.startTrialTitle.replace(/\.$/, ""));
         expect(trial(), "the site's choice is still named, without a trial").toBe(
-          lang === "de" ? "Du hast Pro gewählt, mit jährlicher Abrechnung." : "You chose Pro, billed yearly.",
+          lang === "de" ? "Pro · Jährliche Abrechnung" : "Pro · Billed yearly",
         );
         expect(button(host)).toBe(messages.join.planContinue);
-        expect(host.textContent).not.toContain(messages.join.planTrial);
+        expect(host.textContent).not.toContain(messages.join.planNoCard);
         expect(host.textContent).not.toContain(messages.join.planLaterHint);
         expect(host.textContent).not.toMatch(/\b14\b/);
       });

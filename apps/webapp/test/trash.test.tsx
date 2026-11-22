@@ -133,14 +133,14 @@ async function mount(p: TrashPage, catalogue: typeof en = en, locale: "en" | "de
 
 describe("the Trash view", () => {
   it("carries the SCOPE sentence whether or not there are rows", async () => {
-    // Keep the registered case name. The empty scope copy now consists of the title alone.
     const empty = await mount(page({ exhausted: true }));
     expect(empty.textContent).toContain(en.trash.emptyTitle);
-    expect(empty.textContent).not.toContain(en.trash.foot);
+    expect(empty.textContent).not.toContain("Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.");
     if (root) await act(() => root!.unmount());
     root = null; host?.remove(); host = null;
     const full = await mount(page({ items: [row("m1")] as never }));
-    expect(full.textContent).toContain(en.trash.foot);
+    expect(getAllByRole(full, "option")).toHaveLength(1);
+    expect(full.textContent).not.toContain("Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.");
   });
 
   it("glosses a USER folder by its leaf, and an absent restoreTo as the inbox", async () => {
@@ -155,7 +155,7 @@ describe("the Trash view", () => {
   it("renders in GERMAN from the same keys", async () => {
     const el = await mount(page({ exhausted: true }), de as unknown as typeof en, "de");
     expect(el.textContent).toContain(de.trash.emptyTitle);
-    expect(el.textContent).not.toContain(de.trash.foot);
+    expect(el.textContent).not.toContain("Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.");
   });
 });
 

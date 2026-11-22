@@ -40,7 +40,15 @@ async function open(query = "", width = 390): Promise<{ page: Page; cdp: CDPSess
     route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
   );
   await page.goto(`${ORIGIN}/?${query}`);
-  await page.waitForSelector("[role=option][data-id]", { timeout: 15_000 });
+  const params = new URLSearchParams(query);
+  const place = params.get("place");
+  const ready = {
+    settings: params.has("menu") ? "Settings" : "Settings view",
+    reader: "Letter view",
+    calendar: "Calendar month",
+  }[place as "settings" | "reader" | "calendar"];
+  if (ready) await page.getByRole("heading", { name: ready }).waitFor();
+  else await page.waitForSelector("[role=option][data-id]", { timeout: 15_000 });
   return { page, cdp: await context.newCDPSession(page), errors };
 }
 
@@ -112,6 +120,234 @@ describe("the touch layer under a real finger", () => {
     await page.context().close();
   }, 60_000);
 
+  it("a swipe from a row at the leading edge only opens the drawer", async () => {
+    const { page } = await open();
+    try {
+      // Give both listeners the same real row as a target, with an edge origin regardless of list inset.
+      await page
+        .locator("[role=option][data-id]")
+        .first()
+        .evaluate((row) => {
+          const y = row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2;
+          const send = (type: string, x: number) =>
+            row.dispatchEvent(
+              new PointerEvent(type, {
+                bubbles: true,
+                pointerType: "touch",
+                pointerId: 1,
+                isPrimary: true,
+                button: 0,
+                clientX: x,
+                clientY: y,
+              }),
+            );
+          send("pointerdown", 10);
+          send("pointermove", 155);
+          send("pointerup", 155);
+        });
+      await expect.poll(() => page.getByRole("dialog", { name: "More" }).count()).toBe(1);
+      expect(await saidOf(page)).toMatchObject({ marked: [], opened: [], acted: [], picked: 0 });
+    } finally {
+      await page.context().close();
+    }
+  }, 15_000);
+
+  it.each([390, 719])(
+    "opens from the edge of each compact surface at %i px",
+    async (width) => {
+      for (const place of ["list", "reader", "settings", "calendar"]) {
+        const { page, cdp, errors } = await open(`place=${place}`, width);
+        try {
+          const drawer = page.getByRole("dialog", { name: "More" });
+          const heading =
+            place === "calendar"
+              ? await page.getByRole("heading", { name: "Calendar month" }).boundingBox()
+              : null;
+          const y = heading ? heading.y + heading.height / 2 : 240;
+          await run(cdp, { x: 5, y }, { x: 145, y: 3 });
+          await expect.poll(() => drawer.count(), { message: place }).toBe(1);
+          await run(cdp, { x: 245, y: 240 }, { x: -148, y: 1 });
+          await expect.poll(() => drawer.count(), { message: place }).toBe(0);
+          expect(await saidOf(page)).toMatchObject({ marked: [], opened: [], acted: [] });
+          expect(errors).toEqual([]);
+        } finally {
+          await page.context().close();
+        }
+      }
+    },
+    60_000,
+  );
+
+  it.each(
+    [390, 884].flatMap((width) =>
+      [
+        ["list", "Ohbox"],
+        ["reader", "Letter body"],
+        ["settings", "Settings view"],
+        ["calendar", "Calendar month"],
+      ].map(([place, heading]) => ({ width, place, heading })),
+    ),
+  )(
+    "opens from inside $place at $width px",
+    async ({ width, place, heading }) => {
+      const { page, cdp, errors } = await open(`place=${place}`, width);
+      try {
+        const surface = page.getByRole(place === "reader" ? "region" : "heading", {
+          name: heading,
+          exact: true,
+        });
+        await surface.tap({ trial: true, timeout: 3000 });
+        const box = (await surface.boundingBox({ timeout: 3000 }))!;
+        const x = Math.max(120, box.x + 16);
+        const y = box.y + box.height / 2;
+        await run(cdp, { x, y }, { x: 145, y: 3 });
+        await expect.poll(() => page.getByRole("dialog", { name: "More" }).count()).toBe(1);
+        expect(await saidOf(page)).toMatchObject({ marked: [], opened: [], acted: [] });
+        expect(errors).toEqual([]);
+      } finally {
+        await page.context().close();
+      }
+    },
+    15_000,
+  );
+
+  it("keeps a rightward swipe on the calendar month for the previous month", async () => {
+    const { page, cdp } = await open("place=calendar");
+    try {
+      const date = page.getByRole("button", { name: /\b12 August\b/ });
+      const box = (await date.boundingBox({ timeout: 3000 }))!;
+      await run(cdp, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, { x: 140, y: 0 });
+      await expect.poll(() => page.getByRole("button", { name: /\b1 July\b/ }).count()).toBe(1);
+      expect(await page.getByRole("dialog", { name: "More" }).count()).toBe(0);
+    } finally {
+      await page.context().close();
+    }
+  }, 15_000);
+
+  it.each(["settings", "calendar"])(
+    "opens inside the %s scroll surface",
+    async (place) => {
+      const { page, cdp } = await open(`place=${place}&menu`);
+      try {
+        const ground =
+          place === "settings"
+            ? page.getByRole("button", { name: "AI" })
+            : page.getByText("Nothing", { exact: true });
+        const box = (await ground.boundingBox({ timeout: 3000 }))!;
+        await run(cdp, { x: 120, y: box.y + box.height / 2 }, { x: 145, y: 3 });
+        await expect.poll(() => page.getByRole("dialog", { name: "More" }).count()).toBe(1);
+      } finally {
+        await page.context().close();
+      }
+    },
+    15_000,
+  );
+
+  it("leaves editable controls, horizontal scrolling and selected text to the page", async () => {
+    const { page, cdp } = await open("place=settings&controls");
+    const drawer = page.getByRole("dialog", { name: "More" });
+    try {
+      for (const name of ["Name", "Notes", "Signature"]) {
+        const box = (await page.getByRole("textbox", { name }).boundingBox())!;
+        await run(cdp, { x: box.x + 10, y: box.y + box.height / 2 }, { x: 140, y: 0 });
+        expect(await drawer.count()).toBe(0);
+      }
+
+      const preview = page.getByRole("region", { name: "Preview" });
+      await preview.evaluate((el) => {
+        el.scrollLeft = 250;
+      });
+      const box = (await preview.boundingBox())!;
+      await run(cdp, { x: box.x + 50, y: box.y + box.height / 2 }, { x: 140, y: 0 });
+      await expect.poll(() => preview.evaluate((el) => el.scrollLeft)).toBeLessThan(250);
+      expect(await drawer.count()).toBe(0);
+
+      const heading = page.getByRole("heading", { name: "Settings view" });
+      await heading.evaluate((el) => getSelection()!.selectAllChildren(el));
+      const title = (await heading.boundingBox())!;
+      await run(cdp, { x: 120, y: title.y + title.height / 2 }, { x: 140, y: 0 });
+      expect(await drawer.count()).toBe(0);
+    } finally {
+      await page.context().close();
+    }
+  }, 15_000);
+
+  it.each([
+    [390, "paper", "light"],
+    [390, "paper", "dark"],
+    [390, "ohmarchy", "light"],
+    [390, "ohmarchy", "dark"],
+    [719, "paper", "light"],
+    [719, "paper", "dark"],
+    [719, "ohmarchy", "light"],
+    [719, "ohmarchy", "dark"],
+  ] as const)(
+    "settles without flashing at %i px in %s %s",
+    async (width, face, scheme) => {
+      const { page, cdp } = await open(`motion=full&dock=full&face=${face}&scheme=${scheme}`, width);
+      try {
+        const drawer = page.locator(".fr-railsheet");
+        const handle = (await page.getByRole("button", { name: "More", exact: true }).boundingBox())!;
+        for (const direction of [1, -1]) {
+          const x = direction === 1 ? handle.x + handle.width / 2 : 245;
+          const y = direction === 1 ? handle.y + handle.height / 2 : 240;
+          await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+          for (const step of [24, 70, 120]) {
+            await cdp.send("Input.dispatchTouchEvent", {
+              type: "touchMove",
+              touchPoints: [{ x: x + step * direction, y }],
+            });
+          }
+          const held = direction === 1 ? -180 : -120;
+          await expect
+            .poll(async () => (await drawer.boundingBox({ timeout: 1000 }))?.x, {
+              message: "the panel follows the finger while held",
+            })
+            .toBeCloseTo(held, 0);
+          const frames = page.evaluate(async () => {
+            const result: { reveal: number; dim: number; surface: boolean }[] = [];
+            const end = performance.now() + 420;
+            do {
+              await new Promise(requestAnimationFrame);
+              const panel = document.querySelector(".fr-railsheet");
+              const sc = panel?.parentElement;
+              const frame = document.querySelector(".fr-frame")!;
+              result.push({
+                reveal: Math.max(0, panel?.getBoundingClientRect().right ?? 0),
+                dim: sc ? Number(getComputedStyle(sc, "::before").opacity) : 0,
+                surface:
+                  frame.getBoundingClientRect().height > 0 &&
+                  getComputedStyle(frame).visibility === "visible" &&
+                  getComputedStyle(frame).opacity === "1",
+              });
+            } while (performance.now() < end);
+            return result;
+          });
+          await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+          const samples = await frames;
+          expect(samples.length).toBeGreaterThan(3);
+          expect(samples.every(({ surface }) => surface)).toBe(true);
+          expect(
+            samples.some(({ reveal }) =>
+              direction === 1 ? reveal > 125 && reveal < 295 : reveal > 5 && reveal < 175,
+            ),
+          ).toBe(true);
+          for (let k = 1; k < samples.length; k++) {
+            expect((samples[k]!.reveal - samples[k - 1]!.reveal) * direction).toBeGreaterThanOrEqual(-1);
+            expect((samples[k]!.dim - samples[k - 1]!.dim) * direction).toBeGreaterThanOrEqual(-0.02);
+          }
+          expect(samples.at(-1)).toMatchObject({
+            reveal: direction === 1 ? 300 : 0,
+            dim: direction === 1 ? 1 : 0,
+          });
+        }
+      } finally {
+        await page.context().close();
+      }
+    },
+    20_000,
+  );
+
   it("opens available Trash from More on the unfolded phone", async () => {
     const { page } = await open("dock=full", 884);
     await page.getByRole("button", { name: "More", exact: true }).tap();
@@ -121,6 +357,30 @@ describe("the touch layer under a real finger", () => {
     await drawer.waitFor({ state: "hidden" });
     await page.context().close();
   }, 10_000);
+
+  it("opens on a tap of More during a short drag's snap back", async () => {
+    const { page, cdp } = await open("motion=full");
+    try {
+      const more = (await page.getByRole("button", { name: "More", exact: true }).boundingBox())!;
+      const x = more.x + more.width / 2;
+      const y = more.y + more.height / 2;
+      await run(
+        cdp,
+        { x, y },
+        { x: 42, y: 0 },
+        {
+          rest: 120,
+          afterRelease: () => page.touchscreen.tap(x, y),
+        },
+      );
+      const drawer = page.getByRole("dialog", { name: "More" });
+      await expect.poll(async () => (await drawer.boundingBox({ timeout: 1000 }))?.x).toBeCloseTo(0, 0);
+      await page.keyboard.press("Escape");
+      await expect.poll(() => drawer.count()).toBe(0);
+    } finally {
+      await page.context().close();
+    }
+  }, 15_000);
 
   it("keeps the drawer closed when Escape interrupts a snap back", async () => {
     const { page, cdp } = await open("motion=full");

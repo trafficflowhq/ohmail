@@ -36,7 +36,7 @@
     "discardRefusedUnnamed": "That didn't go through, and the server didn't say why. The draft is still here.",
     "discardQueued": "Not discarded yet — this browser could not reach your account. We will keep trying.",
     "discardAwaitingOrganizer": "Asked for. The install that organizes this mailbox discards it on its next pass.",
-    "emptyTitle": "Nothing half-written",
+    "emptyTitle": "No drafts",
     "emptyHint": "Start a message and it's saved here after a moment — on this device and every other one.",
     "scheduledTitle": "Scheduled",
     "scheduledWhen": "Sends {when}",
@@ -55,6 +55,8 @@
     "heldItWasSent": "It was sent",
     "reportDiscarded": "Discarded",
     "reportUndo": "Undo",
-    "listMenu": "List"
+    "listMenu": "List",
+    "emptyWrite": "Write",
+    "heldLabel": "Unconfirmed"
   }
 }

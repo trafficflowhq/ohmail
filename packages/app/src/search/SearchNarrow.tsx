@@ -11,9 +11,9 @@ import {
   type SearchListModel,
   type SearchPerson,
 } from "@ohmail/app-logic/search";
-import { Button, Menu, MenuItem, Seg } from "@ohmail/ui/base";
+import { Button, Field, Menu, MenuItem, MenuRule, Seg } from "@ohmail/ui/base";
 import { NONE } from "../host/index.js";
-import { useText } from "../text/index.js";
+import { useLocale, useText } from "../text/index.js";
 import type { SearchBeside } from "./beside.js";
 
 /** The windows a date filter offers, by the days they reach back from today. */
@@ -73,13 +73,12 @@ export function SearchPersonRow({ model, beside }: { model: SearchListModel; bes
     );
   if (beside.people === NONE) return null;
   const people = beside.people;
-  const listed = () => peopleFor("", people()).slice(0, MENU_PEOPLE);
   const take = (p: AddressBookEntry, dir: SearchPerson["dir"]) =>
     model.setPerson({ address: p.address, name: p.name === "" ? null : p.name, dir });
   return (
     <div className="sr-filters" data-filter-row="" role="group" aria-label={t("person")}>
-      <PeopleMenu word={t("facetFrom")} people={listed} pick={(p) => take(p, "from")} />
-      <PeopleMenu word={t("to")} people={listed} pick={(p) => take(p, "to")} />
+      <PeopleMenu word={t("facetFrom")} people={people} pick={(p) => take(p, "from")} />
+      <PeopleMenu word={t("to")} people={people} pick={(p) => take(p, "to")} />
     </div>
   );
 }
@@ -87,7 +86,24 @@ export function SearchPersonRow({ model, beside }: { model: SearchListModel; bes
 /** What: unread, and the days (a window ending today); each a press, and a press again takes it off. */
 export function SearchRefine({ model, today }: { model: SearchListModel; today: Date }) {
   const t = useText("search");
+  const locale = useLocale();
   const window = windowOf(model.date, today);
+  const format = (day: string) => {
+    const date = new Date(day);
+    const month = new Intl.DateTimeFormat(locale, { month: "short", timeZone: "UTC" }).format(date);
+    const dayNumber = date.getUTCDate();
+    return locale.startsWith("de") ? `${dayNumber}. ${month}` : `${dayNumber} ${month}`;
+  };
+  const from = model.date?.from ? format(model.date.from) : null;
+  const to = model.date?.to ? format(model.date.to) : null;
+  const span =
+    from && to
+      ? t("dateRange", { from, to })
+      : from
+        ? t("dateSince", { from })
+        : to
+          ? t("dateUntil", { to })
+          : t("dateWord");
   return (
     <>
       <Button kind="two" size="s" pressed={model.unread} onPress={() => model.setUnread(!model.unread)}>
@@ -95,8 +111,9 @@ export function SearchRefine({ model, today }: { model: SearchListModel; today: 
       </Button>
       <DateMenu
         set={model.date}
-        word={window !== null ? t(DATE_WORDS[window]) : model.date !== null ? t("dateDays") : t("dateWord")}
-        pick={(w) => model.setDate(w === null ? null : datesOf(w, today))}
+        word={window !== null ? t(DATE_WORDS[window]) : span}
+        pick={model.setDate}
+        today={today}
       />
     </>
   );
@@ -114,7 +131,13 @@ function PeopleMenu({
   const t = useText("search");
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
-  const listed = open ? people() : [];
+  const [query, setQuery] = useState("");
+  const field = useRef<HTMLInputElement>(null);
+  const listed = open ? peopleFor(query, people()).slice(0, query.trim() ? undefined : MENU_PEOPLE) : [];
+  const close = () => {
+    setOpen(false);
+    setQuery("");
+  };
   return (
     <>
       <Button
@@ -124,11 +147,19 @@ function PeopleMenu({
         mark="down"
         opens="menu"
         expanded={open}
-        onPress={() => setOpen((was) => !was)}
+        onPress={() => (open ? close() : setOpen(true))}
       >
         {word}
       </Button>
-      <Menu open={open} onClose={() => setOpen(false)} anchor={opener} label={word}>
+      <Menu open={open} onClose={close} anchor={opener} label={word} title={word} initialFocus={field}>
+        <Field
+          ref={field}
+          bare
+          label={t("nameOrAddress")}
+          placeholder={t("nameOrAddress")}
+          value={query}
+          onChange={setQuery}
+        />
         {listed.length === 0 ? (
           <MenuItem disabled>{t("nobody")}</MenuItem>
         ) : (
@@ -137,7 +168,7 @@ function PeopleMenu({
               key={p.address}
               note={p.name === "" ? undefined : p.address}
               onPress={() => {
-                setOpen(false);
+                close();
                 pick(p);
               }}
             >
@@ -154,14 +185,28 @@ function DateMenu({
   set,
   word,
   pick,
+  today,
 }: {
   set: SearchDates | null;
   word: string;
-  pick: (w: DateWindow | null) => void;
+  pick: SearchListModel["setDate"];
+  today: Date;
 }) {
   const t = useText("search");
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const close = () => {
+    setOpen(false);
+    setFrom("");
+    setTo("");
+  };
+  const apply = () => {
+    if (!from && !to) return;
+    pick(from && to && from > to ? { from: to, to: from } : { from: from || null, to: to || null });
+    close();
+  };
   if (set !== null)
     return (
       <Button kind="two" size="s" mark="x" pressed onPress={() => pick(null)}>
@@ -177,22 +222,28 @@ function DateMenu({
         mark="down"
         opens="menu"
         expanded={open}
-        onPress={() => setOpen((was) => !was)}
+        onPress={() => (open ? close() : setOpen(true))}
       >
         {word}
       </Button>
-      <Menu open={open} onClose={() => setOpen(false)} anchor={opener} label={word}>
+      <Menu open={open} onClose={close} anchor={opener} label={word} title={t("dateWord")} kind="card">
         {DATE_WINDOWS.map(([w]) => (
           <MenuItem
             key={w}
             onPress={() => {
-              setOpen(false);
-              pick(w);
+              close();
+              pick(datesOf(w, today));
             }}
           >
             {t(DATE_WORDS[w])}
           </MenuItem>
         ))}
+        <MenuRule />
+        <Field type="date" label={t("since")} value={from} onChange={setFrom} onEnter={apply} />
+        <Field type="date" label={t("until")} value={to} onChange={setTo} onEnter={apply} />
+        <MenuItem disabled={!from && !to} onPress={apply} keyHint="Enter">
+          {t("apply")}
+        </MenuItem>
       </Menu>
     </>
   );

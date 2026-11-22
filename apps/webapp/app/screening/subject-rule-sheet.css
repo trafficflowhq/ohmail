@@ -1,0 +1,24 @@
+.subject-rule-card {
+  padding: var(--s2);
+}
+
+.subject-rule-card[data-full] .subject-rule-head {
+  padding-inline-end: var(--h-m);
+}
+
+.subject-rule-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  min-height: var(--h-m);
+  padding-inline: var(--s3);
+  font-weight: var(--w-mid);
+}
+
+.subject-rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  padding: var(--s2);
+}

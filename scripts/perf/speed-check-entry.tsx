@@ -133,7 +133,6 @@ function world(): Fixtures {
     ohbox: [...base.ohbox, ...plant(OHBOX, "ohbox")],
     reads,
     readsWaterline: { ...base.readsWaterline, newestSeenId: reads[Math.min(10, reads.length - 1)]!.id },
-    readsAiChip: { ...base.readsAiChip, afterId: reads[0]!.id },
     receipts: plant(RECEIPTS, "receipts"),
     receiptsGroups: [],
   };

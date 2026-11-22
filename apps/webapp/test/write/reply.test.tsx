@@ -67,7 +67,7 @@ type RichBox = { editor?: { chain(): { selectAll(): { insertContent(w: string): 
  * selection; a line of the head (a plain field) takes them as before.
  */
 async function write(name: string, words: string): Promise<void> {
-  const box = screen.getByRole("textbox", { name }) as HTMLElement & RichBox;
+  const box = (await screen.findByRole("textbox", { name })) as HTMLElement & RichBox;
   await act(async () => {
     if (box.editor) box.editor.chain().selectAll().insertContent(words).run();
     else fireEvent.change(box, { target: { value: words } });
@@ -270,7 +270,7 @@ describe("the reply's sheet", () => {
     const w = await mountWriting({ messages: [letter], hash: "#/ohbox", sheet: ["m1"] });
     await act(async () => w.now().openReply("m1", true));
     await rounds(6);
-    expect(screen.getByText("The colleague, Lena; Cc Max")).toBeTruthy();
+    expect(screen.getByText("The colleague, Lena · Cc Max")).toBeTruthy();
     await write(W.reply.text, "Noon for all of us.");
     await act(async () => {
       fireEvent.click(sendButton());
@@ -283,7 +283,8 @@ describe("the reply's sheet", () => {
 
   it("a forward names nobody: Send rests until a person is in To, then one send carries the original", async () => {
     const w = await open("forward");
-    expect(screen.getByText(W.reply.forwarding)).toBeTruthy();
+    expect(screen.queryByText("The original message is added when you send.")).toBeNull();
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: W.subject }).readOnly).toBe(true);
     await write(W.reply.forwardText, "For your files.");
     expect(sendButton().disabled).toBe(true);
     await person(W.to, "lena@example.invalid");
@@ -300,7 +301,7 @@ describe("the reply's sheet", () => {
   it("a forward of a letter ohmail flagged asks first: nothing is written or sent until Forward", async () => {
     const flagged = message("m1", { sensitivity: { no_forward: true, category: "otp" } } as Partial<EngineMessage>);
     const w = await open("forward", [flagged]);
-    expect(screen.getByRole("status").textContent).toContain(W.reply.ask.otp);
+    expect(screen.getByRole("alertdialog", { name: W.reply.ask.question }).textContent).toContain(W.reply.ask.otp);
     expect(screen.queryByRole("textbox", { name: W.reply.forwardText })).toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: W.reply.ask.confirm }));
@@ -429,7 +430,7 @@ describe("draft reply in one press", () => {
   it("where drafting is not charged, no price is said", async () => {
     const d = drafter();
     await open("reply", [message("m1")], ["m1"], { draftWire: d.wire, metered: false });
-    expect(draftButton(W.draft.verb).title).toBe(en.draftReply.offerBodyUnmetered);
+    expect(draftButton(W.draft.verb).title).toBe(W.draft.verb);
     expect(document.body.textContent).not.toContain("credits");
   });
 

@@ -243,7 +243,7 @@ async function pressWaitingDecision(row: typeof LIVE_ROW | typeof STOPPED_ROW, r
   expect(shell.getByRole("option", { name: /Terrace Review/, selected: true })).toBe(sender);
   await act(async () => { fireEvent.keyDown(sender, { key: "o", code: "KeyO" }); });
   await tick(0);
-  expect(within(document.body).queryAllByRole("status").map((status) => status.textContent?.trim())).toContain(refusal);
+  expect(within(document.body).queryAllByRole("status").map((status) => status.textContent?.trim())).toContain(refusal.replace(/\.$/u, ""));
   expect(sent).toEqual([]);
 }
 
@@ -328,13 +328,13 @@ describe("the sender sheet's organizer line", () => {
     const mutations = () => vi.mocked(globalThis.fetch).mock.calls.filter(([url, init]) =>
       init?.method === "POST" && /\/(?:rules|messages\/[^/]+\/move)$/.test(String(url)));
     const before = mutations().length;
-    await act(async () => { subject.getByRole("option", { name: /^News/ }).click(); });
+    await act(async () => { subject.getByRole("radio", { name: /^News/ }).click(); });
     await act(async () => {
-      subject.getByRole("button", { name: en.screening.subjectConfirmGo.replace("{dest}", "News") }).click();
+      subject.getByRole("button", { name: en.screening.subjectMakeRule }).click();
     });
     await tick(0);
     expect(within(document.body).queryAllByRole("status").map((status) => status.textContent?.trim()))
-      .toContain(named(en.ohbox.whyRefused.outdated));
+      .toContain(named(en.ohbox.whyRefused.outdated).replace(/\.$/u, ""));
     expect(mutations()).toHaveLength(before);
   });
 });

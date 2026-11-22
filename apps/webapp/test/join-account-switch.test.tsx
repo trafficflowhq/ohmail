@@ -775,7 +775,7 @@ describe("recovery codes are made only for an account that has none", () => {
   it("the read before the generate says the account has codes: none are made, the step says so, Continue goes on", async () => {
     sessionScript = [asAccount("acct_A", "a@example.invalid"), withCodes("acct_A", "a@example.invalid")];
     const c = await mountJoin();
-    expect(c.querySelector("h1")?.textContent, "the wizard never reached the codes step").toBe(messages.join.step_codes_title);
+    expect(c.querySelector("h1")?.textContent, "the wizard never reached the codes step").toBe(messages.join.step_codes_title.replace(/\.$/, ""));
     expect(generated(), "a new set cancelled the codes the account already has").toEqual([]);
     expect(c.textContent).toContain(messages.join.codesElsewhere);
     await pressed(c, messages.join.continue);
@@ -807,16 +807,16 @@ describe("recovery codes are made only for an account that has none", () => {
 describe("a factor added in another tab ends the factor step here", () => {
   for (const [what, label, route] of [
     ["the passkey", messages.join.addPasskey, "/auth/2fa/webauthn/register/options"],
-    ["the authenticator", messages.join.useTotp, "/auth/2fa/totp/enroll"],
+    ["the authenticator", messages.join.factorApp, "/auth/2fa/totp/enroll"],
   ] as const) {
     it(`${what}: the press re-reads the account, adds no second factor, and the setup goes on`, async () => {
       // On the factor step at mount; by the press the account has its first factor (another tab).
       sessionScript = [enrolling("acct_A", "a@example.invalid"), asAccount("acct_A", "a@example.invalid")];
       const c = await mountJoin();
-      expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_factor_title);
+      expect(c.querySelector("h1")?.textContent).toBe(messages.join.lockWith.replace("<how></how>.", messages.join.factorPasskeyWord));
       await pressed(c, label);
       expect(calls.filter((u) => u.includes(route)), "a second factor was started").toEqual([]);
-      expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title);
+      expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title.replace(/\.$/, ""));
       // This account has no codes yet, so this tab makes them, once.
       expect(generated()).toHaveLength(1);
       expect(c.textContent).toContain("aaaa-bbbb");
@@ -829,7 +829,7 @@ describe("a factor added in another tab ends the factor step here", () => {
       asAccount("acct_A", "a@example.invalid"),
     ];
     const c = await mountJoin();
-    await pressed(c, messages.join.useTotp);
+    await pressed(c, messages.join.factorApp);
     const field = c.querySelector<HTMLInputElement>("#join-totp");
     expect(field, "the authenticator key was never shown").toBeTruthy();
     await act(async () => {
@@ -838,7 +838,7 @@ describe("a factor added in another tab ends the factor step here", () => {
     });
     await pressed(c, messages.join.activate);
     expect(calls.filter((u) => u.includes("/auth/2fa/totp/activate")), "a second factor was activated").toEqual([]);
-    expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title);
+    expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title.replace(/\.$/, ""));
   });
 });
 
@@ -880,7 +880,7 @@ it.each([
   });
 
   const c = await mountJoin();
-  expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_factor_title);
+  expect(c.querySelector("h1")?.textContent).toBe(messages.join.lockWith.replace("<how></how>.", messages.join.factorPasskeyWord));
   if (factor === "passkey") {
     const apiClient = await import("../app/api-client.js");
     vi.spyOn(apiClient, "createPasskey").mockImplementation(async () => {
@@ -889,7 +889,7 @@ it.each([
     });
     await pressed(c, messages.join.addPasskey);
   } else {
-    await pressed(c, messages.join.useTotp);
+    await pressed(c, messages.join.factorApp);
     const field = c.querySelector<HTMLInputElement>("#join-totp")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "123456");
@@ -898,12 +898,12 @@ it.each([
     await pressed(c, messages.join.activate);
   }
   if (displaced) {
-    expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_factor_title);
+    expect(c.querySelector("h1")?.textContent).toBe(messages.join.lockWith.replace("<how></how>.", messages.join.factorPasskeyWord));
     expect(active).toBe(false);
     expect(generated()).toHaveLength(0);
     return;
   }
-  expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title);
+  expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title.replace(/\.$/, ""));
   expect(generated()).toHaveLength(1);
   for (const code of ["aaaa-bbbb", "cccc-dddd"]) expect(c.textContent).toContain(code);
 });

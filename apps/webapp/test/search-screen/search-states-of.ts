@@ -58,9 +58,9 @@ export function searchStateOf(q: URLSearchParams): SearchState {
   const menu = q.get("menu");
   const press =
     q.get("where") === "ohbox"
-      ? { opener: "Folder", choice: "Ohbox" }
+      ? { opener: "Place", choice: "Ohbox" }
       : menu === "where"
-        ? { opener: "Folder" }
+        ? { opener: "Place" }
         : menu === "sort"
           ? { opener: "Sorted by" }
           : menu === "from"

@@ -28,8 +28,8 @@ export function LinkAsk({ ask, onClose }: { ask: HeldPress; onClose: () => void 
         alert
         inline
         hot
-        title={COPY.linkAskTitle}
-        line={`${COPY.linkAskElsewhere} ${COPY.linkAskGoes(host)}`}
+        title={COPY.linkAskHeading(host)}
+        line={COPY.linkAskElsewhere}
         announceLine
         keysOn="cancel"
         dismissOnScrim={false}

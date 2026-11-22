@@ -290,7 +290,7 @@ describe("a restored letter leaves Trash for good", () => {
     expect(listed()).toEqual(["m2"]);
     expect(cursor()).toBe("m2");
     expect(reading().queryByRole("heading", { name: "Subject m1" })).toBeNull();
-    expect(said()).not.toContain(en.trash.toastRestoreFailed);
+    expect(said()).not.toContain(en.trash.toastRestoreFailed.replace(/\.$/u, ""));
   });
 
   it("stays hidden while the server answers, and a refusal brings it back with the refusal", async () => {
@@ -301,7 +301,7 @@ describe("a restored letter leaves Trash for good", () => {
     expect(listed()).toEqual(["m2"]);
     await act(async () => { response.resolve({ state: "rolled_back", error: "x", code: "provider_unreachable" }); });
     expect(listed()).toEqual(["m1", "m2"]);
-    expect(said()).toContain(en.trash.toastRestoreFailed);
+    expect(said()).toContain(en.trash.toastRestoreFailed.replace(/\.$/u, ""));
   });
 
   it("a letter already out of Trash leaves the list and is said to be out, never 'still in Trash'", async () => {
@@ -312,8 +312,8 @@ describe("a restored letter leaves Trash for good", () => {
     await restoreShown();
     await wait(UNDO_MS + 1_000);
     expect(listed()).toEqual(["m2"]);
-    expect(said()).toContain(en.trash.toastRestoreGone);
-    expect(said()).not.toContain(en.trash.toastRestoreFailed);
+    expect(said()).toContain(en.trash.toastRestoreGone.replace(/\.$/u, ""));
+    expect(said()).not.toContain(en.trash.toastRestoreFailed.replace(/\.$/u, ""));
   });
 });
 

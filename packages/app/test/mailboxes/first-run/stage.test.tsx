@@ -24,7 +24,20 @@ import { D, M, MARKER, O, P, WORDS, factorButtons, fakeDoor, id } from "../conne
  */
 const MESSAGES = { ...WORDS, ...frame, ...screener } as never;
 const settle = (): Promise<void> => act(async () => {});
-const press = (name: RegExp): void => void fireEvent.click(screen.getByRole("button", { name }));
+const setup = () => screen.getByRole("button", { name: O.setupMenu });
+const press = (name: RegExp): void => {
+  const button = screen.queryByRole("button", { name });
+  if (button) {
+    fireEvent.click(button);
+    return;
+  }
+  fireEvent.click(setup());
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+};
+const aiChoice = (word: string): void => {
+  fireEvent.click(screen.getByRole("button", { name: O.aiOff }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: words(word) }));
+};
 const heading = (): string => screen.getByRole("heading", { level: 1 }).textContent ?? "";
 const words = (text: string): RegExp => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
 
@@ -135,7 +148,7 @@ it("holds focus on the step while organizer checking blocks Continue, then offer
 
   act(() => s.facts.set(ground({ rows: [{ ...awaiting, organizerChecked: true }] })));
   await settle();
-  expect(heading()).toBe(O.consentTitle);
+  expect(heading()).toBe(O.mapTitle);
   expect(document.activeElement).toBe(screen.getByRole("button", { name: words(O.continue) }));
 });
 
@@ -146,21 +159,41 @@ describe("the AI question stops the run and asks; nothing is spent before the pr
     const v = verbs();
     stage({ verbs: v, ground: ground({ rows: [consented] }) });
     await settle();
-    expect(heading()).toBe(O.aiTitle);
+    expect(heading()).toContain(O.aiSay.split("<on>")[0]!.trim());
     expect(v.setAiEnabled).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("radio", { name: words(O.aiYesCloud) }));
+    aiChoice(O.aiOn);
     press(words(O.continue));
     await settle();
     expect(v.setAiEnabled.mock.calls).toEqual([[true]]);
   });
+
+  it.each(["cloud", "local", "selfhost"] as const)(
+    "says what enabling AI sends at the %s door",
+    async (door) => {
+      const v = verbs({ selfhostAi: true });
+      stage({ verbs: v, ground: ground({ rows: [consented] }), door });
+      await settle();
+      const draft = () => screen.queryByText(/^A draft sends/);
+      expect(draft()).toBeNull();
+
+      aiChoice(O.aiOn);
+      expect(screen.getByText(O.aiSends)).toBeTruthy();
+      if (door === "cloud") {
+        expect(screen.getByText(/^A draft sends/).textContent).toBe(O.aiDraftSends);
+      } else {
+        expect(draft()).toBeNull();
+      }
+      expect(v.setAiEnabled).not.toHaveBeenCalled();
+    },
+  );
 
   it("a second ↵ while the answer is on its way writes nothing more: the step's form waits for its write", async () => {
     let answer: () => void = () => {};
     const setAiEnabled = vi.fn(() => new Promise<void>((resolve) => (answer = resolve)));
     stage({ verbs: verbs({ setAiEnabled }), ground: ground({ rows: [consented] }) });
     await settle();
-    expect(heading()).toBe(O.aiTitle);
-    fireEvent.click(screen.getByRole("radio", { name: words(O.aiYesCloud) }));
+    expect(heading()).toContain(O.aiSay.split("<on>")[0]!.trim());
+    aiChoice(O.aiOn);
     press(words(O.continue));
     await settle();
     expect(setAiEnabled).toHaveBeenCalledTimes(1);
@@ -176,7 +209,8 @@ describe("the AI question stops the run and asks; nothing is spent before the pr
     const v = verbs();
     stage({ verbs: v, ground: ground({ rows: [consented] }), door: "selfhost" });
     await settle();
-    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual([`${O.aiNo}${O.aiNoWhy}`]);
+    expect(screen.queryByRole("button", { name: O.aiOff })).toBeNull();
+    expect(screen.getByText(O.aiRulesOnly)).toBeTruthy();
     press(words(O.continue));
     await settle();
     expect(v.setAiEnabled.mock.calls).toEqual([[false]]);
@@ -187,10 +221,10 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
   const BODY = { screening: { dormancyDays: 365, scope: "window" }, intent: "join" };
   const toWindow = async (): Promise<void> => {
     await settle();
-    expect(heading()).toContain(O.consentTitle);
+    expect(heading()).toContain(O.mapTitle);
     press(words(O.continue));
     await settle();
-    expect(heading()).toBe(O.windowTitle);
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
   };
 
   it("sends one organize for the mailbox the run is about, the year's window as offered", async () => {
@@ -206,12 +240,20 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
     const v = verbs();
     stage({ verbs: v, ground: ground() });
     await toWindow();
-    const chosen = screen.getByRole("radio", { name: words(O.win365), checked: true });
-    expect(document.activeElement).toBe(chosen);
-
+    const slot = screen.getByRole("button", { name: O.windowYear });
+    slot.focus();
+    fireEvent.click(slot);
+    const chosen = screen.getByRole("menuitemradio", { name: words(O.win365), checked: true });
+    expect(chosen.getAttribute("aria-checked")).toBe("true");
+    chosen.focus();
     fireEvent.keyDown(chosen, { key: "ArrowUp" });
-    expect(document.activeElement).toBe(screen.getByRole("radio", { name: words(O.win180), checked: true }));
+    const earlier = screen.getByRole("menuitemradio", { name: words(O.win180) });
+    expect(document.activeElement).toBe(earlier);
+    fireEvent.click(earlier);
+    expect(slot.textContent).toBe(O.win180);
     expect(v.organize).not.toHaveBeenCalled();
+    const agree = screen.getByRole("button", { name: words(O.agree) });
+    agree.focus();
     enter();
     await settle();
     expect(v.organize.mock.calls).toEqual([
@@ -226,7 +268,7 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
     press(words(O.agree));
     await settle();
     expect(screen.getByText(O.windowGone)).toBeTruthy();
-    expect(heading()).toBe(O.windowTitle);
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
   });
 
   it("the second factor is asked only on the server's refusal, the same press is sent once more, and never twice", async () => {
@@ -319,7 +361,7 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
     expect({ asked, organizes: organize.mock.calls.length }).toEqual({ asked: false, organizes: 1 });
     /* A run about another mailbox is a new run: it opens on its own statement, and no word of the press it was moved
        under stands on it. */
-    expect(heading()).toContain(O.consentTitle);
+    expect(heading()).toContain(O.mapTitle);
     expect(screen.queryByText(M.cancelledNothingChanged)).toBeNull();
   });
 });
@@ -364,7 +406,7 @@ describe("the mailbox step is the one connect form, and the mode is the route's,
     expect(s.address.writes).toEqual([{ next: "#/first-run/add?mailbox=mbx-2", how: "replace" }]);
     act(() => s.facts.set(ground({ rows: [{ ...MAILBOX, id: id("mbx-2") }] })));
     await settle();
-    expect(heading()).toContain(O.consentTitle);
+    expect(heading()).toContain(O.mapTitle);
     expect(document.body.innerHTML).not.toContain(MARKER);
     expect([...document.querySelectorAll("input")].some((i) => i.value.includes(MARKER))).toBe(false);
   });
@@ -380,16 +422,20 @@ describe("the mailbox step is the one connect form, and the mode is the route's,
 describe("a step says its lead: the sentence that explains it is on screen with its title", () => {
   const consented = { ...MAILBOX, organizeConsentedAt: "2026-11-01T00:00:00Z" };
   const cases: readonly (readonly [string, string, FirstRunGround, string])[] = [
-    ["the welcome", "#/first-run", ground({ rows: [] }), O.welcomeLead],
-    ["the connect step of an add", "#/first-run/add", ground({ rows: [] }), O.mailboxLead],
-    ["the AI question", "#/first-run", ground({ rows: [consented] }), O.aiLead],
+    ["the welcome", "#/first-run", ground({ rows: [] }), O.welcomeTitle.replace(/\.$/, "")],
+    ["the connect step of an add", "#/first-run/add", ground({ rows: [] }), O.mailboxTitle],
+    ["the AI question", "#/first-run", ground({ rows: [consented] }), O.aiRulesOnly],
     ["a run whose mailbox is gone", "#/first-run/again?mailbox=mbx-gone", ground(), O.vanishedLead],
   ];
   for (const [name, at, facts, lead] of cases) {
     it(`${name} says its lead`, async () => {
       stage({ verbs: verbs(), ground: facts, at });
       await settle();
-      expect(screen.getByText(lead)).toBeTruthy();
+      if (name === "the welcome" || name === "the connect step of an add") {
+        expect(heading()).toContain(lead.replace(/\.$/, ""));
+      } else {
+        expect(screen.getByText(lead)).toBeTruthy();
+      }
     });
   }
 
@@ -398,8 +444,9 @@ describe("a step says its lead: the sentence that explains it is on screen with 
     await settle();
     press(words(O.continue));
     await settle();
-    expect(heading()).toBe(O.windowTitle);
-    expect(screen.getByText(O.windowLead)).toBeTruthy();
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
+    expect(screen.getByText(O.nothingMoves)).toBeTruthy();
+    expect(screen.queryByText(/Senders with mail inside the window/)).toBeNull();
   });
 });
 
@@ -435,7 +482,7 @@ describe("the route's word is a claim, answered by the account's own rows", () =
     /* The row arrives: the run goes on with the mailbox the account's own list holds. */
     act(() => s.facts.set(ground({ rows: [MAILBOX, { ...MAILBOX, id: id("mbx-2") }] })));
     await settle();
-    expect(heading()).toContain(O.consentTitle);
+    expect(heading()).toContain(O.mapTitle);
   });
 });
 
@@ -459,7 +506,7 @@ describe("the keys stand in what was asked last", () => {
     const forward = screen.getByRole("button", { name: words(O.continue) });
     expect(focused()).toBe(forward);
     /* The person is on the foot's Cancel setup, not where the step opened. */
-    const footCancel = screen.getByRole("button", { name: words(O.cancel) });
+    const footCancel = setup();
     footCancel.focus();
 
     escape();
@@ -485,9 +532,9 @@ describe("the keys stand in what was asked last", () => {
     stage({ verbs: v, ground: ground() });
     await settle();
     /* Start over, pressed by the keys. */
-    const over = screen.getByRole("button", { name: words(O.restart) });
+    const over = setup();
     over.focus();
-    fireEvent.click(over);
+    press(words(O.restart));
     await settle();
     expect(focused()).toBe(within(question(O.restart)).getByRole("button", { name: words(O.restartKeep) }));
 
@@ -520,7 +567,7 @@ describe("the keys stand in what was asked last", () => {
     await settle();
     press(words(O.continue));
     await settle();
-    expect(heading()).toBe(O.windowTitle);
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
 
     escape();
     await settle();
@@ -529,7 +576,7 @@ describe("the keys stand in what was asked last", () => {
     fireEvent.submit(stepForm());
     await settle();
     expect(v.organize).not.toHaveBeenCalled();
-    expect(heading()).toBe(O.windowTitle);
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
 
     fireEvent.click(focused()!);
     await settle();
@@ -544,9 +591,10 @@ describe("the keys stand in what was asked last", () => {
     await settle();
     expect(focused()).toBe(within(question(O.cancel)).getByRole("button", { name: words(O.cancelConfirm) }));
 
-    const over = screen.getByRole("button", { name: words(O.restart) });
+    const over = setup();
     over.focus();
     fireEvent.click(over);
+    fireEvent.click(screen.getByRole("menuitem", { name: words(O.restart) }));
     await settle();
     expect(screen.queryByRole("dialog", { name: O.cancel })).toBeNull();
     expect(focused()).toBe(within(question(O.restart)).getByRole("button", { name: words(O.restartKeep) }));
@@ -639,7 +687,7 @@ describe("how far the run is: the kit's dots, said as one sentence", () => {
   /** The catalogue's sentence for a phase, with the step's number and the walk's length read back. */
   const said = (phase: string): RegExp =>
     new RegExp(
-      `^${O.railSaid.replace("{n}", "(\\d+)").replace("{total}", "(\\d+)").replace("{phase}", phase)}$`,
+      `^${O.railSaid.replace("{n}", "(\\d+)").replace("{total}", "(\\d+)").replace("{phase}", phase)}(?:, \\d+ of \\d+)?$`,
     );
   const place = (phase: string): { n: number; total: number } => {
     const [, n, total] = said(phase).exec(
@@ -654,7 +702,7 @@ describe("how far the run is: the kit's dots, said as one sentence", () => {
     const organize = place(O.rail_organize);
     press(words(O.continue));
     await settle();
-    expect(place(O.rail_history)).toEqual({ n: organize.n + 1, total: organize.total });
+    expect(place(O.rail_organize)).toEqual(organize);
     expect(screen.queryByRole("list", { name: O.rail_mailbox })).toBeNull();
   });
 
@@ -663,10 +711,8 @@ describe("how far the run is: the kit's dots, said as one sentence", () => {
     await settle();
     press(words(O.welcomeStart));
     await settle();
-    expect(screen.getByText("2/2").getAttribute("aria-hidden")).toBe("true");
-    expect(
-      screen.getByRole("img", { name: new RegExp(`^Step 1 of \\d+, ${O.rail_mailbox}, 2 of 2$`) }),
-    ).toBeTruthy();
+    expect(screen.queryByText("2/2")).toBeNull();
+    expect(screen.getByRole("img", { name: new RegExp(`^Step 1 of 4, ${O.rail_mailbox}$`) })).toBeTruthy();
   });
 
   it("leaves out the screen count when adding a mailbox on its own", async () => {

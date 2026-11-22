@@ -3,7 +3,7 @@
  */
 import { useRef, useState } from "react";
 import { SEARCH_SORTS, type SearchListModel } from "@ohmail/app-logic/search";
-import { Button, Menu, MenuItem } from "@ohmail/ui/base";
+import { Menu, MenuItem, Slot } from "@ohmail/ui/base";
 import { useText } from "../text/index.js";
 
 const NO_WORDS_SORTS = ["relevance", "date_desc"] as const;
@@ -17,19 +17,22 @@ export function SearchSort({ model }: { model: SearchListModel }) {
   const sorts = model.text === "" ? NO_WORDS_SORTS : SEARCH_SORTS;
   return (
     <>
-      <Button
+      <Slot
         ref={opener}
-        kind="two"
-        size="s"
-        mark="down"
-        opens="menu"
         expanded={open}
         label={t("sortedBy", { order: t(`sort_${model.sort}`) })}
         onPress={() => setOpen((was) => !was)}
       >
         {t(`sort_${model.sort}`)}
-      </Button>
-      <Menu open={open} onClose={() => setOpen(false)} anchor={opener} right label={t("sortLabel")}>
+      </Slot>
+      <Menu
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={opener}
+        right
+        label={t("sortLabel")}
+        title={t("sortLabel")}
+      >
         {sorts.map((sort) => (
           <MenuItem
             key={sort}

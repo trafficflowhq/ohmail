@@ -410,10 +410,7 @@ describe("the Screener may not offer a suggestion it does not have", () => {
   it("the button is NOT RENDERED, and the preview says why there is nothing to apply", async () => {
     /**
      * Red by gating the control on `state.waitingCount > 0` again (its shipped condition):
-     * "Apply …" reappears over an empty set. Red the other way by deleting the
-     * `scn-why-none` branch: the preview goes back to saying nothing at all, which is the
-     * state reported — a bulk control referring to something the surface never
-     * mentions.
+     * "Apply …" reappears over an empty set. The sender's place slot stays open to a choice.
      */
     const s = await mountWeb(HELD);
     await s.open();
@@ -421,7 +418,8 @@ describe("the Screener may not offer a suggestion it does not have", () => {
     expect(tools.queryByRole("button", { name: /^Apply/ })).toBeNull();
     await click(tools.getByRole("button", { name: copy.place.listMenu }));
     expect(page().getByRole("menuitem", { name: copy.markAllSpam })).toBeTruthy();
-    expect(s.frame.getByText(/No suggestion/)).toBeTruthy();
+    expect(s.frame.getByText(copy.place.nowhere, { exact: true })).toBeTruthy();
+    expect(s.frame.queryByText(/No suggestion/)).toBeNull();
     expect(s.shell.textContent).not.toContain("accept suggestion");
   });
 
@@ -441,7 +439,7 @@ describe("the Screener may not offer a suggestion it does not have", () => {
     const s = await mountWeb(HELD, { advice: true });
     const row = await s.open(HELD[0]!.from.address);
     const tools = within(s.frame.getByRole("group", { name: copy.bulkAria }));
-    expect(tools.getByRole("button", { name: "Apply 1 — News" })).toBeTruthy();
+    expect(tools.getByRole("button", { name: "Apply 1" })).toBeTruthy();
     expect(row.textContent).toContain("News");
     const reading = within(s.frame.getByRole("region", { name: "Reading" }));
     expect(reading.getByText(/0\.88|88%/)).toBeTruthy();
@@ -636,7 +634,8 @@ describe("the Screener sheet says what it does", () => {
     // Screen out, Spam. The marketing page keeps the metaphor, where its hero establishes it.
     const s = await mountWeb(HELD);
     await s.open();
-    expect(s.frame.getByText(/No suggestion/)).toBeTruthy();
+    expect(s.frame.getByText(copy.place.nowhere, { exact: true })).toBeTruthy();
+    expect(s.frame.queryByText(/No suggestion/)).toBeNull();
     expect(s.shell.textContent).not.toMatch(/\bdoor\b/i);
   });
 

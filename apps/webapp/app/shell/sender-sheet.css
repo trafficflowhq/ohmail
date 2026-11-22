@@ -650,34 +650,6 @@ input.sm-edit-input {
   padding: 20px 24px 20px;
   animation: rise 0.22s var(--spring);
 }
-.sa-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.sa-head h3 {
-  font-size:calc(14px + var(--type-up));
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.sa-head .x {
-  margin-left: auto;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius:var(--r-pill);
-  color: var(--ink3);
-}
-.sa-head .x:hover {
-  background: var(--tint);
-  color: var(--ink);
-}
-.sa-count,
 .sa-empty {
   font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
@@ -706,43 +678,12 @@ input.sm-edit-input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sa-place {
-  margin-left: auto;
-  flex: none;
-  font-size:calc(10.5px + var(--type-up));
-  font-weight: 600;
-  color: var(--accent-ink);
-  background: var(--accent-soft);
-  border-radius:var(--r-pill);
-  padding: 2px 9px;
-}
 .sa-meta {
   display: flex;
   gap: 10px;
   align-items: baseline;
   margin-top: 3px;
   font-size:calc(11px + var(--type-up));
-  color: var(--ink3);
-}
-.sa-meta .sa-from {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sa-meta .sa-when {
-  margin-left: auto;
-  flex: none;
-  font-feature-settings: "tnum";
-  font-variant-numeric: tabular-nums;
-}
-.sa-why {
-  margin-top: 5px;
-  font-size:calc(11.5px + var(--type-up));
-  line-height: 1.55;
-  color: var(--ink2);
-}
-.sa-why.sa-sugg {
   color: var(--ink3);
 }
 @media (max-width: 640px) {

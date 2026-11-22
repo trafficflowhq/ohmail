@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider } from "@ohmail/ui";
 import en from "../messages/en.json";
+import { dayStamp } from "@ohmail/app-logic/text/format";
 
 /**
  * THE STRIP FOLLOWS THE PAYMENT: a person who has just paid never reads a
@@ -154,7 +155,7 @@ describe("the strip after a payment in another tab", () => {
   it("the same for the trial strip", async () => {
     access = TRIAL;
     await mount();
-    expect(text()).toContain("Your trial ends on");
+    expect(text()).toContain(en.accountLifecycle.trialEnds.replace("{date}", dayStamp(TRIAL.lifecycle.trialEndsAt)));
     access = PAID;
     later(60_000);
     await returnToTab();
@@ -289,7 +290,7 @@ describe("the catch-up another reader was handed first", () => {
     later(5_000);
     await act(async () => { await account.access({ fresh: true }); });
     await mount();
-    expect(text()).toContain("catching up");
+    expect(text()).toContain(en.accountLifecycle.caughtUp.replace("{date}", dayStamp(SINCE)));
   });
 
   it("survives a reload in the session; put away, it is gone for good", async () => {
@@ -298,11 +299,11 @@ describe("the catch-up another reader was handed first", () => {
     await act(async () => { await account.access({ fresh: true }); });
     access = PAID;
     await mount();
-    expect(text()).toContain("catching up");
+    expect(text()).toContain(en.accountLifecycle.caughtUp.replace("{date}", dayStamp(SINCE)));
     later(5_000);
     await reload();
-    expect(text(), "a reload keeps what the service answered once").toContain("catching up");
-    const got = [...host.querySelectorAll("button")].find((b) => b.textContent === "Got it");
+    expect(text(), "a reload keeps what the service answered once").toContain(en.accountLifecycle.caughtUp.replace("{date}", dayStamp(SINCE)));
+    const got = [...host.querySelectorAll("button")].find((b) => b.textContent === en.accountLifecycle.dismiss);
     await act(async () => { got!.click(); });
     expect(text()).toBe("");
     later(5_000);

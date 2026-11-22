@@ -16,7 +16,6 @@ function useNewsCount(): { count: string; hot: boolean } | null {
 export const newsPlace: PlaceEntry = {
   id: "news",
   body: "news",
-  rowMailboxLabels: true,
   rail: {
     group: "main",
     icon: "news",

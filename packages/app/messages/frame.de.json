@@ -23,11 +23,8 @@
     "tagEmpty": "Noch keine Tags.",
     "folders": "Ordner",
     "folderLoading": "Ordner werden geladen",
-    "folderEmpty": "Noch keine Ordner auf deinem Mailserver.",
-    "junkNote": "Der eigene {folder}-Ordner deines Mailservers steht nicht in dieser Liste — ohmail spiegelt ihn nicht.",
-    "junkNoteUnnamed": "Der eigene Spam-Ordner deines Mailservers steht nicht in dieser Liste — ohmail spiegelt ihn nicht.",
     "folderFilter": "Ordner filtern",
-    "folderNoMatch": "Kein Ordner passt.",
+    "folderNoMatch": "Kein Ordner passt",
     "folderShowAll": "Alle {count} anzeigen…",
     "folderShowFewer": "Weniger anzeigen",
     "folderExpand": "{name} aufklappen",
@@ -284,7 +281,7 @@
     "lineReloadAction": "Neu laden",
     "lineReloadAfterSendTitle": "Neu laden, sobald deine Nachricht gesendet ist",
     "lineReloadAfterFilesTitle": "Neu laden, wenn die Dateien deines Entwurfs gesendet oder entfernt sind",
-    "lineLater": "Später",
+    "lineLater": "Nicht jetzt",
     "lineTooOld": "Dieses ohmail ist zu alt für seinen Server.",
     "lineServerUpdating": "ohmail wird gerade aktualisiert und ist gleich wieder da.",
     "lineUpdateAction": "Aktualisieren",
@@ -382,7 +379,6 @@
       },
       "signedOut": {
         "title": "Abgemeldet",
-        "line": "Melde dich wieder an, um neue Mails zu bekommen.",
         "restart": "Starte ohmail neu, um dich anzumelden."
       },
       "ownerLost": {
@@ -390,8 +386,7 @@
         "line": "Dieses Fenster weiß nicht mehr, zu welchem Account es gehört."
       },
       "noMailbox": {
-        "title": "Kein Postfach verbunden",
-        "line": "Bis eines verbunden ist, kommt nichts an."
+        "title": "Kein Postfach verbunden"
       },
       "offline": {
         "title": "Offline",

@@ -2,8 +2,8 @@
  * UNSUBSCRIBE, FOR ONE LETTER OF A SENDER KEPT OUT (Screened out, Spam): said only once the letter's text has
  * arrived, because the posture is read from its headers, and only where the shell hands the request. A one-click
  * route is one explicit press, sent by the server and at most once; the sentence after it follows what the server
- * answered, and a press that can go through again stays. A route by email is said and declined: ohmail never sends
- * mail for the person. An offered HTTPS page opens through the host's normal link policy.
+ * answered, and a press that can go through again stays. An offered HTTPS page opens through the host's normal link
+ * policy.
  */
 import type { UnsubscribeHeaderState } from "@ohmail/wire";
 import { useState } from "react";
@@ -29,10 +29,12 @@ export function HeldUnsubscribe({
   messageId,
   state,
   url,
+  onSent,
 }: {
   messageId: string;
   state: UnsubscribeHeaderState;
   url: string | null;
+  onSent?: () => void;
 }) {
   const t = useText("screener");
   const { unsubscribe } = useScreenerBeside();
@@ -54,13 +56,7 @@ export function HeldUnsubscribe({
       </p>
     );
   }
-  if (unsubscribe === NONE || state === "no_header") return null;
-  if (state === "mailto_only")
-    return (
-      <p className="oh-text" role="status">
-        {t("unsubMailtoOnly")}
-      </p>
-    );
+  if (unsubscribe === NONE || state === "no_header" || state === "mailto_only") return null;
   const run = async () => {
     if (busy || (result !== null && !result.again)) return;
     setBusy(true);
@@ -77,6 +73,7 @@ export function HeldUnsubscribe({
               ? t("unsubSent")
               : t("unsubDone");
       setResult({ text, again: false });
+      if (res?.posted || res?.refusal === "already_recorded") onSent?.();
     } catch (err) {
       /* By its code, never the server's English: a list that refused will answer the same again. */
       const code = (err as { code?: unknown } | null)?.code;

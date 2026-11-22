@@ -10,9 +10,19 @@ import { LIST_WORDS, listFrame } from "../places/list-seat.js";
 afterEach(cleanup);
 
 it.each([
-  ["en", trashEn, "What you delete in ohmail lands here and can be put back."],
-  ["de", trashDe, "Was du in ohmail löschst, landet hier und lässt sich zurücklegen."],
-] as const)("shows the concise empty Trash in %s", async (locale, messages, oldCopy) => {
+  [
+    "en",
+    trashEn,
+    "What you delete in ohmail lands here and can be put back.",
+    "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
+  ],
+  [
+    "de",
+    trashDe,
+    "Was du in ohmail löschst, landet hier und lässt sich zurücklegen.",
+    "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
+  ],
+] as const)("shows the concise empty Trash in %s", async (locale, messages, oldCopy, formerFooter) => {
   const { host } = listFrame({
     first: "#/trash",
     letters: [],
@@ -31,7 +41,7 @@ it.each([
       node?.classList.contains("oh-empty-label") === true && node.textContent === messages.trash.emptyTitle,
   );
   expect(screen.queryByText(oldCopy)).toBeNull();
-  expect(screen.queryByText(messages.trash.foot)).toBeNull();
+  expect(screen.queryByText(formerFooter)).toBeNull();
   expect(screen.getAllByRole("paragraph").map((paragraph) => paragraph.textContent)).toContain(
     messages.trash.emptyTitle,
   );

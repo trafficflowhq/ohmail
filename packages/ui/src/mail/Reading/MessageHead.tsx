@@ -138,7 +138,7 @@ function Sender({
       {selection ? (
         <span className="oh-messagehead-line">
           <SelectionCircle selection={selection.control} picked={selection.picked}>
-            {selection.control.active ? <SelectionMark picked={selection.picked} /> : avatar}
+            {selection.picked ? <SelectionMark /> : avatar}
           </SelectionCircle>
           {content}
         </span>

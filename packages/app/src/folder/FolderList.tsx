@@ -1,6 +1,6 @@
 /**
  * A FOLDER'S LIST: its name with the way to it (Folders, then each folder above it), how many letters it holds and the
- * list's menu; what is new and what came before. A row's own menu moves its letter into another of the mailbox's
+ * list's menu, followed by its rows. A row's own menu moves its letter into another of the mailbox's
  * folders, where the seat hands the Move.
  * Empty, it says the folder holds nothing; gone from the mail server, it says so by name.
  */
@@ -9,7 +9,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import { useFolderModel, type FolderMove } from "@ohmail/app-logic/folder";
 import { folderLeafOf } from "@ohmail/app-logic/lists/folders";
 import { Button, Empty, RefusalLine } from "@ohmail/ui/base";
-import { GroupHeading, ListHead, ListLine, MovePicker, type Way } from "@ohmail/ui/mail";
+import { ListHead, ListLine, MovePicker, type Way } from "@ohmail/ui/mail";
 import { useFrame } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
 import { routeOf } from "../frame/route.js";
@@ -45,44 +45,10 @@ function FolderColumn({
   const letter =
     asked && asked.folderId === folderId ? model.list.rows.find((m) => m.id === asked.id) : undefined;
   if (asked && (letter === undefined || move === null)) setAsked(null);
-  const both = model.fresh.length > 0 && model.earlier.length > 0;
-  const cursor = model.list.cursor;
-  const selected = model.list.rows.findIndex((m) => m.id === cursor);
-  const cursorIndex = selected < 0 || !both ? selected : selected + (selected < model.fresh.length ? 1 : 2);
-  const { scroller, window } = useCursorWindow(model.list.rows.length + (both ? 2 : 0), cursorIndex, cursor);
-  const rows = (label: string, list: typeof model.fresh, index: number) => {
-    const first = Math.max(0, window.start - index);
-    const slice = list.slice(first, Math.max(0, window.end - index));
-    const showHeading = both && window.start <= index - 1 && index - 1 < window.end;
-    if (slice.length === 0 && !showHeading) return null;
-    return (
-      <section aria-label={label}>
-        {showHeading ? (
-          <div data-index={index - 1}>
-            <GroupHeading count={String(list.length)}>{label}</GroupHeading>
-          </div>
-        ) : null}
-        <LetterRows
-          selection={selection}
-          contact={contact}
-          label={label}
-          rows={slice}
-          slice={{ index: index + first, first, total: list.length }}
-          cursor={model.list.cursor}
-          press={model.list.press}
-          stamp={model.stamp}
-          file={t("row.file")}
-          who={(m) => m.from.name ?? m.from.address}
-          spoken={(m) => (m.unread ? t("row.unread") : t("row.read"))}
-          onMenu={
-            move === null || folderId === undefined
-              ? undefined
-              : (m, at) => setAsked({ folderId, id: m.id, at })
-          }
-        />
-      </section>
-    );
-  };
+  const { rows, cursor } = model.list;
+  const selected = rows.findIndex((m) => m.id === cursor);
+  const { scroller, window } = useCursorWindow(rows.length, selected, cursor);
+  const visible = rows.slice(window.start, window.end);
   return (
     <ListColumn
       foot={
@@ -98,8 +64,26 @@ function FolderColumn({
       scrollerRef={scroller}
     >
       <div aria-hidden data-window-top="" style={{ height: window.padTop }} />
-      {rows(t("group.new"), model.fresh, both ? 1 : 0)}
-      {rows(t("group.earlier"), model.earlier, model.fresh.length + (both ? 2 : 0))}
+      {visible.length > 0 ? (
+        <LetterRows
+          selection={selection}
+          contact={contact}
+          label={model.path.at(-1) ?? t("way.all")}
+          rows={visible}
+          slice={{ index: window.start, first: window.start, total: rows.length }}
+          cursor={cursor}
+          press={model.list.press}
+          stamp={model.stamp}
+          file={t("row.file")}
+          who={(m) => m.from.name ?? m.from.address}
+          spoken={(m) => (m.unread ? t("row.unread") : t("row.read"))}
+          onMenu={
+            move === null || folderId === undefined
+              ? undefined
+              : (m, at) => setAsked({ folderId, id: m.id, at })
+          }
+        />
+      ) : null}
       {window.padBottom > 0 ? <div aria-hidden style={{ height: window.padBottom }} /> : null}
       {model.goneName !== null ? <Empty label={t("gone", { name: model.goneName })} /> : null}
       {model.empty ? <Empty label={t("emptyTitle")} /> : null}

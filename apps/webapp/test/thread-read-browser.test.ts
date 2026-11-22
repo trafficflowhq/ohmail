@@ -275,19 +275,27 @@ it("returns from Calendar to the open conversation at its reading position on th
         const reader = document.querySelector<HTMLElement>("[data-reading-scroll]");
         const reading = reader?.closest(".fr-reading");
         const squares = document.querySelector<HTMLElement>('[role="group"][aria-label$="unread"]');
-        const box = (element: HTMLElement | null) => {
+        const shift = (element: Element | null) => {
+          const transform = element ? getComputedStyle(element).transform : "none";
+          return transform === "none" ? 0 : new DOMMatrixReadOnly(transform).m42;
+        };
+        const box = (element: HTMLElement | null, moving: Element | null = element) => {
           if (!element?.getClientRects().length) return null;
           const { x, y, width, height } = element.getBoundingClientRect();
-          return [x, y, width, height].map((value) => Math.round(value * 100) / 100);
+          return [x, y - shift(moving), width, height].map((value) => Math.round(value * 100) / 100);
         };
         return {
           rail: box(rail),
           railGroup: box(rail?.querySelector(".oh-rail-group:not(:empty)") ?? null),
           list: box(list),
-          listOpacity: list ? getComputedStyle(list).opacity : null,
-          reader: box(reader),
-          readerOpacity: reading ? getComputedStyle(reading).opacity : null,
-          squares: box(squares),
+          reader: box(reader, reading ?? null),
+          squares: box(squares, reading ?? null),
+          motion: {
+            listShift: shift(list),
+            readerShift: shift(reading ?? null),
+            listOpacity: list ? getComputedStyle(list).opacity : null,
+            readerOpacity: reading ? getComputedStyle(reading).opacity : null,
+          },
           scrollTop: reader?.scrollTop ?? null,
           loading: [...(reader?.querySelectorAll('[role="status"]') ?? [])]
             .some((line) => line.textContent?.includes("Loading the full message")),
@@ -330,8 +338,13 @@ it("returns from Calendar to the open conversation at its reading position on th
     expect(before.squares).not.toBeNull();
     expect(before.loading).toBe(false);
     expect.soft(shifts, "layout shifts after returning to Mail").toEqual([]);
-    expect([...new Set(frames.map((frame) => JSON.stringify(frame)))].map((frame) => JSON.parse(frame)),
-      "geometry, visibility, and scroll position from the first Mail frame").toEqual([before]);
+    expect(frames.some(({ motion }) => motion.listShift > 0 && motion.readerShift > 0),
+      "the restored reader and list share the entry motion").toBe(true);
+    expect(frames.at(-1), "geometry and visibility after the entry settles").toEqual(before);
+    const { motion: _entry, ...rest } = before;
+    const geometry = frames.map(({ motion: _motion, ...frame }) => JSON.stringify(frame));
+    expect([...new Set(geometry)].map((frame) => JSON.parse(frame)),
+      "geometry, readiness, and scroll position from the first Mail frame").toEqual([rest]);
   } finally {
     await browser.close();
   }

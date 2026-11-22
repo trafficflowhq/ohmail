@@ -6,10 +6,11 @@ import { useText } from "../text/index.js";
 
 export function HistoryAbove({ model, children }: { model: HistoryModel; children: ReactNode }) {
   const t = useText("history");
-  const blank =
-    model.loading || model.count === undefined
-      ? null
-      : { label: model.empty ? t("emptyTitle") : t("metaCount", { count: model.count }), hot: false };
+  const ohbox = useText("ohbox");
+  const reader = useText("reader");
+  const unread = model.list.rows.filter((row) => row.unread).length;
+  const label = unread > 0 ? ohbox("blank.unread", { count: unread }) : reader("blank.none");
+  const blank = model.loading ? null : { label, hot: unread > 0 };
   return (
     <HistoryModelContext.Provider value={model}>
       <PlaceMeeting visit={model.list.visit} blank={blank} steps={{ up: t("step.up"), down: t("step.down") }}>

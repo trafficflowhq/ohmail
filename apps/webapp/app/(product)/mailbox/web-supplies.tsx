@@ -111,11 +111,13 @@ export function useAccountNotices(): readonly FrameNotice[] {
       out.push({ kind: "caughtUp", title: t("caughtUp", { date: dayStamp(notice.since) }), acts: [{ label: t("dismiss"), onPress: putAway }] });
     } else {
       const date = dayStamp(notice.deadline);
+      const deadline = notice.kind === "trialEnding" ? undefined : t("organizingUntil", { date });
+      const refusal = mintRefusal === null ? undefined : tLock(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed");
       out.push({
         kind: notice.kind === "grace" ? "grace" : notice.kind === "pastDue" ? "payment" : "trial",
         hot: notice.kind !== "trialEnding",
-        title: notice.kind === "grace" ? t("graceEnds", { date }) : notice.kind === "pastDue" ? t("paymentFailed", { date }) : t("trialEnds", { date }),
-        ...(mintRefusal !== null ? { line: tLock(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed") } : {}),
+        title: notice.kind === "trialEnding" ? t("trialEnds", { date }) : t(notice.kind === "grace" ? "trialEnded" : "paymentFailedTitle"),
+        line: deadline && refusal ? `${deadline} ${refusal}` : deadline ?? refusal,
         acts: [
           { label: notice.kind === "pastDue" ? t("fixPayment") : t("subscribe"), onPress: () => { if (!busy) void toManage(); } },
           { label: t("later"), onPress: putAway },

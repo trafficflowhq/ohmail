@@ -241,7 +241,7 @@ describe("an empty folder is a question until the server has answered — the re
     await waitFor(() => expect(listOlder).toHaveBeenCalledTimes(1));
     const messagesRegion = screen.getByRole("region", { name: "Messages" });
     // Never the claim before the answer: no empty state while the source may hold mail…
-    expect(messagesRegion.textContent).not.toContain("Nothing in this folder");
+    expect(messagesRegion.textContent).not.toContain("Nothing here");
     // …and exactly one probe (the empty list IS the ask).
     expect(listOlder).toHaveBeenCalledTimes(1);
     // The way further back is on screen instead (the device sentence went with ARCHIVE-024).
@@ -253,9 +253,9 @@ describe("an empty folder is a question until the server has answered — the re
 
   it("the empty state renders only once the server says the source is exhausted", async () => {
     const { listOlder } = mountRegisteredFolder([], []);
-    expect(screen.queryByText("Nothing in this folder")).toBeNull();
+    expect(screen.queryByText("Nothing here")).toBeNull();
     expect(await screen.findByText("That is everything on your server.")).toBeTruthy();
-    await waitFor(() => expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("Nothing in this folder"));
+    await waitFor(() => expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("Nothing here"));
     expect(listOlder).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: messages.ohbox.olderAction })).toBeNull();
   });
@@ -328,7 +328,7 @@ describe("the reach-past never lies beside the mirror", () => {
   it("fetched rows beside an empty mirror suppress the empty claim", async () => {
     mountRegisteredFolder([], mk(2) as EngineMessage[]);
     expect(await screen.findByRole("option", { name: /Subject 0/ })).toBeTruthy();
-    expect(screen.queryByText("Nothing in this folder")).toBeNull();
+    expect(screen.queryByText("Nothing here")).toBeNull();
   });
 
   it("navigating between two empty folders re-probes the second one", async () => {
@@ -368,7 +368,7 @@ const folderWindowScroller = (list: HTMLElement) => list.closest<HTMLElement>(".
 describe("the folder view is windowed — a large folder never mounts whole", () => {
   it("renders a slice with spacer height standing in for the rest", async () => {
     mountFolderWindow(windowLetters(1000, 3));
-    const list = await screen.findByRole("listbox", { name: "New" });
+    const list = await screen.findByRole("listbox", { name: "Projects" });
     const scroller = folderWindowScroller(list);
     const rows = within(scroller).getAllByRole("option");
     expect(rows.length).toBeGreaterThan(0);
@@ -377,12 +377,15 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
     const spacers = [...scroller.querySelectorAll<HTMLElement>('[aria-hidden="true"]')]
       .filter((element) => parseFloat(element.style.height) > 0);
     expect(spacers.length).toBeGreaterThan(0);
-    expect(within(scroller).getByText("New", { exact: true })).toBeTruthy();
+    expect(within(scroller).queryByText("New", { exact: true })).toBeNull();
+    expect(rows.slice(0, 3).map((row) => row.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining("Subject 0"), expect.stringContaining("Subject 1"), expect.stringContaining("Subject 2"),
+    ]));
   });
 
   it("a deep locate target is REVEALED — the window scrolls to mount the row it names", async () => {
     const { address } = mountFolderWindow(windowLetters(1000), "m400");
-    const list = await screen.findByRole("listbox", { name: "Earlier" });
+    const list = await screen.findByRole("listbox", { name: "Projects" });
     const messagesRegion = screen.getByRole("region", { name: "Messages" });
     // The row is deep below the initial slice, so the reveal effect must have SCROLLED —
     // that write is the whole mechanism: the slice derives from scrollTop.
@@ -408,7 +411,7 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
   it("a target that arrives LATE — after the folder entity — is still revealed", async () => {
     const letters = windowLetters(1000);
     const { mail } = mountFolderWindow(letters.slice(0, 50), "m400");
-    const list = await screen.findByRole("listbox", { name: "Earlier" });
+    const list = await screen.findByRole("listbox", { name: "Projects" });
     const scroller = folderWindowScroller(list);
     expect(scroller.scrollTop).toBe(0);
 

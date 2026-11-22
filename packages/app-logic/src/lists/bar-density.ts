@@ -139,7 +139,7 @@ export const ANSWER_FACES: ReadonlyArray<{ token: string; label: string; button:
   { token: "compact-fwd", label: ".abar-fwd .abar-fwd-lab", button: ".abar-b" },
   { token: "compact-reply", label: ".abar-reply .abar-reply-lab", button: ".abar-reply" },
 ];
-/** The icon a face shows in place of its word. */
+/** The icon a face shows in place of its word, in px. */
 export const ANSWER_ICON_PX = 14;
 
 export interface MeasuredVerb {

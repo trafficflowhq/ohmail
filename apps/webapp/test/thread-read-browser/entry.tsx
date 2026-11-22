@@ -2,7 +2,7 @@
  * reader, in a real engine. Two rigs. `framed`: one unread designed letter in the real `MessageBody`
  * (its frame, its measure, its proxied pictures), opened and entered at once; with `away` the person
  * scrolls into its middle as soon as the frame measures (its top off screen), and back to it later.
- * `landing`: three panels, the opened one held at the top by a copy of `MessagePane`'s thread anchor
+ * `landing`: three panels, the opened one held at the top by a copy of the shared Reader's thread anchor
  * (a ResizeObserver re-scroll), while the body above it lands and grows. `streamPress`: a press inside a
  * stream card's letter, under `readStreamCards`. Bundled by the test;
  * nothing here is product code. */

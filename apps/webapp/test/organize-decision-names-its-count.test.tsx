@@ -85,15 +85,18 @@ async function mount(
   return {
     el, asked, organizedWith, press, flush, render,
     heading: st.heading,
-    countLine: () => (step()?.querySelector("[role=status]")?.textContent ?? "").trim(),
-    choose: async (label: string) => {
-      const radio = [...el.querySelectorAll<HTMLElement>("[role=radio]")].find((r) => (r.textContent ?? "").includes(label));
-      if (!radio) throw new Error(`no choice ${label}`);
-      await act(async () => { radio.click(); });
-      await flush();
+    countLine: () => {
+      const counters = step()?.querySelectorAll(".oh-counters-row");
+      if (counters?.length) {
+        return [...counters].map((row) =>
+          [row.querySelector("dt")?.textContent, row.querySelector("dd")?.textContent].join(" ").trim()
+        ).join(" · ");
+      }
+      return (step()?.querySelector("[role=status]")?.textContent ?? "").trim();
     },
+    choose: async (label: string) => { await st.pick(label); await flush(); },
     key: async (k: string) => {
-      await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
+      await act(async () => { (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
     },
   };
 }
@@ -104,9 +107,9 @@ describe("How far back names what agreeing screens", () => {
   it("names the count for the chosen window, and the press carries it", async () => {
     const s = await mount(NOBODY, () => EIGHTEEN);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.flush();
-    expect(s.countLine()).toBe("18 letters from 3 senders you have not decided about will wait in the Screener.");
+    expect(s.countLine()).toBe("18 messages · 3 senders");
     expect(s.asked.at(-1)).toEqual({ dormancyDays: 365, scope: "window" });
     await s.press(t.agree);
     expect(s.organizedWith).toHaveLength(1);
@@ -114,13 +117,14 @@ describe("How far back names what agreeing screens", () => {
   });
 
   it("asks again for another window, and names the whole count past 1,000", async () => {
+    const letters = 4_212;
     const s = await mount(NOBODY, (sc) => (sc.scope === "all_time"
-      ? { letters: 4212, senders: 41, total: 4212, complete: true, mirrored: true }
+      ? { letters, senders: 41, total: letters, complete: true, mirrored: true }
       : EIGHTEEN));
     await s.press(t.continue);
     await s.choose(t.winAll);
     expect(s.asked.at(-1)).toEqual({ scope: "all_time" });
-    expect(s.countLine()).toBe("4,212 letters from 41 senders you have not decided about will wait in the Screener.");
+    expect(s.countLine()).toBe(`${letters.toLocaleString("en-US")} messages · 41 senders`);
   });
 
   it("a walk that stopped at its bound says more than", async () => {
@@ -134,7 +138,7 @@ describe("How far back names what agreeing screens", () => {
     const s = await mount(NOBODY, () => ({ letters: 0, senders: 0, total: 0, complete: true, mirrored: true }));
     await s.press(t.continue);
     await s.flush();
-    expect(s.countLine()).toBe(t.agreeCountNone);
+    expect(s.countLine()).toBe("0 messages · 0 senders");
   });
 
   it("while the first import still reads the mailbox it says so, never \"nothing\", and the press still carries the count", async () => {
@@ -160,7 +164,7 @@ describe("How far back names what agreeing screens", () => {
       await act(async () => { vi.advanceTimersByTime(5_000); });
       await s.flush();
       expect(reads, "the count so far was not read again").toBe(2);
-      expect(s.countLine()).toBe("18 letters from 3 senders you have not decided about will wait in the Screener.");
+      expect(s.countLine()).toBe("18 messages · 3 senders");
       await act(async () => { vi.advanceTimersByTime(20_000); });
       await s.flush();
       expect(reads, "a whole count is read again").toBe(2);
@@ -218,11 +222,11 @@ describe("How far back names what agreeing screens", () => {
 
   it("CONTROL — a takeover asks for no count and no screening of older mail", async () => {
     const s = await mount(LIVE, () => EIGHTEEN);
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.choose(t.elsewhereChoiceHere);
     await s.press(t.continue);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.flush();
     expect(s.countLine()).toBe("");
     expect(s.asked, "a takeover asked what agreeing would screen").toEqual([]);
@@ -255,26 +259,26 @@ describe("the import's lost connection is said in plain words", () => {
     const s = await mount({ ...NOBODY, unreachable: true }, () => COUNT);
     await s.press(t.continue);
     await s.flush();
-    expect(s.el.textContent).toContain(t.windowReconnecting);
+    expect(s.el.textContent).toContain(t.pullReconnecting);
     await s.render(NOBODY);
-    expect(s.el.textContent).not.toContain(t.windowReconnecting);
+    expect(s.el.textContent).not.toContain(t.pullReconnecting);
   });
 
   it("the pull step says reconnecting, then that the connection came back", async () => {
     const s = await mount(PULLING, () => COUNT, { ai: "off" });
-    expect(s.heading()).toBe(t.pullTitle);
-    expect(s.el.textContent).not.toContain(t.pullResumed);
+    expect(s.el.querySelector(`[aria-label="${t.pullLocal}"]`)).not.toBeNull();
+    expect(s.el.textContent).not.toContain("The connection dropped and came back.");
     await s.render({ ...PULLING, unreachable: true });
     expect(s.el.textContent).toContain(t.pullReconnecting);
-    expect(s.el.textContent).not.toContain(t.pullResumed);
+    expect(s.el.textContent).not.toContain("The connection dropped and came back.");
     await s.render(PULLING);
     expect(s.el.textContent).not.toContain(t.pullReconnecting);
-    expect(s.el.textContent).toContain(t.pullResumed);
+    expect(s.el.textContent).not.toContain("The connection dropped and came back.");
   });
 
   it("CONTROL — once the import is over neither line shows", async () => {
     const s = await mount({ ...PULLING, initialImportCompletedAt: "2026-10-24T09:00:00.000Z", unreachable: true }, () => COUNT, { ai: "off" });
     expect(s.el.textContent).not.toContain(t.pullReconnecting);
-    expect(s.el.textContent).not.toContain(t.windowReconnecting);
+    expect(s.el.textContent).not.toContain(t.pullReconnecting);
   });
 });

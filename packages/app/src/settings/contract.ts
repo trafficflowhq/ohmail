@@ -59,7 +59,7 @@ export interface PaneBodyProps {
 }
 
 /** Places a section’s scrolling content and its current toolbar in the same reading column. */
-export type PaneSheet = (body: ReactNode, foot?: ReactNode) => ReactNode;
+export type PaneSheet = (body: ReactNode, foot?: ReactNode, count?: string) => ReactNode;
 
 export interface SettingsPane {
   readonly id: SettingsPaneId;

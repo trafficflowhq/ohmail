@@ -58,9 +58,9 @@ describe("threadMarksIndex", () => {
     expect(threadMarksIndex(readerOf(msgs)).get("T")).toEqual(["read", "mine", "unread", "unread"]);
   });
 
-  it("unread wins over mine", () => {
+  it("keeps a sent reply distinct from unread received mail", () => {
     const msgs = [mkMsg({ id: "m1", date: at(1), folder: SENT, unread: true }), mkMsg({ id: "m2", date: at(2) })];
-    expect(threadMarksIndex(readerOf(msgs)).get("T")).toEqual(["unread", "read"]);
+    expect(threadMarksIndex(readerOf(msgs)).get("T")).toEqual(["mine", "read"]);
   });
 
   it("a conversation of one has no entry, and neither has a message with no thread", () => {

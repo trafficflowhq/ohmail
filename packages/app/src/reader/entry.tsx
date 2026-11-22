@@ -45,7 +45,7 @@ function StreamConversation({
     <div className="rd-stream-conversation" data-thread={messages.length > 1 || undefined}>
       <div className="rd-stream-squares">
         {messages.length > 1 && (
-          <Squares messages={messages} walk={walk} axis="column" column={scroller} waitForFit={false} />
+          <Squares messages={messages} walk={walk} place="column" column={scroller} waitForFit={false} />
         )}
       </div>
       <div className="rd-stream-letters">{children}</div>
@@ -91,6 +91,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     message,
     opened,
     clip,
+    markUnread,
     conversation,
     scroller = null,
     onEnter = ignoreControls,
@@ -98,6 +99,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     message: EngineMessage;
     opened: boolean;
     clip?: MessageClip;
+    markUnread?: (id: string) => void;
     conversation?: ConversationShown;
     scroller?: HTMLElement | null;
     onEnter?: () => void;
@@ -111,6 +113,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
         key={m.id}
         message={m}
         clip={m.id === message.id ? clip : undefined}
+        markUnread={m.id === message.id ? markUnread : undefined}
         opened={opened && m.id === message.id}
         previewSelection={message.id}
         streamCard="open"
@@ -160,7 +163,12 @@ export function readerEntry(parts: ReaderParts): ReaderEntry {
 }
 
 function previewHeadOf(useParts: () => ReaderParts): NonNullable<ReaderEntry["PreviewHead"]> {
-  const PreviewHead: NonNullable<ReaderEntry["PreviewHead"]> = ({ message, hideBodyNotice, selection }) => {
+  const PreviewHead: NonNullable<ReaderEntry["PreviewHead"]> = ({
+    message,
+    hideBodyNotice,
+    selection,
+    markUnread,
+  }) => {
     const parts = useParts();
     const [person, onPerson, close] = useOpenCard();
     const [notice, setNotice] = useState<LetterNotice | null>(null);
@@ -179,6 +187,7 @@ function previewHeadOf(useParts: () => ReaderParts): NonNullable<ReaderEntry["Pr
           card={person?.slot ?? null}
           preview
           selection={selection}
+          markUnread={markUnread}
         />
         {html ? (
           <Body

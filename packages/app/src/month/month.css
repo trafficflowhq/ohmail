@@ -19,6 +19,9 @@
   min-height: 0;
   flex: 1;
 }
+[data-drawer-edge] .cal-mo-day {
+  touch-action: pan-y pinch-zoom;
+}
 .cal-mo-none {
   margin: 0;
   padding: var(--s3) var(--s4);

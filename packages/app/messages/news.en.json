@@ -3,8 +3,6 @@
     "title": "News",
     "waterline": "Seen up to here",
     "waterlineMeta": "last visit · {stamp}",
-    "aiApprove": "Approve",
-    "aiCorrect": "Correct",
     "streamAria": "News stream",
     "keyNext": "Next in the stream",
     "keyPrev": "Previous in the stream",
@@ -20,7 +18,7 @@
     },
     "markAll": {
       "label": "Mark all read",
-      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "done": "{count, number} read",
       "undo": "Undo"
     },
     "list": {

@@ -1,51 +1,100 @@
+import { Fragment } from "react";
 import { Button } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { ActionPanel, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
+import type { PaneSheet } from "../contract.js";
 import type { HelpModel } from "./model.js";
 
-/** How many characters of the commit the version line shows, as the shipped pane does. */
 const COMMIT_SHOWN = 9;
+const PLATFORM = { linux: "Linux", macos: "macOS", windows: "Windows", ios: "iOS", android: "Android" };
+const PROVIDER = {
+  gmail: "Gmail",
+  icloud: "iCloud",
+  imap: "IMAP",
+  microsoft: "Microsoft",
+  microsoft_oauth: "Microsoft (OAuth)",
+};
 
-/**
- * Settings › Help & contact: Write to us, the version this is, and what the diagnostics block holds. Nothing is sent
- * from here: every way out is the person's own mail.
- */
-export function HelpPane({ model }: { readonly model: HelpModel }) {
+export function HelpPane({ model, sheet }: { readonly model: HelpModel; readonly sheet?: PaneSheet }) {
   const t = useText("help");
-  const { write } = model;
-  const version = `${model.version ?? t("dNone")}${model.commit !== null ? ` · ${t("dBuild")} ${model.commit.slice(0, COMMIT_SHOWN)}` : ""}`;
-  const why =
-    write.kind === "compose"
-      ? t("writeWhy")
-      : write.kind === "mailto"
-        ? t("writeWhyMailto")
-        : t("writeWhyCopy");
-  return (
-    <SettingsSheet>
-      <SettingLine label={t("write")} narrow="under">
-        {write.kind === "compose" ? (
-          <Button kind="ink" size="s" onPress={() => write.write()}>
-            {t("write")}
-          </Button>
-        ) : write.kind === "mailto" ? (
-          <Button kind="ink" size="s" href={write.href}>
-            {t("write")}
-          </Button>
-        ) : (
-          <>
-            <Button kind="ink" size="s" onPress={() => write.copy("address")}>
-              {write.copied === "address" ? t("copied") : t("copyAddress")}
-            </Button>
-            <Button kind="quiet" size="s" onPress={() => write.copy("diag")}>
+  const settings = useText("settings");
+  const { write, facts } = model;
+  const { os, osVersion, mailboxes, commit } = facts;
+  const version = `${facts.version ?? t("dNone")}${commit === null ? "" : ` · ${t("dBuild")} ${commit.slice(0, COMMIT_SHOWN)}`}`;
+  const content = (
+    <>
+      <SettingsSheet>
+        <SettingLine label={t("versionLabel")} value={version} />
+      </SettingsSheet>
+      <SettingsSheet
+        title={t("diag")}
+        aside={
+          write.kind === "copy" ? (
+            <Button kind="quiet" size="s" icon="copy" onPress={() => write.copy("diag")}>
               {write.copied === "diag" ? t("copied") : t("copyDiag")}
             </Button>
-          </>
+          ) : undefined
+        }
+      >
+        <SettingLine label={t("dApp")} value={`ohmail ${facts.surface} ${version}`} />
+        <SettingLine
+          label={t("dPlatform")}
+          value={`${os === null ? t("dNone") : os === "other" ? t("dOther") : PLATFORM[os]}${os !== null && osVersion !== null ? ` ${osVersion}` : ""}`}
+        />
+        {facts.account !== null ? <SettingLine label={t("dAccount")} value={facts.account} /> : null}
+        {mailboxes.length === 0 ? (
+          <SettingLine label={t("dMailbox")} value={t("dNone")} />
+        ) : (
+          mailboxes.map((mailbox, index) => (
+            <Fragment key={index}>
+              <SettingLine label={t("dMailbox")} value={PROVIDER[mailbox.provider]} />
+              <SettingLine label={t("dLastSync")} value={t(`sync_${mailbox.lastSyncError ?? "none"}`)} />
+            </Fragment>
+          ))
         )}
-      </SettingLine>
-      <SettingNote>{why}</SettingNote>
-      <SettingLine label={t("versionLabel")} value={version} />
-      <SettingNote>{t("diagWhat")}</SettingNote>
-      <SettingNote>{t("note")}</SettingNote>
-    </SettingsSheet>
+      </SettingsSheet>
+      {write.kind === "copy" ? <SettingNote>{t("writeWhyCopy")}</SettingNote> : null}
+    </>
+  );
+  const foot =
+    write.kind === "mailto" ? (
+      <div className="oh-actionpanel">
+        <div className="oh-actionpanel-bar" role="toolbar" aria-label={settings("help")}>
+          <Button kind="ink" size="s" icon="write" href={write.href}>
+            {t("write")}
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <ActionPanel
+        label={settings("help")}
+        items={[
+          write.kind === "compose"
+            ? {
+                id: "write",
+                label: t("write"),
+                icon: "write",
+                kind: "ink",
+                rank: 0,
+                onPress: write.write,
+              }
+            : {
+                id: "copy-address",
+                label: write.copied === "address" ? t("copied") : t("copyAddress"),
+                icon: "copy",
+                kind: "ink",
+                rank: 0,
+                onPress: () => write.copy("address"),
+              },
+        ]}
+      />
+    );
+  return sheet ? (
+    sheet(content, foot)
+  ) : (
+    <>
+      {content}
+      {foot}
+    </>
   );
 }

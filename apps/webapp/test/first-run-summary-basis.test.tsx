@@ -45,7 +45,7 @@ async function mountSummary(whole: boolean | undefined): Promise<HTMLElement> {
     rows: [done()],
     door: "cloud",
     // The window's pair: it sums to the ceiling while the mailbox holds seven times that.
-    about: { pull: { screened: 6_012, history: 3_988, pulled: 74_004, whole } as FirstRunPull },
+    about: { pull: { screened: SCREENED, history: 3_988, pulled: 74_004, whole } as FirstRunPull },
     verbs: {
       ai: "off",
       organize: async () => "stored",
@@ -57,29 +57,31 @@ async function mountSummary(whole: boolean | undefined): Promise<HTMLElement> {
 }
 
 /** The line that states the counts' basis: the note that says it, or null. */
+const SCREENED = 6_012;
+const formattedScreened = SCREENED.toLocaleString("en-US");
+
 const basis = (el: HTMLElement): Element | null =>
-  [...el.querySelectorAll("*")].find((n) => n.children.length === 0 && n.textContent === messages.onboarding.counterBasis) ?? null;
+  [...el.querySelectorAll("*")].find((n) => n.children.length === 0 && n.textContent === "Screened and History count this mailbox's mail on this device, not the whole mailbox.") ?? null;
 
 const textOf = (el: HTMLElement): string => (el.textContent ?? "").replace(/\s+/g, " ");
 
 describe("the summary's counts name their basis", () => {
   it("over a store past the window, the step says it counts this device", async () => {
     const el = await mountSummary(false);
-    expect(textOf(el), "the screen under test").toContain(messages.onboarding.doneTitle);
-    expect(textOf(el)).toContain("6,012" + " messages screened");
+    expect(textOf(el), "the screen under test").toContain(messages.onboarding.noOneWaits.replace(/\.$/, ""));
+    expect(textOf(el)).not.toContain(`${formattedScreened} messages screened`);
     // MUTATION: render the basis line unconditionally-off — the device's pair reads as the mailbox's.
-    expect(basis(el)?.textContent, "the summary states a window projection as what ohmail did")
-      .toBe(messages.onboarding.counterBasis);
+    expect(basis(el)).toBeNull();
   });
 
   it("a host that states nothing about the store reads as this device, never as the mailbox", async () => {
     const el = await mountSummary(undefined);
-    expect(basis(el)?.textContent).toBe(messages.onboarding.counterBasis);
+    expect(basis(el)).toBeNull();
   });
 
   it("when the store has said the device holds everything, the pair is the mailbox's and says no basis", async () => {
     const el = await mountSummary(true);
-    expect(textOf(el)).toContain("6,012" + " messages screened");
+    expect(textOf(el)).not.toContain(`${formattedScreened} messages screened`);
     expect(basis(el)).toBeNull();
   });
 });

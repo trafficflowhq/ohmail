@@ -8,16 +8,16 @@ import type { RefObject } from "react";
 import {
   DECISION_KEY,
   DECISION_ORDER,
-  PILE_KEY,
+  DECISION_QUIET,
+  PILE_VERB_KEY,
   suggestionWords,
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
-import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { Menu, MenuItem } from "@ohmail/ui/base";
 import type { Point } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
 import { useNoAdvice, useScreener } from "../contract.js";
 import { whoOf } from "./Sentence.js";
-import { unsubscribeDisclosure } from "./unsubscribe-disclosure.js";
 
 export function PlaceMenu({
   view,
@@ -34,13 +34,11 @@ export function PlaceMenu({
   card: boolean;
 }) {
   const t = useText("screener");
+  const screening = useText("screening");
   const words = suggestionWords(sender, useNoAdvice());
   const model = useScreener();
   const scope = view.scopeOf(sender);
-  const unsubscribe =
-    open && card
-      ? unsubscribeDisclosure(t, sender.from.address, scope, model.unsubClaimOf(sender, scope))
-      : null;
+  const offered = open && model.unsubClaimOf(sender, scope) !== "none";
   return (
     <Menu
       open={open}
@@ -51,25 +49,29 @@ export function PlaceMenu({
       fit={card ? "beside" : undefined}
       title={card ? undefined : whoOf(sender)}
     >
-      {unsubscribe ? <MenuNote>{unsubscribe}</MenuNote> : null}
-      {DECISION_ORDER.map((dest) => (
-        <MenuItem
-          key={dest}
-          checked={card ? undefined : words.dest === dest}
-          note={
-            words.dest === dest && words.sure !== null
-              ? t("place.suggested", { sure: words.sure })
-              : undefined
-          }
-          keyHint={DECISION_KEY[dest]}
-          onPress={() => view.decide(dest, false)}
-        >
-          {t(PILE_KEY[dest])}
-        </MenuItem>
-      ))}
+      {DECISION_ORDER.map((dest) => {
+        const note = [
+          words.dest === dest && words.sure !== null ? t("place.suggested", { sure: words.sure }) : "",
+          offered && DECISION_QUIET.has(dest) ? t("place.plusUnsub") : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        return (
+          <MenuItem
+            key={dest}
+            checked={card ? undefined : words.dest === dest}
+            label={t(PILE_VERB_KEY[dest])}
+            note={note || undefined}
+            keyHint={DECISION_KEY[dest]}
+            onPress={() => view.decide(dest, false)}
+          >
+            {t(PILE_VERB_KEY[dest])}
+          </MenuItem>
+        );
+      })}
       {card ? (
         <MenuItem keyHint="s" onPress={() => view.show("card")}>
-          {t("place.keyCard")}
+          {screening("action")}
         </MenuItem>
       ) : null}
     </Menu>

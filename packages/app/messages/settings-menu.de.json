@@ -23,6 +23,7 @@
       "receipts": "Belege",
       "screened": "Aussortiert",
       "spam": "Spam"
-    }
+    },
+    "mailboxCount": "{count, number} von {limit, number}"
   }
 }

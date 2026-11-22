@@ -11,8 +11,6 @@
 import { useState } from "react";
 import { useTagsRailLive } from "@ohmail/app-logic/tags";
 import { UI_KEYS, usePersistedFlag } from "@ohmail/app-logic/storage/persisted-ui";
-import { hueOf } from "@ohmail/app-logic/text/format";
-import { design } from "@ohmail/ui/base";
 import { RailEntry, RailField } from "@ohmail/ui/mail";
 import type { TagDTO } from "@ohmail/wire";
 import { usePress } from "../frame/room.js";
@@ -20,11 +18,8 @@ import { newTagName } from "../settings/tags/model.js";
 import { useFrame } from "../frame/commands.js";
 import { useRailDropState } from "../frame/rail-drag.js";
 import { useText } from "../text/index.js";
+import { tagHue } from "./colours.js";
 import "./tags.css";
-
-/** A tag's stored hue name as the degrees the kit's dot takes: the design's own, moss for a name it does not hold. */
-const TAG_HUES = design.tagHues as Readonly<Record<string, number>>;
-const TAG_HUE_NAMES = Object.keys(TAG_HUES);
 
 export function TagsRail() {
   const t = useText("tags");
@@ -76,7 +71,7 @@ function NewTag({ tags }: { readonly tags: readonly TagDTO[] }) {
     <RailField
       label={label}
       placeholder={t("newPlaceholder")}
-      hue={TAG_HUES.moss ?? 150}
+      hue={tagHue("moss")}
       maxLength={40}
       problem={(name) => (newTagName(tags, name)?.taken ? t("newTaken", { name }) : undefined)}
       onCancel={() => setEditing(false)}
@@ -110,7 +105,7 @@ function TagEntry({
       <RailEntry
         kind="sub"
         drop={drop}
-        hue={TAG_HUES[hueOf(tag, TAG_HUE_NAMES)] ?? 150}
+        hue={tagHue(tag.hue)}
         count={count > 0 ? String(count) : undefined}
         current={current}
         title={count > 0 ? rail("tagTitle", { count }) : tag.name}

@@ -25,5 +25,5 @@ it("distinguishes an empty inventory from an inventory still loading", async () 
 
   rerender(frame(SYNC_SETTLED));
   expect(screen.queryByRole("status", { name: "Loading folders" })).toBeNull();
-  expect(screen.getByText("No folders on your mail server yet.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Folders" })).toBeNull();
 });

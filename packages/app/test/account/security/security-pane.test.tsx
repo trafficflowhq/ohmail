@@ -132,7 +132,7 @@ describe("new codes are asked for before they replace the set", () => {
 
     drawn(listening(STATES.asked.model, verbs));
     const question = within(screen.getByRole("dialog"));
-    expect(screen.getByRole("dialog").textContent).toContain(sec("codesReplaceWarning"));
+    expect(screen.getByRole("dialog").textContent).toContain(sec("codesReplaceLine"));
     fireEvent.click(question.getByRole("button", { name: sec("cancel") }));
     expect(cancelNewCodes).toHaveBeenCalledTimes(1);
     expect(confirmNewCodes).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ describe("new codes are asked for before they replace the set", () => {
   it("shows the new set once with what to do, and Done; the verb that replaces it is away meanwhile", () => {
     const codesDone = vi.fn();
     drawn(listening(STATES.codes.model, { codesDone }));
-    expect(seen(sec("codesShownOnce"))).toBe(true);
+    expect(seen(sec("shownOnce"))).toBe(true);
     for (const code of CODES) expect(seen(code), code).toBe(true);
     expect(button(sec("codesReplace"))).toBeNull();
     fireEvent.click(button(sec("codesDone"))!);
@@ -153,13 +153,13 @@ describe("new codes are asked for before they replace the set", () => {
   it("a new set over a read that failed after it: the set and its Done stand, the failure said beside them", () => {
     const codesDone = vi.fn();
     drawn(listening(STATES.codesUnread.model, { codesDone }));
-    expect(seen(sec("codesShownOnce"))).toBe(true);
+    expect(seen(sec("shownOnce"))).toBe(true);
     for (const code of CODES) expect(seen(code), code).toBe(true);
     expect(seen(own("notRead"))).toBe(true);
     expect(seen(FAILED)).toBe(true);
     // Done is all it offers: nothing that changes what is enrolled stands over an unread session.
     for (const key of CHANGING) expect(button(sec(key)), key).toBeNull();
-    expect(screen.getAllByRole("button")).toEqual([button(sec("codesDone"))]);
+    expect(screen.getAllByRole("button")).toEqual([button(own("copy")), button(sec("codesDone"))]);
     fireEvent.click(button(sec("codesDone"))!);
     expect(codesDone).toHaveBeenCalledTimes(1);
   });
@@ -172,7 +172,7 @@ describe("a new authenticator", () => {
     const cancelAuthenticator = vi.fn();
     drawn(listening(STATES.authenticatorKey.model, { activate, typeCode, cancelAuthenticator }));
     expect(seen(KEY)).toBe(true);
-    const code = screen.getByRole("textbox", { name: sec("totpCodeLabel") });
+    const code = screen.getByRole("textbox", { name: sec("totpSixDigits") });
     expect(code.getAttribute("inputmode")).toBe("numeric");
     expect(code.getAttribute("autocomplete")).toBe("one-time-code");
     expect((button(sec("totpActivate")) as HTMLButtonElement).disabled).toBe(true);
@@ -192,7 +192,7 @@ describe("a new authenticator", () => {
 
   it("a code the server would not take is said at its field", () => {
     drawn(STATES.codeRefused.model);
-    const code = screen.getByRole("textbox", { name: sec("totpCodeLabel") });
+    const code = screen.getByRole("textbox", { name: sec("totpSixDigits") });
     expect(code.getAttribute("aria-invalid")).toBe("true");
     expect(seen(FAILED)).toBe(true);
     expect(seen(own("notDone"))).toBe(false);
@@ -207,8 +207,12 @@ describe("a new authenticator", () => {
     expect(seen(FAILED)).toBe(true);
     // The sheet's own ways out are all it offers: nothing that changes what is enrolled stands over an unread session.
     for (const key of CHANGING) expect(button(sec(key)), key).toBeNull();
-    expect(screen.getAllByRole("button")).toEqual([button(sec("totpActivate")), button(sec("cancel"))]);
-    fireEvent.change(screen.getByRole("textbox", { name: sec("totpCodeLabel") }), {
+    expect(screen.getAllByRole("button")).toEqual([
+      button(own("copy")),
+      button(sec("totpActivate")),
+      button(sec("cancel")),
+    ]);
+    fireEvent.change(screen.getByRole("textbox", { name: sec("totpSixDigits") }), {
       target: { value: "123456" },
     });
     expect(typeCode).toHaveBeenCalledWith("123456");
@@ -377,7 +381,7 @@ describe("the pane over its door", () => {
     await press(sec("totpAdd"));
     expect((button(sec("totpActivate")) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => {
-      fireEvent.change(screen.getByRole("textbox", { name: sec("totpCodeLabel") }), {
+      fireEvent.change(screen.getByRole("textbox", { name: sec("totpSixDigits") }), {
         target: { value: " 123456 " },
       });
     });
@@ -402,7 +406,7 @@ describe("the pane over its door", () => {
     await over(door, factor);
     await press(sec("totpAdd"));
     await act(async () => {
-      fireEvent.change(screen.getByRole("textbox", { name: sec("totpCodeLabel") }), {
+      fireEvent.change(screen.getByRole("textbox", { name: sec("totpSixDigits") }), {
         target: { value: "123456" },
       });
     });
@@ -419,7 +423,7 @@ describe("the pane over its door", () => {
     // A Cancel that is off while the code is on its way walks away from nothing: nothing more to read then.
     if (cancel!.disabled) return;
     fireEvent.click(cancel!);
-    expect(screen.queryByRole("textbox", { name: sec("totpCodeLabel") })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: sec("totpSixDigits") })).toBeNull();
     await act(async () => {
       first.settle(FACTOR);
     });
@@ -487,7 +491,7 @@ describe("the pane over its door", () => {
     };
     const door = await keyThenRead(refusedWith(FAILED), factor, [FACTOR, ok(null)]);
     await act(async () => {
-      fireEvent.change(screen.getByRole("textbox", { name: sec("totpCodeLabel") }), {
+      fireEvent.change(screen.getByRole("textbox", { name: sec("totpSixDigits") }), {
         target: { value: " 123456 " },
       });
     });

@@ -210,7 +210,7 @@ describe("the landing's Cloud tiers are the plan card the API enforces", () => {
     ) as { draftReply: Record<string, string> };
     expect(all.draftReply.offerBody).toMatch(/\{cost, plural,/);
     expect(all.draftReply.offerBody.replace(/\{[^{}]*\{[^{}]*\}[^{}]*\{[^{}]*\}\}/g, "")).not.toMatch(/\d/);
-    expect(all.draftReply.offerBodyUnmetered).not.toMatch(/\d|credit|Punkt|budget/i);
+    expect(all.draftReply).not.toHaveProperty("offerBodyUnmetered");
     // "one unit of your AI budget" was true under a flat credit and is now false by 15×.
     expect(all.draftReply.offerBody).not.toMatch(/one unit|eine Einheit/i);
   });

@@ -7,6 +7,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
+import "../../base/Overlays/menu.css";
 import { between, EDGE } from "../../base/Overlays/menu-place.js";
 import { portalRenderer } from "../../base/Overlays/portal-renderer.js";
 import { cssRect, cssViewport } from "../../base/ui-zoom.js";
@@ -92,7 +93,7 @@ export function SquareTip({ anchor, children }: { anchor: HTMLElement; children:
   }, [anchor, children]);
   const overlayRoot = anchor.closest<HTMLElement>(".oh-root") ?? anchor.ownerDocument.body;
   return renderPortal(
-    <span className="oh-square-tip" ref={chip} role="tooltip" aria-hidden="true">
+    <span className="oh-popover-surface oh-square-tip" ref={chip} role="tooltip" aria-hidden="true">
       {children}
     </span>,
     overlayRoot,

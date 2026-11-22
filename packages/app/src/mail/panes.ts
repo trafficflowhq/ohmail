@@ -38,6 +38,7 @@ import type { SettingsBeside, SettingsPane, SettingsPanes } from "../settings/co
 import { paneOf } from "../settings/facts.js";
 import { useFoldersSummary, useSignaturesSummary } from "../settings/consent-summary.js";
 import { useAwaySummary } from "../settings/away/summary.js";
+import { useHelpSummary } from "../settings/help/summary.js";
 import { useRulesSummary } from "../settings/rules/summary.js";
 import { rememberSettingsMenu } from "../settings/menu.js";
 import { lazyView } from "../frame/lazy-view.js";
@@ -66,6 +67,7 @@ export interface MailPaneParts {
   readonly invites: InvitesPaneParts | None;
   readonly security: SecurityPaneParts | None;
   readonly billing: SettingsPane["Body"] | None;
+  readonly useBillingSummary?: NonNullable<SettingsPane["useSummary"]>;
   readonly storage: StoragePaneParts | SettingsPane["Body"] | None;
   readonly away: SettingsPane["Body"] | None;
   readonly folders: SettingsPane["Body"] | None;
@@ -113,7 +115,13 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
     screener: parts.screener === NONE ? NONE : paneOf("screener", { Body: parts.screener }),
     ai: parts.ai === NONE ? NONE : paneOf("ai", { Body: parts.ai }),
     away: parts.away === NONE ? NONE : paneOf("away", { Body: parts.away, useSummary: useAwaySummary }),
-    rules: parts.rules === NONE ? NONE : paneOf("rules", { Body: parts.rules, useSummary: useRulesSummary }),
+    rules:
+      parts.rules === NONE
+        ? NONE
+        : {
+            ...paneOf("rules", { Body: parts.rules, useSummary: useRulesSummary }),
+            hasFoot: true,
+          },
     tags: parts.tags === NONE ? NONE : paneOf("tags", { Body: parts.tags }),
     folders:
       parts.folders === NONE
@@ -130,7 +138,10 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
         : typeof parts.devices === "function"
           ? paneOf("devices", { Body: parts.devices })
           : devicesPane(parts.devices),
-    billing: parts.billing === NONE ? NONE : paneOf("billing", { Body: parts.billing }),
+    billing:
+      parts.billing === NONE
+        ? NONE
+        : paneOf("billing", { Body: parts.billing, useSummary: parts.useBillingSummary }),
     storage:
       parts.storage === NONE
         ? NONE
@@ -141,7 +152,10 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
     security: parts.security === NONE ? NONE : securityPane(parts.security),
     account: parts.account === NONE ? NONE : accountPane(parts.account),
     about: parts.about === NONE ? NONE : paneOf("about", { Body: parts.about, useSummary: useAboutSummary }),
-    help: parts.help === NONE ? NONE : paneOf("help", { Body: parts.help }),
+    help:
+      parts.help === NONE
+        ? NONE
+        : { ...paneOf("help", { Body: parts.help, useSummary: useHelpSummary }), hasFoot: true },
   };
 }
 

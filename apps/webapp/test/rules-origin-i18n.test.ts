@@ -4,8 +4,8 @@ import messages from "../messages/en.json";
 /**
  * SETTINGS-RULES-I18N — every rule provenance must have a sentence in `rules.origin`.
  *
- * `RulesView` renders a rule's origin with `t(`origin.${rule.provenance}`)`
- * (`app/views/RulesView.tsx:153`). A provenance value with no key renders the raw key path —
+ * The rule description renders a rule's origin with `t(`origin.${rule.provenance}`)`
+ * (`packages/app-logic/src/press/rule-descriptions.ts`). A provenance value with no key renders the raw key path —
  * "rules.origin.seeded-from-sent" — straight into the rule's meta line. That is visible to any
  * user whose Ohbox was seeded from their Sent mail, which is the DEFAULT onboarding path, so the
  * gap was on the most-travelled surface rather than an edge one.

@@ -113,14 +113,21 @@ describe.each([1440, 390])("mail lists at %i pixels wide", (width) => {
   it.each(rows)("$list applies its action to the two selected rows", async (place) => {
     try {
       const { touched, ids } = await mount(width, place);
-      const circle = (id: string) => {
+      const rowFor = (id: string) => {
         const name = new RegExp(`Pottery ${id}`);
-        const row = place.list === "Search"
+        return place.list === "Search"
           ? within(screen.getByRole("list", { name: words.search.aria })).getByRole("button", { name })
           : screen.getByRole("option", { name });
+      };
+      const circle = (id: string) => {
+        const row = rowFor(id);
         return within(row.closest<HTMLElement>(".oh-row-slot") ?? row.parentElement!).getByRole("button", { name: words.ohbox.keyPick });
       };
+      const secondRow = () => within(rowFor(ids[1]!));
+      const initial = place.list === "Screener" ? "S" : "A";
+      const avatar = secondRow().getByText(initial, { exact: true });
       await act(async () => { fireEvent.click(circle(ids[0]!)); });
+      expect(secondRow().queryByText(initial, { exact: true })).toBe(avatar);
       await act(async () => { fireEvent.click(circle(ids[1]!), { shiftKey: true }); });
       const bar = within(screen.getByRole("toolbar", { name: words.ohbox.bar.label }));
       expect(bar.getByRole("button", { name: /^2 selected/ })).toBeTruthy();

@@ -95,10 +95,10 @@ describe("the AI pane", () => {
     expect(screen.getByText("Refused.", { exact: false })).toBeTruthy();
   });
 
-  it("says a server with no model beside what the switch covers, and only then", () => {
+  it("shows a notice only for a server with no model", () => {
     const noModel = "No AI model is set up on this server.";
     drawn(<AiPane model={model({ enabled: true, problem: null, noModel: true })} noModelSaid={noModel} />);
-    expect(screen.getByText(`${said("en", "settings", "aiSub")} ${noModel}`)).toBeTruthy();
+    expect(screen.getByText(noModel, { exact: false })).toBeTruthy();
     cleanup();
     drawn(<AiPane model={model({ enabled: true, problem: null, noModel: false })} noModelSaid={noModel} />);
     expect(screen.queryByText(noModel, { exact: false })).toBeNull();

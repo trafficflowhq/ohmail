@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -149,7 +149,7 @@ const countCapsule = (): HTMLButtonElement | null =>
 const pickCount = (): string | null => /^(\d+) selected/.exec(countCapsule()?.getAttribute("aria-label") ?? "")?.[1] ?? null;
 /** The ask a destructive verb over the pick opens: a dialog named by its question. */
 const deleteAsk = (): HTMLElement | null =>
-  [...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')].find((d) => /^Delete/.test(d.getAttribute("aria-label") ?? "")) ?? null;
+  [...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')].find((d) => /^(?:Move to Trash|[\d,]+ to Trash)\.$/.test(d.getAttribute("aria-label") ?? "")) ?? null;
 /**
  * The toasts that are SAYING something.
  *
@@ -366,7 +366,8 @@ describe("the selection's keys", () => {
     expect(ask, "`d` did not open the ask").toBeTruthy();
     // The count is stated in the question — the last place it is said before the rows go.
     expect(ask!.getAttribute("aria-label"), "the ask does not count the selection").toContain("3");
-    expect(ask!.textContent).toContain(en.ohbox.deleteNote);
+    expect(within(ask!).getAllByRole("menuitem").map((answer) => answer.textContent)).toEqual(["Move", "Cancel"]);
+    expect(ask!.textContent).not.toContain("your own mail server");
     expect(sent, "the ask dispatched something").toEqual([]);
 
     /* ESCAPE CANCELS THE OPEN SUB-ROW BEFORE IT CLEARS. It matters most here: an Escape that

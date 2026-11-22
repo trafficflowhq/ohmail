@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
 /**
- * THE SIGN-INS OHMAIL SIGNED OUT BECAUSE AN OLDER COPY USED THEM, OVER THE NEW SHELL's DOOR (the switch's point 66: a
- * security notice). The web's account strip says it in the frame's one slot: the sentence, the advice as its line
- * (change the password if none of that happened), OK and Details. Details opens the list over the app, each swept
+ * The account strip shows when older copies of a sign-in ended. It keeps the organizing deadline
+ * visible if the account page fails to open. For older sign-in copies, it offers the sentence
+ * and the OK and Details actions. Details opens the advice and the list over the app, each swept
  * sign-in by its client and its date, and closes again; OK sends one acknowledgement with the ids, and the notice
  * leaves.
  */
 import { randomUUID } from "node:crypto";
+import { createTranslator } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -14,14 +15,17 @@ vi.hoisted(() => {
 });
 
 import en from "../../messages/en.json";
+import { dayStamp } from "@ohmail/app-logic/text/format";
 import { act, message, mountShell, stubDom, unmountAll, waitFor } from "../_draft-shell.js";
 
 const S = en.settings;
+const settings = createTranslator({ locale: "en", messages: en, namespace: "settings" });
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 let sweeps: { id: string; at: string; client: string }[] = [];
 let acks: unknown[] = [];
+let lifecycle: { state: "grace" | "past_due"; graceUntil: string } | null = null;
 
 const button = (name: string, within: ParentNode = document): HTMLButtonElement | null =>
   [...within.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === name) ?? null;
@@ -36,7 +40,9 @@ async function read(): Promise<void> {
   await act(async () => { await auth.session(); });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  const { forgetAccess } = await import("../../app/api-client");
+  forgetAccess();
   try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
   stubDom();
   sweeps = [
@@ -44,9 +50,16 @@ beforeEach(() => {
     { id: randomUUID(), at: "2026-09-25T07:10:00.000Z", client: "web" },
   ];
   acks = [];
+  lifecycle = null;
   document.cookie = "tf_owner=acct_A; Path=/";
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     const u = String(url);
+    if (u.includes("/account/access") && lifecycle !== null) {
+      return json({ metered: true, canAddMailbox: true, mailboxes: 1, lifecycle });
+    }
+    if (u.includes("/account/manage-link")) {
+      return json({ error: { code: "unavailable" } }, 503);
+    }
     if (u.includes("/auth/reuse-sweeps/ack")) {
       acks.push(JSON.parse(String(init?.body)));
       return new Response(null, { status: 204 });
@@ -68,15 +81,17 @@ afterEach(async () => {
 });
 
 describe("the sign-ins ohmail signed out, in the new shell's notice slot", () => {
-  it("says the advice in its line and offers OK and Details; the list stands only behind Details", async () => {
+  it("offers OK and Details; the advice and list stand behind Details", async () => {
     await read();
     await mountShell("#/ohbox", [message("m1")], [], { accountNotices: true });
-    await waitFor(() => slot().includes("ohmail signed out 2 older copies of your sign-in"), "the sweeps' notice");
-    expect(slot()).toContain("change your password in Settings → Account");
+    await waitFor(() => slot().includes(settings("reuseSweepsTitle", { count: 2 })), "the sweeps' notice");
     expect(button(S.reuseSweepsOk), "OK").not.toBeNull();
     expect(button(S.reuseSweepsDetails), "Details").not.toBeNull();
     expect(dialog()).toBeNull();
     expect(document.body.textContent).not.toContain(S.reuseClientLinux);
+    expect(slot()).not.toContain(S.reuseSweepsBody);
+    await act(async () => { button(S.reuseSweepsDetails)!.click(); });
+    await waitFor(() => dialog()?.textContent?.includes(S.reuseSweepsBody) === true, "the password advice");
   }, 30_000);
 
   it("Details names each swept sign-in by its client and its date, with the advice, and closes again", async () => {
@@ -107,3 +122,21 @@ describe("the sign-ins ohmail signed out, in the new shell's notice slot", () =>
     await waitFor(() => !slot().includes("older copies"), "the notice leaves");
   }, 30_000);
 });
+
+
+it.each([
+  ["grace", en.accountLifecycle.subscribe],
+  ["past_due", en.accountLifecycle.fixPayment],
+] as const)("the frame keeps the %s deadline when the account page fails to open", async (state, label) => {
+  const deadline = "2026-09-27T12:00:00.000Z";
+  lifecycle = { state, graceUntil: deadline };
+  sweeps = [];
+  await read();
+  await mountShell("#/ohbox", [message("m1")], [], { accountNotices: true });
+  const line = en.accountLifecycle.organizingUntil.replace("{date}", dayStamp(deadline));
+  await waitFor(() => slot().includes(line), "the organizing deadline");
+
+  await act(async () => { button(label)!.click(); });
+  await waitFor(() => slot().includes(en.accessLock.mintFailed), "the account page refusal");
+  expect(slot()).toContain(line);
+}, 30_000);

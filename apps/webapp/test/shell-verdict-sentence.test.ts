@@ -68,7 +68,7 @@ describe("the shell's verdict sentence names the one staying place", () => {
     await waitFor(() => shell.sent.some((write) => write.kind === "screener_decide"), "the sender decision on the wire");
     expect(shell.sent.filter((write) => write.kind === "screener_decide")).toHaveLength(1);
     // The report keeps its final word in its own span, so compare the status's full text.
-    await waitFor(() => report(shell.el) === reportSentence(), "the report saying where the remaining letter stayed");
+    await waitFor(() => report(shell.el) === reportSentence().replace(/\.$/u, ""), "the report saying where the remaining letter stayed");
   });
 
   it("an account change after confirmation withholds the previous account's folder from the report", async () => {
@@ -120,7 +120,7 @@ describe("the shell's verdict sentence names the one staying place", () => {
     vi.useFakeTimers();
     try {
       await act(async () => {
-        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Mark 2 as spam" }));
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Mark as spam" }));
         await vi.advanceTimersByTimeAsync(1_000);
       });
       expect(report(shell.el)).toContain("2 moved to Spam");
@@ -157,7 +157,7 @@ describe("the shell's verdict sentence names the one staying place", () => {
     fireEvent.click(await screen.findByRole("option", { name: /Fixture sender/ }));
     fireEvent.keyDown(document.body, { key: "s" });
     const card = await screen.findByRole("dialog", { name: "Change this sender's screening" });
-    fireEvent.click(within(card).getByRole("radio", { name: /the whole domain/ }));
+    fireEvent.click(within(card).getByRole("radio", { name: /Everyone at/ }));
     fireEvent.click(within(card).getByRole("radio", { name: "Ohbox" }));
     fireEvent.click(screen.getByRole("button", { name: /^Screened out/ }));
     await waitFor(() => decisions.length > 0, "the promoted domain decision was sent");

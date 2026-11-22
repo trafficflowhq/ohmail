@@ -116,7 +116,14 @@ export function rowStateOf(m: MailboxRow, ctx: RowContext): RowState {
     return { kind: "wait", text: ctx.say({ key: "syncFirstPending", values: { when } }) };
   }
   const stamp = ctx.stamps.ago(m.lastSyncAt, ctx.now);
-  return { kind: "ok", text: ctx.say({ key: "syncedAgo", values: { when: stamp.rel } }), title: stamp.abs };
+  return {
+    kind: "ok",
+    text: ctx.say({
+      key: "syncedAgo",
+      values: { when: ctx.stamps.when(m.lastSyncAt, ctx.now) || stamp.abs },
+    }),
+    title: stamp.abs,
+  };
 }
 
 /** Who holds the mailbox, and which remedy the row offers: one per row, never two in opposite directions. */

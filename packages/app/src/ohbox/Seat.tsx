@@ -9,26 +9,19 @@
  * shape before the first mail, the cards over the list's head and the sender's sheet. A row dragged
  * to a rail place is the frame's gesture over the list's own verbs (`useRailDrag`).
  */
-import type { EngineMessage } from "@ohmail/wire";
+import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useOhboxLive, type ListAnswer, type OhboxLiveOwn, type RowAsk } from "@ohmail/app-logic/ohbox";
 import { wordsOver } from "@ohmail/app-logic/reader";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state";
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
 import { usePull } from "@ohmail/app-logic/session/pull-new-mail";
 import { answerThrough, type ComposerAnswers } from "@ohmail/app-logic/writing/answer";
 import { useComposer } from "@ohmail/app-logic/writing/composer-record";
 import { useWriting } from "../write/above.js";
-import {
-  avatarHue,
-  hueOf,
-  rowAddress,
-  rowStamp,
-  senderName,
-  tagsOfMessage,
-} from "@ohmail/app-logic/text/format";
+import { avatarHue, rowAddress, rowStamp, senderName, tagsOfMessage } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { design } from "@ohmail/ui/base";
 import { useFrame, usePaletteOffers, useResumingReader, useSelectionBar } from "../frame/commands.js";
 import { usePlaceLiveArgs } from "../frame/place-live.js";
 import { useRailDrag } from "../frame/rail-drag.js";
@@ -38,15 +31,12 @@ import { hasReplyAll } from "../reader/actions/use-verbs.js";
 import { scrollerOf } from "../reader/read-dom.js";
 import { useScreener } from "../screener/contract.js";
 import { TagPicker } from "../tags/TagPicker.js";
+import { tagHue } from "../tags/colours.js";
 import { useText, useTimeZone } from "../text/index.js";
 import { type OhboxBeside } from "./beside.js";
 import { rowOf, SEATED, useListKeepsKeyboard, useRowFocusFollow, type Page } from "./keyboard.js";
 import { OhboxAbove } from "./OhboxAbove.js";
 import { OhboxRowAsk } from "./OhboxRowAsk.js";
-
-/** A tag's stored hue name as the degrees the kit's dot takes: the design's own, moss for a name it does not hold. */
-const TAG_HUES = design.tagHues as Readonly<Record<string, number>>;
-const TAG_HUE_NAMES = Object.keys(TAG_HUES);
 
 /**
  * THE PAGE THE OHBOX IS DRAWN IN, read through the list's own scroller once the list stands: the seat draws no
@@ -209,15 +199,15 @@ function useOhboxListFocus(
   useRailDrag({ ...model.drag, rows: `${SEATED.list} .oh-row[data-id]`, page: page.read });
 }
 
+type TagAsk = { ids: string[]; anchor: HTMLElement | null; point?: Parameters<OhboxLiveOwn["pickTags"]>[2] };
+
 export function OhboxSeat({ children }: { readonly children: ReactNode }): ReactNode {
   const { host, plan, commands, route } = useFrame();
   const storageCard = host.features.storageCard;
   const page = usePage();
   const [rowAsk, setRowAsk] = useState<RowAsk | null>(null);
-  const [tagAsk, setTagAsk] = useState<{ ids: string[]; anchor: HTMLElement | null } | null>(null);
-  const own = useOwn(page.read, setRowAsk, (ids, anchor) => setTagAsk({ ids, anchor }));
-  const tag = useText("tag");
-  const press = usePress();
+  const [tagAsk, setTagAsk] = useState<TagAsk | null>(null);
+  const own = useOwn(page.read, setRowAsk, (ids, anchor, point) => setTagAsk({ ids, anchor, point }));
   const args = usePlaceLiveArgs();
   const live = useOhboxLive(args, own, useResumingReader()?.square ?? null);
   const located = useLocatedLetter(args.entered.letter, route.open);
@@ -247,7 +237,7 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
         mailbox: (a) => displayAddress(a),
         tag: (m) => {
           const first = tagsOfMessage(m, tags)[0];
-          return first ? { name: first.name, hue: TAG_HUES[hueOf(first, TAG_HUE_NAMES)] ?? 150 } : null;
+          return first ? { name: first.name, hue: tagHue(first.hue) } : null;
         },
       },
       mail,
@@ -293,36 +283,72 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
       pull,
     ],
   );
-  const tagRead = tagAsk ? host.engine.verbRead() : null;
   return (
     <OhboxAbove model={model} beside={beside}>
       {children}
       <OhboxRowAsk ask={replacing ? null : rowAsk} row={own.anchors.row} onClose={() => setRowAsk(null)} />
       {!replacing && tagAsk ? (
-        <TagPicker
-          anchor={tagAsk.anchor}
+        <OhboxTagPicker
+          ask={tagAsk}
           tags={tags}
-          assigned={tags
-            .filter(({ id }) =>
-              tagAsk.ids.every((messageId) =>
-                tagRead?.get<EngineMessage>("message", messageId)?.labels.includes(id),
-              ),
-            )
-            .map(({ id }) => id)}
-          onToggle={(id, assigned) => live.bulkToggleTag(tagAsk.ids, id, assigned)}
-          onCreate={(name) => {
-            const messageId = tagAsk.ids[0];
-            if (messageId === undefined) return;
-            setTagAsk(null);
-            void press.mutateAndReport(
-              { kind: "tag_assign", messageId, tagId: crypto.randomUUID(), assigned: true, createName: name },
-              tag("toastTagged", { name }),
-            );
-          }}
+          toggle={live.bulkToggleTag}
           onClose={() => setTagAsk(null)}
         />
       ) : null}
     </OhboxAbove>
+  );
+}
+
+function OhboxTagPicker({
+  ask,
+  tags,
+  toggle,
+  onClose,
+}: {
+  ask: TagAsk;
+  tags: readonly TagEntity[];
+  toggle: ReturnType<typeof useOhboxLive>["bulkToggleTag"];
+  onClose: () => void;
+}) {
+  const { host } = useFrame();
+  const t = useText("tag");
+  const press = usePress();
+  const mailboxes = useMailboxFacts();
+  const read = host.engine.verbRead();
+  const targets = ask.ids.map((id) => read?.get<EngineMessage>("message", id));
+  const assigned = tags
+    .filter(({ id }) => targets.every((message) => message?.labels?.includes(id)))
+    .map(({ id }) => id);
+  const target = targets.length === 1 ? targets[0] : undefined;
+  const canCreate =
+    target &&
+    !mailboxes?.some(({ id, organizerRole }) => id === target.mailboxId && organizerRole === "reader");
+  return (
+    <TagPicker
+      anchor={ask.anchor}
+      point={ask.point}
+      tags={tags}
+      assigned={assigned}
+      onToggle={(id, assigned) => toggle(ask.ids, id, assigned)}
+      onCreate={
+        canCreate
+          ? (name) => {
+              onClose();
+              void press.mutateAndReport(
+                {
+                  kind: "tag_assign",
+                  messageId: target.id,
+                  tagId: crypto.randomUUID(),
+                  assigned: true,
+                  createName: name,
+                },
+                t("toastTagged", { name }),
+              );
+            }
+          : undefined
+      }
+      onClose={onClose}
+    />
   );
 }
 

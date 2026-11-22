@@ -189,8 +189,8 @@
     "note": "Gesendet wird nur, was ein Modell zum Antworten braucht. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank. Trägt eine Nachricht einen Code oder einen Anmeldelink, wird dieser nie gesendet — egal welcher Anbieter gewählt ist."
   },
   "ohmarchy": {
-    "offerLead": "Dieses Gerät läuft mit Linux, darum trägt ohmail hier den ohmarchy-Stil.",
-    "offerAction": "Das volle Ohmarchy Theme auf allen deinen Geräten",
+    "offerLead": "ohmarchy auf diesem Computer",
+    "offerAction": "Alle Geräte",
     "offerNote": "Das lässt sich unter Einstellungen jederzeit ändern.",
     "offerFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
     "offerDismiss": "Ohmarchy-Angebot ausblenden",

@@ -26,18 +26,25 @@ async function waitForSettledScroll(scroller: Locator): Promise<void> {
 }
 
 it.each([
-  { width: 1440, place: "news", label: "News stream" },
-  { width: 1440, place: "receipts", label: "Receipts stream" },
-  { width: 390, place: "news", label: "News stream" },
-])("$label at $width opens and closes a keyboard reply in its own card", async ({ width, place, label }) => {
+  { width: 1440, place: "news", label: "News stream", face: "paper" },
+  { width: 1440, place: "receipts", label: "Receipts stream", face: "paper" },
+  { width: 390, place: "news", label: "News stream", face: "paper" },
+  { width: 1440, place: "news", label: "News stream", face: "ohmarchy" },
+  { width: 1440, place: "receipts", label: "Receipts stream", face: "ohmarchy" },
+])("$label at $width in $face opens and closes a keyboard reply in its own card", async ({ width, place, label, face }) => {
   const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
   try {
     await page.route(`${origin}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
-    await page.goto(`${origin}/?place=${place}`);
+    await page.goto(`${origin}/?place=${place}&face=${face}`);
     const stream = page.getByRole("region", { name: label, exact: true });
     const scroller = stream.locator("[data-reading-scroll]");
     await stream.getByRole("heading", { name: "Short letter" }).waitFor({ timeout: 5000 });
-    await page.keyboard.press("j");
+    if (face === "ohmarchy") {
+      await stream.getByRole("article").filter({ has: page.getByRole("heading", { name: "Long letter" }) })
+        .getByRole("button", { name: "Expand", exact: true }).click();
+    } else {
+      await page.keyboard.press("j");
+    }
     const selected = stream.locator("[data-stream-item][data-open]");
     await selected.waitFor({ timeout: 3000 });
     const item = selected.locator("..");
@@ -47,6 +54,26 @@ it.each([
     await replyButton.waitFor({ timeout: 3000 });
     await waitForSettledScroll(scroller);
     await expect.poll(() => replyButton.getAttribute("aria-keyshortcuts")).toBe("r");
+    if (face === "ohmarchy") {
+      const bar = stream.getByRole("toolbar", { name: "Actions", exact: true });
+      for (const [name, key, hint] of [
+        ["Reply", "r", "r"], ["Forward", "Shift+F", "⇧ f"], ["Later", "a", "a"],
+        ["Park", "e", "e"], ["Resurface", "b", "b"],
+      ] as const) {
+        const button = bar.getByRole("button", { name, exact: true });
+        await expect.poll(() => button.getAttribute("aria-keyshortcuts"), { message: name }).toBe(key);
+        expect(await button.locator("kbd").isVisible()).toBe(true);
+        expect(await button.locator("kbd").textContent()).toBe(hint);
+      }
+      const read = bar.getByRole("button", { name: /^Mark (un)?read$/ });
+      await expect.poll(async () => {
+        const key = await read.getAttribute("aria-keyshortcuts");
+        const cap = read.locator("kbd");
+        if (!(await cap.isVisible())) return false;
+        const text = await cap.textContent();
+        return (key === "Shift+I" && text === "⇧ i") || (key === "u" && text === "u");
+      }).toBe(true);
+    }
     await page.keyboard.press("r");
     const reply = stream.getByRole("textbox", { name: "Reply body" });
     await reply.waitFor({ timeout: 3000 });
@@ -56,6 +83,12 @@ it.each([
     await reply.waitFor({ state: "detached", timeout: 3000 });
     expect(await card.evaluate((node) => node.isConnected)).toBe(true);
     expect(await stream.getByRole("heading", { name: title!, exact: true }).count()).toBe(1);
+    if (face === "ohmarchy") {
+      const target = await selected.getAttribute("data-stream-item");
+      expect(target).toBeTruthy();
+      await page.keyboard.press("a");
+      await page.waitForFunction((id) => Reflect.get(window, "streamFiled").includes(id), target);
+    }
     if (width === 390) {
       await waitForSettledScroll(scroller);
       await page.keyboard.press("Shift+KeyF");
@@ -76,13 +109,14 @@ it.each([
 }, 60_000);
 
 it.each([
-  { width: 1440, key: "r", body: "Reply body" },
-  { width: 390, key: "Shift+KeyF", body: "Forward body" },
-])("$key at $width waits until the addressed card is visible", async ({ width, key, body }) => {
+  { width: 1440, key: "r", body: "Reply body", face: "paper" },
+  { width: 1440, key: "r", body: "Reply body", face: "ohmarchy" },
+  { width: 390, key: "Shift+KeyF", body: "Forward body", face: "paper" },
+])("$key at $width in $face waits until the addressed card is visible", async ({ width, key, body, face }) => {
   const page = await browser.newPage({ viewport: { width, height: 660 }, reducedMotion: "reduce" });
   try {
     await page.route(`${origin}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
-    await page.goto(`${origin}/?place=news&older=1`);
+    await page.goto(`${origin}/?place=news&older=1&face=${face}`);
     const stream = page.getByRole("region", { name: "News stream", exact: true });
     const scroller = stream.locator("[data-reading-scroll]");
     const short = stream.getByRole("heading", { name: "Short letter", exact: true });
@@ -94,6 +128,8 @@ it.each([
     const card = (await selected.elementHandle())!;
     const replyButton = stream.getByRole("button", { name: "Reply", exact: true });
     await replyButton.waitFor();
+    const hint = replyButton.locator("kbd");
+    if (face === "ohmarchy") await hint.waitFor();
     await scroller.hover();
     await page.mouse.wheel(0, 680);
     const bottom = () => card.evaluate((item) => {
@@ -101,6 +137,7 @@ it.each([
       return item.getBoundingClientRect().bottom - port.top;
     });
     await expect.poll(bottom).toBeLessThan(-10);
+    if (face === "ohmarchy") await hint.waitFor({ state: "hidden" });
     await page.keyboard.press(key);
     const editor = stream.getByRole("textbox", { name: body, exact: true });
     const opened = await editor.waitFor({ state: "attached", timeout: 650 }).then(() => true, () => false);
@@ -109,6 +146,7 @@ it.each([
     await scroller.evaluate((el) => el.scrollTo({ top: 0, behavior: "instant" }));
     await expect.poll(bottom).toBeGreaterThan(0);
     await waitForSettledScroll(scroller);
+    if (face === "ohmarchy") await hint.waitFor();
     await page.keyboard.press(key);
     await editor.waitFor();
     expect(await editor.evaluate((box, original) => original.parentElement?.contains(box), card)).toBe(true);

@@ -64,7 +64,7 @@ function Tile({
   const locale = useLocale();
   const kind = kindOf(item);
   const size = sizeOf(item.sizeBytes, locale);
-  if (item.state === "loading")
+  if (item.state === "loading" || item.reasking)
     return <FileNotArrived state="fetching" kind={kind} name={item.filename} line={t("loading")} />;
   if (item.state === "too_large")
     return <FileNotArrived state="large" kind={kind} name={item.filename} line={t("tooLarge", { size })} />;
@@ -77,8 +77,7 @@ function Tile({
         : fault.way === "signIn" && recover !== NONE
           ? { label: tb("signIn"), onPress: () => recover("signIn") }
           : undefined;
-    const reason = t(fault.key);
-    const line = item.reasking ? t("faultRetrying", { reason }) : reason;
+    const line = t(fault.key);
     return <FileNotArrived state="failed" kind={kind} name={item.filename} line={line} way={way} />;
   }
   const thumb = thumbnailOf(item);
@@ -132,6 +131,7 @@ export function LetterFiles({
   parts: Pick<ReaderParts, "files" | "look">;
 }) {
   const t = useText("attachments");
+  const locale = useLocale();
   const { files, look } = parts;
   const [picked, setPicked] = useState<{ id: string; selection: string | undefined } | null>(null);
   const activeId = picked?.selection === selection ? picked?.id : undefined;
@@ -153,7 +153,17 @@ export function LetterFiles({
   const many = items.length > 1;
   return (
     <KitFiles
-      summary={many ? t("count", { count: items.length }) : undefined}
+      summary={
+        many
+          ? t("count", {
+              count: items.length,
+              size: sizeOf(
+                items.reduce((sum, item) => sum + item.sizeBytes, 0),
+                locale,
+              ),
+            })
+          : undefined
+      }
       all={
         many
           ? {

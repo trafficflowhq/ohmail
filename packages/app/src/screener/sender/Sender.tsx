@@ -3,7 +3,7 @@
  * held letters (the column opens on the newest), and the decision in the panel at the column's foot. Opening a sender
  * reads nothing and marks nothing read; the panel's press is the view's `decide`, the one way a decision leaves.
  */
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   isSharedDomain,
   refused,
@@ -15,30 +15,12 @@ import { Sheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { useScreener, useScreenerBeside } from "../contract.js";
 import { HeldLetter } from "../held/HeldLetter.js";
-import { Card } from "./Card.js";
-import { KeptLines, KeptPanel } from "./Kept.js";
+import { Card, type CardActions } from "./Card.js";
+import { KeptPanel } from "./Kept.js";
 import { useNewestFirst } from "./newest.js";
 import { Panel } from "./Panel.js";
 import { PlaceMenu } from "./PlaceMenu.js";
 import { DecisionLines, Sentence, whoOf } from "./Sentence.js";
-
-/**
- * What this install may do, said whole under the sentence where it names no holder: when an organizer elsewhere files
- * what is decided here, that nothing organizes the mailbox, and that a mailbox signed in with OAuth is decided where it
- * is organized. Who decides stands in the panel, by the one decider.
- */
-function RoleLines() {
-  const t = useText("screener");
-  const { role } = useScreener();
-  if (role.mode === "pending") return <p className="oh-text">{t("pendingBarWhy")}</p>;
-  if (role.mode !== "blocked") return null;
-  return (
-    <>
-      {role.reason === "no_organizer" ? <p className="oh-text">{t("readerBarNoneWhy")}</p> : null}
-      {role.oauthOnly ? <p className="oh-text">{t("oauthDecideElsewhere")}</p> : null}
-    </>
-  );
-}
 
 /**
  * Which of the account's addresses this sender wrote to, where it has several: a decision writes a rule over the whole
@@ -90,6 +72,9 @@ export function Sender({
   const t = useText("screener");
   const model = useScreener();
   const { subjectRule: SubjectRule } = useScreenerBeside();
+  const [unsubscribedLetters, setUnsubscribedLetters] = useState<ReadonlyMap<string, string | null>>(
+    new Map(),
+  );
   const [cardLetter, setCardLetter] = useState<{ row: string; id: string } | null>(null);
   const slotAt = useRef<HTMLButtonElement | null>(null);
   const cardAt = useRef<HTMLButtonElement | null>(null);
@@ -107,16 +92,16 @@ export function Sender({
   const { open, entered, held, scroller, ready, from, busy, shown } = useSenderWindow(view, phoneWindow);
   if (open === null) return null;
   const sender = viewSender(open);
+  const account = model.accountScope ?? null;
   const decided = view.decided.some((d) => d.sender.id === sender.id);
   const waiting = view.segment === "waiting";
-  const inbox = waiting && sender.held.length > 1 && model.reachOf(sender, "sender").inboxIds.length > 0;
   const choosing = waiting && !decided && !refused(model.role);
   const shared = isSharedDomain(sender.from.address);
   const scope = shared ? "sender" : view.scopeOf(sender);
   const messageId = cardLetter?.row === sender.id ? cardLetter.id : (entered ?? sender.id);
   const domainScope = choosing && scope === "domain";
-  const card = (subjectAction?: ReactNode) => (
-    <Card view={view} sender={sender} anchor={cardAnchor} choosing={choosing} subjectAction={subjectAction} />
+  const card = (actions?: CardActions) => (
+    <Card view={view} sender={sender} anchor={cardAnchor} choosing={choosing} actions={actions} />
   );
   return (
     <Sheet
@@ -140,19 +125,14 @@ export function Sender({
             view.show("card");
           }}
           scopeAt={scopeAt}
+          unsubscribed={!waiting && held.some((letter) => unsubscribedLetters.get(letter.id) === account)}
         />
       }
-      head={<DecisionLines view={view} sender={sender} choosing={choosing} scope={scope} shared={shared} />}
+      head={waiting ? <DecisionLines sender={sender} /> : undefined}
       foot={waiting ? <Panel view={view} /> : <KeptPanel view={view} />}
     >
       <Sheet kind="plain">
-        {waiting ? <RoleLines /> : <KeptLines view={view} />}
         <DeliveredTo mailboxId={sender.mailboxId} />
-        {sender.held.length > 1 ? (
-          <p className="oh-text">
-            {t(inbox ? "place.messageCount" : "place.held", { count: sender.held.length })}
-          </p>
-        ) : null}
       </Sheet>
       <div className="sc-held-letters" role="feed" aria-label={whoOf(sender)} aria-busy={busy}>
         {shown.map((letter, index) => (
@@ -171,6 +151,9 @@ export function Sender({
               view.show("card");
             }}
             onRetry={view.retryBody}
+            onUnsubscribed={() =>
+              setUnsubscribedLetters((letters) => new Map(letters).set(letter.id, account))
+            }
           />
         ))}
       </div>
@@ -188,6 +171,7 @@ export function Sender({
           onAudit={() => view.show("audit")}
           open={view.shown === "subject"}
           onOpen={() => view.show("subject")}
+          onBack={() => view.show("card")}
           onClose={() => view.show(null)}
         >
           {card}

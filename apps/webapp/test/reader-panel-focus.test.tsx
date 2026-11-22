@@ -126,10 +126,9 @@ describe("opening a bar ceremony puts the keyboard in it", () => {
   it("MOVE lands on its first destination — the behaviour Resurface was missing", async () => {
     /* The positive control for the pair. Without it, "Resurface focuses its first answer" could be satisfied by a
        change that focuses the first control of EVERY menu by accident, and the two verbs' focus lines would have
-       no evidence of being the same rule. Move stands behind More in the new panel: its only door. */
+       no evidence of being the same rule. */
     await readerOpen();
-    await pressAt(more(), "More");
-    await press(item("Move"), "More's Move");
+    await pressAt(verb("Move"), "Move");
     const moveMenu = menu("Move");
     expect(moveMenu, "the destination menu did not open").not.toBeNull();
     const first = moveMenu!.querySelector<HTMLElement>('[role="menuitem"]');
@@ -161,15 +160,12 @@ describe("cancelling a ceremony puts the keyboard back on the control that opene
   });
 
   it("MOVE, by its Cancel button", async () => {
-    /* The Move menu has no Cancel: Escape from inside it is its way out. Move's door is More, so More's button is
-       the control that opened it. */
     await readerOpen();
-    await pressAt(more(), "More");
-    await press(item("Move"), "More's Move");
+    await pressAt(verb("Move"), "Move");
     expect(menu("Move"), "the destination menu did not open").not.toBeNull();
     await keyAtFocus("Escape");
     expect(menu("Move")).toBeNull();
-    expect(document.activeElement).toBe(more());
+    expect(document.activeElement).toBe(verb("Move"));
     expect(sent()).toEqual([]);
   });
 

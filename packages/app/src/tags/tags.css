@@ -1,8 +1,15 @@
-/* Tags' own placement: Rename's two answers in one line under its field. Every look is the kit's. */
-.tg-answers {
+/* Tags' own placement: Rename's field and answers in the list head. Every look is the kit's. */
+.tg-rename {
   display: flex;
   gap: var(--s1);
-  padding-top: var(--s2);
+  align-items: end;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.tg-rename > :first-child {
+  flex: 1;
+  min-inline-size: min(100%, var(--s8));
 }
 
 /* A tag's drop-target box in the rail draws nothing: the kit's entry lays out as if it stood alone. */

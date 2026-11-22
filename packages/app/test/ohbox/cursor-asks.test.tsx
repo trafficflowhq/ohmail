@@ -123,27 +123,32 @@ describe("the cursor row's keys that ask, at a phone's width", () => {
     press("j");
     expect(cursorRow()).toBe("c");
     press("m");
-    const where = ask("move to");
+    const where = ask("Move");
     expect(mail.mutations).toEqual([]);
     fireEvent.click(within(where).getAllByRole("menuitem")[1]!);
     await settle();
-    expect(noAsk("move to")).toBe(true);
+    expect(noAsk("Move")).toBe(true);
     expect(mail.mutations.length).toBe(1);
     expect(sent(mail)[0]).toContain(" c");
   });
 
-  it("d asks first: nothing leaves at the press, Cancel keeps the letter, and the ask's Delete holds its delete for the Undo window", async () => {
+  it("d asks first: nothing leaves at the press, Cancel keeps the letter, and the ask's Move holds its delete for the Undo window", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const { mail } = seat({ room: "phone" });
     press("j");
     press("d");
-    const first = ask("Delete this message?");
-    expect(within(first).getByText(/ohmail never erases mail/)).toBeTruthy();
+    const first = ask("Move to Trash.");
+    expect(within(first).queryByText(/ohmail never erases mail/)).toBeNull();
+    expect(
+      within(first)
+        .getAllByRole("menuitem")
+        .map((answer) => answer.textContent),
+    ).toEqual(["Move", "Cancel"]);
     fireEvent.click(within(first).getByRole("menuitem", { name: "Cancel" }));
-    expect(noAsk("Delete this message?")).toBe(true);
+    expect(noAsk("Move to Trash.")).toBe(true);
     expect(rows().map((r) => r.dataset.id)).toEqual(["c", "b", "a"]);
     press("d");
-    fireEvent.click(within(ask("Delete this message?")).getByRole("menuitem", { name: /^Delete/ }));
+    fireEvent.click(within(ask("Move to Trash.")).getByRole("menuitem", { name: /^Move/ }));
     expect(rows().map((r) => r.dataset.id)).toEqual(["b", "a"]);
     expect(mail.mutations, "nothing leaves before the Undo window ends").toEqual([]);
     await act(async () => {
@@ -155,17 +160,17 @@ describe("the cursor row's keys that ask, at a phone's width", () => {
   it("a held d asks nothing more than one press does, and a press in no letter's row asks nothing", () => {
     seat({ room: "phone" });
     press("d");
-    expect(noAsk("Delete this message?"), "the first press places the cursor").toBe(true);
+    expect(noAsk("Move to Trash."), "the first press places the cursor").toBe(true);
     press("d", { repeat: true });
-    expect(noAsk("Delete this message?")).toBe(true);
+    expect(noAsk("Move to Trash.")).toBe(true);
   });
 
   it("two columns bind neither on the list: the reader's own d and m are the letter's", () => {
     const { mail } = seat({ room: "desktop" });
     press("m");
     press("d");
-    expect(noAsk("move to")).toBe(true);
-    expect(noAsk("Delete this message?")).toBe(true);
+    expect(noAsk("Move")).toBe(true);
+    expect(noAsk("Move to Trash.")).toBe(true);
     expect(mail.mutations).toEqual([]);
   });
 });

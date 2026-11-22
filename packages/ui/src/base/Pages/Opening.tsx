@@ -1,21 +1,46 @@
+import type { ReactNode } from "react";
 import { EndDot } from "../Primitives/EndDot.js";
 import { useSaidOnArrival } from "../said-on-arrival.js";
 import "./opening.css";
 import { RowsShape } from "./RowsShape.js";
 import { Bar } from "./shape-bar.js";
 
-export interface OpeningProps {
-  /** `window`: the menu, the list and the reading column as shape. `phone`: the list as shape. */
-  kind: "window" | "phone";
-  /** What is happening, said only once the wait has lasted: a line, how far it is, a note. */
-  status?: { label: string; count?: string; note?: string };
-}
+export type OpeningProps =
+  | {
+      /** `window`: the menu, the list and the reading column as shape. `phone`: the list as shape. */
+      kind: "window" | "phone";
+      /** What is happening, said only once the wait has lasted: a line, how far it is, a note. */
+      status?: { label: string; count?: string; note?: string };
+    }
+  | {
+      kind: "web";
+      label?: string;
+      action?: ReactNode;
+      /** The server's own fallback, revealed even if the page's scripts never run. */
+      late?: boolean;
+    };
 
 /* The shapes: how wide each bar is, in parts of a hundred. A menu's groups. */
 const MENU = [[58, 46, 52], [44], [56, 38, 50], [48, 40, 44, 52]] as const;
 
 /** While the app opens: its own measures as bars, and never a word of mail. No spinner. */
-export function Opening({ kind, status }: OpeningProps) {
+export function Opening(props: OpeningProps) {
+  if (props.kind === "web") {
+    return (
+      <main className="oh-opening" data-kind="web">
+        <div className="oh-opening-web" data-late={props.late ? "" : undefined}>
+          <p className="oh-display oh-opening-title" role="status">
+            {props.label ? <EndDot kind="hot">{props.label}</EndDot> : null}
+          </p>
+          {props.action}
+        </div>
+      </main>
+    );
+  }
+  return <OpeningShape {...props} />;
+}
+
+function OpeningShape({ kind, status }: Exclude<OpeningProps, { kind: "web" }>) {
   /* The line appears once the wait has lasted: said by a change inside a region that stands. */
   const held = useSaidOnArrival(Boolean(status)) ? true : undefined;
   const line = status ? (

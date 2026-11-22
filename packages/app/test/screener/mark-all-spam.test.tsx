@@ -22,14 +22,14 @@ it("keeps background keys blocked and only removes rows from the open Spam quest
   const view = mountPlace(model([a, b]));
   fireEvent.click(screen.getByRole("button", { name: "List" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Mark all spam" }));
-  const question = () => screen.getByRole("dialog", { name: /waiting senders? as spam/ });
-  expect(question().textContent).toContain("Mark all 2 waiting senders as spam?");
+  const question = () => screen.getByRole("dialog", { name: /Mark \d+ as spam/ });
+  expect(question().textContent).toContain("Mark 2 as spam");
   (document.activeElement as HTMLElement).blur();
   fireEvent.keyDown(document.body, { key: "o" });
   expect(asked.decided).toEqual([]);
-  expect(question().textContent).toContain("Mark all 2 waiting senders as spam?");
+  expect(question().textContent).toContain("Mark 2 as spam");
   view.again(model([b, aNew, c]));
-  expect(question().textContent).toContain("Mark the 1 waiting sender as spam?");
+  expect(question().textContent).toContain("Mark 1 as spam");
   fireEvent.click(within(question()).getByRole("button", { name: "Cancel" }));
   expect(file).not.toHaveBeenCalled();
 });

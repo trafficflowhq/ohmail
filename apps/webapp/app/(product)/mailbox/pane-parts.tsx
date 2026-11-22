@@ -15,10 +15,14 @@
  */
 import { confirmedAccountForScope } from "@ohmail/app/host";
 import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import type { PaneBodyProps } from "@ohmail/app/settings";
 import { BrowserFoldersPane, BrowserNotificationsPane, BrowserSignaturesPane } from "./browser-settings-panes";
 import { BrowserSettingsAbove } from "./browser-settings-panes";
 import { WebRulesPane } from "./WebRulesPane";
+import { useText } from "@ohmail/app/text";
+import { standingOf } from "./subscription-door";
+import { accessFeedFor, onAccessFeed } from "../../api-client";
 import { useFrame } from "@ohmail/app/frame";
 import { useWriting } from "@ohmail/app/write";
 import { HelpContactPane } from "./HelpContactPane";
@@ -55,6 +59,30 @@ function useWebAccountDoor(): AccountDoor {
 
 function useSettingsOwner(): string | null {
   return confirmedAccountForScope(useFrame().host);
+}
+
+function useWebAccess() {
+  const owner = useSettingsOwner();
+  return useSyncExternalStore(onAccessFeed, () => accessFeedFor(owner), () => null)?.answer;
+}
+
+function useWebBillingSummary() {
+  const access = useWebAccess();
+  const t = useText("settings");
+  const own = useText("accountSubscription");
+  const standing = access?.metered ? standingOf(access.lifecycle) : null;
+  if (standing?.state === "trial") {
+    return { value: own("trial"), detail: standing.ends ? t("webPlanTrialEnds", { when: standing.ends }) : undefined };
+  }
+  if (standing?.state === "overdue") return { value: own("overdue"), hot: true };
+  if (standing?.state === "grace") return { value: own("trialEnded"), hot: true };
+  if (standing?.state === "active") return { value: own("active") };
+  return null;
+}
+
+function useWebMailboxLimit() {
+  const access = useWebAccess();
+  return access?.metered ? access.mailboxes : null;
 }
 
 function useWebStorageDoor() {
@@ -111,7 +139,7 @@ export function WebSettingsAbove({ children }: { readonly children: ReactNode })
   return <BrowserSettingsAbove>{children}</BrowserSettingsAbove>;
 }
 
-function WebHelpPane() {
+function WebHelpPane({ sheet }: Pick<PaneBodyProps, "sheet">) {
   const { host } = useFrame();
   const { writeSupport } = useWriting();
   const { mailboxes } = useMailState();
@@ -119,6 +147,7 @@ function WebHelpPane() {
   return (
     <HelpContactPane
       host={{ surface: "web", version, commit, mailtoLeaves, accountId: confirmedAccountForScope(host) }}
+      sheet={sheet}
       mailboxes={liveMailboxes(mailboxes)}
       onWrite={host.features.places.write === NONE ? null : writeSupport ?? null}
     />
@@ -131,6 +160,7 @@ export const WEB_PANE_PARTS: MailPaneParts = {
   about: WebAboutPane,
   ai: WebAiPane,
   billing: WebSubscriptionPane,
+  useBillingSummary: useWebBillingSummary,
   help: WebHelpPane,
   rules: WebRulesPane,
   folders: BrowserFoldersPane,
@@ -138,7 +168,7 @@ export const WEB_PANE_PARTS: MailPaneParts = {
   screener: WebScreenerPane,
   notifications: BrowserNotificationsPane,
   signatures: BrowserSignaturesPane,
-  mailboxes: { factor, calendar: NONE, savedSettings: SavedMailboxSettings },
+  mailboxes: { factor, calendar: NONE, savedSettings: SavedMailboxSettings, useLimit: useWebMailboxLimit },
   away: AwaySettings,
   devices: { useDoor: useWebDevicesDoor, useWatch: useDevicesWatch, factor, qr },
   storage: { useDoor: useWebStorageDoor, factor },

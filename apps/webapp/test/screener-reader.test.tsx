@@ -335,14 +335,14 @@ describe("the Screener pane draws no deciding control on a reader", () => {
     for (const name of destinations) expect(bar.getByRole("button", { name })).toBeTruthy();
     expect(bar.queryByText(copy.place.decides.replace("{name}", PENDING.name!))).toBeNull();
     expect(bar.getByText(copy.pendingBarTitle.replace("{name}", PENDING.name!))).toBeTruthy();
-    expect(view.getByText(copy.pendingBarWhy)).toBeTruthy();
+    expect(view.queryByText(/Your decision is sent to it/)).toBeNull();
   });
 
   it("CONTROL: with no holder the bar, the row menu and the bulk are all there", () => {
     const { bar, view, tools } = mountView(ORGANIZES);
     for (const name of destinations) expect(bar.getByRole("button", { name })).toBeTruthy();
     expect(view.queryByText(copy.place.decides.replace("{name}", HOLDER.name!))).toBeNull();
-    expect(view.queryByText(copy.pendingBarWhy)).toBeNull();
+    expect(view.queryByText(/Your decision is sent to it/)).toBeNull();
     expect(view.getByRole("button", { name: copy.place.choose })).toBeTruthy();
     expect(tools.getByRole("button", { name: /^Apply 1/ })).toBeTruthy();
     fireEvent.click(tools.getByRole("button", { name: "List" }));

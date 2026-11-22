@@ -74,7 +74,7 @@ async function docFor(
   return buildMailDocument(body, opts);
 }
 
-/** Mount the component and hand back the container `MessagePane` wraps it in. */
+/** Mount the component and hand back the container the shared Reader wraps it in. */
 async function render(props: Omit<Parameters<Mod["MessageBody"]>[0], "owner">): Promise<HTMLDivElement> {
   await unmount();
   const { MessageBody } = await mod();

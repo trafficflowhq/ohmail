@@ -26,11 +26,10 @@ it("wraps the whole address in the revoke confirmation at phone width", async ()
         outranked: false,
         queued: false,
         places: [],
-        refile: { label: "", note: "", on: "" },
         finds: address,
       },
     ],
-    intro: words("intro"),
+    intro: null,
     introHeld: "",
     locked: "",
     facets: [],
@@ -39,7 +38,7 @@ it("wraps the whole address in the revoke confirmation at phone width", async ()
   }).rest;
   drawn(<RulesPane model={model} />);
   fireEvent.click(screen.getByRole("button", { name: words("revoke") }));
-  const dialog = screen.getByRole("dialog", { name: words("revokeConfirm") });
+  const dialog = screen.getByRole("dialog", { name: "Revoke 1 rule" });
   expect(dialog.textContent).toContain(address);
 
   const browser = await chromium.launch();

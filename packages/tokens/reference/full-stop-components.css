@@ -14,6 +14,9 @@
   --sheet-back-max-width: 60%;
   --sheet-back-icon: 22px;
   --sheet-back-gap: 2px;
+
+  /* core/core.js: the width available to the squares in an unfolded heading. */
+  --sq-head-max-w: 300px;
 }
 
 :root[data-rm="1"],

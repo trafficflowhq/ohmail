@@ -1,7 +1,7 @@
 /**
  * The desktop reader's ActionBar in the glass grammar — pinned at the reading pane's foot on
  * every big flat surface (the caller owns the pinning). The arrangement is the webapp's
- * (`MessagePane.tsx` + `bar-density.ts`): Reply the one accent capsule, then the verbs IN ROW
+ * (`packages/app/src/reader` + `bar-density.ts`): Reply the one accent capsule, then the verbs IN ROW
  * ORDER — Reply all, Forward, the Not-now segment, Tag, the File-it segment — the read switch
  * beside them, ⋯ last. ROW ORDER IS FOLD ORDER: verbs are admitted greedily while they fit
  * (`fold.ts#admitVerbs`), a later verb never stands while an earlier one folds, a folded verb

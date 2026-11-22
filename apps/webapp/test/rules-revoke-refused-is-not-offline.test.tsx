@@ -102,7 +102,7 @@ function rowOf(id: string) {
 }
 async function revoke(id: string): Promise<string> {
   await press(buttonIn(rowOf(id)!, R.revoke));
-  await press(buttonIn(within(host).getByRole("dialog", { name: R.revokeConfirm }), R.revokeConfirm));
+  await press(buttonIn(within(host).getByRole("dialog", { name: "Revoke 1 rule" }), R.revoke));
   return host.textContent ?? "";
 }
 
@@ -124,7 +124,7 @@ describe("what a queued revoke says", () => {
     await open([rule("a", "b@r34n.example")], { status: "queued", serverFailed: true });
     const text = await revoke("a");
     expect(text).toContain(R.toastRevokeFailing);
-    expect(text).not.toContain(R.toastRevokeQueued);
+    expect(text).not.toContain(R.toastRevokeQueued.replace(/\.$/u, ""));
     expect(text).not.toContain(R.toastRevoked);
   });
 
@@ -132,14 +132,14 @@ describe("what a queued revoke says", () => {
     setOnline(false);
     await open([rule("a", "b@r34n.example")], { status: "queued" });
     const text = await revoke("a");
-    expect(text).toContain(R.toastRevokeQueued);
+    expect(text).toContain(R.toastRevokeQueued.replace(/\.$/u, ""));
   });
 
   it("online and unanswered: not arrived yet, not 'back online'", async () => {
     await open([rule("a", "b@r34n.example")], { status: "queued" });
     const text = await revoke("a");
-    expect(text).toContain(R.toastRevokeUnsent);
-    expect(text).not.toContain(R.toastRevokeQueued);
+    expect(text).toContain(R.toastRevokeUnsent.replace(/\.$/u, ""));
+    expect(text).not.toContain(R.toastRevokeQueued.replace(/\.$/u, ""));
   });
 
   it("a retarget the server refused says so too", async () => {
@@ -204,7 +204,7 @@ describe("a rule with a queued revoke is shown as it runs", () => {
     await open([rule("a", "b@r34n.example"), rule("b", "c@one.example"), rule("c", "d@two.example")], { status: "confirmed" }, queuedOf(true), (id) => { pressed.push(id); });
     await press(buttonIn(host, /^Revoke all 2 matching/));
     const dialog = within(host).getByRole("dialog", { name: "Revoke 2 rules" });
-    await press(buttonIn(dialog, "Revoke 2 rules"));
+    await press(buttonIn(dialog, R.revoke));
     expect(pressed.sort()).toEqual(["b", "c"]);
   });
 

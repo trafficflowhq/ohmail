@@ -191,7 +191,7 @@ const linesOf = (el: HTMLElement): HolderRow[] =>
   [...(el.querySelector("h1")?.closest("form")?.querySelectorAll<HTMLElement>('[role="group"][aria-labelledby]') ?? [])]
     .map((g) => ({
       label: (document.getElementById(g.getAttribute("aria-labelledby")!)?.textContent ?? "").trim(),
-      description: (g.nextElementSibling?.textContent ?? "").trim(),
+      description: (g.querySelector(".oh-settingline-text")?.textContent ?? "").trim(),
     }));
 
 async function mount(initial: OnboardingMailbox): Promise<Harness> {
@@ -212,7 +212,7 @@ async function mount(initial: OnboardingMailbox): Promise<Harness> {
 
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith(label));
+      .find((b) => (b.getAttribute("aria-label") ?? b.textContent ?? "").trim().startsWith(label));
     if (!button) {
       throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
         + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
@@ -261,7 +261,7 @@ const SINCE = tm.readerSinceUnknown.slice(0, tm.readerSinceUnknown.indexOf("{sin
 async function onSummary(initial: OnboardingMailbox = CLOUD): Promise<Harness> {
   const s = await mount(initial);
   expect(s.heading(), "the walk to the summary did not start on the claim question")
-    .toBe(t.elsewhereTitle);
+    .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   await s.pick("read");
   await s.press(t.continue);
   expect(s.heading(), "the walk did not reach the reader summary").toBe(t.doneReaderTitle);
@@ -288,13 +288,13 @@ async function onSummary(initial: OnboardingMailbox = CLOUD): Promise<Harness> {
  */
 async function onElsewhere(): Promise<Harness> {
   const s = await mount(CLOUD);
-  expect(s.heading()).toBe(t.elsewhereTitle);
+  expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   await s.pick("here");
   await s.press(t.continue);
   expect(s.heading(), "'Organize here instead' did not reach the consent statement")
-    .toBe(t.consentTitle);
+    .toBe(t.mapTitle);
   await s.press(t.back);
-  expect(s.heading(), "Back did not park the cursor on the claim question").toBe(t.elsewhereTitle);
+  expect(s.heading(), "Back did not park the cursor on the claim question").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   return s;
 }
 
@@ -422,10 +422,10 @@ describe("SURFACE 2 — the claim question's banner", () => {
     const s = await onElsewhere();
     await s.move(NOBODY);
     expect(s.heading(), "a screen about another install stood over a mailbox nothing organizes")
-      .not.toBe(t.elsewhereTitle);
-    expect(s.heading(), "the run lost its place instead of moving on").toBe(t.consentTitle);
+      .not.toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
+    expect(s.heading(), "the run lost its place instead of moving on").toBe(t.mapTitle);
     expect(s.text(), "the lead about a second install survived the install")
-      .not.toContain(t.elsewhereLead);
+      .not.toContain("This mailbox already has an organizer. Two installs never organize one mailbox at once.");
     expect(s.text(), "a relationship with an install that does not exist")
       .not.toContain(tm.readerHolderUnknown);
   });
@@ -453,19 +453,19 @@ describe("SURFACE 2 — the claim question's banner", () => {
        carrying a stamp — "Organize here instead", which moves the cursor two screens ahead of the
        write that would end the situation, then Back. */
     const s = await mount({ ...CLOUD, organizerEventAt: t2 });
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.pick("here");
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     await s.press(t.back);
     expect(s.heading(), "the walk did not park the cursor on the claim question")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // A read prepared BEFORE the holder was recorded, landing now. It says the same thing a
     // current one would; only its stamp says it is not news.
     await s.move({ ...NOBODY, organizerEventAt: t1 });
     expect(s.heading(), "a late-landing read took the claim question away")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     /* AND A READ THAT OMITS THE FIELD ALTOGETHER is not an answer either, whatever its stamp
        says. Both producers used to normalize this into "nobody", which is what made the arm
@@ -475,13 +475,13 @@ describe("SURFACE 2 — the claim question's banner", () => {
     delete noField.organizedBy;
     await s.move(noField as unknown as OnboardingMailbox);
     expect(s.heading(), "a read that said nothing about the organizer took the screen away")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // …and the release actually happening does move the run on, which is what keeps the rule
     // above from being a screen nobody can leave.
     await s.move({ ...NOBODY, organizerEventAt: t3 });
     expect(s.heading(), "the release the person is waiting for did not move the run on")
-      .not.toBe(t.elsewhereTitle);
+      .not.toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   });
 
   /**
@@ -500,27 +500,27 @@ describe("SURFACE 2 — the claim question's banner", () => {
     const t3 = "2026-09-07T09:10:00.000Z";
 
     const s = await mount({ ...CLOUD, organizerEventAt: t3 });
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.pick("here");
     await s.press(t.continue);
     await s.press(t.back);
     expect(s.heading(), "the walk did not park the cursor on the claim question")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // A HOLDER read issued before that one, landing now. It still names a holder, so the screen
     // is right to stay — the question is what it does to the floor.
     await s.move({ ...CLOUD, organizerEventAt: t2 });
-    expect(s.heading(), "a read that still names a holder took the screen away").toBe(t.elsewhereTitle);
+    expect(s.heading(), "a read that still names a holder took the screen away").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // The floor must still be the third instant, so a `nobody` at the second is older and refused.
     await s.move({ ...NOBODY, organizerEventAt: t2 });
     expect(s.heading(), "a late holder read lowered the floor and let an older nobody through")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // …and the third is not older, so the genuine release still lands.
     await s.move({ ...NOBODY, organizerEventAt: t3 });
     expect(s.heading(), "the floor stopped the release it was supposed to admit")
-      .not.toBe(t.elsewhereTitle);
+      .not.toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   });
 
   it("(b) CONTROL: a recorded holder with no name is unchanged here", async () => {

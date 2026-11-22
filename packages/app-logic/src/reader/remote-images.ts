@@ -61,7 +61,7 @@ export interface RemoteImagesChrome {
   consent: (messageId: string) => void;
   /**
    * Does this account load remote images without being asked? The account setting, carried on the
-   * chrome so the two surfaces that render a message (`MessagePane`, `Conversation`) read one
+   * chrome so the two surfaces that render a message (the shared Reader and the conversation column, `packages/app/src/reader`) read one
    * answer. `true` ⇒ pictures come through the proxy on open and there is no per-message button
    * (a sender not let in still waits for one, {@link autoLoadsImages});
    * `false` ⇒ the bar counts what was blocked and offers "Show images". It changes NOTHING about
@@ -184,7 +184,7 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
 
   /**
    * THE CHROME'S IDENTITY IS A PERFORMANCE CONTRACT, SO `onFailed` RIDES A REF: The stream cards compare this hook's
-   * return BY REFERENCE (`StreamCardMemo`'s comparator), because a changed chrome is exactly when every mounted card
+   * return BY REFERENCE (`packages/app/src/stream`'s card comparator), because a changed chrome is exactly when every mounted card
    * must re-sanitize — a setting flipped, a consent recorded. The one caller passes `onFailed` as an inline arrow, so
    * its identity changes on every shell render — including the render every `/sync` apply causes — and an `onFailed`
    * dependency here would hand the stream a fresh chrome per poll, re-running the sanitizer over every mounted card

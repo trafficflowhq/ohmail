@@ -5,7 +5,7 @@
  * cannot act is a small lie); a reader whose organizer files what is decided here says who files it; a sender
  * decided here waits for that organizer; a decision the organizer refused says so.
  */
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import {
   DECISION_KEY,
   DECISION_ORDER,
@@ -54,7 +54,9 @@ function refusal(t: Text, reason: string | null | undefined): string {
 export function Panel({ view }: { view: ScreenerView }) {
   const t = useText("screener");
   const model = useScreener();
-  const { commands } = useFrame();
+  const { commands, plan } = useFrame();
+  const narrow = plan.device === "phone" || (plan.device === "fold" && plan.pose !== "land");
+  const [folded, setFolded] = useState<readonly string[]>([]);
   const moreAt = useRef<HTMLElement | null>(null);
   const { role } = model;
   const open = view.open === null ? null : viewSender(view.open);
@@ -82,25 +84,38 @@ export function Panel({ view }: { view: ScreenerView }) {
     notes.push({
       note:
         readerHolder(role) === "named"
-          ? t("pendingBarTitle", { name: role.name })
-          : t("pendingBarTitleUnknown"),
+          ? t(narrow ? "place.pendingNamedShort" : "pendingBarTitle", { name: role.name })
+          : t(narrow ? "place.pendingUnknownShort" : "pendingBarTitleUnknown"),
       keep: true,
     });
+  const offersUnsubscribe = model.unsubClaimOf(open, view.scopeOf(open)) !== "none";
   /* As the sheet draws them: each with its place's sign, the suggested one the ink, the others words that act. */
-  const verbs: PanelVerb[] = DECISION_ORDER.map((dest) => ({
-    id: dest,
-    label: t(PILE_VERB_KEY[dest]),
-    icon: DECISION_ICON[dest],
-    keyHint: DECISION_KEY[dest],
-    kind: view.accept === dest ? "ink" : undefined,
-    rank: dest === "ohbox" || view.accept === dest ? 0 : undefined,
-    onPress: () => view.decide(dest, false),
-  }));
+  const verbs = DECISION_ORDER.map(
+    (dest) =>
+      ({
+        id: dest,
+        label:
+          narrow && offersUnsubscribe && dest === "screened"
+            ? t("place.screenOutPlusUnsub")
+            : t(PILE_VERB_KEY[dest]),
+        icon: DECISION_ICON[dest],
+        keyHint: DECISION_KEY[dest],
+        kind: view.accept === dest ? "ink" : undefined,
+        rank: dest === "ohbox" || view.accept === dest ? 0 : undefined,
+        segment: DECISION_QUIET.has(dest) ? "out" : "in",
+        onPress: () => view.decide(dest, false),
+      }) satisfies PanelVerb,
+  );
+  const actionItems: (PanelVerb | PanelNote)[] = [...notes, ...verbs];
+  if (!narrow && offersUnsubscribe) {
+    actionItems.splice(notes.length + DECISION_ORDER.indexOf("screened"), 0, { note: t("place.plusUnsub") });
+  }
   return (
     <>
       <ActionPanel
         label={label}
-        items={[...notes, ...verbs]}
+        items={actionItems}
+        onFold={setFolded}
         more={{
           label: t("place.more"),
           behind: true,
@@ -119,6 +134,24 @@ export function Panel({ view }: { view: ScreenerView }) {
         up
         right
       >
+        {verbs
+          .filter((verb) => folded.includes(verb.id))
+          .map((verb) => (
+            <MenuItem
+              key={verb.id}
+              label={verb.label}
+              note={
+                offersUnsubscribe && DECISION_QUIET.has(verb.id) && (!narrow || verb.id === "spam")
+                  ? t("place.plusUnsub")
+                  : undefined
+              }
+              icon={verb.icon}
+              keyHint={verb.keyHint}
+              onPress={verb.onPress}
+            >
+              {verb.label}
+            </MenuItem>
+          ))}
         {DECISION_ORDER.filter((dest) => !DECISION_QUIET.has(dest)).map((dest) => (
           <MenuItem
             key={dest}
@@ -128,9 +161,6 @@ export function Panel({ view }: { view: ScreenerView }) {
             {t("barMarkRead", { dest: t(PILE_KEY[dest]) })}
           </MenuItem>
         ))}
-        <MenuItem keyHint="s" onPress={() => view.show("card")}>
-          {t("place.keyCard")}
-        </MenuItem>
       </Menu>
     </>
   );

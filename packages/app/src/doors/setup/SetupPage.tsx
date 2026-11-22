@@ -6,7 +6,7 @@
  * says what the state says. Its words are the `setup` namespace's.
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { Button, Page, Tag } from "@ohmail/ui/base";
+import { Button, Page } from "@ohmail/ui/base";
 import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
 import { AccountSentence, accountWanted, useWanted } from "../stage/AccountSentence.js";
@@ -127,7 +127,6 @@ function SetupForm(p: {
         stack
         smaller
         /* The page's name, as the shipped page named it, at its top where the design leaves the room empty. */
-        back={<Tag>{setup("title")}</Tag>}
         aside={<Steps said={setup("progress")} part="1/3" />}
         refusal={state.refusal === null ? undefined : [state.refusal]}
         material={<TokenWhere door={door} setup={setup} />}

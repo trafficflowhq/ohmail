@@ -44,14 +44,13 @@ describe("syncsWhileHidden — the desktop sync-visibility flag", () => {
     // Strip comments first — the file's prose names `visibility: null` while explaining the gate,
     // and only the CODE decides what runs. Same approach the shared-shell guards use.
     const engineTsx = raw.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-    // The gated form is present: visibility is nulled inside a `syncsWhileHidden() ? … : {}` spread.
-    expect(engineTsx).toMatch(
-      /syncsWhileHidden\(\)\s*\?\s*\{\s*visibility:\s*null\s*\}\s*:\s*\{\s*\}/,
-    );
-    // …and EVERY `visibility: null` in the code is gated that way — no unconditional one slipped in.
-    const nulls = engineTsx.match(/visibility:\s*null/g) ?? [];
-    const gated = engineTsx.match(/syncsWhileHidden\(\)\s*\?\s*\{\s*visibility:\s*null/g) ?? [];
-    expect(nulls.length).toBeGreaterThan(0);
-    expect(gated.length).toBe(nulls.length);
+    const gated = engineTsx.match(
+      /syncsWhileHidden\(\)\s*\?\s*\{\s*visibility:\s*null,\s*online:\s*null\s*\}\s*:\s*\{\s*\}/g,
+    ) ?? [];
+    expect(gated).toHaveLength(1);
+    for (const option of ["visibility", "online"]) {
+      const nulls = engineTsx.match(new RegExp(`\\b${option}:\\s*null\\b`, "g")) ?? [];
+      expect(nulls).toHaveLength(gated.length);
+    }
   });
 });

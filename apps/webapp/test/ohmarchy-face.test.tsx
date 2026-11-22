@@ -173,7 +173,7 @@ describe("account adoption is LIVE-WIRE only", () => {
       "the mirror was wiped by an answer nobody gave").toBe("ohmarchy");
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
     // and the account-write affordances stay withheld — no offer without live knowledge
-    expect(container.textContent).not.toContain("Go full Ohmarchy Theme");
+    expect(container.textContent).not.toContain("ohmarchy on this computer");
   });
 });
 
@@ -550,14 +550,14 @@ describe("the Option B offer (Linux device)", () => {
     const { container } = await mountMailPage();
     // the detection default, device-only
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
-    expect(container.textContent).toContain("Go full Ohmarchy Theme on all your devices");
+    expect(container.textContent).toContain("All devices");
 
-    await click(within(container).getByRole("button", { name: "Go full Ohmarchy Theme on all your devices" }));
+    await click(within(container).getByRole("button", { name: "All devices" }));
     await tickMailPage(0);
     expect(server.on("PATCH /api/consent/settings").map((entry) => entry.body)).toEqual([{ themeFace: "ohmarchy" }]);
     expect(window.localStorage.getItem("ohmail.face.account")).toBe("ohmarchy");
     expect(window.localStorage.getItem("ohmail.faceOffer")).toBe("done");
-    expect(container.textContent).not.toContain("Go full Ohmarchy Theme on all your devices");
+    expect(container.textContent).not.toContain("All devices");
   });
 
   it("dismissal keeps the device default, is remembered, and the next mount stays quiet", async () => {
@@ -565,14 +565,14 @@ describe("the Option B offer (Linux device)", () => {
     await prepareMailPage();
     const { container, unmount } = await mountMailPage();
     await click(within(container).getByRole("button", { name: "Not now" }));
-    expect(container.textContent).not.toContain("Go full Ohmarchy Theme");
+    expect(container.textContent).not.toContain("ohmarchy on this computer");
     // the dismissal answers the OFFER, not the detection — this device stays ohmarchy
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
     expect(window.localStorage.getItem("ohmail.faceOffer")).toBe("done");
 
     unmount();
     const { container: second } = await mountMailPage();
-    expect(second.textContent).not.toContain("Go full Ohmarchy Theme");
+    expect(second.textContent).not.toContain("ohmarchy on this computer");
   });
 
   it("an explicit prior choice wins over detection — no offer, no ohmarchy", async () => {
@@ -581,12 +581,12 @@ describe("the Option B offer (Linux device)", () => {
     window.localStorage.setItem("ohmail.face", "paper");
     const { container } = await mountMailPage();
     expect(document.documentElement.dataset.face).toBe("paper");
-    expect(container.textContent).not.toContain("Go full Ohmarchy Theme");
+    expect(container.textContent).not.toContain("ohmarchy on this computer");
   });
 
   it("never on a non-Linux device", async () => {
     await prepareMailPage();
     const { container } = await mountMailPage();
-    expect(container.textContent).not.toContain("Go full Ohmarchy Theme");
+    expect(container.textContent).not.toContain("ohmarchy on this computer");
   });
 });

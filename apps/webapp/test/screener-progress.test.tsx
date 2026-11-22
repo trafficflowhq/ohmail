@@ -80,12 +80,12 @@ describe("the apply-all run's progress", () => {
     const world = mount({ ...gate, applying: { done: 7, total: 40 } });
     const progress = screen.getByText("Applying 7 of 40…");
     expect(progress.getAttribute("role")).toBe("status");
-    expect(screen.queryByRole("button", { name: "Apply 3 — Ohbox & News" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply 3" })).toBeNull();
     fireEvent.click(progress);
     expect(applyAll).not.toHaveBeenCalled();
 
     world.again(modelOf({ flushes: 0 }, { ...gate, applying: null }));
-    const idle = screen.getByRole<HTMLButtonElement>("button", { name: "Apply 3 — Ohbox & News" });
+    const idle = screen.getByRole<HTMLButtonElement>("button", { name: "Apply 3" });
     expect(idle.disabled).toBe(false);
     expect(idle.getAttribute("aria-busy")).toBeNull();
     fireEvent.click(idle);

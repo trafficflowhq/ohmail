@@ -42,7 +42,7 @@ import { useOpenAndCursor } from "./live-open.js";
 import { useOhboxVerbs } from "./live-verbs.js";
 import { useOhboxList } from "./ohbox-list.js";
 import { useReplyDone } from "../writing/reply-done.js";
-import type { OhboxListInput, OhboxListModel } from "./types.js";
+import type { OhboxListInput, OhboxListModel, TagMenuPoint } from "./types.js";
 
 export type { ListAnswer };
 
@@ -81,7 +81,7 @@ export interface OhboxLiveOwn {
   /** More than one person besides the sender has the letter. */
   readonly replyAll: (m: EngineMessage) => boolean;
   /** The place's tag picker, pointed at a set of letters. */
-  readonly pickTags: (ids: string[], anchor: HTMLElement | null) => void;
+  readonly pickTags: (ids: string[], anchor: HTMLElement | null, point?: TagMenuPoint) => void;
   /** A row was entered where one column stands: the keyboard goes to the letter over the list. */
   readonly onRowEntered: (id: string) => void;
   /** Stands a cursor row's question (Move's places, Delete's ask) or takes it away: the seat draws it. */
@@ -240,7 +240,9 @@ export function useOhboxLive(
     owed: mail.owed,
     onDoorbell: useStableCallback(() => commands.go({ place: "screener" })),
     onAction: verbs.onMessageAction,
-    onAddTag: useStableCallback((id: string, anchor: HTMLElement | null) => own.pickTags([id], anchor)),
+    onAddTag: useStableCallback((id: string, anchor: HTMLElement | null, point?: TagMenuPoint) =>
+      own.pickTags([id], anchor, point),
+    ),
     onDropTag: verbs.dropTag,
     bulk: verbs.bulkVerbs,
     onMarkAllRead: markAllRead,

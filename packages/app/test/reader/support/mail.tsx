@@ -43,6 +43,9 @@ import doorsDe from "../../../messages/doors.de.json" with { type: "json" };
 import searchEn from "../../../messages/search.en.json" with { type: "json" };
 import searchDe from "../../../messages/search.de.json" with { type: "json" };
 
+import tagsEn from "../../../messages/tags.en.json" with { type: "json" };
+import tagsDe from "../../../messages/tags.de.json" with { type: "json" };
+
 import { fakeMail, letter } from "./fake-mail.js";
 
 export { fakeMail, letter, type FakeMail } from "./fake-mail.js";
@@ -57,6 +60,7 @@ export const WORDS: Readonly<Record<"en" | "de", Messages>> = {
     ...doorsEn,
     ...searchEn,
     ...readerEn,
+    ...tagsEn,
   } as Messages,
   de: {
     ...FRAME_WORDS.de,
@@ -67,6 +71,7 @@ export const WORDS: Readonly<Record<"en" | "de", Messages>> = {
     ...doorsDe,
     ...searchDe,
     ...readerDe,
+    ...tagsDe,
   } as Messages,
 };
 

@@ -214,9 +214,11 @@
 :root[data-rm="1"] .fr-railsheet:not(.fr-rail-preview) {
   animation: fr-rail-fade-in var(--d-reduced) var(--e-std) backwards;
 }
+[data-drawer-edge],
+[data-drawer-edge] [data-reading-scroll],
 [data-drawer-dock],
 [data-drawer-toggle] {
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
 }
 @keyframes fr-rail-slide-in {
   from {

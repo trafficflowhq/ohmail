@@ -239,7 +239,7 @@ function LabWrap(o: { initial?: ComposeAttachment[]; maxTotalBytes?: number; cap
     open
       ? h(ComposeAttach as never, {
           // `clone` reproduces the reply panel's exact wiring: a fresh array every render
-          // (`InlineReply` passes `[...attachments]`), so nothing downstream may depend on the
+          // (the reply editor passes `[...attachments]`), so nothing downstream may depend on the
           // ARRAY keeping identity — only the rows do.
           attachments: o.clone ? [...form.atts] : form.atts,
           onChange: (next: ComposeAttachment[]) => {

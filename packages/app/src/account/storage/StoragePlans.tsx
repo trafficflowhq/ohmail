@@ -1,5 +1,4 @@
-import { Button } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { ActionPanel, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText, type Text } from "../../text/index.js";
 import type { StorageFigures, StorageModel, StoragePlan } from "./model.js";
 import { refusalSaid } from "./said.js";
@@ -9,8 +8,6 @@ type Plans = NonNullable<StorageFigures["plans"]>;
 export interface StoragePlansProps {
   readonly model: StorageModel;
   readonly plans: Plans;
-  /** The build links out: amounts are drawn, and the plan can be changed where the program offers it. */
-  readonly linksOut: boolean;
 }
 
 /**
@@ -19,7 +16,7 @@ export interface StoragePlansProps {
  * figure. Change plan and Add storage stand only where the build links out and the program offered a change; both
  * open the same page, and both are off while the change is on its way or waits for the factor.
  */
-export function StoragePlans({ model, plans, linksOut }: StoragePlansProps) {
+export function StoragePlans({ model, plans }: StoragePlansProps) {
   const t = useText("settings");
   const own = useText("accountStorage");
   const devices = useText("devices");
@@ -34,60 +31,62 @@ export function StoragePlans({ model, plans, linksOut }: StoragePlansProps) {
     >
       {refused !== null && nothingRan !== null ? <SettingNote warn>{nothingRan}</SettingNote> : null}
       {plans.lines.map((plan) => (
-        <PlanLines key={plan.plan} t={t} plan={plan} linksOut={linksOut} />
+        <PlanLines key={plan.plan} t={t} plan={plan} />
       ))}
       {plans.addon === null ? null : (
-        <>
-          <SettingLine label={t("storageAddonName")} tag={t("storageTagAddon")} value={plans.addon.unit} />
-          {linksOut && plans.addon.price !== null ? <SettingNote>{plans.addon.price}</SettingNote> : null}
-          <SettingNote>{t("storageLetters", { count: plans.addon.letters })}</SettingNote>
-          <SettingNote>{t("storageAddonEach")}</SettingNote>
-          <SettingNote>{t("storageAddonMax", { count: plans.addon.most })}</SettingNote>
-        </>
+        <SettingLine
+          label={t("storageAddonName")}
+          tag={t("storageTagAddon")}
+          value={t("storageAddonFacts", { count: plans.addon.letters })}
+          figure={plans.addon.unit}
+        />
       )}
-      {linksOut && plans.mayChange ? (
-        <>
-          <Button kind="ink" size="s" disabled={model.changing} onPress={model.change}>
-            {t("storageChangePlan")}
-          </Button>
-          {plans.addon === null ? null : (
-            <Button kind="two" size="s" disabled={model.changing} onPress={model.change}>
-              {t("storageAddStorage")}
-            </Button>
-          )}
-          <SettingNote>{t("storageOpensPage")}</SettingNote>
-        </>
-      ) : null}
     </SettingsSheet>
   );
 }
 
-/** One plan: its name with its tag and its room, then its price where one may be shown, its facts and what it adds. */
-function PlanLines({
-  t,
-  plan,
-  linksOut,
-}: {
-  readonly t: Text;
-  readonly plan: StoragePlan;
-  readonly linksOut: boolean;
-}) {
+export function StoragePlanActions({ model, add }: { readonly model: StorageModel; readonly add: boolean }) {
+  const t = useText("settings");
+  return (
+    <ActionPanel
+      label={t("storagePlansHead")}
+      items={[
+        {
+          id: "change-plan",
+          rank: 0,
+          icon: "go",
+          label: t("storageChangePlan"),
+          kind: "ink",
+          disabled: model.changing,
+          onPress: model.change,
+        },
+        ...(add
+          ? [
+              {
+                id: "add-storage",
+                rank: 0,
+                icon: "plus",
+                label: t("storageAddStorage"),
+                kind: "soft",
+                disabled: model.changing,
+                onPress: model.change,
+              } as const,
+            ]
+          : []),
+      ]}
+    />
+  );
+}
+
+function PlanLines({ t, plan }: { readonly t: Text; readonly plan: StoragePlan }) {
   const tag =
     plan.tag === "yours" ? t("storageTagYours") : plan.tag === "keepsAll" ? t("storageTagFits") : undefined;
-  const { fit } = plan;
   return (
-    <>
-      <SettingLine label={t("storagePlanName", { plan: plan.plan })} tag={tag} value={plan.room} />
-      {linksOut && plan.price !== null ? <SettingNote>{plan.price}</SettingNote> : null}
-      <SettingNote>{t("storageLetters", { count: plan.letters })}</SettingNote>
-      <SettingNote>{t("storageMailboxes", { count: plan.mailboxes })}</SettingNote>
-      {fit === null ? null : (
-        <SettingNote>
-          {linksOut && fit.price !== null
-            ? t("storageFitWith", { extra: fit.extra, room: fit.room, price: fit.price })
-            : t("storageFitWithStore", { extra: fit.extra, room: fit.room })}
-        </SettingNote>
-      )}
-    </>
+    <SettingLine
+      label={t("storagePlanName", { plan: plan.plan })}
+      tag={tag}
+      value={t("storagePlanFacts", { count: plan.letters, mailboxes: plan.mailboxes })}
+      figure={plan.room}
+    />
   );
 }

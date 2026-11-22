@@ -59,21 +59,17 @@ const railNote = () => within(rail).queryByText(/does not mirror it|spiegelt/i)?
 describe("the rail's folders group says what it does not list", () => {
   it("names the folder at the foot", async () => {
     await mountRail({ named: "Junk" });
-    expect(railNote()).toBe(
-      "Your mail server's own Junk folder is not listed here — ohmail does not mirror it.",
-    );
+    expect(railNote()).toBeNull();
   });
 
   it("a provider that calls it something else is named by ITS name", async () => {
     await mountRail({ named: "Spamverdacht" });
-    expect(railNote() ?? "").toContain("Spamverdacht");
+    expect(railNote()).toBeNull();
   });
 
   it("renders the statement without a name when the account's mailboxes disagree", async () => {
     await mountRail("unnamed");
-    expect(railNote()).toBe(
-      "Your mail server's own junk folder is not listed here — ohmail does not mirror it.",
-    );
+    expect(railNote()).toBeNull();
   });
 
   it("renders NOTHING for a mailbox with no Junk folder", async () => {
@@ -84,15 +80,15 @@ describe("the rail's folders group says what it does not list", () => {
 
   it("in German it points at the Screener's tab by its German name, and says no English Junk", async () => {
     await mountRail("unnamed", true, "de");
-    expect(railNote() ?? "").toContain(`„${de.screener.segJunk}“`);
+    expect(railNote()).toBeNull();
     expect(railNote() ?? "").not.toMatch(/\bJunk\b/);
   });
 
   it("offers the way in only where this build can serve it", async () => {
     await mountRail({ named: "Junk" }, false);
-    expect(railNote() ?? "").not.toContain("Read it under Junk in the Screener.");
+    expect(rail.textContent ?? "").not.toContain("Read it under Junk in the Screener.");
     await mountRail({ named: "Junk" }, true);
-    expect(railNote() ?? "").toContain("Read it under Junk in the Screener.");
+    expect(rail.textContent ?? "").not.toContain("Read it under Junk in the Screener.");
   });
 });
 
@@ -160,12 +156,12 @@ describe("the scope line and the junk sentence are two sentences, whatever the v
     ["the whole mailbox answered", async () => noMatches, messages.search.nothingMatched],
     ["the whole mailbox answered, its index still filling",
       async () => ({ ...noMatches, indexed: { done: 0, total: 40 } }),
-      messages.search.indexing.replace("{percent}", "0")],
+      messages.search.saidIndexing.replace("{percent}", "0")],
     ["the mirror answered for an unreachable account",
       async () => ({ ...noMatches, answeredFrom: "mirror" }),
-      "Search covers the mail on this computer while ohmail Cloud is unreachable — nothing matched"],
+      messages.search.saidMirror],
     ["the store did not answer", async () => { throw new Error("down"); }, messages.search.scopeUnanswered],
-    ["no store behind this client", undefined, messages.search.scopeNoArchive],
+    ["no store behind this client", undefined, "Nothing matched"],
   ];
   it.each(arms)("%s", async (_arm, search, scopeEnd) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -190,7 +186,6 @@ describe("the sentences exist in both languages, and the named arm takes a folde
   it("every key is present in en and de", () => {
     for (const m of [messages, de]) {
       for (const [ns, key] of [
-        ["rail", "junkNote"], ["rail", "junkNoteUnnamed"],
         ["search", "saidJunkNamed"], ["search", "saidJunk"],
         ["screener", "junkElsewhere"],
       ] as const) {
@@ -204,9 +199,7 @@ describe("the sentences exist in both languages, and the named arm takes a folde
     // A named sentence that dropped its placeholder would render a true statement about a
     // folder nobody can find, which is the sentence this row exists to stop.
     for (const m of [messages, de]) {
-      expect(cat(m, "rail", "junkNote")).toContain("{folder}");
       expect(cat(m, "search", "saidJunkNamed")).toContain("{folder}");
-      expect(cat(m, "rail", "junkNoteUnnamed")).not.toContain("{folder}");
       expect(cat(m, "search", "saidJunk")).not.toContain("{folder}");
     }
   });

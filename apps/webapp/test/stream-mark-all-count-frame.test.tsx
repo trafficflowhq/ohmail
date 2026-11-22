@@ -151,11 +151,11 @@ it.each([
   expect(screen.getByRole("menuitem", { name })).toBeTruthy();
 });
 
-it("offers no Mark all read action when the stream is empty", async () => {
+it("keeps Mark all read disabled in the empty stream's list menu", async () => {
   const el = await mountNews("en", { empty: true });
   const header = within(within(el).getByRole("region", { name: "News" })).getByRole("banner");
   expect(within(header).getByText("Nothing new since you were here")).toBeTruthy();
-  const menu = within(header).queryByRole("button", { name: "List" });
-  if (menu) fireEvent.click(menu);
-  expect(screen.queryByRole("menuitem", { name: /^Mark/ })).toBeNull();
+  fireEvent.click(within(header).getByRole("button", { name: "List" }));
+  const all = screen.getByRole<HTMLButtonElement>("menuitem", { name: "Mark all read" });
+  expect(all.disabled).toBe(true);
 });

@@ -36,11 +36,22 @@ journeysOf("ohbox", () => {
     await person.see("conversation", { named });
   });
   journey(GUARDS[3]!, async (b) => {
-    const { person, named } = await personWith(b, NEW);
+    const { person, named, row, account } = await personWith(b, NEW);
     await person.arrive("ohbox");
     await person.see("conversation", { named });
     b.faults.push((_method, path) => path === "/sync" || path === "/sync/snapshot" ? "hold" : null);
     expect(await firstCachedOhboxPaint(person, NEW.subject)).toEqual({ rows: true, waiting: false });
+
+    const unread = say("ohbox.row.unread", {}, person.lang);
+    expect((await person.spoken("conversation", { named })).description).toContain(unread);
+    await expect.poll(() => b.held().some((request) => request === "GET /sync" || request === "GET /sync/snapshot"),
+      { timeout: 20_000 }).toBe(true);
+    const changed = await b.ask(account!, "PATCH", "/messages", {
+      session: "fresh", body: { ids: row.messageIds, unread: false },
+    });
+    expect(changed.status).toBe(200);
+    b.release();
+    await person.until(async () => !(await person.spoken("conversation", { named })).description.includes(unread), "the read mark from the server");
   });
   journey(GUARDS[4]!, async (b) => {
     const account = await b.account();

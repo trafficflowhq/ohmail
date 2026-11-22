@@ -180,7 +180,7 @@ function fileSenders(
       cx.toast(
         done.length === 0
           ? t("ohbox.toastBulkMoveFailed")
-          : t("ohbox.toastBulkMovedSenders", { senders: done.length, count: moved, place }),
+          : t("ohbox.toastBulkMovedSenders", { count: moved, place }),
       );
     });
   }
@@ -189,7 +189,6 @@ function fileSenders(
       plans: held,
       view,
       sentence: t("ohbox.toastBulkMovedSenders", {
-        senders: held.length,
         count: held.reduce((n, p) => n + p.plan.moved, 0),
         place,
       }),

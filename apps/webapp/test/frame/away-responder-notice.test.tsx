@@ -76,7 +76,7 @@ async function press(button: HTMLElement) {
   await tick(0);
 }
 
-const sentence = /people you've let in whose mail lands in Ohbox get a reply at most once a day/;
+const sentence = new RegExp(en.away.noticeTitle);
 
 async function bringAwayToFront(screen: ReturnType<typeof within>) {
   if (screen.queryByRole("button", { name: en.away.noticeSettings })) return;
@@ -88,13 +88,33 @@ async function bringAwayToFront(screen: ReturnType<typeof within>) {
   }
 }
 
-it("reports the enabled responder's audience, pile and rate, and opens its settings", async () => {
+it("reports that the responder is enabled and opens Away settings", async () => {
   const { screen, reads } = await mount(true, "#/ohbox");
   await bringAwayToFront(screen);
   expect(screen.queryAllByRole("status").filter((el) => sentence.test(el.textContent ?? ""))).toHaveLength(1);
   expect(reads).toHaveLength(1);
   await press(screen.getByRole("button", { name: en.away.noticeSettings }));
   expect(window.location.hash).toBe("#/settings/away");
+});
+
+it("dismisses the Away notice until the next reading without changing the responder", async () => {
+  const { screen, reads, writes } = await mount(true, "#/ohbox");
+  const count = () => screen.queryAllByRole("status").filter((el) => sentence.test(el.textContent ?? "")).length;
+  await bringAwayToFront(screen);
+  expect(count()).toBe(1);
+  await press(screen.getByRole("button", { name: en.away.noticeDismiss }));
+  expect(count()).toBe(0);
+  expect(reads).toHaveLength(1);
+
+  await act(async () => { window.location.hash = "#/settings/away"; });
+  await tick(3000);
+  expect(screen.getByRole("switch", { name: en.away.title }).getAttribute("aria-checked")).toBe("true");
+  await act(async () => { window.location.hash = "#/ohbox"; });
+  await tick(3000);
+  await bringAwayToFront(screen);
+  expect(count()).toBe(1);
+  expect(reads).toHaveLength(2);
+  expect(writes).toHaveLength(0);
 });
 
 const noticeCases: {
@@ -106,12 +126,12 @@ const noticeCases: {
 }[] = [
   {
     name: "people let in, Ohbox, daily", enabled: true, reads: 1,
-    words: "Away responder is on — people you've let in whose mail lands in Ohbox get a reply at most once a day.",
+    words: en.away.noticeTitle,
   },
   {
     name: "everyone, Receipts, weekly", enabled: true, reads: 1,
     options: { saved: { audience: "everyone", throttle: "per_week", piles: ["ohmail/Receipts"] } },
-    words: "Away responder is on — everyone who writes whose mail lands in Receipts gets a reply at most once a week.",
+    words: en.away.noticeTitle,
   },
   { name: "disabled", enabled: false, reads: 1 },
   { name: "no confirmed host wire", enabled: true, options: { unconfirmed: true }, reads: 0 },

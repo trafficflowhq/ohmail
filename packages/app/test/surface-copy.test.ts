@@ -44,13 +44,7 @@ describe("the sentences exist in both catalogues", () => {
   it("every key is in en and de", () => {
     for (const m of [searchEn, searchDe]) {
       const search = m.search as Record<string, string>;
-      for (const key of [
-        "scopeSynced",
-        "scopeSyncedAtLeast",
-        "scopeSyncedAbout",
-        "syncing",
-        "similarHintSynced",
-      ]) {
+      for (const key of ["saidSynced", "saidMirror", "saidPart"]) {
         expect(search[key], key).toBeTypeOf("string");
       }
     }

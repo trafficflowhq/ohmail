@@ -12,7 +12,7 @@ import {
 /**
  * THE ATTACHMENT STRIP, AGAINST THE CONTRACT THE DATA PATH IS BUILT TO.
  *
- * The component is mounted alone, on purpose: its wiring into `MessagePane` belongs to
+ * The component is mounted alone, on purpose: its wiring into the shared Reader belongs to
  * the slice that owns the data path, and these assertions are about the strip's own
  * promises — which states are pressable, what each state SAYS, and the consent gate on
  * the thumbnail. The last one is the assertion that costs the most to lose: `objectUrl`

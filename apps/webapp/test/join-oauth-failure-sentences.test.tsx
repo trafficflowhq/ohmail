@@ -181,7 +181,7 @@ describe("the wizard words a failed Microsoft sign-in itself", () => {
     await signInReturns("oauth=pending&state=STATE-F&code=CODE-F");
     listed = [MAILBOX];
     const ui = await wizard();
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_connected_title);
-    expect(ui.host.textContent).toContain(en.join.mailboxConnected.replace("{address}", ADDRESS));
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.myMailboxes.replace(/\.$/, ""));
+    expect([...ui.host.querySelectorAll(".oh-tag")].map((tag) => tag.textContent)).toEqual(expect.arrayContaining([ADDRESS, en.join.connected]));
   });
 });

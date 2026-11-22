@@ -182,8 +182,8 @@ async function waiting() {
   await a.type("join-email", "pat@family.example");
   await a.type("join-name", "Pat");
   await a.type("join-pw", "a-long-signup-password");
-  await a.press(en.join.createAccount);
-  expect(a.title()).toBe(en.join.step_sent_title);
+  await a.press(en.join.continue);
+  expect(a.title()).toContain(en.join.openLink.split("<a>")[0]!.trim());
   return a;
 }
 
@@ -213,8 +213,8 @@ describe("the confirming page hands the setup over, or continues it, never both"
   it("a tab waiting on Check your email takes the setup over; the confirming page opens no /join and offers nothing", async () => {
     const a = await waiting();
     const v = await confirm();
-    await until(() => a.title() !== en.join.step_sent_title);
-    expect(a.title(), "the waiting tab did not carry on into the setup").toBe(en.join.step_factor_title);
+    await until(() => !a.title()?.startsWith(en.join.openLink.split("<a>")[0]!));
+    expect(a.title(), "the waiting tab did not carry on into the setup").toBe(en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord));
     await tick(1_200);
     expect(nav.pushes, "the confirming page opened a second wizard").toEqual([]);
     expect(v.title()).toBe(en.verify.doneTitle);
@@ -271,18 +271,18 @@ describe("the confirming page hands the setup over, or continues it, never both"
     });
     expect(said.filter((m) => (m as { kind?: string }).kind === "granted"), "a claim after the window was granted").toEqual([]);
     expect(nav.pushes).toEqual(["/join"]);
-    expect(a.title(), "a late answer made a second live wizard").toBe(en.join.step_sent_title);
+    expect(a.title(), "a late answer made a second live wizard").toContain(en.join.openLink.split("<a>")[0]!.trim());
   });
 
   it("with two tabs waiting, exactly one of them moves on", async () => {
     const first = await waiting();
     const second = await waiting();
     await confirm();
-    const moved = () => [first, second].filter((t) => t.title() === en.join.step_factor_title).length;
+    const moved = () => [first, second].filter((t) => t.title() === en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord)).length;
     expect(await until(() => moved() > 0)).toBe(true);
     await tick(1_200);
     expect(moved()).toBe(1);
-    expect([first, second].filter((t) => t.title() === en.join.step_sent_title)).toHaveLength(1);
+    expect([first, second].filter((t) => t.title()?.startsWith(en.join.openLink.split("<a>")[0]!))).toHaveLength(1);
     expect(nav.pushes).toEqual([]);
   });
 });
@@ -358,7 +358,7 @@ describe("the tab that took the setup over says when it cannot read it", () => {
     expect(await until(() => a.title() === en.onboarding.resumeUnreachableTitle), "the fault was swallowed").toBe(true);
     sessionFault = null;
     await a.press(en.onboarding.resumeRetry);
-    expect(await until(() => a.title() === en.join.step_factor_title)).toBe(true);
+    expect(await until(() => a.title() === en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord))).toBe(true);
   });
 
   it("a session gone by then is the expired screen, with sign-in carrying on into the setup", async () => {
@@ -377,25 +377,25 @@ describe("one set of recovery codes across the tab that took over and a second /
   it("a factor added in the second tab ends the factor step in the first: its press re-reads, and no second set is made", async () => {
     const a = await waiting();
     await confirm();
-    expect(await until(() => a.title() === en.join.step_factor_title)).toBe(true);
+    expect(await until(() => a.title() === en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord))).toBe(true);
     // A second /join, opened by hand: it adds the authenticator and saves its codes.
     const b = await tab("join");
-    expect(b.title()).toBe(en.join.step_factor_title);
-    await b.press(en.join.useTotp);
+    expect(b.title()).toBe(en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord));
+    await b.press(en.join.factorApp);
     await b.type("join-totp", "123456");
     await b.press(en.join.activate);
     expect(await until(() => b.host.querySelectorAll("ul li").length > 0)).toBe(true);
     expect(codeSets).toBe(1);
     const enrolments = calls.filter((p) => p === "/auth/2fa/totp/enroll").length;
     // Back in the first tab, the factor step is still on screen; the person does what it asks.
-    await a.press(en.join.useTotp);
+    await a.press(en.join.factorApp);
     if (a.host.querySelector("#join-totp")) {
       await a.type("join-totp", "654321");
       await a.press(en.join.activate);
     }
-    await until(() => a.title() !== en.join.step_factor_title, 2_000);
+    await until(() => a.title() !== en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord), 2_000);
     expect(calls.filter((p) => p === "/auth/2fa/totp/enroll").length, "a second factor was started").toBe(enrolments);
     expect(codeSets, "the codes the second tab showed were cancelled").toBe(1);
-    expect(a.title()).toBe(en.join.step_plan_title);
+    expect(a.title()).toBe(en.join.startTrialTitle.replace(/\.$/, ""));
   });
 });

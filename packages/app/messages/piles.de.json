@@ -51,8 +51,7 @@
       "empty": "Nichts zum späteren Antworten"
     },
     "row": {
-      "done": "Erledigt",
-      "resurfaces": "zurück {when}"
+      "done": "Erledigt"
     },
     "stamp": {
       "yesterday": "gestern {time}"

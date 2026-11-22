@@ -61,7 +61,7 @@ async function launch(roster: MailboxFacts[], hash: string): Promise<void> {
 }
 
 const theQuestion = (): HTMLElement | null =>
-  [...document.querySelectorAll<HTMLElement>("h1, h2, [role=heading]")].find((el) => el.textContent?.trim() === t.consentTitle) ?? null;
+  [...document.querySelectorAll<HTMLElement>("h1, h2, [role=heading]")].find((el) => el.textContent?.trim() === t.mapTitle) ?? null;
 const settle = async (n = 40): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
 };

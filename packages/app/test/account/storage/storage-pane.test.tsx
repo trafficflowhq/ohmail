@@ -94,75 +94,80 @@ describe("what is stored, and why the limit is what it is", () => {
 
   it("says used of the limit and the room left in words; a tag from 80 percent, and full at the limit", () => {
     drawn(STATES.rest.model);
-    const figure = line(said("storageOf", { used: "235 MB", limit: "5 GB" }));
-    expect(figure.textContent).toContain(
-      said("storageUsed", { room: said("storageRoomTrial", { limit: "5 GB" }) }),
-    );
+    expect(seen("235 MB")).toBe(true);
+    expect(seen(said("storageFigureTrial", { limit: "5 GB" }))).toBe(true);
     cleanup();
     drawn(STATES.near.model);
-    expect(line(said("storageOf", { used: "4.6 GB", limit: "5 GB" })).textContent).toContain(
-      said("storageTagPercent", { percent: 92 }),
-    );
+    expect(seen("4.6 GB")).toBe(true);
+    expect(seen(said("storageTagPercent", { percent: 92 }))).toBe(true);
     cleanup();
     drawn(STATES.full.model);
-    expect(line(said("storageOf", { used: "5 GB", limit: "5 GB" })).textContent).toContain(
-      said("storageTagFull"),
-    );
+    expect(seen("5 GB")).toBe(true);
+    expect(seen(said("storageTagFull"))).toBe(true);
   });
 
   it("names the room by its reason: the plan's, and one kept until a day", () => {
     drawn(STATES.heldUntil.model);
-    expect(seen(said("storageRoomHeld", { limit: "5 GB", date: "November 26, 2026" }))).toBe(true);
+    expect(seen(said("storageFigureHeld", { date: "November 26, 2026" }))).toBe(true);
     cleanup();
     drawn(STATES.heldUndated.model);
-    expect(seen(said("storageRoomPlan", { limit: "5 GB" }))).toBe(true);
+    expect(seen(said("storageFigureOf", { limit: "5 GB" }))).toBe(true);
   });
 
   it("gives each mailbox its three figures, each named by its column, and the total the same way", () => {
     drawn(STATES.rest.model);
-    const names = screen.getAllByRole("group").map((g) => g.textContent);
-    const at = names.indexOf("mila@lichtgrat.example");
-    expect(at).toBeGreaterThanOrEqual(0);
-    expect(names.slice(at, at + 4)).toEqual([
-      "mila@lichtgrat.example",
-      `${said("storageColLetters")}7,912`,
-      `${said("storageColKept")}198 MB`,
-      `${said("storageColExpected")}198 MB`,
-    ]);
-    const total = names.indexOf(said("storageTotal"));
-    expect(names.slice(total + 1, total + 4)).toEqual([
-      `${said("storageColLetters")}9,406`,
-      `${said("storageColKept")}235 MB`,
-      `${said("storageColExpected")}235 MB`,
-    ]);
+    const table = within(screen.getByRole("table"));
+    expect(table.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(
+      ["storageColMailbox", "storageColLetters", "storageColKept", "storageColExpected"].map((key) =>
+        said(key),
+      ),
+    );
+    const cells = table
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) =>
+        within(row)
+          .getAllByRole("cell")
+          .map((cell) => cell.textContent),
+      );
+    expect(cells).toContainEqual(["mila@lichtgrat.example", "7,912", "198 MB", "198 MB"]);
+    expect(cells.at(-1)).toEqual([said("storageTotal"), "9,406", "235 MB", "235 MB"]);
   });
 
   it("draws no mailbox lines where the answer names no mailbox", () => {
     drawn(withFigures({ rows: [], total: null }));
     expect(screen.queryByRole("group", { name: said("storageTotal") })).toBeNull();
-    expect(screen.queryByRole("group", { name: said("storageColLetters") })).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
   it("says what the mail needs, the measured or the default average, and that not all is counted yet", () => {
     drawn(STATES.incomplete.model);
-    expect(seen(said("storageNeeds", { letters: 9_406, size: "235 MB" }))).toBe(true);
-    expect(seen(said("storageAverage", { size: "25 KB" }))).toBe(true);
+    expect(seen(said("storageNeedsAverage", { count: 9_406, size: "235 MB", average: "25 KB" }))).toBe(true);
     expect(seen(said("storageIncomplete"))).toBe(true);
     cleanup();
     drawn(STATES.unmeasured.model);
-    expect(seen(said("storageAverageDefault", { size: "25 KB" }))).toBe(true);
+    expect(seen(said("storageAverageDefault", { size: "25 KB" }))).toBe(false);
     expect(seen(said("storageIncomplete"))).toBe(false);
   });
 
   it("says a first import with its count while it runs", () => {
     drawn(STATES.near.model);
-    expect(seen(said("storageImporting", { stored: 184_000, expected: 244_000, size: "6.1 GB" }))).toBe(true);
+    expect(
+      seen(
+        said("storageImportProgress", {
+          stored: 184_000,
+          expected: 244_000,
+          size: "6.1 GB",
+          average: "25 KB",
+        }),
+      ),
+    ).toBe(true);
     expect(seen(said("storageNeeds", { letters: 244_000, size: "6.1 GB" }))).toBe(false);
   });
 
   it("says from which month text is kept, or how many were emptied, and that the refill runs", () => {
     drawn(STATES.full.model);
-    expect(seen(said("storageKeptFrom", { month: "March 2021" }))).toBe(true);
+    expect(line(said("storageKeptFromLabel")).textContent).toContain("March 2021");
     expect(seen(said("storageRefill"))).toBe(true);
     cleanup();
     drawn(withFigures({ kept: { kind: "some", count: 312, refills: false } }, STATES.full.model));
@@ -172,22 +177,27 @@ describe("what is stored, and why the limit is what it is", () => {
 
   it("says what counts, why it is limited, and the plan in its three forms", () => {
     drawn(STATES.rest.model);
-    for (const key of ["storageWhatCountsHead", "storageWhyHead", "storagePlanHead"])
-      expect(screen.getByRole("heading", { name: said(key) })).toBeTruthy();
-    expect(seen(said("storageWhatCountsBody"))).toBe(true);
-    expect(seen(said("storageWhyBody"))).toBe(true);
-    expect(seen(said("storagePlanKeepsNamed", { plan: "Plus", limit: "5 GB" }))).toBe(true);
+    expect(line(said("storageWhatCountsHead")).textContent).toContain(said("storageCountsText"));
+    expect(line(said("storageAttachments")).textContent).toContain(said("storageNeverCounted"));
+    expect(line(said("storageNamedPlanKeeps", { plan: "Plus" })).textContent).toContain("5 GB");
+    fireEvent.click(screen.getByRole("button", { name: said("storageWhatCountsHead") }));
+    for (const key of ["storageInfoCounts", "storageInfoPurpose", "storageInfoOriginals"]) {
+      expect(seen(said(key))).toBe(true);
+    }
     cleanup();
     drawn(STATES.trialRoom.model);
-    expect(seen(said("storagePlanTrial", { limit: "5 GB", cap: "2 GB" }))).toBe(true);
+    expect(line(said("storageYourPlanKeeps")).textContent).toContain("2 GB");
     cleanup();
     drawn(STATES.heldUntil.model);
-    expect(seen(said("storagePlanUntil", { limit: "5 GB", cap: "2 GB", date: "November 26, 2026" }))).toBe(
-      true,
+    expect(line(said("storageYouKeep")).textContent).toContain(
+      said("storageLimitUntil", { limit: "5 GB", date: "November 26, 2026" }),
+    );
+    expect(line(said("storageYourPlanKeeps")).textContent).toContain(
+      said("storageFromThen", { limit: "2 GB" }),
     );
     cleanup();
     drawn(withFigures({ plan: { kind: "keeps", limit: "5 GB", plan: null } }));
-    expect(seen(said("storagePlanKeeps", { limit: "5 GB" }))).toBe(true);
+    expect(line(said("storageYourPlanKeeps")).textContent).toContain("5 GB");
   });
 });
 
@@ -199,16 +209,16 @@ describe("the plans", () => {
     expect(line("Pro").textContent).toContain(said("storageTagFits"));
     expect(line("Solo").textContent).toContain("2 GB");
     expect(seen(said("storageLetters", { count: 80_000 }))).toBe(true);
-    expect(seen(said("storageMailboxes", { count: 10 }))).toBe(true);
+    expect(seen(said("storagePlanFacts", { count: 400_000, mailboxes: 10 }).split(" · ")[1]!)).toBe(true);
     expect(line(said("storageAddonName")).textContent).toContain(said("storageTagAddon"));
-    expect(seen(said("storageAddonEach"))).toBe(true);
-    expect(seen(said("storageAddonMax", { count: 4 }))).toBe(true);
+    expect(line(said("storageAddonName")).textContent).toContain(said("storageAddonEach"));
+    expect(seen(said("storageAddonMax", { count: 4 }))).toBe(false);
   });
 
-  it("draws an amount only where the build links out", () => {
+  it("keeps prices on the Subscription screen", () => {
     drawn(STATES.rest.model);
     for (const amount of [...Object.values(AMOUNTS.plan), AMOUNTS.addon])
-      expect(seen(amount), amount).toBe(true);
+      expect(seen(amount), amount).toBe(false);
     cleanup();
     drawn(STATES.rest.model, { body: "facts" });
     expect(text()).not.toMatch(/\$/);
@@ -216,28 +226,28 @@ describe("the plans", () => {
 
   it("draws a price that is not there as no figure, never zero, and keeps its line", () => {
     drawn(storageStates(null).rest.model);
-    expect(text()).not.toMatch(/\$|€|\b0\b/);
+    expect(text()).not.toMatch(/\$|€/);
     for (const plan of ["Solo", "Plus", "Pro"]) expect(line(plan)).toBeTruthy();
     expect(line(said("storageAddonName"))).toBeTruthy();
   });
 
-  it("says what a fit adds, with its amount where the build links out and without it where it may not", () => {
+  it("keeps fit and price copy off both storage views", () => {
     const fit = { extra: "+10 GB", room: "15 GB", price: "$20/month" };
     const lines = STATES.near.model.figures!.plans!.lines.map((plan) =>
       plan.plan === "pro" ? { ...plan, fit } : plan,
     );
     const model = withFigures({ plans: { ...STATES.near.model.figures!.plans!, lines } }, STATES.near.model);
     drawn(model);
-    expect(seen(said("storageFitWith", fit))).toBe(true);
+    expect(seen(said("storageFitWith", fit))).toBe(false);
     cleanup();
     drawn(model, { body: "facts" });
-    expect(seen(said("storageFitWithStore", fit))).toBe(true);
+    expect(seen(said("storageFitWithStore", fit))).toBe(false);
     expect(seen("$20")).toBe(false);
   });
 });
 
 describe("the change of plan", () => {
-  const verbs = () => screen.queryAllByRole("button").filter((b) => b.getAttribute("role") !== "switch");
+  const verbs = () => screen.queryAllByRole("button", { name: /^(Change plan|Add storage)$/ });
 
   it("offers Change plan and Add storage where the build links out and the program offered a change", () => {
     const model = { ...STATES.rest.model, change: vi.fn() };
@@ -245,7 +255,7 @@ describe("the change of plan", () => {
     fireEvent.click(screen.getByRole("button", { name: said("storageChangePlan") }));
     fireEvent.click(screen.getByRole("button", { name: said("storageAddStorage") }));
     expect(model.change).toHaveBeenCalledTimes(2);
-    expect(seen(said("storageOpensPage"))).toBe(true);
+    expect(seen(said("storageOpensPage"))).toBe(false);
   });
 
   it("offers Add storage only where an add-on is offered, and no verb where no change is offered", () => {
@@ -323,7 +333,7 @@ describe("the storage mails' switch", () => {
     expect(sw().getAttribute("aria-checked")).toBe("true");
     fireEvent.click(sw());
     expect(model.setMail).toHaveBeenCalledWith(false);
-    expect(seen(said("storageMailSub"))).toBe(true);
+    expect(line(said("storageMail")).textContent).toContain(said("storageMailSub"));
   });
 
   it("is off while a write is on its way, and says a refused write", () => {

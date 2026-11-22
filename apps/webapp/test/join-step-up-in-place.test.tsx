@@ -153,7 +153,7 @@ describe("the mailbox step asks for the second factor in place", () => {
     expect(stepUps).toEqual([{ code: "123456" }]);
     expect(createBodies, "exactly the refused connect, sent again once").toHaveLength(2);
     expect(createBodies[1]).toEqual(createBodies[0]);
-    expect(ui.h1()).toBe(en.join.step_connected_title);
+    expect(ui.h1()).toBe(en.join.myMailboxes.replace(/\.$/, ""));
   });
 
   it("Cancel keeps everything typed and sends nothing more", async () => {
@@ -256,6 +256,6 @@ describe("the trial mail's button, for an account that never connected a mailbox
     await ui.type("stepup-code", "123456");
     await ui.press(en.stepUp.verify, ui.prompt()!);
     expect(createBodies).toHaveLength(2);
-    expect(ui.h1()).toBe(en.join.step_connected_title);
+    expect(ui.h1()).toBe(en.join.myMailboxes.replace(/\.$/, ""));
   });
 });

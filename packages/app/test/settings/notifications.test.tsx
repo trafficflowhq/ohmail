@@ -104,21 +104,25 @@ describe("Notifications", () => {
 
   it("says what the last reconcile answered, and nothing once it clears", () => {
     const { rerender } = mount(state({ delivery: "no_server_key" }));
-    expect(screen.getByText(S.notifyNoServerKey)).toBeTruthy();
+    expect(screen.getByText(S.notifyNoServerKey, { exact: false })).toBeTruthy();
     rerender(
       <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
         <NotificationsPane model={state({ delivery: null })} />
       </TextProvider>,
     );
-    expect(screen.queryByText(S.notifyNoServerKey)).toBeNull();
+    expect(screen.queryByText(S.notifyNoServerKey, { exact: false })).toBeNull();
   });
 
   it("says where the platform holds the answer, and the device's own reach", () => {
     mount(state({ osHolds: true, permission: "default", live: false }));
     expect(screen.getByText(S.notifyOsHeld)).toBeTruthy();
     expect(screen.queryByText(S.notifyAskFirst)).toBeNull();
-    expect(screen.getByText(S.notifyReach)).toBeTruthy();
-    expect(screen.getByText(S.badgeRule)).toBeTruthy();
+    expect(screen.getByText("This device")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "The numbers mean the same thing on every device: the app icon and the Ohbox count unread mail in your Ohbox, the Screener counts first-time senders waiting, and News and Receipts count what arrived since you last looked.",
+      ),
+    ).toBeNull();
   });
 
   it("reads in German", () => {

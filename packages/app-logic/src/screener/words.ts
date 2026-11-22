@@ -1,12 +1,4 @@
-/**
- * WHAT THE OPEN SENDER'S SENTENCE SAYS, as keys of the `screener` namespace and their values: where a real
- * suggestion files them (the slot's proposal, with how sure it is), and the lines under it. What ohmail measured
- * comes first and stands whether or not a suggestion was bought; then the model's advice, or why there is none:
- * nobody asked yet, a run is buying one now, the account's spend is refused, or the sender's mail is kept out of
- * automatic AI. Where a run met a refusal, "yet" is not said; where no run stands (`NO_RUN`: no control or no wire)
- * the sentence is today's "No suggestion yet", as the released Screener says it there. The words are read where
- * they are drawn: no reader crosses into this package.
- */
+/** The place, confidence and advice the Screener can show for one sender. */
 import { senderKey } from "@ohmail/client-engine";
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { DecisionDestination } from "./decision.js";
@@ -23,7 +15,9 @@ export interface SuggestionWords {
   readonly dest: DecisionDestination | null;
   /** How sure the advice is, 0 to 1, where it is a real suggestion. */
   readonly sure: number | null;
-  /** The lines under the sentence, in the order they are read. */
+  readonly badge: "aiHoldChip" | "aiNoAnswerChip" | null;
+  readonly reason: WordsLine | null;
+  /** A standing refusal or a failed automatic decision. */
   readonly lines: readonly WordsLine[];
 }
 
@@ -47,39 +41,28 @@ const reasonValues = (ai: Ai): Record<string, string | number> => ({
   count: ai.reasonCount ?? 0,
 });
 
-/** What ohmail measured about the sender: the claim, or the brand's own address its provider did not confirm. */
-function checkedLines(sender: ScreenerSenderDTO): WordsLine[] {
-  const c = sender.checked;
-  if (!c) return [];
-  const values = { brand: c.brand, domain: c.domain };
-  const first: WordsLine =
-    c.reason === "unverified"
-      ? { key: "senderCheck.unverified", values }
-      : { key: c.domainShared ? "senderCheck.impersonationShared" : "senderCheck.impersonation", values };
-  return c.list ? [first, { key: "senderCheck.list" }] : [first];
-}
-
-/** The model's advice, said as 1.0.11 says it; a sender with none says why. */
-function adviceLines(sender: ScreenerSenderDTO, why: NoAdvice): WordsLine[] {
-  const ai = sender.ai;
-  if (!ai) {
-    const reason = noSuggestionReason(sender, why.standing, why.inFlight.has(senderKey(sender.from.address)));
-    return [{ key: noSuggestionKey(reason, why.standing, why.subscriptionPane) }];
-  }
-  const lines: WordsLine[] = [];
-  if (ai.reasonCode) lines.push({ key: `aiReason.${ai.reasonCode}`, values: reasonValues(ai) });
-  if (ai.noAnswer) lines.push({ key: `aiSkip.${ai.noAnswer}` });
-  else if (ai.dest === "screener") lines.push({ key: "aiHolds" });
-  if (!ai.noAnswer && ai.rationale) lines.push({ key: "aiWhy", values: { why: ai.rationale } });
-  if (ai.actRefused) lines.push({ key: "aiActRefused" });
-  return lines;
+function reasonOf(ai: Ai): WordsLine | null {
+  if (ai.reasonCode === "impersonation") return null;
+  if (ai.reasonCode) return { key: `aiReasonChip.${ai.reasonCode}`, values: reasonValues(ai) };
+  return ai.rationale.trim() ? { key: "aiWhy", values: { why: ai.rationale } } : null;
 }
 
 export function suggestionWords(sender: ScreenerSenderDTO, why: NoAdvice): SuggestionWords {
+  const ai = sender.ai;
   const dest = acceptDestOf(sender);
+  const badge = ai?.noAnswer ? "aiNoAnswerChip" : ai?.dest === "screener" ? "aiHoldChip" : null;
+  const lines: WordsLine[] = [];
+  if (!ai) {
+    const reason = noSuggestionReason(sender, why.standing, why.inFlight.has(senderKey(sender.from.address)));
+    const key = noSuggestionKey(reason, why.standing, why.subscriptionPane);
+    if (key !== null) lines.push({ key });
+  }
+  if (ai?.actRefused) lines.push({ key: "aiActRefused" });
   return {
     dest,
-    sure: dest !== null && sender.ai ? sender.ai.confidence : null,
-    lines: [...checkedLines(sender), ...adviceLines(sender, why)],
+    sure: dest !== null && ai ? ai.confidence : null,
+    badge,
+    reason: ai && badge === null && sender.checked?.reason !== "impersonation" ? reasonOf(ai) : null,
+    lines,
   };
 }

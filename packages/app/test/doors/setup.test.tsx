@@ -120,7 +120,7 @@ describe("the setup page", () => {
   it("form: the token and the first account are blanks in two sentences, at the first of five steps, with where the token is", () => {
     const { acts: a } = draw(form());
     expect(sentences()).toEqual(["This server’s setup token is", "I’m , at , with a password of"]);
-    expect(document.body.textContent).toContain(S.title);
+    expect(document.body.textContent).not.toContain(S.title);
     expect(screen.getByRole("img", { name: "Step 1 of 5, Account, 1 of 3" })).toBeTruthy();
     /* Where the token is: on a sheet beside the form, the command and its Copy, and how to find it in the log. */
     expect(screen.getByRole("heading", { name: S.tokenWhere })).toBeTruthy();

@@ -8,11 +8,6 @@
     "devices": "Devices",
     "about": "Notify about",
     "blocked": "Blocked",
-    "on": "On",
-    "off": "Off",
-    "ohbox": "Ohbox",
-    "screener": "Screener",
-    "scheduled": "Scheduled",
     "pairing": "Devices",
     "shortAlerts": "Alerts",
     "shortInvitations": "Invitations",
@@ -26,6 +21,11 @@
     "answer": "An invitee answered",
     "found": "Something found in mail",
     "titles": "Titles",
-    "showTitles": "Show titles in notifications"
+    "showTitles": "Show titles in notifications",
+    "thisDevice": "This device",
+    "mail": "Mail",
+    "onlyWhileOpen": "Only while ohmail is open",
+    "notRegistered": "Not registered",
+    "noCentre": "No notification centre"
   }
 }

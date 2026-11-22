@@ -247,9 +247,8 @@ describe("a resurface across a clock change", () => {
     await mountBar(SPRING_EVE, "02:30");
     await openStrip();
     const panel = resurfaceMenu().textContent ?? "";
-    /* The sentence as the reader's catalogue words it (`reader.resurface.skip`: a colon where today's had a dash). */
-    expect(panel, "the menu resolved the hour silently")
-      .toContain("Tomorrow lands at 03:30: the clocks skip 02:30 that night.");
+    expect(hourStated(item("Tomorrow"))).toBe("03:30");
+    expect(panel).not.toContain("the clocks skip");
   });
 
   it("says nothing extra on the nights that book the hour that was asked for", async () => {
@@ -428,6 +427,7 @@ describe("the send-later field says which hour it will send at", () => {
     const later = (): HTMLButtonElement => screen.getByRole("button", { name: "Send later" }) as HTMLButtonElement;
     await waitFor(() => !later().disabled, "Send later stayed locked on a sendable letter");
     await pressReal(later(), "Send later");
+    await pressReal(within(card()).getByRole("menuitem", { name: /^Pick a date and time/ }), "Pick a date and time");
   }
 
   /** Type a wall clock into the card's day and time, and hand back everything the card is saying. */

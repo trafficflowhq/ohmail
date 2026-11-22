@@ -9,8 +9,8 @@
  */
 
 import type { AutoFiledItemWire } from "@ohmail/wire";
-import { useEffect, useReducer, useRef, useState } from "react";
-import type { OhmailEngine } from "@ohmail/client-engine";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { FOLDER_OF_VIEW, type OhmailEngine } from "@ohmail/client-engine";
 import { durableSet } from "../storage/durable.js";
 import { scopeSuffix, usePinnedScope, type StorageScope } from "../storage/scope.js";
 
@@ -70,14 +70,18 @@ export function spamLettersMark(rows: readonly { held: readonly { id: string }[]
 }
 
 /**
- * The notice, or `null` while unread, unanswerable, acknowledged, or where a press is walled (`blocked`).
- * `spamMark` is {@link spamLettersMark} of the Spam shelf.
+ * The proved Spam filings and the separate unacknowledged notice. Acknowledging a notice does
+ * not change how its mail arrived. `spamMark` is {@link spamLettersMark} of the Spam shelf.
  */
 export function useImpersonationFiled(
   engine: OhmailEngine, blocked: boolean, spamMark: string, scope: StorageScope,
-): ImpersonationFiledNotice | null {
+): { notice: ImpersonationFiledNotice | null; autoFiledSpam: ReadonlySet<string> } {
   const owner = useRef(usePinnedScope(scope));
-  const [items, setItems] = useState<AutoFiledItemWire[] | null>(null);
+  const [page, setPage] = useState<{ engine: OhmailEngine; items: AutoFiledItemWire[] } | null>(null);
+  const items = page?.engine === engine ? page.items : null;
+  const autoFiledSpam = useMemo(() => new Set(
+    items?.filter((item) => item.to === FOLDER_OF_VIEW.spam).map((item) => item.messageId),
+  ), [items]);
   const [seen, setSeen] = useState<string>(() => readImpersonationSeen(owner.current));
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -101,7 +105,7 @@ export function useImpersonationFiled(
       r.again = false;
       // A door that cannot say leaves the state alone: no render for an answer that changes nothing.
       void from.autoFiled().then((page) => {
-        if (alive.current && page !== null && r.engine === from) setItems(page.items);
+        if (alive.current && page !== null && r.engine === from) setPage({ engine: from, items: page.items });
       }).finally(() => {
         r.busy = false;
         if (r.again && alive.current) read();
@@ -110,9 +114,9 @@ export function useImpersonationFiled(
     read();
   }, [engine, asked, spamMark]);
 
-  if (items === null || blocked) return null;
+  if (items === null || blocked) return { notice: null, autoFiledSpam };
   const unseen = unseenImpersonations(items, seen);
-  if (unseen.length === 0) return null;
+  if (unseen.length === 0) return { notice: null, autoFiledSpam };
 
   const putBack = (ids: readonly string[]): void => {
     if (busy) return;
@@ -134,5 +138,8 @@ export function useImpersonationFiled(
     // A refused jar is announced once by the door itself; the mark still holds for this session.
     durableSet(impersonationSeenKey(owner.current), newest, "screener.impersonationSeen");
   };
-  return { items: unseen, open, toggle: () => setOpen((o) => !o), busy, said, putBack, acknowledge };
+  return {
+    autoFiledSpam,
+    notice: { items: unseen, open, toggle: () => setOpen((o) => !o), busy, said, putBack, acknowledge },
+  };
 }

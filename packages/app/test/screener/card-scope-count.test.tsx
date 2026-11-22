@@ -21,7 +21,7 @@ it("the sender card names the mail in each scope before a choice", () => {
   );
   fireEvent.keyDown(document.body, { key: "s" });
   const card = within(screen.getByRole("dialog", { name: "Change this sender's screening" }));
-  expect(card.getByRole("radio", { name: /this sender.*1 message/i })).toBeTruthy();
+  expect(card.getByRole("radio", { name: /this address.*1 message/i })).toBeTruthy();
   expect(card.getByRole("radio", { name: /first\.example.*4 messages.*2 senders/i })).toBeTruthy();
   expect(asked.decided).toEqual([]);
 });

@@ -150,7 +150,7 @@ async function commit(latest: () => ScreenerState): Promise<void> {
 }
 
 const wait = (ms: number) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
-const askNow = (): HTMLElement | null => within(document.body).queryByRole("dialog", { name: /waiting senders? as spam/ });
+const askNow = (): HTMLElement | null => within(document.body).queryByRole("dialog", { name: /Mark \d+ as spam/ });
 
 async function markAll(): Promise<void> {
   await click(within(host!).getByRole("button", { name: "List" }));
@@ -163,7 +163,7 @@ it("files only the original letters when the same sender writes during the quest
   const { latest, arrive } = await mount([msg("original", from, 9)], undefined, false);
   await markAll();
   await arrive([msg("during-question", from, 10)]);
-  await click(within(askNow()!).getByRole("button", { name: "Mark 1 as spam" }));
+  await click(within(askNow()!).getByRole("button", { name: "Mark as spam" }));
   await wait(300);
   await arrive([msg("during-undo", from, 11)]);
   await commit(latest);
@@ -210,7 +210,7 @@ it("sends from the single-sender confirmation for the displayed IDs only", async
   const { arrive } = await mount([msg("shown", from, 9)]);
   await click(within(host!).getByRole("option"));
   await press("x");
-  const ask = () => within(document.body).getByRole("dialog", { name: "Mark spam and unsubscribe" });
+  const ask = () => within(document.body).getByRole("dialog", { name: "Spam and unsubscribe" });
   expect(ask().textContent).toContain("one-click");
   await arrive([msg("after-warning", from, 10)]);
   expect(sent).toEqual([]);

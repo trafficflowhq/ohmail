@@ -15,6 +15,7 @@ import type { AccessLifecycle, AccessVerdict, EntitlementsPort, PlanHint } from 
 import { makeDeps } from "../../../packages/api/test/helpers.js";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 import de from "../messages/de.json";
+import en from "../messages/en.json";
 
 type SpyMailer = Awaited<ReturnType<typeof makeDeps>>["mailer"];
 
@@ -157,6 +158,13 @@ const APP_PASSWORD = "App password";
 const tile = (page: Page, name: string | RegExp, group = PROVIDERS) =>
   page.getByRole("group", { name: group }).getByRole("button", { name });
 const field = (page: Page, label: string) => page.getByLabel(label, { exact: true });
+const printed = (sentence: string) => sentence.replace(/\.$/, "");
+const sentHeading = (page: Page, copy: typeof en.join) =>
+  page.getByRole("heading", { level: 1 }).filter({ hasText: copy.openLink.split("<a>")[0]!.trim() });
+const factorHeading = (page: Page, copy: typeof en.join) =>
+  page.getByRole("heading", { name: copy.lockWith.replace("<how></how>.", copy.factorPasskeyWord) });
+const factorApp = (page: Page, copy: typeof en.join) =>
+  page.getByRole("radio", { name: new RegExp(copy.factorApp) });
 /**
  * What the authenticator step says of a refused code, once it says it: the card's alert, or what describes the
  * code's blank on a door's page (the field says its own refusal there).
@@ -198,8 +206,8 @@ async function signUp(
   await p.fill("#join-email", who.email);
   await p.fill("#join-name", "Mila Reyes");
   await p.fill("#join-pw", who.password);
-  await p.getByRole("button", { name: "Create account" }).click();
-  await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
+  await p.getByRole("button", { name: en.join.continue }).click();
+  await sentHeading(p, en.join).waitFor({ timeout: 30_000 });
 
   const mail = world.mailer.sent.find((m) => m.to === who.email && m.template === "email_verification");
   expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
@@ -207,15 +215,14 @@ async function signUp(
   await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
   await p.getByLabel("Your password", { exact: true }).fill(who.password);
   await p.getByRole("button", { name: "Confirm my email" }).click();
-  await p.getByRole("heading", { name: "Add your second factor" }).waitFor({ timeout: 30_000 });
+  await factorHeading(p, en.join).waitFor({ timeout: 30_000 });
 
-  await p.getByRole("button", { name: "Use an authenticator app instead" }).click();
+  await factorApp(p, en.join).click();
   who.totpSecret = ((await p.getByText(/^[A-Z2-7]{4}( [A-Z2-7]{1,4})+$/).first().textContent()) ?? "").trim();
   await p.fill("#join-totp", totpAt(who.totpSecret, world.clock.now()));
   await p.getByRole("button", { name: "Activate" }).click();
   await p.locator("ul li").first().waitFor({ timeout: 30_000 });
-  await p.getByRole("checkbox").or(p.getByRole("switch")).first().check();
-  await p.getByRole("button", { name: "Continue" }).click();
+  await p.getByRole("button", { name: en.join.codesSaved }).click();
 }
 
 /**
@@ -324,8 +331,8 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
 
     await stepUp.getByLabel("Six-digit code from your authenticator app").fill(totpAt(person.totpSecret, world.clock.now()));
     await stepUp.getByRole("button", { name: "Verify code" }).click();
-    await page.getByRole("heading", { name: "Your mailbox is connected" }).waitFor({ timeout: 30_000 }).catch(() => {});
-    expect(await h1(page), `the connect did not finish: ${await said(page)}`).toBe("Your mailbox is connected");
+    await page.getByRole("heading", { name: printed(en.join.myMailboxes) }).waitFor({ timeout: 30_000 }).catch(() => {});
+    expect(await h1(page), `the connect did not finish: ${await said(page)}`).toBe(printed(en.join.myMailboxes));
     const creates = heard.filter((h) => h.method === "POST" && h.path === "/mailboxes");
     expect(creates.map((c) => c.status), "one refusal for the window, then the same connect once").toEqual([403, 201]);
     expect(creates[1]!.body).toEqual(creates[0]!.body);
@@ -339,13 +346,13 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       const p = await fresh.newPage();
       const who = { email: "noor@family.example", password: "another-long-signup-password", totpSecret: "" };
       await signUp(p, who);
-      await p.getByRole("heading", { name: "Choose your plan" }).waitFor({ timeout: 30_000 });
+      await p.getByRole("heading", { name: printed(en.join.startTrialTitle) }).waitFor({ timeout: 30_000 });
       // The plan step has one way on (the account page). A person who leaves it lands on the front door by its address.
       await p.goto(`http://localhost:${webPort}/`);
       await p.getByRole("button", { name: "Start your trial" }).waitFor({ timeout: 30_000 }).catch(() => {});
       const wall = await p.evaluate(() => document.body?.innerText ?? "");
       expect(wall, `the front door: ${await said(p)}`).toContain("Start your free trial");
-      expect(wall).toContain("14 days free, no card.");
+      expect(wall).toContain(en.accessLock.neverLine);
       expect(await p.getByRole("button", { name: "Start your trial" }).count()).toBe(1);
       expect(await p.getByRole("button", { name: "Sign out" }).count()).toBe(1);
       // Nothing a closed account is told: not inactive, not stopped, no erasure clock, no move to self-hosting.
@@ -364,11 +371,11 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       const who = { email: "ines@family.example", password: "a-third-long-signup-password", totpSecret: "" };
       // The site's Pro button with the yearly toggle; the verification link comes back without the query.
       await signUp(p, who, "/join?plan=pro&interval=year");
-      await p.getByRole("heading", { name: "Choose your plan" }).waitFor({ timeout: 30_000 });
-      const trial = p.getByText(/^You chose /);
-      await trial.waitFor({ timeout: 30_000 }).catch(() => {});
-      expect(await trial.count(), `no trial line: ${await said(p)}`).toBe(1);
-      expect(((await trial.textContent()) ?? "").trim()).toBe("You chose Pro, billed yearly. 14 days free, no card.");
+      const trial = p.getByRole("heading", { name: en.join.startOn.replace("<plan></plan>.", "Pro") });
+      await trial.waitFor({ timeout: 30_000 });
+      expect(await trial.count(), `no trial heading: ${await said(p)}`).toBe(1);
+      expect(await p.getByText(en.join.planYearly, { exact: true }).count()).toBe(1);
+      expect(await p.getByText(en.join.planNoCard, { exact: true }).count()).toBe(1);
       await p.locator('a[href^="https://plane.example/"]').waitFor({ timeout: 30_000 });
       expect(plane.mints, "the plan step's mint carries the language and the site's choice")
         .toContainEqual({ lang: "en", hint: { plan: "pro", interval: "year" } });
@@ -389,8 +396,8 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.fill("#join-email", who.email);
       await p.fill("#join-name", "Lena Graf");
       await p.fill("#join-pw", who.password);
-      await p.getByRole("button", { name: de.join.createAccount }).click();
-      await p.getByRole("heading", { name: de.join.step_sent_title }).waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: de.join.continue }).click();
+      await sentHeading(p, de.join).waitFor({ timeout: 30_000 });
 
       const mail = world.mailer.sent.find((m) => m.to === who.email && m.template === "email_verification");
       expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
@@ -405,9 +412,9 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.getByRole("alert").filter({ hasText: de.verify.refusedPassword }).waitFor({ timeout: 30_000 });
       await p.getByLabel(de.verify.passwordLabel, { exact: true }).fill(who.password);
       await p.getByRole("button", { name: de.verify.confirm }).click();
-      await p.getByRole("heading", { name: de.join.step_factor_title }).waitFor({ timeout: 30_000 });
+      await factorHeading(p, de.join).waitFor({ timeout: 30_000 });
 
-      await p.getByRole("button", { name: de.join.useTotp }).click();
+      await factorApp(p, de.join).click();
       who.totpSecret = ((await p.getByText(/^[A-Z2-7]{4}( [A-Z2-7]{1,4})+$/).first().textContent()) ?? "").trim();
       const right = totpAt(who.totpSecret, world.clock.now());
       await p.fill("#join-totp", right === "000000" ? "111111" : "000000");
@@ -416,9 +423,8 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.fill("#join-totp", right);
       await p.getByRole("button", { name: de.join.activate }).click();
       await p.locator("ul li").first().waitFor({ timeout: 30_000 });
-      await p.getByRole("checkbox").or(p.getByRole("switch")).first().check();
-      await p.getByRole("button", { name: de.join.continue }).click();
-      await p.getByRole("heading", { name: de.join.step_mailbox_title }).waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: de.join.codesSaved }).click();
+      await p.getByRole("heading", { name: de.join.step_mailbox_title.replace(/\.$/, "") }).waitFor({ timeout: 30_000 });
 
       await tile(p, /GMX/, de.providerPicker.label).click();
       const note = p.getByText(de.providerPicker.note_gmx, { exact: true }).first();
@@ -436,10 +442,10 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
     const fresh = await browser!.newContext();
     try {
       const p = await fresh.newPage();
-      const current = async () => (await p.getByRole("list", { name: "Setup progress" }).locator('li[aria-current="step"]').textContent())?.trim();
+      const current = () => p.getByRole("img", { name: /^Step 1 of 5, Account/ }).getAttribute("aria-label");
       await p.goto(`http://localhost:${webPort}/join`);
       await p.locator("#join-email").waitFor({ timeout: 30_000 });
-      expect(await current()).toBe("Account");
+      expect(await current()).toBe("Step 1 of 5, Account, 1 of 5");
       // The provider's domain with its dot left out, as a thumb types it; the fixture helper builds both.
       const meant = personalAt("fixture.ada", "gmail.com");
       await p.fill("#join-email", meant.replace("gmail.com", "gmailcom"));
@@ -448,16 +454,16 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.fill("#join-email", "ada@family.exmaple");
       await p.fill("#join-name", "Ada Lund");
       await p.fill("#join-pw", "a-fourth-long-signup-password");
-      await p.getByRole("button", { name: "Create account" }).click();
-      await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
-      expect(await current(), "Check your email is the Email station").toBe("Email");
-      await p.getByRole("button", { name: "Wrong address? Change it" }).click();
-      await p.getByRole("heading", { name: "Create your account" }).waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: en.join.continue }).click();
+      await sentHeading(p, en.join).waitFor({ timeout: 30_000 });
+      expect(await current(), "the link is the second account part").toBe("Step 1 of 5, Account, 2 of 5");
+      await p.getByRole("button", { name: en.join.changeAddress }).click();
+      await p.getByRole("heading", { level: 1 }).filter({ hasText: en.join.account.split("<name>")[0]!.trim() }).waitFor({ timeout: 30_000 });
       expect(await p.inputValue("#join-email")).toBe("ada@family.exmaple");
       await p.fill("#join-email", "ada@family.example");
       await p.fill("#join-pw", "a-fourth-long-signup-password");
-      await p.getByRole("button", { name: "Create account" }).click();
-      await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: en.join.continue }).click();
+      await sentHeading(p, en.join).waitFor({ timeout: 30_000 });
 
       const mail = world.mailer.sent.find((m) => m.to === "ada@family.example" && m.template === "email_verification");
       expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
@@ -465,16 +471,16 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
       await p.getByLabel("Your password", { exact: true }).fill("a-fourth-long-signup-password");
       await p.getByRole("button", { name: "Confirm my email" }).click();
-      await p.getByRole("heading", { name: "Add your second factor" }).waitFor({ timeout: 30_000 });
-      expect(await current()).toBe("Passkey");
+      await factorHeading(p, en.join).waitFor({ timeout: 30_000 });
+      expect(await current()).toBe("Step 1 of 5, Account, 3 of 5");
 
-      await p.getByRole("button", { name: "Use an authenticator app instead" }).click();
+      await factorApp(p, en.join).click();
       const qr = p.getByRole("img", { name: "QR code for your authenticator app" });
       await qr.waitFor({ timeout: 30_000 });
       expect((await qr.boundingBox())?.width ?? 0, "the QR is drawn at a scannable size").toBeGreaterThanOrEqual(120);
       const shown = ((await p.getByText(/^[A-Z2-7]{4}( [A-Z2-7]{1,4})+$/).first().textContent()) ?? "").trim();
       expect(shown, "the key in groups of four").toMatch(/^([A-Z2-7]{4} )+[A-Z2-7]{1,4}$/);
-      const back = p.getByRole("button", { name: "Back" });
+      const back = p.getByRole("button", { name: en.join.factorAppWord });
       expect((await back.boundingBox())?.height ?? 0, "a text button is a 24px target").toBeGreaterThanOrEqual(24);
       await p.fill("#join-totp", totpAt(shown, world.clock.now()));
       await p.getByRole("button", { name: "Activate" }).click();

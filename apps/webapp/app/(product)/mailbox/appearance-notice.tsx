@@ -54,7 +54,6 @@ export function useOhmarchyNotice(captureOwner: () => () => boolean): FrameNotic
   return {
     kind: "ohmarchy",
     title: t("offerLead"),
-    line: t("offerNote"),
     acts: [
       {
         label: t("offerAction"),

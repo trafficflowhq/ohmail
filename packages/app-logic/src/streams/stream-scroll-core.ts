@@ -104,6 +104,7 @@ export class StreamScrollCore {
   /** The scroll handler's frame, and the spy's re-reading. */
   raf = 0;
   respy: () => void = () => {};
+  positionChanged: () => void = () => {};
 
   constructor(inputs: StreamScrollInputs) {
     this.inputs = inputs;
@@ -384,6 +385,7 @@ export class StreamScrollCore {
         this.measure(); // keep the leave's visible range current
         if (this.offScreen.size) this.settleOffScreen();
         this.spy();
+        this.positionChanged();
       });
     };
     this.respy = onScroll;

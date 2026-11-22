@@ -112,10 +112,8 @@ async function engineOver(rows: EngineMessage[], word: string, typo: string): Pr
 
 const SENTENCES = {
   searching: "Searching your whole mailbox…",
-  matched: /Searched your whole mailbox — [\d,]+ matched/,
-  near: /Searched your whole mailbox — [\d,]+ with a close word/,
-  nothing: "Searched your whole mailbox — nothing matched",
-  unanswered: "Your server did not answer — showing the recent mail this device holds.",
+  nothing: "Nothing matched",
+  unanswered: "Your server did not answer, so these are from the recent mail this device holds.",
 } as const;
 
 let host: HTMLDivElement;
@@ -123,7 +121,7 @@ let root: Root;
 let leaveSearch: () => void;
 const text = (): string => host.textContent ?? "";
 const verdicts = (): string[] =>
-  Object.entries(SENTENCES).filter(([, s]) => (typeof s === "string" ? text().includes(s) : s.test(text()))).map(([k]) => k);
+  Object.entries(SENTENCES).filter(([, line]) => text().includes(line)).map(([key]) => key);
 const rowIds = (): string[] => [...host.querySelectorAll("[data-hit]")].map((n) => n.getAttribute("data-hit") ?? "");
 
 /** Resolves at the first DOM state `pred` accepts; `each` sees every state on the way. */
@@ -159,10 +157,11 @@ async function mount(): Promise<{ engine: OhmailEngine; door: { type?: (q: strin
 /** Typed word -> the first render that holds a whole-mailbox verdict, in ms; the box emptied first. */
 async function typedToVerdict(door: { type?: (q: string) => void }, word: string): Promise<number> {
   door.type!("");
-  await until(() => !text().includes("Searched your whole mailbox — "));
+  await until(() => !verdicts().length && !rowIds().length);
   const t0 = performance.now();
   door.type!(word);
-  const t1 = await until(() => text().includes("Searched your whole mailbox — "));
+  await until(() => verdicts().includes("searching"));
+  const t1 = await until(() => !verdicts().includes("searching") && (word === NO_MATCH ? verdicts().includes("nothing") : rowIds().length > 0));
   await sleep(LATENCY_MS * 2);
   return t1 - t0;
 }
@@ -206,7 +205,7 @@ describe("the no-match verdict is not held behind the device pass (a large mailb
     const look = () => {
       const v = verdicts();
       most = Math.max(most, v.length);
-      if (v.includes("searching") && text().includes("Nothing matched.")) titleEarly = true;
+      if (v.includes("searching") && text().includes("Nothing matched")) titleEarly = true;
       const key = v.join("+");
       if (key !== "" && seen[seen.length - 1] !== key) seen.push(key);
     };
@@ -223,15 +222,17 @@ describe("the no-match verdict is not held behind the device pass (a large mailb
     expect(within(host).getAllByText((_, node) => node?.textContent === messages.search.nothingMatched, {
       selector: ".oh-empty-label",
     })).toHaveLength(1);
-    expect(text().match(/— nothing matched/g)?.length).toBe(1);
-    expect(within(host).getByText("A long message is searched in its first 65,536 characters.").textContent).toBe("A long message is searched in its first 65,536 characters.");
+    expect(text().match(/Nothing matched/g)).toHaveLength(1);
+    expect(within(host).queryByText("A long message is searched in its first 65,536 characters.")).toBeNull();
   }, 30_000);
 
   it("the time on the line is the wait a person had, never the store's own ms (40 here)", async () => {
     const { door } = await mount();
     door.type!(WORD);
-    await until(() => /matched · \d+ ms/.test(text()));
-    const said = Number(/matched · (\d+) ms/.exec(text())![1]);
+    await until(() => verdicts().includes("searching"));
+    await until(() => !verdicts().includes("searching") && rowIds().length > 0);
+    const timer = within(within(host).getByRole("textbox", { name: messages.search.aria }).parentElement!).getByText(/^\d+ ms$/);
+    const said = Number.parseInt(timer.textContent!, 10);
     expect(said).toBeGreaterThanOrEqual(LATENCY_MS);
     expect(said).not.toBe(40);
   }, 30_000);
@@ -249,12 +250,14 @@ describe("the no-match verdict is not held behind the device pass (a large mailb
     door.type!(TYPO);
     await until(() => within(host).queryByRole("heading", { name: /^Similar/ }) !== null, look);
     const before = rowIds();
-    await until(() => verdicts().includes("near"), look);
+    await until(() => seen.includes("searching") && !verdicts().includes("searching"), look);
     await sleep(LATENCY_MS * 3);
     look();
     // Closest words are said as near, never as matched.
-    expect(seen).toEqual(["searching", "near"]);
-    expect(within(host).getByText("Nothing matched exactly, so these are the closest words.")).toBeTruthy();
+    expect(seen).toEqual(["searching"]);
+    expect(within(host).getByRole("heading", { name: /^Similar/ })).toBeTruthy();
+    expect(text()).not.toContain("with a close word");
+    expect(within(host).queryByText("Nothing matched exactly, so these are the closest words.")).toBeNull();
     const after = rowIds();
     const kept = before.filter((id) => after.includes(id));
     expect(kept.length).toBeGreaterThan(0);

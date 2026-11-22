@@ -29,7 +29,7 @@ export type DoorAttachmentsView =
   | { state: "failed"; error: string; code: string | null; retryable: boolean; onRetry: () => void };
 
 /**
- * What `MessagePane` needs to render one message's strip.
+ * What the shared Reader needs to render one message's strip.
  *
  * Functions of `messageId` rather than resolved values, for the reason every other member of
  * the old shell's message chrome is: the pane is mounted TWICE while the

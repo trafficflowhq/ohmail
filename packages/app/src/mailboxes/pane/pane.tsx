@@ -39,6 +39,7 @@ export interface MailboxesSlots {
   /** A device's own status at the head of the mailbox list. */
   readonly head?: ComponentType;
   readonly holdEdit?: boolean;
+  readonly useLimit?: () => number | null;
   /** A native roster with device-only operations. It occupies the same registered Settings section. */
   readonly device?: ComponentType<
     PaneBodyProps & {
@@ -91,6 +92,7 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
           opened={here ? (route.words.mailbox ?? null) : null}
           stage={host.features.stages.firstRun !== NONE}
           subscriptionPane={panesOf(host).billing}
+          openPlans={() => commands.go({ place: "settings", sub: "billing" })}
           go={(how) => commands.go({ place: route.place, stage: { id: "firstRun", words: { how } } })}
           ground={ground}
           hidden={documentHidden}
@@ -102,6 +104,7 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
   function useSummary(): PaneSummary | null {
     const t = useText("settingsMenu");
     const locale = useLocale();
+    const limit = slots.useLimit?.();
     const facts = slots.mailState().mailboxes;
     if (facts === undefined || facts === null) return null;
     const live = facts.filter((m) => m.status !== "disabled");
@@ -112,7 +115,10 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
     const connecting = statuses.includes("status_connecting");
     const connected = statuses.length > 0 && statuses.every((status) => status === "status_connected");
     return {
-      count: new Intl.NumberFormat(locale).format(live.length),
+      count:
+        limit == null
+          ? new Intl.NumberFormat(locale).format(live.length)
+          : t("mailboxCount", { count: live.length, limit }),
       value: full
         ? t("mailboxFull")
         : connecting

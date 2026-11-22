@@ -183,7 +183,7 @@ describe("the update notice on the ground", () => {
   it("Later puts the offer away", async () => {
     mount();
     await announce(offer("ready", () => undefined));
-    await act(async () => void fireEvent.click(screen.getByRole("button", { name: "Later" })));
+    await act(async () => void fireEvent.click(screen.getByRole("button", { name: "Not now" })));
     expect(screen.queryByText(/2\.0\.1/)).toBeNull();
   });
 });

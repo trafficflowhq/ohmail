@@ -208,7 +208,7 @@ describe("Search pages the store", () => {
         [["portal@insure.example", 400], ["news@axa.example", 300], ["claims@axa.example", 12]], { "ohmail/News": 350, INBOX: 362 },
       ) });
     });
-    expect(text()).toContain("Searched your whole mailbox — 712 matched");
+    expect(within(host).getByRole("heading", { name: "Results 712" })).toBeTruthy();
     expect(read().slice(0, 3), "same order, the exact counts").toEqual(
       ["news@axa.example300", "portal@insure.example400", "claims@axa.example12"],
     );
@@ -239,8 +239,8 @@ describe("Search pages the store", () => {
       : { items: page(0, 9), total: 9, nextCursor: null, bounded: true, ms: 11 }));
     await render(engine, "axa");
     await settle();
-    expect(text()).toContain("Older mail is still being indexed — 25 % done.");
-    expect(text()).toContain("Showing the 9 best matches — sort by date to walk them all.");
+    expect(text()).toContain("Older mail is still being indexed, 25% done.");
+    expect(text()).toContain("These are the 9 best matches. Sort by date to walk them all.");
   });
 
   it("a cut exact page with no row whose count lands as 0 says nothing matched, and no best matches", async () => {
@@ -254,8 +254,8 @@ describe("Search pages the store", () => {
     });
     await render(engine, "kai survey -samples");
     await settle();
-    expect(text()).toContain("Searched your whole mailbox — nothing matched");
-    expect(within(host).queryByText(/Showing the/), "no best matches to show").toBeNull();
+    expect(within(host).getByText((_, node) => node?.textContent === "Nothing matched", { selector: ".oh-empty-label" })).toBeTruthy();
+    expect(within(host).queryByText(/These are the .* best matches/), "no best matches to show").toBeNull();
     expect(asked).toEqual(["page", "estimate"]);
   });
 
@@ -266,25 +266,21 @@ describe("Search pages the store", () => {
     await render(engine, "axa");
     await settle();
     expect(within(host).queryByText(/Older mail is still being indexed/)).toBeNull();
-    expect(within(host).queryByText(/Showing the/)).toBeNull();
+    expect(within(host).queryByText(/These are the .* best matches/)).toBeNull();
   });
 
   it("the verdict carries the measured wait once it answered, and says the numbers once", async () => {
-    /* "1 result · 62 ms" above "Searched your whole mailbox — 1 matched · 62 ms"
-       was the same numbers twice. The verdict stays (the scope and the time are the claim); the bare
-       line goes while the verdict carries a count. Mutation: render the bare line unconditionally —
-       `.results-head.num` reads "1 result · 62 ms" again. */
     const engine = await engineWith([msg("d1", "AXA on the device")], async (_q, o) => (o.parts === "summary"
       ? { items: [], total: 1, totalExact: true }
       : { items: [msg("d1", "AXA on the device")], total: 1, nextCursor: null, ms: 62 }));
     await render(engine, "axa");
     await settle();
     expect(within(host).getByRole("heading", { name: "Results 1" }).querySelector(".oh-groupheading-count")?.textContent, "the exact count beside Results, with no time").toBe("1");
-    expect(text()).toMatch(/Searched your whole mailbox — 1 matched · \d+ ms/);
+    expect(text()).not.toContain("Searched your whole mailbox");
     // The store's own 62 ms is never the time said: the line states the wait.
-    expect(text()).not.toMatch(/\b62 ms/);
-    expect(text().match(/\b\d+ ms/g)).toHaveLength(1);
-    const countAndWait = within(host).getByText(/^1 matched · \d+ ms$/);
+    expect(text()).not.toMatch(/62 ms/);
+    expect(text().match(/\d+ ms/g)).toHaveLength(1);
+    const countAndWait = within(within(host).getByRole("textbox", { name: messages.search.aria }).parentElement!).getByText(/^\d+ ms$/);
     const firstResult = within(host).getAllByRole("listitem")[0]!;
     expect(countAndWait.compareDocumentPosition(firstResult) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -294,9 +290,9 @@ describe("Search pages the store", () => {
     const engine = await engineWith([msg("d1", "AXA on the device")], async () => { throw new Error("unreachable"); });
     await render(engine, "axa");
     await settle();
-    const heading = within(host).getByRole("heading", { name: /^Results.*1 result/ });
-    expect(within(heading).getByText(/^1 result · \d+ ms$/)).toBeTruthy();
-    expect(text().match(/\b\d+ ms/g)).toHaveLength(1);
+    const heading = within(host).getByRole("heading", { name: "Results 1" });
+    expect(within(heading).getByText("1", { exact: true })).toBeTruthy();
+    expect(text().match(/\d+ ms/g)).toHaveLength(1);
   });
 
   it("a store that answered with no time still leaves a time on screen — the device's own", async () => {
@@ -309,7 +305,7 @@ describe("Search pages the store", () => {
     await render(engine, "axa");
     await settle();
     expect(within(host).getByRole("heading", { name: "Results 1" }).querySelector(".oh-groupheading-count")?.textContent, "the exact count beside Results, with no time").toBe("1");
-    expect(within(host).getByText(/^1 matched · \d+ ms$/)).toBeTruthy();
+    expect(within(within(host).getByRole("textbox", { name: messages.search.aria }).parentElement!).getByText(/^\d+ ms$/)).toBeTruthy();
   });
 
   it("the store's order is the order: a date sort's page is rendered as the store sent it", async () => {

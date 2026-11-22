@@ -10,7 +10,6 @@
 import { useState } from "react";
 import type { FolderAct, FolderEntity } from "@ohmail/wire";
 import { RECENT_SIZE, shelfKeyOf, useFolderRailLive, usedNow } from "@ohmail/app-logic/folder";
-import { junkFolderSaid } from "@ohmail/app-logic/lists/folders";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { isRemovedMailbox } from "@ohmail/app-logic/mail-state/mail-state";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
@@ -30,7 +29,6 @@ export function FolderRailSeat() {
   const consent = useConsent();
   const press = usePressWhereOn();
   const rail = useText("rail");
-  const screener = useText("screener");
   const [pinned, setPinned] = useState<readonly string[]>([]);
   const [recent, setRecent] = useState<readonly string[]>([]);
   const summary = host.wires.folderSummary;
@@ -59,14 +57,8 @@ export function FolderRailSeat() {
     const verdict = await press.dispatchPress(act);
     if (verdict.kind === "refused") report(rail("folderVerbFailed"));
   });
-  if (live === null) return null;
-  const junk = junkFolderSaid(mailboxes ?? []);
-  const junkNotice =
-    junk === null
-      ? null
-      : junk === "unnamed"
-        ? rail("junkNoteUnnamed")
-        : rail("junkNote", { folder: junk.named });
+  if (live === null || (live.ready && live.folders.length === 0 && !(writable && available.length > 0)))
+    return null;
   const visitId = route.place === "folder" ? route.sub : null;
   const opened = visitId === null ? undefined : live.folders.find((f) => f.id === visitId);
   const go = (folder: FolderEntity): void => {
@@ -108,21 +100,11 @@ export function FolderRailSeat() {
       go={go}
       drag={null}
     >
-      {live.folders.length > 0 ? null : live.ready ? (
-        <p className="rsub-empty">{rail("folderEmpty")}</p>
-      ) : (
+      {!live.ready && live.folders.length === 0 ? (
         <p className="rsub-empty" role="status" aria-busy="true" aria-label={rail("folderLoading")}>
           {rail("folderLoading")}
         </p>
-      )}
-      {junkNotice === null ? null : (
-        <p className="rsub-empty">
-          {junkNotice}
-          {host.wires.junk !== NONE && host.features.places.screener !== NONE ? (
-            <> {screener("junkElsewhere")}</>
-          ) : null}
-        </p>
-      )}
+      ) : null}
     </FolderRail>
   );
 }

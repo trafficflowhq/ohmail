@@ -35,8 +35,15 @@ journeysOf("gate", () => {
     await person.act("type", "login-email", { value: who.email });
     await person.act("type", "login-password", { value: who.password });
     await person.act("press", "login-continue");
-    await person.until(async () => (await person.offered("login-code")) || (await person.offered("login-code-instead")), "the sign-in to ask for the second factor", 30_000);
-    if (!(await person.offered("login-code"))) await person.act("press", "login-code-instead");
+    await person.until(
+      async () => (await person.offered("login-code")) || (await person.offered("login-factor-choice")),
+      "the sign-in to ask for the second factor",
+      30_000,
+    );
+    if (!(await person.offered("login-code"))) {
+      await person.act("press", "login-factor-choice");
+      await person.act("press", "login-code-instead");
+    }
     await person.act("type", "login-code", { value: await who.code() });
     await person.act("press", "login-code-verify");
     // An account with no mailbox yet carries on with its setup.

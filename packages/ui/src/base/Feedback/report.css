@@ -43,7 +43,7 @@
   }
 
   /* With a sentence: a block, not a pill, on the same ground in the same place. */
-  .oh-report[data-kind="why"] {
+  .oh-report:is([data-kind="why"], [data-kind="detail"]) {
     --oh-report-pad: var(--s3) var(--s2) var(--s3) var(--s5);
     flex-wrap: wrap;
     border-radius: var(--r-sheet);
@@ -58,7 +58,7 @@
   .oh-report-verdict {
     font-weight: var(--w-bold);
   }
-  :root[data-device="phone"] .oh-report[data-kind="why"] {
+  :root[data-device="phone"] .oh-report:is([data-kind="why"], [data-kind="detail"]) {
     --oh-report-pad: var(--s4) var(--s3) var(--s4) var(--s5);
   }
 
@@ -66,7 +66,7 @@
     min-height: var(--h-m);
     box-shadow: none;
   }
-  :root[data-face="ohmarchy"] .oh-report:not([data-kind="why"]) {
+  :root[data-face="ohmarchy"] .oh-report:not(:is([data-kind="why"], [data-kind="detail"])) {
     --oh-report-pad: 0 var(--s2) 0 var(--s4);
   }
   :root[data-face="ohmarchy"] .oh-report .oh-key {

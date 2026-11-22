@@ -4,7 +4,7 @@
  * draft is the composer's, which its seat stands here.
  */
 import { heldSentence, isHeld, useDraftsModel } from "@ohmail/app-logic/drafts";
-import { ActionPanel, BlankColumn, ReadingHead, Sheet } from "@ohmail/ui/mail";
+import { ActionPanel, BlankColumn, Message, ReadingHead, Sheet } from "@ohmail/ui/mail";
 import { recipientsOf } from "./words.js";
 import type { PaneProps } from "../frame/contract.js";
 import { useText } from "../text/index.js";
@@ -46,10 +46,15 @@ export function DraftsReading({ route }: PaneProps) {
         }
       >
         <ReadingHead subject={subject} people={[]} names={recipientsOf(open) || t("noRecipient")} />
+        {open.body ? <Message head={null}>{open.body}</Message> : null}
       </Sheet>
     );
   }
   const count = model.drafts.length + model.scheduled.length;
   if (model.loading) return null;
-  return <BlankColumn>{count > 0 ? t("metaCount", { count }) : t("emptyTitle")}</BlankColumn>;
+  return count > 0 ? (
+    <BlankColumn>{t("metaCount", { count })}</BlankColumn>
+  ) : (
+    <div className="oh-blankcolumn" data-blank-column="" />
+  );
 }

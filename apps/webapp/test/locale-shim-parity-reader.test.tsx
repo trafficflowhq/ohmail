@@ -28,8 +28,8 @@ describe("with a German catalogue set, the non-hook surfaces answer German", () 
 
   it("an interpolated sentence keeps its number and takes the German plural (the files' half)", () => {
     const t = wordsOf("attachments");
-    expect(t("count", { count: 1 })).toBe("1 Anhang");
-    expect(t("count", { count: 4 })).toBe("4 Anhänge");
+    expect(t("count", { count: 1, size: "2 MB" })).toBe("1 Anhang · 2 MB");
+    expect(t("count", { count: 4, size: "4 MB" })).toBe("4 Anhänge · 4 MB");
     expect(t("idle", { size: "2,3 MB" })).toContain("2,3 MB");
   });
 });

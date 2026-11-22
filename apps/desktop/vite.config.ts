@@ -248,7 +248,7 @@ const BASE_MESSAGE_NAMESPACES = [
   // is the second kind of read the header note warns about and is caught the same way.
   "markAll", "message", "viewError",
   // `stream` is the ONE sentence the two reading streams put over their count — "12 new since
-  // you were here" (`ReadsView`, `ReceiptsView`, both header slots), the words the rail's
+  // you were here" (the streams in `packages/app/src/stream`, both header slots), the words the rail's
   // tooltip says too. It is its own namespace rather than a key in `reads` because Receipts
   // reads it as well, and a second copy of one sentence is how the two piles came to disagree
   // before. Genuinely reachable in the binary: the fixtures engine partitions a pile and the
@@ -921,12 +921,15 @@ export default defineConfig({
       { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
       { find: "@ohmail/app/calendar", replacement: r("../../packages/app/src/calendar/index.ts") },
       { find: "@ohmail/app/account/way-out", replacement: r("../../packages/app/src/account/way-out/index.ts") },
+      { find: "@ohmail/app/doors/signed-out", replacement: r("../../packages/app/src/doors/signed-out/index.ts") },
+      { find: "@ohmail/app/doors/stage", replacement: r("../../packages/app/src/doors/stage/index.ts") },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/settings/browser", replacement: r("../../packages/app/src/settings/browser/index.ts") },
       { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
+      { find: "@ohmail/app/mailboxes/connect", replacement: r("../../packages/app/src/mailboxes/connect/index.ts") },
       { find: /^@ohmail\/app\/mailboxes$/, replacement: r("../../packages/app/src/mailboxes/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
       { find: "@ohmail/app/profile-import", replacement: r("../../packages/app/src/profile-import/index.ts") },

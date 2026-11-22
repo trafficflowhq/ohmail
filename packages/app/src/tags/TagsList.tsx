@@ -54,6 +54,18 @@ function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel
           ? t("count.letters", { count: model.count })
           : undefined
       }
+      below={
+        tag !== null && asked === "rename" ? (
+          <TagRename
+            tag={tag}
+            model={model}
+            close={() => {
+              setAsked(null);
+              menuAt.current?.focus({ preventScroll: true });
+            }}
+          />
+        ) : undefined
+      }
       aside={
         <ListMenu
           label={t("list.menu")}
@@ -99,9 +111,6 @@ function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel
       )}
       {model.loading ? <Empty label={t("loading")} /> : null}
       {model.empty ? <Empty label={tag === null ? t("empty.none") : t("empty.tag")} /> : null}
-      {tag !== null && asked === "rename" ? (
-        <TagRename tag={tag} model={model} anchor={menuAt} close={() => setAsked(null)} />
-      ) : null}
       {tag !== null && asked === "delete" ? (
         <TagDelete tag={tag} model={model} close={() => setAsked(null)} />
       ) : null}
@@ -118,6 +127,7 @@ function OneTag({
   selection,
   contact,
 }: TagRowsProps & { win: ReturnType<typeof useListWindow> }) {
+  const place = usePlaceLabel();
   if (model.list.rows.length === 0) return null;
   return (
     <LetterRows
@@ -125,6 +135,7 @@ function OneTag({
       contact={contact}
       label={model.tag?.name ?? t("title")}
       rows={model.list.rows}
+      where={(message) => place(message.physicalFolder ?? message.folder)}
       windowed={{
         start: win.start,
         total: model.list.rows.length,

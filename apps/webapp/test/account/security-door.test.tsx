@@ -91,7 +91,7 @@ const press = async (name: string) => {
 };
 const typeCode = (code: string) =>
   act(async () => {
-    fireEvent.change(screen.getByLabelText(en.security.totpCodeLabel), { target: { value: code } });
+    fireEvent.change(screen.getByLabelText(en.security.totpSixDigits), { target: { value: code } });
   });
 
 /** The four guarded verbs: what the account has, how the verb is reached, the press that sends it, the request it is. */

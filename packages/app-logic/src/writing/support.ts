@@ -57,7 +57,6 @@ export function supportContact(
     seed,
     canSend,
     href: supportMailto(subject, seed.body),
-    version: facts.version,
-    commit: facts.commit,
+    facts,
   };
 }

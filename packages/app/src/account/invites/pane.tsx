@@ -7,7 +7,7 @@
 import type { ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
 import type { HostContract } from "../../host/index.js";
-import type { SettingsPane } from "../../settings/contract.js";
+import type { PaneBodyProps, PaneSheet, SettingsPane } from "../../settings/contract.js";
 import { PANE_FACTS, paneOf } from "../../settings/facts.js";
 import { accountBodies } from "../bodies.js";
 import type { FactorSlot, QrSlot } from "../contract.js";
@@ -29,14 +29,17 @@ const draws = (host: HostContract): boolean => accountBodies(host).invites === "
 
 /** The Invites section over one host's parts. Call it once per mount: a registration made again is a pane mounted again. */
 export function invitesPane(parts: InvitesPaneParts): SettingsPane {
-  function Drawn(): ReactNode {
-    return <InvitesPane model={useInvites(parts.useDoor())} factor={parts.factor} qr={parts.qr} />;
+  function Drawn({ sheet }: { sheet?: PaneSheet }): ReactNode {
+    return (
+      <InvitesPane model={useInvites(parts.useDoor())} factor={parts.factor} qr={parts.qr} sheet={sheet} />
+    );
   }
-  function Body(): ReactNode {
-    return draws(useFrame().host) ? <Drawn /> : null;
+  function Body({ sheet }: PaneBodyProps): ReactNode {
+    return draws(useFrame().host) ? <Drawn sheet={sheet} /> : null;
   }
   return {
     ...paneOf("invites", { Body }),
+    hasFoot: true,
     listed: (host) => PANE_FACTS.invites.listed(host) && draws(host),
   };
 }

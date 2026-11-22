@@ -68,7 +68,7 @@ export function previewKind(mimeType: string): PreviewKind {
  *
  * The set is exactly the engine's `RENDERABLE_MIME` (the four raster images plus PDF) widened
  * by `text/*`. SVG is deliberately NOT here — it is a document that executes script, and the
- * engine downgrades its blob to `application/octet-stream` for the same reason. `MessagePane`
+ * engine downgrades its blob to `application/octet-stream` for the same reason. The shared Reader
  * reads this to decide which tiles are offered a preview control at all; the tiles themselves
  * download either way, so a `false` here removes a viewer, never the file.
  */

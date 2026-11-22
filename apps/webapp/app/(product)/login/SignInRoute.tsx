@@ -52,6 +52,7 @@ export function SignInRoute(
     },
     restart: c.restart,
     join: { href: "/join" },
+    back: "/",
     demo: { href: "/?demo=1" },
   };
   return (

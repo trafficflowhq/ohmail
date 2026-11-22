@@ -40,7 +40,7 @@ export type Zone = "rail" | "list" | "reader" | "none";
  * How far one ↑/↓ press moves the open message, in px. 48 = three 16px text lines — Firefox's
  * native arrow-scroll unit, within a few px of Chrome's 40: small enough that a held key reads as
  * continuous flow, big enough that a single press visibly moves. Applied as an instant `scrollTop`
- * assignment (`MessagePane` prefers the same primitive) so key-repeat never queues smooth
+ * assignment (the shared Reader prefers the same primitive) so key-repeat never queues smooth
  * animations against each other. A thread needs no "next message" step: the conversation is one
  * flat column of full-body panels in one scroller, so scrolling past the end of one message IS
  * arriving at the next.

@@ -1,4 +1,6 @@
+import { motionEase, motionMs, motionReduced } from "@ohmail/ui/base";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 
 const INTENT = 12;
 const FLICK = 0.45;
@@ -73,29 +75,37 @@ function clearDrawerMotion(target: HTMLElement): void {
 function snapDrawer(target: HTMLElement, next: boolean, finish: () => void): Animation {
   const end = next ? "translateX(0)" : "translateX(-100%)";
   const from = target.style.transform || "translateX(0)";
-  const styles = target.ownerDocument.defaultView!.getComputedStyle(target);
-  const duration = styles.animationDuration;
-  const timing = {
-    duration: parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000),
-    easing: styles.animationTimingFunction,
-  };
+  const timing = { duration: motionMs(target, "--d-pop"), easing: motionEase(target, "--e-out") };
   target.style.transform = end;
   const scrim = target.parentElement;
   scrim?.setAttribute("data-drawer-snap", "");
   scrim?.style.setProperty("--oh-drawer-scrim", next ? "1" : "0");
   const animation = target.animate([{ transform: from }, { transform: end }], timing);
-  animation.onfinish = () => {
-    target.style.animationName = "none";
-    clearDrawerMotion(target);
-    finish();
-  };
+  animation.onfinish = finish;
   return animation;
 }
 
-function fromDock(frame: HTMLElement, target: Element, x: number): boolean {
-  if (frame.contains(target.closest("[data-drawer-toggle]"))) return true;
-  const dock = target.closest("[data-drawer-dock]");
-  return dock !== null && frame.contains(dock) && x - dock.getBoundingClientRect().left <= INTENT;
+/** The frame reserves rightward starts in this strip for the drawer. */
+export function startsAtDrawerEdge(target: Element, x: number): boolean {
+  const frame = target.closest("[data-drawer-edge]");
+  return frame !== null && x - frame.getBoundingClientRect().left <= INTENT;
+}
+
+function fromDrawerStart(frame: HTMLElement, target: Element, x: number): boolean {
+  if (target.closest("[data-drawer-edge]") !== frame) return false;
+  if (
+    target.closest("[data-touch-walk], [data-calendar-swipe], input, textarea, select, [contenteditable]")
+  ) {
+    return false;
+  }
+  if (frame.ownerDocument.getSelection()?.isCollapsed === false) return false;
+  if (target.closest("[data-swipe-right]") && !startsAtDrawerEdge(target, x)) return false;
+  for (let element: Element | null = target; element && element !== frame; element = element.parentElement) {
+    if (element.scrollWidth <= element.clientWidth) continue;
+    const { overflowX } = getComputedStyle(element);
+    if (overflowX === "auto" || overflowX === "scroll") return false;
+  }
+  return true;
 }
 
 function listenForDrag(
@@ -119,7 +129,7 @@ function listenForDrag(
   };
 }
 
-/** Start from the compact menu control or the open drawer. Leave vertical panning to the browser. */
+/** Read a finger from unused ground in the compact frame or from the open drawer. */
 export function useRailGesture(
   frame: RefObject<HTMLDivElement | null>,
   panel: RefObject<HTMLDivElement | null>,
@@ -134,7 +144,7 @@ export function useRailGesture(
   const cancelSnap = useRef<() => void>(() => {});
   const wasOpen = useRef(open);
   useLayoutEffect(() => {
-    if (wasOpen.current && !open) cancelSnap.current();
+    if (wasOpen.current !== open) cancelSnap.current();
     wasOpen.current = open;
   }, [open]);
 
@@ -142,8 +152,6 @@ export function useRailGesture(
     const el = frame.current;
     const win = el?.ownerDocument.defaultView;
     if (!enabled || !el || !win) return;
-    const preference = win.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const reduced = () => preference?.matches || el.ownerDocument.documentElement.dataset.rm === "1";
     let drag: Drag | null = null;
     let swallow = 0;
     let animation: Animation | undefined;
@@ -162,10 +170,18 @@ export function useRailGesture(
 
     const down = (event: PointerEvent): void => {
       swallow = 0;
-      if (drag || animation || !event.isPrimary || event.button !== 0 || !(event.target instanceof Element))
+      if (
+        drag ||
+        animation ||
+        event.pointerType !== "touch" ||
+        !event.isPrimary ||
+        event.button !== 0 ||
+        !(event.target instanceof Element)
+      )
         return;
       const open = current.current.open;
-      if (open ? !panel.current?.contains(event.target) : !fromDock(el, event.target, event.clientX)) return;
+      if (open ? !panel.current?.contains(event.target) : !fromDrawerStart(el, event.target, event.clientX))
+        return;
       drag = startDrag(event, open);
     };
     const move = (event: PointerEvent): void => {
@@ -179,13 +195,16 @@ export function useRailGesture(
       if (result === "vertical") drag = null;
       if (result !== "moving") return;
       if (!drag) return;
-      if (!claimed && drag.direction === 1 && !reduced()) setPreview(true);
+      if (motionReduced(el)) return;
+      // Place the first preview at the finger before the browser can paint it.
+      if (!claimed && drag.direction === 1) flushSync(() => setPreview(true));
       const target = panel.current;
-      if (!reduced() && target) {
+      if (!target) return;
+      if (movingPanel !== target) {
         movingPanel = target;
-        target.getAnimations().forEach((motion) => motion.cancel());
-        draw(target, drag);
+        target.style.animationName = "none";
       }
+      draw(target, drag);
     };
     const finish = (event: PointerEvent): void => {
       const done = drag;
@@ -199,7 +218,7 @@ export function useRailGesture(
         setPreview(false);
       };
       const target = panel.current;
-      if (reduced() || !target) {
+      if (motionReduced(el) || !target) {
         settle();
         return;
       }
@@ -210,7 +229,9 @@ export function useRailGesture(
         if (current.current.open !== (done.direction === -1)) return;
         animation = undefined;
         movingPanel = null;
-        settle();
+        // Keep both layers at the end of the snap until React has shown or removed the drawer.
+        flushSync(settle);
+        clearDrawerMotion(target);
       });
       animation = snap;
     };
@@ -220,17 +241,8 @@ export function useRailGesture(
       event.preventDefault();
       event.stopPropagation();
     };
-    // The first move can mount the drawer. Apply that move before the browser paints it.
-    const mounted = (): void => {
-      if (!drag?.claimed || !panel.current || reduced()) return;
-      movingPanel = panel.current;
-      draw(movingPanel, drag);
-    };
-    const observer = new win.MutationObserver(mounted);
-    if (el.parentElement) observer.observe(el.parentElement, { childList: true });
     const stop = listenForDrag(win, down, move, finish, click);
     return () => {
-      observer.disconnect();
       reset();
       stop();
     };

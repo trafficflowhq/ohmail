@@ -136,10 +136,11 @@ async function mount(o: StageOpts) {
   return {
     el, counts: counted, card,
     set: async (next: (f: OnboardingFacts) => OnboardingFacts) => { current = next(current); await st.move(rows()); await flush(); },
-    heading: (): string => st.heading() || (counted.left === 1 ? drawn.at(-1) ?? "" : ""),
-    lead: (): string => (el.querySelector("h1")?.closest("main")?.querySelector(".oh-page-line")?.textContent ?? "").trim(),
+    heading: (): string => st.heading() || (el.querySelector(`[aria-label="${t.pullLocal}"]`) ? t.pullTitle : counted.left === 1 ? drawn.at(-1) ?? "" : ""),
+    press: st.press,
+    lead: (): string => el.querySelector(".oh-page-aside .oh-tag")?.textContent?.trim() ?? "",
     button: (label: string): HTMLButtonElement => {
-      const b = [...el.querySelectorAll("button")].find((x) => (x.textContent ?? "").trim().startsWith(label));
+      const b = [...el.querySelectorAll("button")].find((x) => (x.getAttribute("aria-label") ?? x.textContent ?? "").trim().startsWith(label));
       if (!b) throw new Error(`no button ${label}`);
       return b;
     },
@@ -161,7 +162,7 @@ function focusWord(): string {
   }
   if (a instanceof HTMLFormElement) return "FORM";
   if (a instanceof HTMLInputElement) return `input ${a.type} ${a.value}${a.checked ? " (checked)" : ""}`;
-  return `${a.tagName} "${(a.textContent ?? "").trim().slice(0, 40)}"`;
+  return `${a.tagName} "${(a.getAttribute("aria-label") ?? a.textContent ?? "").trim().slice(0, 40)}"`;
 }
 
 /** Focus stands inside the step's form, on a control: the only place a browser's ↵ submits from. */
@@ -215,17 +216,17 @@ const SETTLED: OnboardingFacts = {
 describe("R33-01: ↵ on every setup step does what the step's ↵ button does", () => {
   it("a first run, ↵ from wherever focus lands, through every step to Open ohmail", async () => {
     const s = await mount({ facts: FIRST_RUN });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     expect(inStepForm(s), `opened with focus on ${focusWord()}`).toBe(true);
     await enter();
 
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(inStepForm(s), `the window step left focus on ${focusWord()}`).toBe(true);
-    expect(focusWord(), "a radio group is entered on its checked choice").toBe("input radio 365 (checked)");
+    expect(focusWord(), "a radio group is entered on its checked choice").toBe(`BUTTON "${t.agree}↵"`);
     await enter();
     expect(s.counts.organized, "↵ on the window step did not agree").toBe(1);
 
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     expect(inStepForm(s), `the AI step left focus on ${focusWord()}`).toBe(true);
     await enter();
 
@@ -235,10 +236,10 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     // The import ends; ↵ here would leave setup, which is this step's verb.
     await s.set((f) => ({ ...f, mailbox: { ...f.mailbox!, initialImportCompletedAt: "2026-10-12T00:22:00.000Z" } }));
 
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
     expect(focusWord(), "the decision has no ↵ verb: focus holds on the card").toBe("the dialog card");
     await enter();
-    expect(s.heading(), "↵ on the decision did something").toBe(t.decideTitle);
+    expect(s.heading(), "↵ on the decision did something").toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
     expect(s.counts.decided).toEqual([]);
     await letter("r");
     expect(s.counts.decided).toEqual(["reads"]);
@@ -263,17 +264,17 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     expect(s.el.textContent, "↵ asked to cancel setup").not.toContain(t.cancelConfirm);
     expect(s.heading(), "↵ walked past the check").toBe(t.resumeCheckingTitle);
     await s.set((f) => ({ ...f, mailbox: { ...f.mailbox!, organizerChecked: true } }));
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     expect(focusWord(), "the check answered and focus stayed put").toBe(`BUTTON "${t.continue}↵"`);
     await enter();
-    expect(focusWord()).toBe("input radio 365 (checked)");
+    expect(focusWord()).toBe(`BUTTON "${t.agree}↵"`);
     await enter();
     expect(s.counts.organized, "↵ did not agree once the check answered").toBe(1);
   });
 
   it("a click on the dialog's text focuses the card: focus goes on to the ↵ control, and ↵ opens ohmail", async () => {
     const s = await mount({ facts: SETTLED });
-    expect(s.heading()).toBe(t.doneTitle);
+    expect(s.heading()).toBe(t.noOneWaits.replace(/\.$/, ""));
     await act(async () => { s.card().focus(); });
     expect(focusWord(), "focus stayed on the card, where ↵ reaches no form").toBe(`BUTTON "${t.doneOpen}↵"`);
     await enter();
@@ -320,16 +321,16 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     expect(focusWord(), "the question opened with focus left in the step").toBe(`BUTTON "${t.cancelConfirm}↵"`);
     await enter();
     expect(s.counts, "↵ in the question did not close setup").toMatchObject({ completed: 1, left: 1, organized: 0 });
-    expect(s.heading(), "↵ in the question moved the step behind it").toBe(t.consentTitle);
+    expect(s.heading(), "↵ in the question moved the step behind it").toBe(t.mapTitle);
   });
 
   it("Start over asks with focus on its first verb, and taking the question back puts focus in the step's form", async () => {
     const s = await mount({ facts: FIRST_RUN });
-    await act(async () => { s.button(t.restart).click(); });
+    await s.press(t.restart);
     await flush();
     /* The kit draws ↵ on a question's first verb (its look): the name the keys stand on is the same. */
     expect(focusWord(), "the question opened with focus left in the step").toBe(`BUTTON "${t.restartKeep}↵"`);
-    const backs = [...s.card().querySelectorAll("button")].filter((b) => (b.textContent ?? "").trim() === t.back);
+    const backs = [...s.card().querySelectorAll("button")].filter((b) => (b.getAttribute("aria-label") ?? b.textContent ?? "").trim().startsWith(t.back));
     await act(async () => { backs[backs.length - 1]!.click(); });
     await flush();
     expect(inStepForm(s), `the question closed and left focus on ${focusWord()}`).toBe(true);
@@ -339,10 +340,10 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     const s = await mount({
       facts: { ...SETTLED, account: { onboardingCompletedAt: "2026-10-12T00:23:10.000Z" } }, rerun: true,
     });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     expect(focusWord()).toBe(`BUTTON "${t.continue}↵"`);
     await enter();
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 
   it("the code prompt takes focus; Cancel and Verify each put it back in a step's form", async () => {
@@ -350,7 +351,7 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
       facts: { ...SETTLED, mailbox: { ...SETTLED.mailbox!, organizerRole: "reader", organizeConsentedAt: null } },
       answers: ["step_up", "step_up", "stored"],
     });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     await enter();
     await enter();
     expect(prompt(s.el), "no code prompt").not.toBeNull();
@@ -379,21 +380,21 @@ describe("R33-02: the first decision names how many senders wait", () => {
 
   it("three wait: it says three, in English and in German", async () => {
     const en = await mount({ facts: AT_DECIDE, waiting: 3 });
-    expect(en.heading()).toBe(t.decideTitle);
-    expect(en.lead()).toMatch(/^3 senders are waiting\. /);
+    expect(en.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
+    expect(en.lead()).toBe("3 left");
     const de = await mount({ facts: AT_DECIDE, waiting: 3, locale: "de" });
-    expect(de.lead()).toMatch(/^3 Absender warten\. /);
+    expect(de.lead()).toBe("Noch 3");
   });
 
   it("forty wait: forty", async () => {
     const s = await mount({ facts: AT_DECIDE, waiting: 40 });
-    expect(s.lead()).toMatch(/^40 senders are waiting\. /);
+    expect(s.lead()).toBe("40 left");
   });
 
   it("control: one waits, and the singular stays; a count that has not caught up with the card says one", async () => {
     const one = await mount({ facts: AT_DECIDE, waiting: 1 });
-    expect(one.lead()).toMatch(/^One sender is waiting\. /);
+    expect(one.lead()).toBe("1 left");
     const lag = await mount({ facts: AT_DECIDE, waiting: 0, locale: "de" });
-    expect(lag.lead()).toMatch(/^Ein Absender wartet\. /);
+    expect(lag.lead()).toBe("Noch 1");
   });
 });

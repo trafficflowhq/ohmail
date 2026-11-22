@@ -8,7 +8,7 @@
 import { useSyncExternalStore, type ReactNode } from "react";
 import { useFrame } from "../../frame/index.js";
 import { NONE, type HostContract } from "../../host/index.js";
-import type { SettingsPane } from "../../settings/contract.js";
+import type { PaneBodyProps, PaneSheet, SettingsPane } from "../../settings/contract.js";
 import { PANE_FACTS, paneOf } from "../../settings/facts.js";
 import { accountBodies } from "../bodies.js";
 import type { FactorSlot } from "../contract.js";
@@ -45,15 +45,24 @@ export function storagePane(parts: StoragePaneParts): SettingsPane {
       hot: figures.tag !== null,
     };
   }
-  function Drawn({ body }: { readonly body: "pane" | "facts" }): ReactNode {
-    return <StoragePane model={useStorage(parts.useDoor())} body={body} factor={parts.factor} />;
+  function Drawn({
+    body,
+    sheet,
+  }: {
+    readonly body: "pane" | "facts";
+    readonly sheet?: PaneSheet;
+  }): ReactNode {
+    return (
+      <StoragePane model={useStorage(parts.useDoor())} body={body} factor={parts.factor} sheet={sheet} />
+    );
   }
-  function Body(): ReactNode {
+  function Body({ sheet }: PaneBodyProps): ReactNode {
     const body = bodyOf(useFrame().host);
-    return body === null ? null : <Drawn body={body} />;
+    return body === null ? null : <Drawn body={body} sheet={sheet} />;
   }
   return {
     ...paneOf("storage", { Body, useSummary }),
+    hasFoot: true,
     listed: (host) => PANE_FACTS.storage.listed(host) && bodyOf(host) !== null,
   };
 }

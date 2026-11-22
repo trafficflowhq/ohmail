@@ -159,7 +159,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   /*
    * jsdom implements no scrolling, so `Element.scrollIntoView` is undefined — and the Reads
-   * view calls it when it reveals a message (`ReadsView.tsx`). This file only ever landed in
+   * view calls it when it reveals a message (`packages/app/src/stream`). This file only ever landed in
    * row-shaped piles until search's tie-break reordered two equally-scoring hits and put a
    * Reads message under the cursor, at which point the view threw into its own error boundary
    * and the assertion below read as "the message did not open". It had opened; the environment

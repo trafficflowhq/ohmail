@@ -23,7 +23,6 @@ export function SearchFilters({
   more: ReactNode;
 }) {
   const t = useText("search");
-  if (model.facets.length === 0 && more === null) return null;
   const nameOf = (it: SearchFacetItem): string =>
     it.pick.group === "folder" ? beside.words.placeOfFolder(it.pick.key) : it.label;
   const group = (g: SearchFacetGroup["group"]) => model.facets.find((x) => x.group === g);
@@ -31,26 +30,50 @@ export function SearchFilters({
   const folder = group("folder");
   const files = group("refine")?.items[0];
   return (
-    <div className="sr-filters" data-filter-row="" role="group" aria-label={t("facetRefine")}>
-      {from && more === null ? (
-        <FacetMenu word={t("facetFrom")} items={from.items} nameOf={nameOf} pick={model.pick} />
+    <>
+      {more === null ? (
+        <div className="sr-filters" data-filter-row="" role="group" aria-label={t("person")}>
+          <FacetMenu
+            word={t("facetFrom")}
+            title={t("facetFrom")}
+            items={from?.items ?? []}
+            nameOf={nameOf}
+            pick={model.pick}
+          />
+          <Button kind="two" size="s" mark="down" disabled>
+            {t("to")}
+          </Button>
+        </div>
       ) : null}
-      {folder ? (
+      <div className="sr-filters" data-filter-row="" role="group" aria-label={t("facetRefine")}>
         <FacetMenu
-          word={t(model.searchBy === "people" ? "facetPlace" : "facetFolder")}
-          title={model.searchBy === "people" ? t("facetPlace") : undefined}
-          items={folder.items}
+          word={t("facetPlace")}
+          title={t("facetPlace")}
+          items={folder?.items ?? []}
           nameOf={nameOf}
           pick={model.pick}
         />
-      ) : null}
-      {files ? (
-        <Button kind="two" size="s" pressed={files.pressed} onPress={() => model.pick(files.pick)}>
+        <Button
+          kind="two"
+          size="s"
+          disabled={!files}
+          pressed={files?.pressed}
+          onPress={() => files && model.pick(files.pick)}
+        >
           {t("facetAttachment")}
         </Button>
-      ) : null}
-      {more}
-    </div>
+        {more ?? (
+          <>
+            <Button kind="two" size="s" disabled>
+              {t("facetUnread")}
+            </Button>
+            <Button kind="two" size="s" mark="down" disabled>
+              {t("dateWord")}
+            </Button>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -67,7 +90,7 @@ function FacetMenu({
   pick,
 }: {
   word: string;
-  title?: string;
+  title: string;
   items: readonly SearchFacetItem[];
   nameOf: (it: SearchFacetItem) => string;
   pick: SearchListModel["pick"];
@@ -101,7 +124,7 @@ function FacetMenu({
         opens="menu"
         expanded={open}
         disabled={items.length === 0}
-        onPress={() => setOpenedWith(open ? null : title ? items.map(itemKey) : [])}
+        onPress={() => setOpenedWith(open ? null : items.map(itemKey))}
       >
         {word}
       </Button>

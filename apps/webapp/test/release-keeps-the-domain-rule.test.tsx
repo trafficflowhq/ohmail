@@ -195,7 +195,7 @@ const commit = () => tick(COMMIT_MS + UNDO_MS + 100);
 
 /** A catalogue sentence with its holes filled — what the reader is shown, from the file they are shown it from. */
 const fill = (template: string, vars: Record<string, string>): string =>
-  template.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? `{${k}}`);
+  template.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? `{${k}}`).replace(/\.$/u, "");
 
 function lastToast(): string {
   const report = document.querySelector('.fr-report [role="status"]:not([data-leaving])');
@@ -339,7 +339,7 @@ describe("Not spam → Ohbox on a sender marked spam this session (the pinned re
     if (scope === "domain") {
       await click(s.frame.getByRole("button", { name: s.copy.barScopeAria }));
       const menu = within(document.body).getByRole("menu", { name: s.copy.barScopeAria });
-      await click(within(menu).getByRole("menuitemradio", { name: s.copy.barScopeDomain }));
+      await click(within(menu).getByRole("menuitemradio", { name: new RegExp(`^${s.copy.place.scopeDomain}`) }));
     }
     await s.press(s.copy.pileSpam);
     const confirmation = within(document.body).queryByRole("dialog", { name: s.copy.place.unsub.spam });
@@ -405,8 +405,7 @@ describe("a Move out of a domain rule's pile holds an address rule, and Undo tak
     expect(row, "the domain-held letter is in News").toBeTruthy();
     await click(row!);
     const panel = s.frame.getByRole("toolbar", { name: "Actions" });
-    await click(within(panel).getByRole("button", { name: "More" }));
-    await click(within(document.body).getByRole("menuitem", { name: "Move" }));
+    await click(within(panel).getByRole("button", { name: "Move" }));
     await click(within(document.body).getByRole("menuitem", { name: "Ohbox" }));
     expect(moves(s.writes)).toEqual([move("p1", "INBOX", true)]);
     return s;

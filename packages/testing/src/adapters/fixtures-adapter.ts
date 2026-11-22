@@ -358,13 +358,12 @@ export class FixturesAdapter implements EngineAdapter {
     this.emit("view_meta", "reads_waterline", fx.readsWaterline);
     // The demo's first sync predates all of its mail, so a pile it never visited (Receipts) reads all new.
     this.emit("view_meta", FEED_SINCE_ID, { at: "1970-01-01T00:00:00.000Z" } satisfies FeedSinceMeta);
-    this.emit("view_meta", "reads_ai_chip", fx.readsAiChip);
     this.emit("view_meta", "account", fx.account);
     /**
      * The Notifications screen's VIP list and its learned suggestion. They used to be imported into `SettingsView`
      * straight from `@ohmail/testing` and rendered on every account, so a paying customer read a learned pattern
      * about Petra Wyss — a person invented for the demo. They travel through the MIRROR now, exactly as the Reads
-     * waterline and the AI chip already do, which means the gate is structural: `/sync` has no `view_meta` entity
+     * waterline already does, which means the gate is structural: `/sync` has no `view_meta` entity
      * type at all, so a Cloud account can never receive this row and the block simply does not render there. It is a
      * stronger guarantee than a `demo` boolean a view has to remember to check, and it keeps Mila's people where they
      * belong — in the fixtures package, not in the app's copy file.

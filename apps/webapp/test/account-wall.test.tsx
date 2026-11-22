@@ -140,11 +140,11 @@ describe("the wall names the closure and its date", () => {
       },
     }));
     expect(text()).not.toContain("today, not on");
-    expect(text()).toContain("Erases everything ohmail keeps, today.");
+    expect(text()).toContain(en.accessLock.deleteHintUndated);
     // An older server says nothing about dates at all — same undated hint.
     await mount(h(WallRoute, { facts: { ...WALL, lifecycle: undefined } }));
     expect(text()).not.toContain("today, not on");
-    expect(text()).toContain("Erases everything ohmail keeps, today.");
+    expect(text()).toContain(en.accessLock.deleteHintUndated);
   });
 
   it("a closure the server could not attribute gets the undated sentence, not a guessed date", async () => {
@@ -423,8 +423,12 @@ describe("the wall's box, not its sentences", () => {
     const selectors = [...css.matchAll(/^([^@{}\n][^{}\n]*)\{/gm)]
       .map((m) => m[1]!.trim())
       .filter((s) => s.includes(".wall-"));
-    // The census found the rules it is about: a zero here would pass for a stylesheet with none.
-    expect(selectors.length, "no `.wall-` rule found — the census read nothing").toBeGreaterThan(8);
+    expect(selectors).toEqual(expect.arrayContaining([
+      ".gate-card.wall-card",
+      ".gate-card .wall-lead",
+      ".gate-card .wall-erase",
+      ".gate-card .wall-erase .set-pane",
+    ]));
     for (const sel of selectors) {
       expect(sel.startsWith(".gate-card"), sel).toBe(true);
     }
@@ -521,8 +525,8 @@ describe("the first paint after sign-in waits for the verdict", async () => {
   let walled = true;
   let asked: string[] = [];
   let frames: string[] = [];
-  /** Did the verdict's own waiting card (the wordmark and a spinner, nothing else) ever show? */
-  let sawGateCard = false;
+  /** Did the opening frame show while the verdict was being asked? */
+  let sawOpening = false;
   /** Did the mail shell mount at any moment before the wall stood? */
   let sawShellBeforeWall = false;
   let observer: MutationObserver | null = null;
@@ -539,7 +543,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     sessionStorage.clear();
     asked = [];
     frames = [];
-    sawGateCard = false;
+    sawOpening = false;
     sawShellBeforeWall = false;
     walled = true;
     access = () => jsonOf(CLOSED);
@@ -556,7 +560,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     observer = new MutationObserver(() => {
       const t = document.body.textContent ?? "";
       if (frames[frames.length - 1] !== t) frames.push(t);
-      if (document.querySelector("main.gate[aria-busy=true] .gate-card .oh-activity-line")) sawGateCard = true;
+      if (document.querySelector('main[data-kind="web"] [role="status"]')) sawOpening = true;
       if (!(document.body.textContent ?? "").includes(wallTitle) && document.querySelector(".fr-root")) sawShellBeforeWall = true;
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -577,10 +581,9 @@ describe("the first paint after sign-in waits for the verdict", async () => {
   it("a closed account's first frame with anything in it is the wall, never an empty Ohbox", async () => {
     await shell.mountCloudShell();
     await shell.tick(2_000);
-    // The only thing before the wall is the verdict's waiting card: the wordmark and a spinner.
-    const withText = frames.filter((f) => f.trim() !== "" && f.trim() !== "ohmail");
+    const withText = frames.filter((f) => f.trim() !== "");
     expect(sawShellBeforeWall, "the mail shell mounted before the wall").toBe(false);
-    expect(sawGateCard, "the verdict was not asked before the first paint").toBe(true);
+    expect(sawOpening, "the verdict was not asked before the first paint").toBe(true);
     expect(withText.length, "nothing was ever painted").toBeGreaterThan(0);
     expect(withText[0]).toContain(wallTitle);
     for (const f of frames) for (const s of ohbox) expect(f, "an empty Ohbox was painted").not.toContain(s);
@@ -621,7 +624,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     const host = document.createElement("div");
     host.innerHTML = renderToString(tree());
     document.body.appendChild(host);
-    const late = host.querySelector(".gate .gate-late");
+    const late = host.querySelector('[data-kind="web"] [data-late]');
     expect(late?.textContent, "the server's frame is empty").toContain(en.session.opening);
     expect(late?.querySelector("a")?.getAttribute("href")).toBe("/");
     expect(late?.querySelector("a")?.textContent).toBe(en.appError.reload);
@@ -632,7 +635,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     });
     await shell.tick(500);
     expect(recoverable, "the frame did not hydrate as the server drew it").toEqual([]);
-    expect(host.querySelector(".gate-late"), "the line outlived hydration").toBeNull();
+    expect(host.querySelector('[data-kind="web"] [data-late]'), "the line outlived hydration").toBeNull();
     await shell.act(async () => { root!.unmount(); });
     host.remove();
   });
@@ -644,7 +647,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.mountCloudShell();
     await shell.tick(500);
     expect(document.body.querySelector(".fr-root"), "the mailbox never opened").not.toBeNull();
-    expect(sawGateCard, "the ordinary account was shown the verdict's waiting card").toBe(false);
+    expect(sawOpening, "the ordinary account was shown the verdict's waiting card").toBe(false);
   });
 
   it("the lift: an open answer on the return mounts the mail, says what was caught up, and a stale 402 does not re-raise the wall", async () => {
@@ -665,7 +668,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       .find((b) => /more notice/.test(b.getAttribute("aria-label") ?? ""));
     if (more) await shell.act(async () => { more.click(); });
     expect(document.body.textContent, "no catch-up notice after the lift")
-      .toContain("catching up on mail");
+      .toContain("Catching up since Aug 25, 2026");
     expect(localStorage.getItem(`ohmail.access.${OWNER}`)).toBe("open");
     // Another API instance still holds the old refusal for up to a minute: its 402 is disbelieved.
     walled = true;

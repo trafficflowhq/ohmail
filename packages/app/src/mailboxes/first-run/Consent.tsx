@@ -5,8 +5,9 @@
  */
 import type { ReactNode } from "react";
 import { Button, Page, Sentence } from "@ohmail/ui/base";
-import { SettingNote } from "@ohmail/ui/mail";
-import { Foot, Next, StepForm, type StepProps } from "./parts.js";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
+import { DoorSheet } from "../../doors/stage/DoorSheet.js";
+import { Next, StepForm, stepTop, type StepProps } from "./parts.js";
 import type { Say } from "./words.js";
 import type { FirstRun } from "@ohmail/app-logic/mailboxes/first-run/use-first-run";
 
@@ -23,32 +24,49 @@ export function HolderWait({ run, say }: { run: FirstRun; say: Say }): ReactNode
   );
 }
 
-export function Consent({ run, say }: StepProps): ReactNode {
-  if (run.wait.awaiting)
-    return (
-      <StepForm run={run} submit={() => undefined}>
-        <Page
-          material={<HolderWait run={run} say={say} />}
-          acts={
-            <Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} disabled />} />
-          }
-        >
-          <Sentence size="xl" level={1} end="hot">
-            {say("onboarding.resumeCheckingTitle")}
-          </Sentence>
-        </Page>
-      </StepForm>
-    );
+export function FolderMap({ say, history }: { say: Say; history: boolean }): ReactNode {
   return (
-    <StepForm run={run} submit={run.acts.forward}>
+    <DoorSheet kind="facts">
+      <SettingLine label={say("onboarding.mapInbox")} />
+      <SettingLine sub label={say("screener.pileOhbox")} value={say("onboarding.mapOhbox")} />
+      {history ? (
+        <SettingLine sub label={say("onboarding.mapHistory")} value={say("onboarding.mapOlder")} />
+      ) : null}
+      <SettingLine label="ohmail" />
+      <SettingLine sub label={say("screener.pileReads")} value={say("onboarding.mapNews")} />
+      <SettingLine sub label={say("screener.pileReceipts")} value={say("onboarding.mapReceipts")} />
+      <SettingLine sub label={say("onboarding.mapScreener")} value={say("onboarding.mapFirst")} />
+      <SettingLine sub label={say("onboarding.mapScreened")} value={say("onboarding.mapScreenedMail")} />
+      <SettingLine sub label={say("onboarding.mapQuarantine")} value={say("onboarding.mapSpam")} />
+      <SettingLine label={say("onboarding.mapOther")} value={say("onboarding.mapUnchanged")} />
+      <SettingNote>{say("onboarding.mapShared")}</SettingNote>
+    </DoorSheet>
+  );
+}
+
+export function Consent({ run, say }: StepProps): ReactNode {
+  const awaiting = run.wait.awaiting;
+  return (
+    <StepForm
+      run={run}
+      submit={() => {
+        if (!awaiting) run.acts.forward();
+      }}
+    >
       <Page
-        line={say("onboarding.consentBody")}
-        note={say("onboarding.consentHistory")}
-        material={<SettingNote>{say("onboarding.consentNothingYet")}</SettingNote>}
-        acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
+        {...stepTop(run, say, { back: true })}
+        columns={awaiting ? 1 : 2}
+        material={
+          awaiting ? (
+            <HolderWait run={run} say={say} />
+          ) : (
+            <FolderMap say={say} history={run.agree.win !== "all"} />
+          )
+        }
+        acts={<Next label={say("onboarding.continue")} disabled={awaiting} />}
       >
         <Sentence size="xl" level={1} end="hot">
-          {say("onboarding.consentTitle")}
+          {say(awaiting ? "onboarding.resumeCheckingTitle" : "onboarding.mapTitle")}
         </Sentence>
       </Page>
     </StepForm>

@@ -62,8 +62,9 @@ export function ScreenerReading({ route }: PaneProps) {
         <AllDecided />
       </div>
     );
+  if (segmentOf(route.sub) !== "waiting") return null;
   if (!model.queueSettled) return <BlankColumn>{t("place.loading")}</BlankColumn>;
   const count = model.waitingCount;
   if (count === 0 && facts.notOrganizingYet !== null) return null;
-  return <BlankColumn hot={count > 0}>{t("metaWaiting", { count })}</BlankColumn>;
+  return <BlankColumn hot={count > 0}>{t("railWaiting", { count })}</BlankColumn>;
 }

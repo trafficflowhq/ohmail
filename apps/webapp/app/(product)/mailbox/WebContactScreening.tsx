@@ -9,7 +9,6 @@ import { otherOrganizerOf } from "@ohmail/app-logic/mail-state/mail-state";
 import { shellConsentOptions } from "@ohmail/app-logic/press/consent-options";
 import { browserOffline, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";
 import { moveInBatches, retroOf, screeningReadBack, screeningShown, verdictAction, verdictArgs, verdictKeyOf, writtenRuleIds } from "@ohmail/app-logic/press/press-verdict";
-import { attributeMessages } from "@ohmail/app-logic/press/sender-audit";
 import {
   autoUnsubscribeDoor, dispatchScreeningChange, domainOf, isOwnSubject, movesAtLanding, planScreeningChange,
   resolutionExtras, ruleMatchOf, screeningPath, screeningToast, senderScreening, withResolution,
@@ -339,7 +338,8 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
     return <SenderAuditPanel state={{
       title: audit === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address),
       domain: audit === "domain",
-      rows: attributeMessages(read, rows),
+      name: sender.name ?? undefined,
+      rows,
     }} onClose={onClose} />;
   }
   if (subjectRule.sheet) return subjectRule.sheet;

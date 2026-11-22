@@ -23,6 +23,11 @@
     "planFacts": "{mailboxes, plural, one {# Postfach} other {# Postfächer}} · {credits, number} Credits · {storage}",
     "subscribe": "Abo abschließen",
     "subscribeTo": "{plan, select, solo {Solo} plus {Plus} pro {Pro} other {{plan}}} abonnieren",
-    "fixPayment": "Zahlung in Ordnung bringen"
+    "fixPayment": "Zahlung in Ordnung bringen",
+    "trialEnds": "Testphase endet",
+    "then": "Danach",
+    "price": "Preis",
+    "organizingUntil": "Organisiert bis {date}.",
+    "mailboxesConnected": "{used, number} von {count, number}"
   }
 }

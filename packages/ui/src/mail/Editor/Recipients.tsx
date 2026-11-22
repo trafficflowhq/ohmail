@@ -25,6 +25,7 @@ export interface RecipientsProps {
     label: string;
     value: ReactNode;
     tag?: string;
+    tags?: readonly string[];
     state?: string;
     stateId?: string;
     long?: boolean;
@@ -209,6 +210,9 @@ function FromLine({ from }: { from: NonNullable<RecipientsProps["from"]> }) {
         from.value
       )}
       {from.tag ? <Tag>{from.tag}</Tag> : null}
+      {from.tags?.map((tag) => (
+        <Tag key={tag}>{tag}</Tag>
+      ))}
       {from.state ? (
         <span id={from.stateId ?? own} role="status" className="oh-recipients-state">
           {from.state}
@@ -256,7 +260,7 @@ function SubjectLine({
         aria-label={subject.label}
         placeholder={subject.placeholder}
         autoComplete="off"
-        readOnly={locked}
+        readOnly={locked || subject.onChange === undefined}
         value={subject.value}
         onChange={(e) => subject.onChange?.(e.target.value)}
         onKeyDown={(e) => {

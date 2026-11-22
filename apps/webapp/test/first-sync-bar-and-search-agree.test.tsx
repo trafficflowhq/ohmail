@@ -56,7 +56,7 @@ describe("the sync line and search agree about the first import", () => {
 
     await goTo("search");
     await typeQuery(el, "zqxjvwk");
-    expect(textOf(el)).toContain("Searched the mail synced so far — nothing matched");
+    expect(textOf(el)).toContain("Only the mail synced so far was searched. The rest of your mail has not synced yet.");
     expect(textOf(el)).toContain("The rest of your mail has not synced yet.");
 
     /* The import is over: the stamp is written and the server has nothing new, so the count is
@@ -66,7 +66,7 @@ describe("the sync line and search agree about the first import", () => {
     await tick(FACTS_POLL_MS + IMPORT_END_IDLE_MS + 5_000);
     expect(textOf(el), "the rail kept the import after the stamp and the idle tail").not.toContain(SYNCING);
     await typeQuery(el, "zqxjvwkx");
-    expect(textOf(el)).toContain("Searched your whole mailbox — nothing matched");
+    expect(textOf(el)).toContain("Nothing matched");
     expect(textOf(el)).not.toContain("synced so far");
     expect(textOf(el)).not.toContain("The rest of your mail has not synced yet.");
   });
@@ -81,6 +81,6 @@ describe("the sync line and search agree about the first import", () => {
     expect(textOf(el), "the rail let go of an import nobody stamped").toContain(SYNCING);
     expect(textOf(el), "the import fell back to the awaiting state").not.toMatch(AWAITING_LINE);
     await typeQuery(el, "zqxjvwkx");
-    expect(textOf(el)).toContain("Searched the mail synced so far — nothing matched");
+    expect(textOf(el)).toContain("Only the mail synced so far was searched. The rest of your mail has not synced yet.");
   });
 });

@@ -2,7 +2,7 @@
   "invites": {
     "title": "Einladungen",
     "intro": "Lade jemanden auf diesen Server ein. Alle Eingeladenen bekommen einen eigenen Account: eigene Anmeldung, eigene Mails.",
-    "mintFor": "Für wen ist sie?",
+    "mintFor": "Für wen ist der Link",
     "mintAction": "Einladungslink erstellen",
     "mintHint": "Du bekommst einen Link, der einmal funktioniert und nach sieben Tagen abläuft. Schick ihn — oder lass ihn direkt vom Bildschirm scannen.",
     "working": "Einen Moment …",
@@ -19,7 +19,10 @@
     "rowMeta": "Erstellt {created} · läuft ab {expires}",
     "revoke": "Widerrufen",
     "revoked": "Einladung widerrufen.",
-    "stepUpExpired": "Dein Bestätigungsfenster ist zu. Melde dich neu an und versuch es dann nochmal."
+    "stepUpExpired": "Dein Bestätigungsfenster ist zu. Melde dich neu an und versuch es dann nochmal.",
+    "namePlaceholder": "Name",
+    "onceSevenDays": "Einmal · 7 Tage",
+    "expires": "Läuft ab"
   },
   "devices": {
     "title": "Geräte",
@@ -54,7 +57,7 @@
     "mintedName": "ohmail für {kind}",
     "deviceMeta": "{kind} · hinzugefügt {created} · zuletzt gesehen {seen}",
     "remove": "Abmelden",
-    "removeAsk": "{name} abmelden?",
+    "removeAsk": "{name} abmelden",
     "removeWhat": "Mit der nächsten Anfrage verliert es den Zugriff. Mit einem neuen Code lässt es sich jederzeit wieder koppeln.",
     "removed": "Gerät abgemeldet.",
     "cancel": "Abbrechen",
@@ -78,12 +81,22 @@
     "webGroup": "{count, plural, one {# weitere Web-Sitzung} other {# weitere Web-Sitzungen}}",
     "webGroupMeta": "Browser-Anmeldungen außer dieser · zuletzt gesehen {seen}. Deine gekoppelten Geräte bleiben unberührt.",
     "webGroupAction": "Alle abmelden",
-    "webGroupAsk": "{count, plural, one {# Web-Sitzung} other {# Web-Sitzungen}} abmelden?",
+    "webGroupAsk": "{count, plural, one {# Web-Sitzung} other {# Web-Sitzungen}} abmelden",
     "webGroupWhat": "Jede verliert den Zugriff mit ihrer nächsten Anfrage. Dieser Browser und deine gekoppelten Geräte bleiben angemeldet.",
     "webGroupDone": "{count, plural, one {# Web-Sitzung abgemeldet} other {# Web-Sitzungen abgemeldet}}.",
     "loading": "Deine Geräte werden geladen …",
     "loadFailed": "Deine Geräte konnten nicht geladen werden.",
-    "retry": "Nochmal versuchen"
+    "retry": "Nochmal versuchen",
+    "whoseDevice": "Wessen Gerät",
+    "namePlaceholder": "Name",
+    "newDevice": "Neues Gerät",
+    "onceUntil": "Einmal · bis {time}",
+    "scanWith": "Scannen mit",
+    "scanApp": "ohmail auf dem Gerät",
+    "webGroupScope": "Dieser Browser und deine gekoppelten Geräte bleiben angemeldet.",
+    "copyPairingFailed": "Der Link konnte nicht kopiert werden. Scanne stattdessen den Code.",
+    "pairing": "Wird gekoppelt",
+    "revokePairingLink": "Kopplungslink widerrufen"
   },
   "account": {
     "title": "Account löschen",
@@ -117,7 +130,7 @@
     "keptTitle": "Bleibt",
     "kept1": "Eine Abrechnungszeile mit einer zufälligen Kennung und ohne Namen, dazu die Credit-Buchungen, der Abo-Datensatz und die Verknüpfung zu Stripe. Deine Adresse darin wird überschrieben. Für Finanzunterlagen gilt eine Aufbewahrungspflicht, die Art. 17 Abs. 3 lit. b DSGVO ausdrücklich vorsieht. Das Protokoll dessen, was unser Personal am Account eingesehen oder geändert hat, bleibt ebenfalls, unter derselben Kennung. Die Hashwerte deiner Anmelde-Tokens bleiben bis zu 400 Tage nach ihrem Ablauf, damit eine noch angemeldete App erfährt, dass der Account gelöscht ist.",
     "keptSelfHost": "Eine Account-Zeile mit einer zufälligen Kennung und ohne Namen, dazu bis zu 400 Tage nach ihrem Ablauf die Hashwerte ihrer Anmelde-Tokens, damit eine App, die noch eines davon hat, erfährt, dass der Account gelöscht ist.",
-    "keptSub": "Dein Abo wird dabei sofort gek\u00fcndigt. Bereits bezahlte Tage werden nicht zur\u00fcckerstattet.",
+    "keptSub": "Dein Abo wird dabei sofort gekündigt. Bereits bezahlte Tage werden nicht zurückerstattet.",
     "backups": "Backups laufen nach ihrem eigenen Zeitplan ab.",
     "backupsLink": "Datenschutzerklärung",
     "typeLabel": "Tipp {email}, um fortzufahren",
@@ -138,11 +151,11 @@
   },
   "passwordChange": {
     "title": "Passwort ändern",
-    "lead": "Wenn es sich ändert, wird jede andere Sitzung auf jedem Gerät abgemeldet, und jede Anmeldung, die noch nicht abgeschlossen ist, wird abgebrochen. Diese hier bleibt angemeldet.",
+    "lead": "Wenn du es änderst, werden alle anderen Sitzungen auf allen Geräten abgemeldet und laufende Anmeldungen abgebrochen. Diese Sitzung bleibt angemeldet.",
     "currentLabel": "Aktuelles Passwort",
     "nextLabel": "Neues Passwort",
     "repeatLabel": "Neues Passwort, noch einmal",
-    "nextHint": "Mindestens 12 Zeichen.",
+    "nextHint": "12 Zeichen oder mehr",
     "submit": "Passwort ändern",
     "working": "Wird geändert …",
     "needCurrent": "Gib zuerst dein aktuelles Passwort ein. Es wurde nichts geändert.",
@@ -155,7 +168,7 @@
     "slowed": "Passwortprüfungen für diesen Account sind nach vielen Fehlversuchen verlangsamt. Warte ein paar Minuten und versuch es nochmal.",
     "conflict": "Das Passwort wurde gerade in einer anderen Sitzung geändert, deshalb wurde diese Änderung nicht gemacht.",
     "refused": "Das Passwort wurde nicht geändert. Versuch es gleich nochmal.",
-    "done": "Dein Passwort ist geändert. {count, plural, =0 {Keine andere Sitzung war angemeldet.} one {# andere Sitzung wurde abgemeldet.} other {# andere Sitzungen wurden abgemeldet.}}",
+    "done": "Dein Passwort wurde geändert{count, plural, =0 {. Es war keine andere Sitzung angemeldet.} one { und # andere Sitzung wurde abgemeldet.} other { und # andere Sitzungen wurden abgemeldet.}}",
     "confirmTitle": "Bestätige, dass du es bist",
     "factorBody": "Der nächste erfolgreiche Faktor ändert das Passwort. Danach kommt kein weiterer Schritt.",
     "cancelled": "Es wurde nichts geändert. Du hast abgebrochen, bevor die Prüfung fertig war."
@@ -183,16 +196,23 @@
     "totpRemove": "Authenticator entfernen",
     "totpScan": "Scan das in deinem Authenticator, oder tipp den Schlüssel von Hand ein:",
     "totpCodeLabel": "Gib den sechsstelligen Code ein",
-    "totpActivate": "Einschalten"
+    "totpActivate": "Einschalten",
+    "codesReplaceTitle": "Codes ersetzen",
+    "codesReplaceLine": "Die zehn gespeicherten Codes funktionieren danach nicht mehr.",
+    "shownOnce": "Wird einmal angezeigt",
+    "totpSixDigits": "6-stelliger Code"
   },
   "accountLifecycle": {
     "graceEnds": "Deine Testphase ist abgelaufen. ohmail organisiert noch bis zum {date}.",
     "paymentFailed": "Deine letzte Zahlung ist fehlgeschlagen. Bring sie bis zum {date} in Ordnung, damit ohmail weiter organisiert.",
-    "trialEnds": "Deine Testphase endet am {date}.",
+    "trialEnds": "Testphase endet am {date}",
     "subscribe": "Abo abschlie\u00dfen",
     "fixPayment": "Zahlung in Ordnung bringen",
-    "later": "Sp\u00e4ter",
-    "caughtUp": "ohmail holt die Nachrichten nach, die seit dem {date} angekommen sind.",
-    "dismiss": "Verstanden"
+    "later": "Nicht jetzt",
+    "caughtUp": "Holt Mails seit {date} nach",
+    "dismiss": "Ausblenden",
+    "trialEnded": "Testphase beendet",
+    "paymentFailedTitle": "Zahlung fehlgeschlagen",
+    "organizingUntil": "Organisiert bis {date}."
   }
 }

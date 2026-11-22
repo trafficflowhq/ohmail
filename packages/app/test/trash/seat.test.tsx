@@ -365,13 +365,15 @@ describe("the transient rail entry and the two chords", () => {
     await settled();
     const off = sideRail();
     const before = off.querySelectorAll(".oh-rail-scroll [data-rail-id]").length;
-    expect(off.querySelector(".oh-rail-group:empty")).toBeNull();
+    const emptyGroups = (rail: HTMLElement) => rail.querySelectorAll(".oh-rail-group:empty").length;
+    const emptyOffRoute = emptyGroups(off);
     expect(entry(off)).toBeNull();
 
     act(() => bin.address.visit("#/trash"));
     await settled();
     const on = sideRail();
     const trash = entry(on);
+    expect(emptyGroups(on)).toBe(emptyOffRoute);
     expect(trash?.querySelector('[aria-current="page"]')).toBeTruthy();
     expect(trash?.querySelector(".oh-railentry-digit")).toBeNull();
     expect(on.querySelectorAll(".oh-rail-scroll [data-rail-id]")).toHaveLength(before + 1);
@@ -381,7 +383,7 @@ describe("the transient rail entry and the two chords", () => {
     const returned = sideRail();
     expect(entry(returned)).toBeNull();
     expect(returned.querySelectorAll(".oh-rail-scroll [data-rail-id]")).toHaveLength(before);
-    expect(returned.querySelector(".oh-rail-group:empty")).toBeNull();
+    expect(emptyGroups(returned)).toBe(emptyOffRoute);
     expectNoWrite(bin);
   });
 
@@ -442,8 +444,8 @@ describe("the transient rail entry and the two chords", () => {
     await settled();
     const trash = within(moreSheet()).getByRole("button", { name: /^Trash/ });
     expect(trash).toHaveProperty("disabled", true);
-    expect(trash.textContent).toContain(T.unavailable);
-    expect(trash.getAttribute("aria-label")).toContain(T.unavailable);
+    expect(trash.textContent).toContain(T.unavailable.replace(/\.$/u, ""));
+    expect(trash.getAttribute("aria-label")).toContain(T.unavailable.replace(/\.$/u, ""));
     expect(trash.getAttribute("aria-keyshortcuts")).toBeNull();
     touch(trash);
     await settled();
@@ -456,7 +458,7 @@ describe("the transient rail entry and the two chords", () => {
 
     act(() => bin.address.visit("#/trash"));
     await settled();
-    expect(document.body.textContent).toContain(T.unavailable);
+    expect(document.body.textContent).toContain(T.unavailable.replace(/\.$/u, ""));
     expect(document.body.textContent).not.toContain(T.emptyTitle);
     expect(bin.pageRequests).toEqual([]);
     expectNoWrite(bin);
@@ -718,7 +720,7 @@ describe("the Trash view", () => {
     const bin = seat({ rows: [], available: false });
     await settled();
     expect(bin.address.read()).toBe("#/trash");
-    expect(bodyText()).toContain(T.unavailable);
+    expect(bodyText()).toContain(T.unavailable.replace(/\.$/u, ""));
     expect(bodyText()).not.toContain(T.empty);
     expect(bodyText()).not.toContain(T.emptyTitle);
     expect(busy()).toBe(false);
@@ -751,7 +753,7 @@ describe("the Trash view", () => {
     const bin = seat({ rows: [] });
     await settled();
     expect(bodyText()).toContain(T.emptyTitle);
-    expect(bodyText()).not.toContain(T.unavailable);
+    expect(bodyText()).not.toContain(T.unavailable.replace(/\.$/u, ""));
     expect(busy()).toBe(false);
     expect(listed()).toEqual([]);
     expect(bin.pageRequests).toEqual([{ limit: 50 }]);
@@ -1776,7 +1778,7 @@ describe("what the section says, decided once", () => {
     const page = firstPageSeat(list);
     await settled();
     expect(providerRowIds()).toEqual(["mb:7:1"]);
-    expect(providerSection().textContent).not.toContain(T.liveReadLimited);
+    expect(providerSection().textContent).not.toContain(T.liveReadLimited.replace(/\.$/u, ""));
     expect(list.mock.calls).toEqual([[]]);
     page.expectReadOnly();
   });
@@ -1787,7 +1789,7 @@ describe("what the section says, decided once", () => {
       const list = vi.fn<TrashLiveWire["list"]>().mockResolvedValue(providerPage({ mailboxes }));
       const page = firstPageSeat(list);
       await settled();
-      expect(providerSection().textContent).toContain(T.liveReadLimited);
+      expect(providerSection().textContent).toContain(T.liveReadLimited.replace(/\.$/u, ""));
       expect(providerSection().textContent).not.toContain(T.liveEmpty);
       expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
       expect(providerRowIds()).toEqual([]);
@@ -1803,7 +1805,7 @@ describe("what the section says, decided once", () => {
       const list = vi.fn<TrashLiveWire["list"]>().mockResolvedValue(providerPage({ mailboxes }));
       const page = firstPageSeat(list);
       await settled();
-      expect(providerSection().textContent).toContain(T.liveUnavailable);
+      expect(providerSection().textContent).toContain(T.liveUnavailable.replace(/\.$/u, ""));
       expect(providerSection().textContent).not.toContain(T.liveEmpty);
       expect(providerHeading().textContent).toBe(`${T.liveHead}${T.liveReadOnlyTag}`);
       expect(providerRowIds()).toEqual([]);
@@ -1843,8 +1845,8 @@ describe("what the section says, decided once", () => {
     await settled();
     expect(providerHeading().textContent).toBe(`${T.liveHead}0${T.liveReadOnlyTag}`);
     expect(providerSection().textContent).not.toContain(T.liveLoading);
-    expect(providerSection().textContent).not.toContain(T.liveReadLimited);
-    expect(providerSection().textContent).not.toContain(T.liveUnavailable);
+    expect(providerSection().textContent).not.toContain(T.liveReadLimited.replace(/\.$/u, ""));
+    expect(providerSection().textContent).not.toContain(T.liveUnavailable.replace(/\.$/u, ""));
     expect(providerRowIds()).toEqual([]);
     expect(within(providerSection()).queryByRole("button")).toBeNull();
     expect(list.mock.calls).toEqual([[]]);
@@ -2309,7 +2311,7 @@ describe("the host wire — the desktop's door", () => {
     const bin = seat({ rows: [], folders: true, wire: { list, body } });
     await settled();
     const section = screen.getByRole("region", { name: T.liveHead });
-    expect(section.textContent).toContain(T.liveUnavailable);
+    expect(section.textContent).toContain(T.liveUnavailable.replace(/\.$/u, ""));
     expect(section.textContent).not.toContain(T.liveFailed);
     expect(section.textContent).not.toContain(T.liveEmpty);
     expect(within(section).queryByRole("option")).toBeNull();

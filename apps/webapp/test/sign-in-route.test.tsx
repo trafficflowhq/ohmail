@@ -114,7 +114,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 /** A blank by the name its label gives it. */
 const blank = (c: HTMLElement, name: string): HTMLInputElement | null => {
   const label = [...c.querySelectorAll("label")].find((l) => l.textContent === name);
-  return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+  return label?.control instanceof HTMLInputElement ? label.control : null;
 };
 const button = (c: HTMLElement, name: string): HTMLButtonElement | undefined =>
   [...c.querySelectorAll("button")].find((b) => b.textContent?.startsWith(name));
@@ -133,7 +133,7 @@ describe("/login draws the sign-in's page over its ceremony", () => {
   it("the password step: the heading the journeys find, the two blanks by their names, ids and fill names", async () => {
     const c = await mount();
     await waitFor(() => blank(c, L.emailLabel) !== null, "the password step");
-    expect(c.querySelector("h1")?.textContent).toBe(L.title.replace(/\.$/, ""));
+    expect(c.querySelector("h1")?.textContent).toMatch(/^I’m .* with password /);
     const email = blank(c, L.emailLabel)!;
     const password = blank(c, L.passwordLabel)!;
     /* No name on a blank, as the card's had none: a press before the page's script runs sends nothing typed. */
@@ -153,10 +153,9 @@ describe("/login draws the sign-in's page over its ceremony", () => {
     expect(document.activeElement, "the time-boxed step costs no extra click").toBe(code);
     expect([code.inputMode, code.autocomplete, code.name]).toEqual(["numeric", "one-time-code", ""]);
     /* Only the factors this account enrolled and this browser can use: no passkey here. */
-    expect(button(c, L.usePasskey)).toBeUndefined();
-    await act(async () => {
-      button(c, L.useRecovery)!.click();
-    });
+    await act(async () => { button(c, L.factorCode)!.click(); });
+    expect(c.querySelector('[role="menuitemradio"]')?.parentElement?.textContent).not.toContain(L.factorPasskey);
+    await act(async () => { button(c, L.factorRecovery)!.click(); });
     await waitFor(() => blank(c, L.recoveryLabel) !== null, "the recovery code's blank");
     expect(c.querySelector<HTMLInputElement>("#login-code")!.inputMode).toBe("text");
   }, 20000);
@@ -186,7 +185,7 @@ describe("/login draws the sign-in's page over its ceremony", () => {
   it("a named continuation is said before the form", async () => {
     const c = await mount({ next: "/account/manage" });
     await waitFor(() => blank(c, L.emailLabel) !== null, "the password step");
-    expect(c.textContent).toContain(L.continueManage);
+    expect(c.textContent).not.toContain("Sign in, and your account page opens.");
   }, 20000);
 });
 

@@ -3,28 +3,17 @@
  * takes off, and that the letters stay where they are, said before it is asked.
  */
 import type { TagEntity as TagDTO } from "@ohmail/wire";
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { chordMatches } from "@ohmail/app-logic/keys";
 import type { TagsModel } from "@ohmail/app-logic/tags";
-import { Button, Dialog, Field, Menu } from "@ohmail/ui/base";
+import { Button, Dialog, Field } from "@ohmail/ui/base";
 import "./tags.css";
 import { useText } from "../text/index.js";
 
 /**
- * Rename is asked where the list's menu stood, as a small form: the field, then Save and Cancel. The field takes the
- * keys as it opens, and Enter in it is Save; Escape is the menu's.
+ * Rename takes the second line of the list head. The field takes focus and Enter saves.
  */
-export function TagRename({
-  tag,
-  model,
-  anchor,
-  close,
-}: {
-  tag: TagDTO;
-  model: TagsModel;
-  anchor: RefObject<HTMLButtonElement | null>;
-  close: () => void;
-}) {
+export function TagRename({ tag, model, close }: { tag: TagDTO; model: TagsModel; close: () => void }) {
   const t = useText("tags");
   const [draft, setDraft] = useState(tag.name);
   const answer = model.judge(tag.id, draft);
@@ -34,40 +23,35 @@ export function TagRename({
     close();
   };
   const field = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
-  const saveNow = useRef(save);
-  saveNow.current = save;
-  /* After the menu's own focus (a child's layout effect runs first): the keys go to the name. */
   useLayoutEffect(() => {
-    const el = field.current;
-    if (!el) return;
-    el.focus({ preventScroll: true });
-    const onKey = (e: Event): void => {
-      if (!chordMatches("Enter", e as KeyboardEvent)) return;
-      e.preventDefault();
-      saveNow.current();
-    };
-    el.addEventListener("keydown", onKey);
-    return () => el.removeEventListener("keydown", onKey);
+    field.current?.focus({ preventScroll: true });
+    field.current?.select();
   }, []);
-  const title = t("rename.title", { name: tag.name });
   return (
-    <Menu open onClose={close} anchor={anchor} right kind="ask" label={title} title={title}>
+    <div
+      className="tg-rename"
+      onKeyDown={(e) => {
+        if (!chordMatches("Escape", e.nativeEvent)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }}
+    >
       <Field
         ref={field}
         label={t("rename.field")}
         value={draft}
         onChange={setDraft}
+        onEnter={save}
         refusal={answer.kind === "taken" ? t("rename.taken", { name: answer.name }) : undefined}
       />
-      <div className="tg-answers">
-        <Button kind="ink" size="s" disabled={answer.kind !== "save"} onPress={save}>
-          {t("rename.save")}
-        </Button>
-        <Button kind="quiet" size="s" onPress={close}>
-          {t("rename.cancel")}
-        </Button>
-      </div>
-    </Menu>
+      <Button kind="ink" disabled={answer.kind !== "save"} onPress={save}>
+        {t("rename.save")}
+      </Button>
+      <Button kind="quiet" keyHint="Esc" shortcut="Escape" onPress={close}>
+        {t("rename.cancel")}
+      </Button>
+    </div>
   );
 }
 

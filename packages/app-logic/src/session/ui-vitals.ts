@@ -275,7 +275,7 @@ export function abandonOpen(): void {
  * message as ON SCREEN until the returned function runs (the pane's effect cleanup). Silent when
  * this message's open is not the one pending: a body can arrive unasked.
  *
- * The caller is a LAYOUT effect on a terminal body state (`MessagePane`), so this runs in the
+ * The caller is a LAYOUT effect on a terminal body state (the shared Reader), so this runs in the
  * commit that put the text in the document; the paint is the other frame a reader waits through.
  */
 export function endOpen(messageId: string): () => void {

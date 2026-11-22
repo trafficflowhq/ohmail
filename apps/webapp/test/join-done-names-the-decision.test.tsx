@@ -99,8 +99,9 @@ describe("the join wizard's last screen and the organize decision", () => {
     answers["/api/auth/session"] = { status: 200, body: sessionUser() };
     answers["/api/mailboxes"] = { status: 200, body: { items: [box()] } };
     const c = await mountJoin();
-    expect(c.textContent).toContain(messages.join.step_connected_title);
-    expect(c.textContent).toContain(messages.join.step_connected_lead);
+    expect(c.textContent).toContain(messages.join.myMailboxes.replace(/\.$/, ""));
+    expect(c.textContent).toContain(messages.join.connected);
+    expect(c.textContent).toContain(box().address);
     expect(c.textContent, "setup declared finished before the decision").not.toContain(messages.join.step_done_title);
     const link = [...c.querySelectorAll("a")].find((a) => a.textContent === messages.join.continue);
     expect(link?.getAttribute("href")).toBe("/#/first-run");
@@ -114,11 +115,10 @@ describe("the join wizard's last screen and the organize decision", () => {
       answers["/api/auth/session"] = { status: 200, body: sessionUser() };
       answers["/api/mailboxes"] = { status: 200, body: { items: [box()] } };
       const c = await mountJoin(false, catalog);
-      /* The lead: the line that says one of the last screen's two leads. */
-      const lead = [...c.querySelectorAll("p, span")].map((el) => el.textContent ?? "")
-        .find((said) => [catalog.join.step_connected_lead, catalog.join.step_done_lead].includes(said)) ?? "";
-      expect(lead).toBe(catalog.join.step_connected_lead);
-      expect(lead).not.toMatch(/\b(one|two|three|\d+)\s+steps?\b|\b(ein|zwei|drei|\d+)\s+schritte?\b/i);
+      expect(c.textContent).toContain(catalog.join.myMailboxes.replace(/\.$/, ""));
+      expect(c.textContent).toContain(catalog.join.connected);
+      const line = c.querySelector(".oh-page-line")?.textContent ?? "";
+      expect(line).not.toMatch(/\b(one|two|three|\d+)\s+steps?\b|\b(ein|zwei|drei|\d+)\s+schritte?\b/i);
     });
   }
 
@@ -127,7 +127,7 @@ describe("the join wizard's last screen and the organize decision", () => {
     answers["/api/mailboxes"] = { status: 200, body: { items: [box({ organizeConsentedAt: "2026-10-09T10:00:00.000Z" })] } };
     const c = await mountJoin();
     expect(c.textContent).toContain(messages.join.step_done_title);
-    expect(c.textContent).not.toContain(messages.join.step_connected_title);
+    expect(c.textContent).not.toContain(messages.join.myMailboxes.replace(/\.$/, ""));
     const link = [...c.querySelectorAll("a")].find((a) => a.textContent === messages.join.openOhmail);
     expect(link?.getAttribute("href")).toBe("/#/first-run");
   });

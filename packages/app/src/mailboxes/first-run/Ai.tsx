@@ -1,68 +1,91 @@
-/**
- * THE AI QUESTION, and its answer's step. The question stops the run until it is answered (nothing is spent before):
- * "no" is a complete answer; "yes" means what this shell makes of it: a model to choose here, the plan's credits, or
- * the operator's key. On a self-hosted server with no model, "yes" is not offered.
- */
-import { useState, type ReactNode } from "react";
-import { Page, RadioLines, Sentence } from "@ohmail/ui/base";
-import { SettingNote } from "@ohmail/ui/mail";
+import { useRef, useState, type ReactNode } from "react";
+import { Menu, MenuItem, Page, Sentence, Slot, Tag } from "@ohmail/ui/base";
+import { SaidWith } from "../../doors/stage/Said.js";
 import { NONE } from "../../host/index.js";
-import { Foot, Next, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
-import { AI_YES, PROVIDER_STEP } from "./words.js";
+import { useText } from "../../text/index.js";
+import { Next, StepForm, refusalOf, stepTop, type StepProps } from "./parts.js";
 
 export function Ai({ run, say, door }: StepProps): ReactNode {
   const offered = run.acts.aiOffered;
-  /* `on` and `on-unconfigured` are a "yes" already given; `unset` and `off` both draw as "no". */
-  const [answer, setAnswer] = useState<"yes" | "no">(() =>
-    run.facts.ai === "on" || run.facts.ai === "on-unconfigured" ? "yes" : "no",
-  );
-  const title = say("onboarding.aiTitle");
+  const onboarding = useText("onboarding");
+  const [answer, setAnswer] = useState(() => run.facts.ai === "on" || run.facts.ai === "on-unconfigured");
+  const enabled = offered && answer;
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const mode = say(enabled ? "onboarding.aiOn" : "onboarding.aiOff");
   return (
-    <StepForm run={run} submit={() => run.acts.answerAi(answer === "yes")}>
+    <StepForm run={run} submit={() => run.acts.answerAi(enabled)}>
       <Page
-        line={leadOf(say("onboarding.aiLead"))}
-        refusal={refusalOf(run, say)}
-        material={
-          <div className="mbx-run-material">
-            <RadioLines<"yes" | "no">
-              label={title}
-              value={offered ? answer : "no"}
-              onChange={(v) => {
-                if (!run.writes.busy) setAnswer(v);
-              }}
-              options={[
-                { value: "no", label: say("onboarding.aiNo"), note: say("onboarding.aiNoWhy") },
-                ...(offered
-                  ? [{ value: "yes" as const, label: say(AI_YES[door].label), note: say(AI_YES[door].why) }]
-                  : []),
-              ]}
-            />
-            {offered ? null : <SettingNote>{say("onboarding.providerSelfhostOff")}</SettingNote>}
-          </div>
+        {...stepTop(run, say, { back: true })}
+        line={
+          enabled
+            ? [
+                { note: say("onboarding.aiSends") },
+                ...(door === "cloud" ? [{ note: say("onboarding.aiDraftSends") }] : []),
+                {
+                  tag: say(
+                    door === "cloud"
+                      ? "onboarding.aiCloudTag"
+                      : door === "selfhost"
+                        ? "onboarding.aiServerTag"
+                        : "onboarding.aiKeyTag",
+                  ),
+                },
+              ]
+            : [{ tag: say("onboarding.aiRulesOnly") }]
         }
-        acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
+        refusal={refusalOf(run, say)}
+        acts={<Next label={say("onboarding.continue")} />}
       >
-        <Sentence size="xl" level={1} end="hot">
-          {title}
-        </Sentence>
+        <SaidWith
+          level={1}
+          parts={onboarding.rich("aiSay", {
+            on: () =>
+              offered ? (
+                <Slot
+                  kind="fill"
+                  ref={anchor}
+                  expanded={open}
+                  disabled={run.writes.busy}
+                  onPress={() => setOpen(!open)}
+                >
+                  {mode}
+                </Slot>
+              ) : (
+                <Tag>{mode}</Tag>
+              ),
+          })}
+        />
+        <Menu anchor={anchor} open={open} label={say("onboarding.aiTitle")} onClose={() => setOpen(false)}>
+          {[true, false].map((value) => (
+            <MenuItem
+              key={String(value)}
+              checked={value === enabled}
+              onPress={() => {
+                if (!run.writes.busy) setAnswer(value);
+                setOpen(false);
+              }}
+            >
+              {say(value ? "onboarding.aiOn" : "onboarding.aiOff")}
+            </MenuItem>
+          ))}
+        </Menu>
       </Page>
     </StepForm>
   );
 }
 
-/** THE ANSWER'S STEP: the shell's own model form where the install keeps its model, else the service's sentence. */
+/** The local model form uses the same host slot as Settings. */
 export function Provider({ run, say, door, slots }: StepProps): ReactNode {
-  const step = PROVIDER_STEP[door];
-  const form = "form" in step;
   return (
     <StepForm run={run} submit={run.acts.forward}>
       <Page
-        {...(form ? {} : { line: say(step.body(run.operatorModel)) })}
-        material={form && slots.aiProvider !== NONE ? slots.aiProvider() : undefined}
-        acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
+        {...stepTop(run, say, { back: true })}
+        material={door === "local" && slots.aiProvider !== NONE ? slots.aiProvider() : undefined}
+        acts={<Next label={say("onboarding.continue")} />}
       >
         <Sentence size="xl" level={1} end="hot">
-          {say(form ? "onboarding.aiTitle" : step.title)}
+          {say("onboarding.aiTitle")}
         </Sentence>
       </Page>
     </StepForm>

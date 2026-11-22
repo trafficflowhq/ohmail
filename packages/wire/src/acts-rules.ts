@@ -13,7 +13,7 @@ export type RuleAct =
    * finished UI for all of Stage 2 — mounted, tested, reachable from nothing. A revoke does not
    * move mail: `RulesService.remove` deletes the row and never touches `folder_state`; rules
    * are consulted when mail ARRIVES, never retroactively — the surface says so before the user
-   * commits (see `RulesView`).
+   * commits (see the rule list, `packages/app-logic/src/press/rule-list.ts`).
    */
   | {
       kind: "rule_delete"; ruleId: string;

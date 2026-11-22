@@ -19,7 +19,6 @@ export {
   ohbox,
   reads,
   readsWaterline,
-  readsAiChip,
   receipts,
   receiptsGroups,
   waiting,

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { act } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { COPY } from "../../../../packages/letter-body/src/MessageBody.js";
@@ -44,15 +45,17 @@ describe("the note on News and Receipts", () => {
         .find(n => n.textContent?.includes("senders you never let in")) ?? null;
       const posts = () => calls.filter(c => c.method === "POST");
       expect(calls.map(c => `${c.method} ${c.url}`)).toContain("GET /api/screener/unscreened?pile=news");
-      expect(note()?.textContent).toBe("3 letters here are from senders you never let in.Screen 3");
+      expect(note()?.textContent).toBe("3 letters here were never let in They are from senders you never let in.Screen 3");
       expect(posts(), "a READ moved somebody's mail").toEqual([]);
 
       await act(async () => { note()!.querySelector("button")!.click(); });
       await live.tick(50);
       expect(posts().map(c => [c.url, JSON.parse(c.body ?? "null")])).toEqual([["/api/screener/unscreened", { pile: "news" }]]);
-      const said = [...document.querySelectorAll('[role="status"]')].map(n => n.textContent)
-        .filter(text => text === "Screened 3. Your organizer moves them on the next pass.");
-      expect(said).toEqual(["Screened 3. Your organizer moves them on the next pass."]);
+      const reports = [...document.querySelectorAll('.fr-report [role="status"][data-kind="detail"]')];
+      expect(reports.map(report => report.querySelector("b")?.textContent)).toEqual(["Screened 3"]);
+      expect(reports.map(report => report.textContent)).toEqual([
+        "Screened 3 Cloud moves them the next time it checks this mailbox.",
+      ]);
       expect(note(), "the note outlived the press it answered").toBeNull();
     } finally {
       await live.teardownShellEnv();
@@ -71,9 +74,8 @@ describe("the card being read carries the message's verbs", () => {
       await press(card, "the first News card");
       const bar = shell.el.querySelector<HTMLElement>('.fr-reading [role="toolbar"][aria-label="Actions"]');
       expect(bar, "the selected card's actions").not.toBeNull();
-      const later = [...bar!.querySelectorAll("button")].find(button => button.textContent?.trim() === "Later");
-      expect(later).toBeTruthy();
-      await press(later!, "Later on the selected card");
+      const later = within(bar!).getByRole("button", { name: "Later" });
+      await press(later, "Later on the selected card");
       const writes = () => shell.sent.filter(m => m.kind === "triage_set");
       await waitFor(() => writes().length > 0, "the letter's Later command reaches the engine");
       expect(writes()).toEqual([{ kind: "triage_set", messageId: "one", state: "reply_later" }]);

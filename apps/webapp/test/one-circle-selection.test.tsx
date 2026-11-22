@@ -30,7 +30,10 @@ it.each(folderCases)("%s enters and leaves selection with a single circle", asyn
     });
     return {
       ...letter,
-      from: name === "Screener" ? { ...letter.from, address: `${id}@example.invalid` } : letter.from,
+      from: {
+        name: index === 0 ? "Ada" : "Bea",
+        address: name === "Screener" ? `${id}@example.invalid` : letter.from.address,
+      },
       triage: name === "Answer Later" ? {
         messageId: id, state: "reply_later" as const, bubbleUpAt: null,
         setAt: letter.updatedAt, updatedAt: letter.updatedAt,
@@ -57,6 +60,7 @@ it.each(folderCases)("%s enters and leaves selection with a single circle", asyn
   const bar = () => view.queryByRole("toolbar", { name: en.ohbox.bar.label });
   await waitFor(() => circles().length === 2, "both selection circles are available");
   const [circle, other] = circles();
+  const otherAvatars = view.getAllByText("B", { exact: true });
   const before = address.read();
   const readerActions = () => view.queryAllByRole("toolbar").filter((toolbar) => toolbar !== bar());
   const beforeActions = readerActions();
@@ -72,12 +76,15 @@ it.each(folderCases)("%s enters and leaves selection with a single circle", asyn
   expect(within(selection!).getByRole("button", { name: /^1 selected\b/ })).toBeTruthy();
   expect(circle!.getAttribute("aria-pressed")).toBe("true");
   expect(other!.getAttribute("aria-pressed")).toBe("false");
+  expect(view.queryAllByText("B", { exact: true })).toEqual(otherAvatars);
   expect(address.read()).toBe(before);
-  expect(readerActions()).toEqual(beforeActions);
+  const phoneStream = phone && (name === "News on a phone" || name === "Receipts on a phone");
+  expect(readerActions()).toEqual(phoneStream ? [] : beforeActions);
 
   fireEvent.click(circle!);
   expect(bar()).toBeNull();
   expect(circle!.tabIndex).toBe(0);
+  if (phoneStream) expect(readerActions()).toEqual(beforeActions);
   circle!.focus();
   // A native button's Enter key dispatches a click in the browser.
   expect(fireEvent.keyDown(circle!, { key: "Enter" })).toBe(true);

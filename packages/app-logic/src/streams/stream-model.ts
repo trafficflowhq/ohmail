@@ -11,7 +11,7 @@ import type { ListVerbs } from "../press/list-verbs.js";
 
 export type StreamPlace = "news" | "receipts";
 
-/** What a host hands a stream place, under today's names (`ReadsView`'s and `ReceiptsView`'s props). */
+/** What a host hands a stream place. */
 export interface StreamInput {
   readonly place: StreamPlace;
   /** `MailState.settled` and `.owed`: nothing about the pile is stated before both allow it. */

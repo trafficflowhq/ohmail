@@ -87,7 +87,26 @@ export function isCardDeleteKey(e: KeyboardEvent): boolean {
   );
 }
 
-/** The embedded panel shares the reader's answer, Move and Delete bindings. */
+function filingKeys(t: Text, open: LetterKeyDoors | null): KeyBinding[] {
+  const booked = open?.letter.triage?.state === "bubbled_up";
+  const file = (chord: string, label: string, run: () => void): KeyBinding => ({
+    chord,
+    group: "message",
+    label,
+    when: outsideText,
+    disabled: open === null,
+    disabledReason: open === null ? "no_cursor" : undefined,
+    run,
+  });
+  return [
+    file("a", t("key.answerLater"), () => open?.verbs.act("later")),
+    file("e", t("key.park"), () => open?.verbs.act("aside")),
+    file("b", t("key.resurface"), () => (booked ? open?.menu("resurface") : open?.verbs.act("resurface"))),
+    ...(open?.tagLabel ? [file("t", open.tagLabel, () => open.menu("tag"))] : []),
+  ];
+}
+
+/** The embedded panel shares the reader's bindings while its addressed card has the keyboard. */
 export function useCardKeys(
   on: boolean,
   open: LetterKeyDoors | null,
@@ -99,6 +118,7 @@ export function useCardKeys(
     on && open !== null
       ? [
           ...(showPanel ? answerKeys(t, open) : []),
+          ...filingKeys(t, open),
           {
             chord: "m",
             group: "message",
@@ -150,7 +170,6 @@ function answerKeys(t: Text, open: LetterKeyDoors | null): KeyBinding[] {
  */
 export function letterKeys(ts: Text, open: LetterKeyDoors | null): KeyBinding[] {
   const resting = open === null ? ({ disabled: true, disabledReason: "no_cursor" } as const) : {};
-  const act = (action: MessageAction) => () => open?.verbs.act(action);
   const show = (which: PanelMenu) => () => open?.menu(which);
   const verb = (
     chord: string,
@@ -166,13 +185,9 @@ export function letterKeys(ts: Text, open: LetterKeyDoors | null): KeyBinding[] 
     ...resting,
     ...more,
   });
-  const booked = open?.letter.triage?.state === "bubbled_up";
   return [
     ...answerKeys(ts, open),
-    verb("a", ts("key.answerLater"), act("later")),
-    verb("e", ts("key.park"), act("aside")),
-    verb("b", ts("key.resurface"), booked ? show("resurface") : act("resurface")),
-    ...(open?.tagLabel ? [verb("t", open.tagLabel, show("tag"))] : []),
+    ...filingKeys(ts, open),
     ...(open?.screeningLabel ? [verb("s", open.screeningLabel, show("screening"))] : []),
     ...(open?.calendarAction ? [verb("v", open.calendarAction.label, open.calendarAction.onPress)] : []),
     verb("m", ts("key.move"), show("move"), open === null ? {} : { disabled: open.verbs.moves.length === 0 }),

@@ -121,7 +121,7 @@ describe("a windowed list announces its true size and every row's true position"
   /* The premise and the Ohbox's two cases moved to `ohbox/list-window-set-size-ohbox.test.tsx` (share ohbox-2): the
      Ohbox's own list, drawn from its model. Every case below still asserts its own window (`expectHeard`'s first line). */
 
-  it("News with the line and the AI chip: both are in the index space and neither is an item", async () => {
+  it("the News waterline occupies a window slot without counting as a letter", async () => {
     const letters = range(0, N, { folder: "ohmail/News" });
     mountStreamFrame({
       at: "#/reads",
@@ -133,7 +133,7 @@ describe("a windowed list announces its true size and every row's true position"
     });
     const host = screen.getByRole("region", { name: "News" });
     const scroller = scrollerOf(host, "listbox", "News");
-    expect(within(host).queryByText("Filed here by ohmail"), "the chip is not mounted — the case asks nothing about it").not.toBeNull();
+    expect(within(host).queryByText("Filed here by ohmail")).toBeNull();
     const h = await walk(host, scroller, N + 2);
     const line = within(host).queryByRole("separator");
     expectHeard(h, { News: 100, "Seen up to here": N - 100 },
@@ -149,10 +149,9 @@ describe("a windowed list announces its true size and every row's true position"
       first: `#/folder/${folder.id}`, letters: rows, consent: FOLDERS_ON,
       more: { [`folder:${folder.id}`]: folder },
     });
-    const first = await within(host).findByRole("listbox", { name: "New" });
+    const first = await within(host).findByRole("listbox", { name: "Projects" });
     const m = { host, scroller: first.closest<HTMLElement>(".pl-scroll")! };
-    expectHeard(await walk(m.host, m.scroller, N + 2), { New: 60, Earlier: N - 60 },
-      (label, k) => (label === "New" ? indexOfKey(k) + 1 : indexOfKey(k) - 59));
+    expectHeard(await walk(m.host, m.scroller, N + 2), { Projects: N }, (_label, k) => indexOfKey(k) + 1);
   });
 
   it("a Trash of 600", async () => {
@@ -262,7 +261,7 @@ describe("a windowed list announces its true size and every row's true position"
     const h = await walk(m.host, m.scroller, N + 1);
     expectHeard(h, { Screener: N });
     await scrollTo(m.scroller, (QUEUE - 4) * ESTIMATED_ROW_PX);
-    const heading = within(m.host).queryByRole("heading", { name: /Waiting for the organizer/ });
+    const heading = within(m.host).queryByRole("heading", { name: /^Waiting for / });
     expect(heading, "the decided heading is not mounted at its slot — the case asks nothing about it").not.toBeNull();
     expect(heading!.closest('[role="option"]')).toBeNull();
     const off = [...(h.at.get("Screener") ?? [])]

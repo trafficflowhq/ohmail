@@ -12,7 +12,7 @@ export interface RulesPaneState {
  */
 export interface RulesStateWords {
   readonly rules: readonly RuleItem[];
-  readonly intro: string;
+  readonly intro: string | null;
   readonly introHeld: string;
   readonly facets: RulesModel["facets"];
   readonly waiting: RulesModel["waiting"];

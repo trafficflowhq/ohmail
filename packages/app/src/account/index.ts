@@ -21,6 +21,7 @@ import type { WayOutDoor } from "./way-out/model.js";
 import { WAY_OUT_STATES } from "./way-out/states.js";
 
 export * from "./contract.js";
+export { SubscriptionPane, useSubscription } from "./subscription/index.js";
 export {
   GATED_IDLE,
   gatedAsk,

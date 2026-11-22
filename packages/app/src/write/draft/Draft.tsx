@@ -65,7 +65,6 @@ export function useDraftOffer(messageId: string): DraftOffer | null {
   const t = useText("write");
   const w = useWriting();
   const beside = useWriteBeside();
-  const draftReply = useText("draftReply");
   const { control, pending, resolve, noCredits } = w.draftReplyChrome;
   const here = control.messageId === messageId;
   const drafting = here && control.phase === "running";
@@ -107,7 +106,7 @@ export function useDraftOffer(messageId: string): DraftOffer | null {
     control: (
       <DraftControl
         label={label}
-        title={beside.metered || drafting || waiting ? title : draftReply("offerBodyUnmetered")}
+        title={title}
         cost={cost}
         busy={drafting || waiting}
         /* Another letter's draft is being written: this one cannot be pressed until it lands, and says so. */
@@ -180,7 +179,15 @@ export function useLetterDraftOffer(): DraftOffer | null {
         label={label}
         word={word}
         short={fromText ? t("draft.fromTextShort") : undefined}
-        title={cost === undefined || waiting ? word : t("draft.fromTextTitle", { cost: control.cost })}
+        title={
+          waiting || drafting
+            ? label
+            : !words
+              ? t("draft.letterHint")
+              : cost === undefined
+                ? label
+                : t("draft.fromTextTitle", { cost: control.cost })
+        }
         cost={cost}
         idle={!words}
         busy={drafting || waiting}

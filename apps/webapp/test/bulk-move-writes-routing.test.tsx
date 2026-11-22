@@ -225,9 +225,7 @@ describe("the selection's Move", () => {
     expect([...new Set(intoReads.map((m) => m.folder))], "a move went somewhere else")
       .toEqual(["ohmail/News"]);
 
-    // …and the sentence names both numbers.
-    expect(saidAtPress, "the sentence did not count senders and messages")
-      .toMatch(/Mail from [1-9]\d* senders? now goes to News/);
+    expect(saidAtPress).toContain(`${intoReads.length} · News`);
   }, 20000);
 
   it("moves only the messages that were picked", async () => {
@@ -250,11 +248,11 @@ describe("the selection's Move", () => {
    * output, because a press that guessed once agrees with itself perfectly.
    *
    * Watched: `bySender` seeded with a constant key, and the routing count falls to one against a
-   * three-sender list, here and in the sentence.
+   * three-sender list.
    */
   it("writes one routing per DISTINCT sender, and counts the senders the list holds", async () => {
     await mountShell();
-    const { senders } = await moveSelectionTo("News", 2);
+    const { ids, senders } = await moveSelectionTo("News", 2);
     const saidAtPress = toastText();
     expect(senders.size, "the selection spans one sender, so grouping cannot be read").toBeGreaterThan(1);
 
@@ -270,9 +268,6 @@ describe("the selection's Move", () => {
     expect(subjects.size, "the press wrote one routing for the whole set").toBe(senders.size);
     expect(routing.length, "a sender got two routing writes from one press").toBe(senders.size);
 
-    // …and the sentence says the same number the list does.
-    const said = /Mail from (\d+) senders? now goes to News/.exec(saidAtPress);
-    expect(said, "the sentence did not count senders").not.toBeNull();
-    expect(Number(said![1])).toBe(senders.size);
+    expect(saidAtPress).toContain(`${ids.length} · News`);
   }, 20000);
 });

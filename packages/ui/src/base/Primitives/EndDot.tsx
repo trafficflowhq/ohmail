@@ -7,12 +7,13 @@ export interface EndDotProps extends DotProps {
 
 /** Words that end in the full stop. */
 export function EndDot({ children, kind, product }: EndDotProps) {
-  const cut = children.lastIndexOf(" ");
+  const words = children.trimEnd().replace(/(?<!\.)\.$/u, "");
+  const cut = words.lastIndexOf(" ");
   return (
     <>
-      {cut < 0 ? "" : children.slice(0, cut + 1)}
+      {cut < 0 ? "" : words.slice(0, cut + 1)}
       <span className="oh-nowrap">
-        {children.slice(cut + 1)}
+        {words.slice(cut + 1)}
         <Dot kind={kind} product={product} />
       </span>
     </>

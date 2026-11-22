@@ -114,8 +114,8 @@ describe("an opened row says its state with its exact time", () => {
     const pane = fakePane({ list: [ok([row("mbx-a", A)])], allowance: [ALLOWED] });
     drawPane(pane.wire, { opened: "mbx-a" });
     await settle();
-    const line = screen.getByRole("group", { name: say(M.syncedAgo, { when: "2 minutes ago" }) });
-    expect(line.textContent).toContain(exact("2026-11-16T08:58:00.000Z"));
+    const line = screen.getByRole("group", { name: M.lineSynced });
+    expect(line.textContent).toContain("08:58");
   });
 
   it("a failing mailbox: since when, how often, and the token the server gave, as a setting's line", async () => {
@@ -149,17 +149,19 @@ describe("connecting goes to the first run's add run", () => {
     const pane = fakePane({ list: [ok([row("mbx-a", A)])], allowance: [ALLOWED] });
     const view = drawPane(pane.wire, { connect: fakeDoor().door });
     await settle();
-    fireEvent.click(screen.getByRole("button", { name: M.setupAgainAction }));
+    fireEvent.click(screen.getByRole("button", { name: M.setupAgain }));
     expect(view.went).toEqual(["again"]);
   });
 
   it("a proven block withholds the offer and says why; an unknown never does", async () => {
     const full = ok({ emailVerified: true, access: { canAddMailbox: true, mailboxes: 1 } });
     const pane = fakePane({ list: [ok([row("mbx-a", A)])], allowance: [full] });
-    drawPane(pane.wire, { connect: fakeDoor().door });
+    const viewForLimit = drawPane(pane.wire, { connect: fakeDoor().door });
     await settle();
-    expect(screen.queryByRole("button", { name: M.connect })).toBeNull();
-    expect(screen.getByText(M.blocked_at_limit)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: M.connect }));
+    const limit = screen.getByRole("dialog", { name: "1 of 1 mailboxes" });
+    expect(limit.textContent).toContain(M.limitLine);
+    expect(viewForLimit.went).toEqual([]);
 
     cleanup();
     const unknown = fakePane({

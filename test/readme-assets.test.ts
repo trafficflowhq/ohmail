@@ -9,7 +9,7 @@ import { publicPath, ROOT } from "./support/public-root.mjs";
 /**
  * ══ THE TWO README FACES SHOW FILES THAT EXIST, AND ONLY THOSE ═══════════════════════════════════
  *
- * README.md (paper) and README.ohmarchy.md (its twin in the ohmarchy face) show screenshots and
+ * README.md (oh) and README.ohmarchy.md (its twin in the ohmarchy face) show screenshots and
  * recordings from `docs/assets/readme/`. A `<picture>` whose file is missing fails nothing: GitHub
  * draws the alt text, and a stranger finds the hole on the project's front page.
  *
@@ -21,18 +21,18 @@ import { publicPath, ROOT } from "./support/public-root.mjs";
 const at = (rel: string): string => publicPath(rel);
 const DIR = "docs/assets/readme";
 
-const paper = readFileSync(at("README.md"), "utf8");
+const oh = readFileSync(at("README.md"), "utf8");
 const twin = readFileSync(at("README.ohmarchy.md"), "utf8");
 
 const named = (md: string): string[] =>
   [...md.matchAll(/(?:src|srcset|href)="(docs\/assets\/readme\/[^"]+)"/g)].map((m) => m[1]!);
 
 /** README.ohmarchy.md back into README.md: the switch's lit half, the twin link, the tile paths. */
-function toPaper(md: string): string {
+function toOh(md: string): string {
   return md
-    .replace(/toggle-paper-off-(light|dark)\.svg/g, "toggle-paper-on-$1.svg")
+    .replace(/toggle-oh-off-(light|dark)\.svg/g, "toggle-oh-on-$1.svg")
     .replace(/toggle-ohmarchy-on-(light|dark)\.svg/g, "toggle-ohmarchy-off-$1.svg")
-    .replace('alt="paper: open this README in the paper face"', 'alt="paper, the face shown"')
+    .replace('alt="oh: open this README in the oh face"', 'alt="oh, the face shown"')
     .replace('alt="ohmarchy, the face shown"', 'alt="ohmarchy: open this README in the ohmarchy face"')
     .replace("[twin in the other face](README.md)", "[twin in the other face](README.ohmarchy.md)")
     .replace(/(docs\/assets\/readme\/)ohmarchy-([a-z0-9-]+\.(?:gif|webp))/g, "$1$2");
@@ -41,12 +41,12 @@ function toPaper(md: string): string {
 const headings = (md: string): string[] => md.split("\n").filter((l) => /^#{2,3} /.test(l));
 
 describe("the README's two faces", () => {
-  const all = [...new Set([...named(paper), ...named(twin)])];
+  const all = [...new Set([...named(oh), ...named(twin)])];
 
   it("name their pictures — and the list is not empty", () => {
     // Anti-vacuity: a regex that stopped matching would make every assertion below pass.
-    expect(named(paper).length).toBeGreaterThanOrEqual(30);
-    expect(named(twin).length).toBe(named(paper).length);
+    expect(named(oh).length).toBeGreaterThanOrEqual(30);
+    expect(named(twin).length).toBe(named(oh).length);
     expect(named(twin).some((p) => p.includes("/ohmarchy-")), "the twin shows no ohmarchy tile").toBe(true);
   });
 
@@ -75,10 +75,10 @@ describe("the README's two faces", () => {
   });
 
   it("the twin is README.md in the other face, and nothing else", () => {
-    expect(twin).not.toBe(paper);
-    expect(toPaper(twin)).toBe(paper);
-    expect(headings(twin)).toEqual(headings(paper));
-    expect(headings(paper).length).toBeGreaterThanOrEqual(10);
+    expect(twin).not.toBe(oh);
+    expect(toOh(twin)).toBe(oh);
+    expect(headings(twin)).toEqual(headings(oh));
+    expect(headings(oh).length).toBeGreaterThanOrEqual(10);
   });
 
   it("the ohmarchy light captures show the unread wash the apps ship", () => {
@@ -108,12 +108,16 @@ describe("the face switch", () => {
     return { x: Number(box?.[1]), w: Number(box?.[2]), width: Number(box?.[3]) };
   };
 
-  for (const [page, md, shown] of [["README.md", paper, "paper"], ["README.ohmarchy.md", twin, "ohmarchy"]] as const) {
-    it(`${page}: paper opens README.md, ohmarchy opens README.ohmarchy.md, the shown face is the lit half`, () => {
+  for (const [page, md, shown] of [["README.md", oh, "oh"], ["README.ohmarchy.md", twin, "ohmarchy"]] as const) {
+    it(`${page}: oh opens README.md, ohmarchy opens README.ohmarchy.md, the shown face is the lit half`, () => {
       const [left, right, ...rest] = halves(md);
       expect(rest).toEqual([]);
       const lit = (face: string) => (face === shown ? "on" : "off");
-      expect(left).toMatchObject({ href: "README.md", face: "paper", state: lit("paper"), dark: `toggle-paper-${lit("paper")}` });
+      expect(left).toMatchObject({ href: "README.md", face: "oh", state: lit("oh"), dark: `toggle-oh-${lit("oh")}` });
+      for (const theme of ["light", "dark"] as const) {
+        const svg = readFileSync(at(left!.file.replace("-light.svg", `-${theme}.svg`)), "utf8");
+        expect(svg).toMatch(/<text\b[^>]*>oh<\/text>/);
+      }
       expect(right).toMatchObject({ href: "README.ohmarchy.md", face: "ohmarchy", state: lit("ohmarchy"), dark: `toggle-ohmarchy-${lit("ohmarchy")}` });
     });
 
@@ -133,11 +137,11 @@ describe("the face switch", () => {
 describe("what ohmail.app links to and quotes from the README", () => {
   // The landing links #how-ohmail-organizes-inside-your-mailbox and quotes the folder tree, the
   // self-host heading and the Microsoft footnote; a rewrite that drops one leaves it citing nothing.
-  const fence = /The folders ohmail creates are a small, frozen set:\s*```\n([\s\S]*?)```/.exec(paper)?.[1] ?? "";
+  const fence = /The folders ohmail creates are a small, frozen set:\s*```\n([\s\S]*?)```/.exec(oh)?.[1] ?? "";
   const names = fence.split("\n").map((l) => l.replace(/^[├└│─\s]+/, "").split(/\s{2,}/)[0]!).filter(Boolean);
 
   it("the organizing section draws exactly the folders ohmail creates, and none called Spam", () => {
-    expect(headings(paper)).toContain("## How ohmail organizes inside your mailbox");
+    expect(headings(oh)).toContain("## How ohmail organizes inside your mailbox");
     expect(names.slice(0, 4)).toEqual(["Inbox", "Junk", "Sent", "ohmail/"]);
     const own = [...OHMAIL_FOLDERS, META_FOLDER].map((f) => f.replace(/^ohmail\//, ""));
     expect(names.slice(4).sort()).toEqual([...own].sort());
@@ -145,8 +149,8 @@ describe("what ohmail.app links to and quotes from the README", () => {
   });
 
   it("the self-host heading and the Microsoft footnote the landing quotes", () => {
-    expect(headings(paper)).toContain("### Run the server yourself");
-    const note = paper.split("\n").find((l) => l.startsWith("\\* Microsoft 365")) ?? "";
+    expect(headings(oh)).toContain("### Run the server yourself");
+    const note = oh.split("\n").find((l) => l.startsWith("\\* Microsoft 365")) ?? "";
     expect(note).toContain("Microsoft sign-in on ohmail Cloud and on self-hosted servers set up for it");
   });
 });
@@ -166,7 +170,7 @@ describe("what the docs say travels and what is not in this repository", () => {
   it("the README and how-it-works name every setting the profile carries", () => {
     expect(fields).toContain("signature");
     const lists = [
-      /your settings \(([^)]*)\)/.exec(paper.replace(/\s+/g, " "))?.[1] ?? "",
+      /your settings \(([^)]*)\)/.exec(oh.replace(/\s+/g, " "))?.[1] ?? "",
       /holds your ohmail settings for this mailbox — ([^—]*) —/.exec(flat("docs/how-it-works.md"))?.[1] ?? "",
     ];
     for (const list of lists) for (const f of fields) expect(list, f).toContain(PHRASE[f] ?? `<unnamed ${f}>`);

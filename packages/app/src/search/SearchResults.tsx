@@ -12,7 +12,7 @@ import type { SearchListModel } from "@ohmail/app-logic/search";
 import { GroupHeading, ListLine, Row, Rows } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 import type { SearchBeside } from "./beside.js";
-import { fuzzyTerm, hitWho, markedSubject } from "./row-words.js";
+import { hitWho, markedSubject } from "./row-words.js";
 import { SearchSort } from "./SearchSort.js";
 
 import type { RowContact } from "../place-list/use-row-contact.js";
@@ -62,16 +62,9 @@ export function SearchResults({
       />
     </div>
   );
-  /* Closest words are near, never matches: said under their heading, with where a part of a word is looked for. */
-  const similarHint = (
-    <>
-      <ListLine fine>{model.similarSynced ? t("similarHintSynced") : t("similarHint")}</ListLine>
-      {model.partsSaid ? <ListLine fine>{t("saidPart")}</ListLine> : null}
-    </>
-  );
   const sort = <SearchSort model={model} />;
-  const heading = (
-    <GroupHeading count={count} aside={sort}>
+  const heading = (hot: boolean) => (
+    <GroupHeading count={count} aside={sort} hot={hot}>
       {model.similar ? t("similarHead") : t("results")}
     </GroupHeading>
   );
@@ -79,6 +72,7 @@ export function SearchResults({
   if (model.listing === "store") {
     /* THE STORE'S LIST: the walker's slots in the window. */
     const slots: ReactNode[] = [];
+    let hot = false;
     for (let i = model.window.start; i < model.window.end; i++) {
       const s = model.slotAt(i);
       if (s.kind === "gone") slots.push(<div key={`g${i}`} data-index={i} className="sr-gone" aria-hidden />);
@@ -88,12 +82,15 @@ export function SearchResults({
             <Row who="" people={OWED_PEOPLE} subject="" />
           </div>,
         );
-      else slots.push(item(s.hit, i, model.similar, true));
+      else {
+        hot ||= s.hit.message.unread;
+        slots.push(item(s.hit, i, model.similar, true));
+      }
     }
     return (
       <>
-        {heading}
-        {model.similarFrom !== null ? similarHint : null}
+        {heading(hot)}
+        {model.similarFrom !== null && model.partsSaid ? <ListLine fine>{t("saidPart")}</ListLine> : null}
         <Rows listLabel={t("aria")}>
           <div aria-hidden data-window-top="" style={{ height: model.window.padTop }} />
           {slots}
@@ -105,29 +102,34 @@ export function SearchResults({
   /* THE DEVICE'S PAINT, whole: the matches under Results, then the closest words under their own heading. */
   const exact: ReactNode[] = [];
   const near: ReactNode[] = [];
+  let exactHot = false;
+  let nearHot = false;
   for (let i = 0; i < model.length; i++) {
     const s = model.slotAt(i);
     if (s.kind !== "hit") continue;
     const after = model.similarFrom !== null && i >= model.similarFrom;
+    if (after) nearHot ||= s.hit.message.unread;
+    else exactHot ||= s.hit.message.unread;
     (after ? near : exact).push(item(s.hit, i, s.similar, false));
   }
   return (
     <>
       {exact.length > 0 ? (
         <>
-          {heading}
+          {heading(exactHot)}
           <Rows listLabel={t("aria")}>{exact}</Rows>
         </>
       ) : null}
       {near.length > 0 ? (
         <Fragment key="similar">
           <GroupHeading
+            hot={nearHot}
             count={exact.length === 0 ? count : undefined}
             aside={exact.length === 0 ? sort : undefined}
           >
             {t("similarHead")}
           </GroupHeading>
-          {similarHint}
+          {model.partsSaid ? <ListLine fine>{t("saidPart")}</ListLine> : null}
           <Rows listLabel={t("similarHead")}>{near}</Rows>
         </Fragment>
       ) : null}
@@ -153,12 +155,10 @@ export function SearchHitRow({
   selection?: RowSelection;
   contact?: RowContact;
 }) {
-  const t = useText("search");
   const m = hit.message;
   const who = hitWho(hit, beside.words);
   const contactActions = contact?.rowProps(m.from, m.id);
   const cut = markedSubject(m.subject, hit);
-  const fuzzy = fuzzyTerm(hit);
   const subject = (
     <>
       {cut === null ? (
@@ -170,7 +170,6 @@ export function SearchHitRow({
           {cut.after}
         </>
       )}
-      {fuzzy !== null ? ` · ${t("fuzzyNote", { term: fuzzy })}` : null}
     </>
   );
   return (

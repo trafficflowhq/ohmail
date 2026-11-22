@@ -8,13 +8,13 @@
  * in words: the word is a claim, and until a row answers it there is no form and no verb of a mailbox.
  */
 import type { ReactNode } from "react";
-import { Page, Sentence } from "@ohmail/ui/base";
-import { SettingNote } from "@ohmail/ui/mail";
+import { Page, Sentence, Tag } from "@ohmail/ui/base";
+import { SettingLine } from "@ohmail/ui/mail";
+import { DoorSheet } from "../../doors/stage/DoorSheet.js";
 import { NONE } from "../../host/index.js";
 import { ConnectForm } from "../connect/index.js";
 import type { ConnectResult } from "../connect/contract.js";
-import { Foot, Next, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
-import { PASSWORD_HINT } from "./words.js";
+import { Next, StepForm, leadOf, refusalOf, stepTop, type StepProps } from "./parts.js";
 
 export function MailboxStep(props: StepProps): ReactNode {
   const { run, say } = props;
@@ -23,12 +23,29 @@ export function MailboxStep(props: StepProps): ReactNode {
     return (
       <StepForm run={run} submit={run.acts.forward}>
         <Page
-          line={say("join.mailboxConnected", { address: mailbox.address })}
-          note={say("onboarding.probeOkDetail")}
-          acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
+          {...stepTop(run, say, { back: true })}
+          columns={2}
+          material={
+            <DoorSheet kind="facts">
+              {(run.rows ?? [mailbox]).map((row) => (
+                <SettingLine
+                  key={row.id}
+                  label={row.address}
+                  tag={
+                    row.organizerRole === "reader"
+                      ? say("onboarding.readerTag")
+                      : row.id === mailbox.id && !row.unreachable
+                        ? say("onboarding.connectedTag")
+                        : undefined
+                  }
+                />
+              ))}
+            </DoorSheet>
+          }
+          acts={<Next label={say("onboarding.continue")} />}
         >
-          <Sentence size="xl" level={1} end="ink">
-            {say("onboarding.mailboxTitle")}
+          <Sentence size="xl" level={1} end="hot">
+            {say("onboarding.myMailboxes")}
           </Sentence>
         </Page>
       </StepForm>
@@ -38,13 +55,8 @@ export function MailboxStep(props: StepProps): ReactNode {
       <StepForm run={run} submit={run.wait.retry}>
         <Page
           line={leadOf(say("onboarding.resumeChecking"))}
-          acts={
-            <Foot
-              run={run}
-              say={say}
-              primary={<Next label={say("onboarding.resumeRetry")} disabled={run.wait.retrying} />}
-            />
-          }
+          {...stepTop(run, say)}
+          acts={<Next label={say("onboarding.resumeRetry")} disabled={run.wait.retrying} />}
         >
           <Sentence size="xl" level={1} end="hot">
             {say("onboarding.resumeCheckingTitle")}
@@ -56,10 +68,8 @@ export function MailboxStep(props: StepProps): ReactNode {
     return (
       <StepForm run={run} submit={run.acts.resume}>
         <Page
-          line={leadOf(say("onboarding.mailboxHandoffLead"))}
-          acts={
-            <Foot run={run} say={say} back primary={<Next label={say("onboarding.mailboxHandoffGo")} />} />
-          }
+          {...stepTop(run, say, { back: true })}
+          acts={<Next label={say("onboarding.mailboxHandoffGo")} />}
         >
           <Sentence size="xl" level={1} end="hot">
             {say("onboarding.mailboxTitle")}
@@ -71,27 +81,17 @@ export function MailboxStep(props: StepProps): ReactNode {
 }
 
 /** The form itself. It is its own form, so the step around it is none; its press is the step's forward verb. */
-function Connect({ run, say, service, slots, connect, onCodeStarted }: StepProps): ReactNode {
-  const holder = run.accountOrganizer;
-  const named = holder?.name?.trim() ? holder.name : null;
+function Connect({ run, say, slots, connect, onCodeStarted }: StepProps): ReactNode {
   const onDone = (result: ConnectResult): void => {
     if (result.kind === "connected") run.acts.connected(result.mailboxId);
   };
   return (
     <Page
-      line={leadOf(say("onboarding.mailboxLead"))}
+      {...stepTop(run, say, { back: true })}
       refusal={refusalOf(run, say)}
       material={
         <div className="mbx-run-material">
-          {/* WHAT THIS CONNECTION WILL BE, BEFORE IT IS MADE: a consent-less reader while another install organizes. */}
-          {holder ? <SettingNote>{say("onboarding.doorReader")}</SettingNote> : null}
-          {holder ? (
-            <SettingNote>
-              {named
-                ? say("onboarding.doorReaderWhy", { name: named })
-                : say("onboarding.doorReaderWhyLegacy")}
-            </SettingNote>
-          ) : null}
+          {run.accountOrganizer ? <Tag>{say("onboarding.readerTag")}</Tag> : null}
           {connect === NONE ? null : (
             <ConnectForm
               ask={{
@@ -103,10 +103,9 @@ function Connect({ run, say, service, slots, connect, onCodeStarted }: StepProps
               factor={slots.factor}
             />
           )}
-          <SettingNote>{say(PASSWORD_HINT[service])}</SettingNote>
         </div>
       }
-      acts={<Foot run={run} say={say} back />}
+      acts={null}
     >
       <Sentence size="xl" level={1} end="hot">
         {say("onboarding.mailboxTitle")}

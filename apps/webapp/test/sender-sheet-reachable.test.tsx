@@ -206,7 +206,7 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
     );
     await click(within(el).getByRole("button", { name: "Decision scope" }));
     const page = within(document.body);
-    await click(page.getByRole("menuitemradio", { name: "whole domain" }));
+    await click(page.getByRole("menuitemradio", { name: /^Whole domain/i }));
     const actions = within(within(el).getByRole("toolbar", { name: messages.screener.place.panel }));
     await click(actions.getByRole("button", { name: "Screen out" }));
     expect(writes).toEqual([]);
@@ -544,14 +544,14 @@ describe("the past-mail option", () => {
         const editor = within(document.body).getByRole("dialog", {
           name: messages.screening.subjectAria.replace("{who}", sender),
         });
-        await clickMounted(within(editor).getByRole("option", { name: messages.screener.pileReads }));
+        await clickMounted(within(editor).getByRole("radio", { name: messages.screener.pileReads }));
         const retro = within(editor).getByRole("switch", { name: messages.screening.retroToggleAria });
         expect(retro.getAttribute("aria-checked")).toBe("true");
         if (!applyRetro) await clickMounted(retro);
         expect(retro.getAttribute("aria-checked")).toBe(String(applyRetro));
         expect(writes).toEqual([]);
         await clickMounted(within(editor).getByRole("button", {
-          name: messages.screening.subjectConfirmGo.replace("{dest}", messages.screener.pileReads),
+          name: messages.screening.subjectMakeRule,
         }));
         await tick(500);
         expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([{

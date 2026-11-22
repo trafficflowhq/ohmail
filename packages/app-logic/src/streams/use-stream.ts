@@ -225,12 +225,13 @@ export function useStream(input: StreamInput): StreamModel {
     } else open(id);
   };
 
+  const keepUnread = read.keepUnread;
   const markUnread = useCallback(
     (id: string) => {
-      read.keepUnread(id);
+      keepUnread(id);
       inputRef.current.markUnread(id);
     },
-    [inputRef, read],
+    [inputRef, keepUnread],
   );
   const markAllRead = useCallback(() => {
     inputRef.current.markAllRead(itemsRef.current.filter((m) => m.unread).map((m) => m.id));

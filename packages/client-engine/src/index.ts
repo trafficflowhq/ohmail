@@ -491,6 +491,7 @@ export {
   heldUnpinned,
   threadSizeIndex,
   threadMarksIndex,
+  threadMarkOf,
   type ThreadMark,
   threadSubject,
   THREAD_PARTICIPANTS_MAX,

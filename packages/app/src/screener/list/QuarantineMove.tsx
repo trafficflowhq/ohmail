@@ -33,7 +33,6 @@ export function QuarantineMove({ sweep }: { sweep: NonNullable<ScreenerJunk["swe
   };
   return (
     <div className="sc-notices">
-      {confirmationRequired && !canMove && <Notice place="bar" title={t("quarantineMove.confirmAgain")} />}
       {canMove || phase === "pending" ? (
         <Notice
           place="bar"
@@ -44,14 +43,20 @@ export function QuarantineMove({ sweep }: { sweep: NonNullable<ScreenerJunk["swe
               ? "quarantineMove.queued"
               : phase === "failed"
                 ? "quarantineMove.failed"
-                : confirmationRequired
-                  ? "quarantineMove.confirmAgain"
-                  : "quarantineMove.hint",
+                : "quarantineMove.hint",
           )}
           acts={canMove ? (confirmationRequired ? [move] : [move, dismiss]) : undefined}
         />
       ) : phase === "done" ? (
-        <Notice place="bar" title={t("quarantineMove.done")} />
+        <Notice
+          place="bar"
+          title={t("quarantineMove.done")}
+          line={
+            sweep.requestedCount === undefined
+              ? undefined
+              : t("quarantineMove.doneLine", { count: sweep.requestedCount })
+          }
+        />
       ) : null}
       {mailboxes
         .filter((box) => !box.hasJunkFolder && box.candidates > 0)

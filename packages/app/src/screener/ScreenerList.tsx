@@ -224,6 +224,14 @@ export function ScreenerList(pane: PaneProps) {
       <div className="sc-scroll" ref={listScroller}>
         {junkOn ? (
           <>
+            <Tools
+              view={view}
+              junkCount={
+                junk.phase === "ready" && junk.nextCursor === null && !junk.search.query
+                  ? junk.visible.length
+                  : null
+              }
+            />
             <Junk
               junk={junk}
               view={{
@@ -236,7 +244,7 @@ export function ScreenerList(pane: PaneProps) {
             />
             {view.rows.length > 0 ? (
               <>
-                <GroupHeading>{t("quarantineShelf")}</GroupHeading>
+                <GroupHeading count={String(view.rows.length)}>{t("quarantineShelf")}</GroupHeading>
                 <Rows
                   label={t("quarantineShelf")}
                   contact={contact}
@@ -255,7 +263,7 @@ export function ScreenerList(pane: PaneProps) {
           </>
         ) : (
           <>
-            <Tools view={view} />
+            <Tools view={view} touch={pane.plan.pointer === "coarse"} />
             <Rows view={view} scroller={listScroller} selection={selection} contact={contact} />
             <Empty view={view} />
             {segment === "waiting" ? <Tail /> : null}

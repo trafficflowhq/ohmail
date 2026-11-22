@@ -128,11 +128,10 @@ describe("a send that is still going says so", () => {
     const since = Date.now();
     const w = await replyWith({ phase: "sending", since }, "en", tick);
 
-    expect(statusOf(w), "the opening line is the one a normal send shows")
-      .toBe(en.write.status.sending); // Write's words: "Sending your message" (today's reply: "Sending your reply")
+    expect(statusOf(w)).toBe("");
 
     await act(async () => { await vi.advanceTimersByTimeAsync(since + SENDING_LONG_MS - 1 - Date.now()); });
-    expect(statusOf(w), "the line changed before the threshold").toBe(en.write.status.sending);
+    expect(statusOf(w), "the line appeared before the threshold").toBe("");
 
     await act(async () => { await vi.advanceTimersByTimeAsync(2); });
     expect(statusOf(w), "a send past the threshold still says nothing new")
@@ -260,6 +259,9 @@ describe("Send later on a letter with files says what it can do before the pick"
   /** Every press the card offers: its times and its way back. */
   const presets = (): string[] =>
     card() === null ? [] : within(card()!).queryAllByRole("menuitem").map((b) => (b.textContent ?? "").trim());
+  const pickOwn = () => act(async () => {
+    within(card()!).getByRole("menuitem", { name: /^Pick a date and time/ }).click();
+  });
   const panelText = (): string => card()?.textContent ?? "";
   /** The card's field for a time of one's own (today's one `#compose-send-at`; Write's day and time). */
   const dayField = (): HTMLInputElement | null =>
@@ -275,8 +277,8 @@ describe("Send later on a letter with files says what it can do before the pick"
     await act(async () => { toggle().click(); });
     const tomorrow = presets().find((p) => p.startsWith("Tomorrow"));
     expect(tomorrow, "no times were offered").toBeDefined();
-    expect(panelText()).toContain(en.write.later.thisComputer);
-    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: tomorrow })); });
+    expect(panelText()).not.toContain("It goes at that time if ohmail is open on this computer; otherwise when ohmail next opens, up to a day later.");
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: /^Tomorrow morning/ })); });
     await rounds(10);
     expect(scheduled(w)).toHaveLength(1);
   });
@@ -287,7 +289,7 @@ describe("Send later on a letter with files says what it can do before the pick"
       expect(toggle().disabled, "the reason must be reachable, not hidden in a title").toBe(false);
       await act(async () => { toggle().click(); });
       expect(panelText()).toContain(kept !== null ? en.write.later.filesNotHere : en.write.later.unavailable);
-      expect(presets()).toEqual([en.write.later.back]); // today's one Close: the card's way back
+      expect(presets()).toEqual([]);
       expect(dayField()).toBeNull();
       expect(timeField()).toBeNull();
       await rounds(4);
@@ -301,7 +303,7 @@ describe("Send later on a letter with files says what it can do before the pick"
     expect(presets().some((p) => p.startsWith("Tomorrow"))).toBe(true);
     await view.setFiles(true);
     expect(panelText()).toContain(en.write.later.filesNotHere);
-    expect(presets()).toEqual([en.write.later.back]);
+    expect(presets()).toEqual([]);
   });
 
   it("a pick while a file is still being read waits for it, then carries both files", async () => {
@@ -339,7 +341,7 @@ describe("Send later on a letter with files says what it can do before the pick"
     read.mockRestore();
     const tomorrow = presets().find((p) => p.startsWith("Tomorrow"));
     expect(tomorrow, "the times come back once the read commits").toBeDefined();
-    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: tomorrow })); });
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: /^Tomorrow morning/ })); });
     await rounds(10);
     expect(scheduled(w).map((m) => (m.attachments ?? []).map((a) => a.filename))).toEqual([["photo.png", "invoice.pdf"]]);
   });
@@ -372,8 +374,8 @@ describe("Send later on a letter with files says what it can do before the pick"
       await act(async () => { toggle().click(); });
       expect(presets().some((p) => p.startsWith("Tomorrow"))).toBe(true);
       expect(presets().some((p) => p.startsWith("Monday")), "a preset past the horizon was offered").toBe(false);
-      expect(panelText()).toContain("A message with files can be scheduled up to 1 day ahead.");
-      expect(panelText()).not.toContain(en.write.later.thisComputer);
+      expect(panelText()).not.toContain("A message with files can be scheduled up to 1 day ahead.");
+      expect(panelText()).not.toContain("It goes at that time if ohmail is open on this computer; otherwise when ohmail next opens, up to a day later.");
     });
 
     it("caps the field at the horizon", async () => {
@@ -381,6 +383,7 @@ describe("Send later on a letter with files says what it can do before the pick"
       // The date picker must enforce the latest allowed send date.
       await compose({ kept: { kept: true, days: 1 }, files: true });
       await act(async () => { toggle().click(); });
+      await pickOwn();
       const lastDay = dayField()?.max;
       expect(lastDay).toBe("2026-11-05");
       const [year, month, day] = String(lastDay).split("-").map(Number);
@@ -394,6 +397,7 @@ describe("Send later on a letter with files says what it can do before the pick"
     it("a time typed past it is refused in words before the pick", async () => {
       const { w } = await compose({ kept: { kept: true, days: 1 }, files: true });
       await act(async () => { toggle().click(); });
+      await pickOwn();
       const confirm = () => within(card()!).getByRole("button", { name: en.write.later.confirm }) as HTMLButtonElement;
       for (const [day, time] of [["2026-11-05", "10:01"], ["2026-11-05", "12:00"], ["2026-11-07", "12:00"]] as const) {
         await act(async () => { fireEvent.change(dayField()!, { target: { value: day } }); });
@@ -416,11 +420,13 @@ describe("Send later on a letter with files says what it can do before the pick"
       const view = await compose({ kept: { kept: true, days: 1 }, files: false });
       await act(async () => { toggle().click(); });
       expect(presets().some((p) => p.startsWith("Monday")), "a letter without files has no horizon").toBe(true);
+      await pickOwn();
       expect(dayField()?.max).toBe("");
       await view.setFiles(true);
-      expect(presets().some((p) => p.startsWith("Monday"))).toBe(false);
       expect(dayField()?.max).toBe("2026-11-05");
-      expect(panelText()).toContain("up to 1 day ahead");
+      await act(async () => { within(card()!).getByRole("button", { name: en.write.later.back }).click(); });
+      expect(presets().some((p) => p.startsWith("Monday"))).toBe(false);
+      expect(panelText()).not.toContain("up to 1 day ahead");
     });
   });
 
@@ -428,9 +434,10 @@ describe("Send later on a letter with files says what it can do before the pick"
     // OVER WRITE: Write's Send later opens its card for a forward too, and the card says why in words in place of the
     // times (today's verb was disabled with the sentence as its title).
     const { w } = await compose({ kept: DESKTOP, files: false, forwardOf: "m-1" });
+    expect(toggle().disabled).toBe(true);
     await act(async () => { toggle().click(); });
-    expect(panelText()).toContain(en.write.later.noForwards);
-    expect(presets()).toEqual([en.write.later.back]);
+    expect(card()).toBeNull();
+    expect(presets()).toEqual([]);
     expect(dayField()).toBeNull();
     await rounds(4);
     expect(scheduled(w)).toEqual([]);

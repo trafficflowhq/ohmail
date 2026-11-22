@@ -109,6 +109,7 @@ function Navigation(props: CalendarRailProps & { readonly waiting?: string; read
         switcher={switcher}
         more={{
           label: t("more"),
+          drawer: true,
           count: form === "dock" ? props.waiting : undefined,
           countHot: true,
           onPress: () => commands.rail(true),

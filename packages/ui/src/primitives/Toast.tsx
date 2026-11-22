@@ -100,7 +100,7 @@ export function ToastHost({ children }: ToastHostProps) {
 
   const show = useCallback<ToastFn>((message, options) => {
     const next: ActiveToast = {
-      message,
+      message: options?.line ? `${message}. ${options.line}` : message,
       action: options?.action,
       actionKey: options?.actionKey,
       onAction: options?.onAction,

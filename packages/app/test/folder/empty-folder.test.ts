@@ -24,7 +24,7 @@ describe("an empty folder is a question until the server has answered — the re
       }),
     });
 
-    await waitFor(() => expect(document.body.textContent).toContain("Nothing in this folder"));
+    await waitFor(() => expect(document.body.textContent).toContain("Nothing here"));
     expect(document.body.textContent).not.toContain("Load older mail");
     expect(listOlder).not.toHaveBeenCalled();
   });

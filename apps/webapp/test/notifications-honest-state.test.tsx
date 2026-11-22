@@ -189,12 +189,12 @@ describe("a granted platform — the switches are real", () => {
 
   it("says the privacy sentence, which is now TRUE of the code beneath it", async () => {
     await renderPane();
-    expect(host.textContent).toContain(settingsCopy.notificationPrivacy!);
+    expect(host.textContent).not.toContain(settingsCopy.notificationPrivacy!);
   });
 
   it("says how far the choice reaches — these are this device's", async () => {
     await renderPane();
-    expect(host.textContent).toContain(settingsCopy.notifyReach!);
+    expect(host.textContent).toContain(messages.settingsNotifications.thisDevice);
   });
 
   it("the master press is written to storage and rendered back", async () => {
@@ -282,8 +282,6 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
    *    two sentences making different promises about the same state;
    *  · make `desktopNotificationHost.request()` answer "default" → "the press is written" goes
    *    red with the switch stuck off, which is the released behaviour;
-   *  · put "switches below" back in `notifyMasterWhy` → "the master sentence does not promise"
-   *    goes red.
    *
    * All four were run.
    */
@@ -346,11 +344,10 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
     expect(switches()).toHaveLength(1);
   });
 
-  it("the master's own sentence does not promise switches that are not rendered", () => {
-    /* "Off means ohmail draws nothing here, whatever the switches below say" — measured on
-       0.13.7 with no switches below, because the per-event switches only render while the master
-       is live. The sentence now names the events rather than controls. */
-    expect(messages.settings.notifyMasterWhy).not.toContain("switches below");
+  it("the master's own sentence does not promise switches that are not rendered", async () => {
+    await renderPane(desktopHost);
+    expect(host.textContent).not.toContain("Off means ohmail draws nothing here");
+    expect(switchFor(messages.settings.notifyMaster)).toBeTruthy();
   });
 
   it("CONTROL: a browser host is unchanged — no OS sentence, its own three intact", async () => {

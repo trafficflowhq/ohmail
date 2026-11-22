@@ -119,7 +119,7 @@ describe("the Screener's count is the store's", () => {
     await waitFor(() => expect(place.model().queueSettled).toBe(true));
     place.showCurrent();
     expect(seen.filter((value) => value !== "0:")).toEqual([]);
-    expect(screen.getByText("No one’s waiting")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("No one’s waiting");
   });
 
   it("a client with no store keeps the plain sentence", async () => {

@@ -55,11 +55,11 @@ export {
   hasRealSuggestion,
   joinSuggestion,
   useScreenerState,
+  reportScreened,
 } from "./screener-state.js";
 export type {
   DecideOptions,
   HeldBodyStall,
-  HeldReleaseOffer,
   PendingDecision,
   ScreenerState,
   ScreenerText,

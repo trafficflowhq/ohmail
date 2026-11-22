@@ -58,7 +58,11 @@ function Standing({
       ? standing.press
       : undefined;
   return (
-    <Report {...common} undo={undo && standing.leaving ? { ...undo, keyHint: undefined } : undo}>
+    <Report
+      {...common}
+      line={standing.line}
+      undo={undo && standing.leaving ? { ...undo, keyHint: undefined } : undo}
+    >
       {standing.message}
     </Report>
   );

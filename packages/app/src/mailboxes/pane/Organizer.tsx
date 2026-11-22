@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Button } from "@ohmail/ui/base";
+import { Button, Tag } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
 import { drawsTakeover, organizerSaid } from "@ohmail/app-logic/mailboxes/pane/organizer";
@@ -97,14 +97,19 @@ export function Organizing(props: Props): ReactNode {
   const offered = verbs.stop && !asked && (stranded || !m.releaseRequestedAt);
   return (
     <>
-      <SettingLine label={say({ key: stranded ? "stateReading" : "stateOrganizing" })}>
+      <SettingLine label={say({ key: stranded ? "stateReading" : "organizedBy" })}>
+        {stranded ? null : (
+          <Tag>{say({ key: filer === "cloud" ? "organizerNameCloud" : "organizerNameServer" })}</Tag>
+        )}
         {offered ? (
           <Button kind="quiet" size="s" onPress={() => acts.askRelease(m.id)}>
-            {say({ key: stranded ? "releaseClaim" : "stopOrganizingHandBack" })}
+            {say({ key: stranded ? "releaseClaim" : "handBack" })}
           </Button>
         ) : null}
       </SettingLine>
-      <SettingNote>{say(organizingSaid(m, standing, filer))}</SettingNote>
+      {stranded || m.releaseRequestedAt ? (
+        <SettingNote>{say(organizingSaid(m, standing, filer))}</SettingNote>
+      ) : null}
       {asked ? (
         <>
           <SettingNote>

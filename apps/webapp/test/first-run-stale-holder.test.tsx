@@ -107,37 +107,37 @@ const with_ = (s: string) => s.replace("{name}", NAME);
 describe("the claim question tells the lease's state", () => {
   it("LIVE holder: today's lead and choices, and no stopped sentence", async () => {
     const s = await mount(LIVE);
-    expect(s.heading()).toBe(t.elsewhereTitle);
-    expect(s.lead()).toBe(t.elsewhereLead);
-    expect(s.text()).toContain(with_(t.elsewhereChoiceHereWhy));
-    expect(s.text()).toContain(with_(t.elsewhereChoiceReadWhy));
-    expect(s.text()).not.toContain(t.elsewhereLeadStopped);
-    expect(s.text()).not.toContain(with_(t.elsewhereChoiceHereStoppedWhy));
-    expect(s.text()).not.toContain(t.elsewhereChoiceReadStoppedWhy);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
+    expect(s.lead()).toBe("");
+    expect(s.text()).not.toContain(with_("{name} stops organizing on its next pass — within a minute — and becomes a reader: it keeps its copy of your mail and moves nothing. Your rules and the away responder travel with the mailbox."));
+    expect(s.text()).not.toContain(with_("This install reads, searches and sends. {name} keeps organizing. You can take over later from Settings → Mailboxes."));
+    expect(s.text()).not.toContain("The install that organized this mailbox has stopped checking in, so nothing organizes it now.");
+    expect(s.text()).not.toContain(with_("This install takes the mailbox over and starts screening new mail. There is no hand-over to wait for: {name} stopped checking in."));
+    expect(s.text()).not.toContain("This install reads, searches and sends. Nothing organizes the mailbox then: new mail waits in the inbox. You can take over later from Settings → Mailboxes.");
     // Over a live holder the person picks: nothing is pre-selected.
     expect(s.picked()).toBeNull();
   });
 
   it("STALE holder: named as stopped, no hand-off promised, reading leaves nobody organizing", async () => {
     const s = await mount(STALE);
-    expect(s.heading(), "the title still said the mailbox is organized elsewhere").toBe(t.elsewhereTitleStopped);
-    expect(s.lead(), "the lead still said the mailbox has an organizer").toBe(t.elsewhereLeadStopped);
+    expect(s.heading(), "the title still said the mailbox is organized elsewhere").toBe(with_(t.elsewhereSayStopped).replace(/\.$/, ""));
+    expect(s.lead()).toBe("");
     expect(s.text()).toContain(with_(tm.readerStopped));
     expect(s.text()).toContain(t.elsewhereChoiceHereStopped);
-    expect(s.text()).toContain(with_(t.elsewhereChoiceHereStoppedWhy));
-    expect(s.text()).toContain(t.elsewhereChoiceReadStoppedWhy);
+    expect(s.text()).not.toContain(with_("This install takes the mailbox over and starts screening new mail. There is no hand-over to wait for: {name} stopped checking in."));
+    expect(s.text()).not.toContain("This install reads, searches and sends. Nothing organizes the mailbox then: new mail waits in the inbox. You can take over later from Settings → Mailboxes.");
     expect(s.text(), "a stopped install was promised a pass").not.toContain("next pass");
     expect(s.text(), "a stopped install was said to keep organizing").not.toContain("keeps organizing");
-    expect(s.text()).not.toContain(t.elsewhereLead);
+    expect(s.text()).not.toContain("This mailbox already has an organizer. Two installs never organize one mailbox at once.");
     expect(s.picked(), "organizing here is not the default over a stopped holder").toBe("here");
   });
 
   it("STALE holder, the default taken: the run goes on to take the lease", async () => {
     const s = await mount(STALE);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.organizedWith.length, "the default press did not ask for the mailbox").toBe(1);
   });
@@ -147,32 +147,32 @@ describe("the claim question tells the lease's state", () => {
     await s.pick("read");
     await s.press(t.continue);
     expect(s.heading()).toBe(t.doneReaderTitle);
-    expect(s.text()).toContain(t.doneReaderReadsWhyStopped);
-    expect(s.text()).toContain(t.doneReaderClaimWhyStopped);
-    expect(s.text(), "the summary sent the work to a stopped organizer").not.toContain(t.doneReaderReadsWhy);
-    expect(s.text()).not.toContain(t.doneReaderClaimWhy);
+    expect(s.text()).not.toContain("Reading, searching, marking read and sending all work. It moves nothing and screens nothing, and the organizer below has stopped, so new mail waits in the inbox.");
+    expect(s.text()).not.toContain("Settings → Mailboxes has the button. Nothing has to hand the mailbox over first.");
+    expect(s.text(), "the summary sent the work to a stopped organizer").not.toContain("Reading, searching, marking read and sending all work. It moves nothing and screens nothing — the organizer below does that.");
+    expect(s.text()).not.toContain("Settings → Mailboxes has the button. Whatever organizes it then becomes a reader and keeps its copy of your mail.");
     expect(s.organizedWith).toEqual([]);
   });
 
   it("STALE holder with no name: the choices name 'another install'", async () => {
     const s = await mount({ ...STALE, organizedBy: { kind: "local", name: "", since: null } });
-    expect(s.heading()).toBe(t.elsewhereTitleStopped);
-    expect(s.text()).toContain(t.elsewhereChoiceHereStoppedWhy.replace("{name}", tm.readerHolderUnknown));
+    expect(s.heading()).toBe(t.elsewhereSayStopped.replace("{name}", tm.readerHolderUnknown).replace(/\.$/, ""));
+    expect(s.text()).not.toContain("This install takes the mailbox over and starts screening new mail. There is no hand-over to wait for: {name} stopped checking in.".replace("{name}", tm.readerHolderUnknown));
   });
 
   it("NO holder: the question is not asked at all", async () => {
     const s = await mount(NOBODY);
-    expect(s.heading()).toBe(t.consentTitle);
-    expect(s.text()).not.toContain(t.elsewhereLead);
-    expect(s.text()).not.toContain(t.elsewhereLeadStopped);
+    expect(s.heading()).toBe(t.mapTitle);
+    expect(s.text()).not.toContain("This mailbox already has an organizer. Two installs never organize one mailbox at once.");
+    expect(s.text()).not.toContain("The install that organized this mailbox has stopped checking in, so nothing organizes it now.");
   });
 
   it("CONTROL: LIVE holder's reader summary keeps today's sentences", async () => {
     const s = await mount(LIVE);
     await s.pick("read");
     await s.press(t.continue);
-    expect(s.text()).toContain(t.doneReaderReadsWhy);
-    expect(s.text()).not.toContain(t.doneReaderReadsWhyStopped);
+    expect(s.text()).not.toContain("Reading, searching, marking read and sending all work. It moves nothing and screens nothing — the organizer below does that.");
+    expect(s.text()).not.toContain("Reading, searching, marking read and sending all work. It moves nothing and screens nothing, and the organizer below has stopped, so new mail waits in the inbox.");
   });
 });
 
@@ -188,17 +188,12 @@ describe("holderStopped reads the decider's stop and nothing else", () => {
   });
 
   it("both catalogues carry every stopped twin, with {name} where the live one has it", () => {
-    const twins = [
-      "elsewhereTitleStopped", "elsewhereLeadStopped", "elsewhereChoiceHereStopped",
-      "elsewhereChoiceHereStoppedWhy", "elsewhereChoiceReadStoppedWhy",
-      "doneReaderReadsWhyStopped", "doneReaderClaimWhyStopped",
-    ] as const;
-    for (const k of twins) {
-      expect(t[k], `en ${k}`).toBeTruthy();
-      expect(de.onboarding[k], `de ${k}`).toBeTruthy();
+    for (const deck of [t, de.onboarding]) {
+      expect(deck.elsewhereSay).toContain("{name}");
+      expect(deck.elsewhereSayStopped).toContain("{name}");
+      expect(deck.elsewhereSayStopped).not.toBe(deck.elsewhereSay);
+      expect(deck.elsewhereChoiceHereStopped).toBeTruthy();
     }
-    expect(t.elsewhereChoiceHereStoppedWhy).toContain("{name}");
-    expect(de.onboarding.elsewhereChoiceHereStoppedWhy).toContain("{name}");
   });
 });
 
@@ -215,8 +210,7 @@ describe("census: one step, one predicate", () => {
      and the file is not walked while it still stands. */
   const LEAVING = new Set(["apps/webapp/app/shell/FirstRun.tsx"]);
   const KEYS = [
-    "elsewhereLead", "elsewhereLeadStopped", "elsewhereChoiceHereWhy", "elsewhereChoiceHereStoppedWhy",
-    "elsewhereChoiceReadWhy", "elsewhereChoiceReadStoppedWhy",
+    "elsewhereSay", "elsewhereSayStopped",
   ];
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const name of readdirSync(dir)) {

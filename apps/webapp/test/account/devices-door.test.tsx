@@ -183,7 +183,7 @@ const press = async (name: string, inside: HTMLElement = document.body) => {
 };
 const typeName = (name: string) =>
   act(async () => {
-    fireEvent.change(screen.getByRole("textbox", { name: en.devices.addFor }), { target: { value: name } });
+    fireEvent.change(screen.getByRole("textbox", { name: en.devices.whoseDevice }), { target: { value: name } });
   });
 
 describe("a refused verb, as its word", () => {
@@ -339,8 +339,8 @@ describe("opening the pane", () => {
     const clock = new Intl.DateTimeFormat("en", { timeStyle: "short", timeZone: "UTC" }).format(
       new Date(CODE.expiresAt),
     );
-    expect(said(day(at.createdAt))).toBe(true);
-    expect(said(day(at.lastSeenAt))).toBe(true);
+    expect(said(day(at.createdAt))).toBe(false);
+    expect(said(day(at.lastSeenAt))).toBe(false);
     expect(screen.getByRole("group", { name: "Ben" }).textContent).toContain(clock);
     expect(said(day(CODE.expiresAt))).toBe(false);
   });
@@ -385,7 +385,7 @@ describe("the pairing link, made once", () => {
     await press(en.devices.addAction);
     expect(server.on(MINT).map((sent) => sent.body)).toEqual([{ grant: "device-pair", label: "Ben" }]);
     expect(scanned()).toBe(LINK);
-    expect((document.body.textContent ?? "").split(LINK)).toHaveLength(2);
+    expect((document.body.textContent ?? "").split(LINK)).toHaveLength(1);
     expect(said(en.devices.copied)).toBe(false);
     await press(en.devices.copyLink);
     expect(clipboard.written).toEqual([LINK]);
@@ -400,14 +400,15 @@ describe("the pairing link, made once", () => {
     await press(en.devices.addAction);
     expect(server.on(MINT).map((sent) => sent.keys)).toEqual([["grant"]]);
     await press(en.devices.copyLink);
-    expect(said(en.devices.copyFailed)).toBe(true);
+    expect(said(en.devices.copyPairingFailed)).toBe(true);
     expect(said(en.devices.copied)).toBe(false);
   });
 
   it("is in nothing but what is read and scanned; Done takes it off the page and reads both lists again", async () => {
     await opened();
     await press(en.devices.addAction);
-    expect(said(LINK)).toBe(true);
+    expect(scanned()).toBe(LINK);
+    expect(said(LINK)).toBe(false);
     expect(foundIn(SECRETS, server, written.lines)).toEqual([]);
     await press(en.devices.copyLink);
     expect(foundIn(SECRETS, server, written.lines)).toEqual([]);
@@ -426,7 +427,7 @@ describe("the pairing link, made once", () => {
     await press(en.devices.addAction);
     await press(en.devices.revoke, screen.getByRole("group", { name: "Ben" }));
     expect(scanned()).toBe(LINK);
-    await press(en.devices.revoke, screen.getByRole("group", { name: en.devices.codeFallback }));
+    await press(en.devices.revokePairingLink);
     expect(server.on("DELETE /api/pair/pt-9")).toHaveLength(1);
     expect(scanned()).toBeNull();
     expect(document.body.innerHTML).not.toContain(MADE);

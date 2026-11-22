@@ -1,14 +1,13 @@
 {
   "receipts": {
     "title": "Belege",
-    "tail": "Ältere Belege findest du über die Suche.",
     "streamAria": "Lesestrom",
     "waterline": {
       "label": "Bis hierher gesehen"
     },
     "markAll": {
       "label": "Alles als gelesen markieren",
-      "done": "{count, plural, one {1 Beitrag} other {# Beiträge}} als gelesen markiert",
+      "done": "{count, number} gelesen",
       "undo": "Rückgängig"
     },
     "list": {

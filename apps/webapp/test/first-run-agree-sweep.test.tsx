@@ -31,7 +31,7 @@ const t = O;
 const IMPORTED = "2026-10-19T00:00:00.000Z";
 const AGREED = "2026-10-19T00:01:00.000Z";
 /** The summary, in either shape: the role stays the reader's until the worker's gate answers. */
-const SUMMARY = [t.doneTitle, t.doneReaderTitle];
+const SUMMARY = [t.noOneWaits.replace(/\.$/, ""), t.doneReaderTitle];
 
 const READER: OnboardingMailbox = {
   organizerRole: "reader",
@@ -152,8 +152,8 @@ async function mount(start: { mb: OnboardingMailbox; ai?: OnboardingAi; senders?
   const etas = lines.all;
   const headings = heads.distinct;
 
-  const heading = st.heading;
-  const eta = () => (el.querySelector("h1")?.closest("main")?.querySelector("[role=status]")?.textContent ?? "").trim();
+  const heading = () => st.heading() || (el.querySelector(`[aria-label="${t.pullLocal}"]`) ? t.pullTitle : "");
+  const eta = () => (el.querySelector(".mbx-run .oh-page [role=status]")?.textContent ?? "").trim();
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
     if (!button) throw new Error(`no button labelled ${JSON.stringify(label)} on ${JSON.stringify(heading())}`);
@@ -162,11 +162,7 @@ async function mount(start: { mb: OnboardingMailbox; ai?: OnboardingAi; senders?
   };
   /** The AI question's two answers by their names: no is the stage's "no", yes is the other. */
   const choose = async (value: "yes" | "no") => {
-    const radios = [...el.querySelectorAll<HTMLElement>("[role=radio]")];
-    const no = (r: HTMLElement) => (r.querySelector(".oh-radioline-word")?.textContent ?? "").trim() === t.aiNo;
-    const radio = radios.find((r) => (value === "no" ? no(r) : !no(r)));
-    if (!radio) throw new Error(`no ${value} option on screen`);
-    await act(async () => { radio.click(); });
+    await st.pick(value === "yes" ? t.aiOn : t.aiOff);
   };
   /** A decision verb, by its key, as a browser delivers it: at the element that has the keys. */
   const key = async (k: string) => {
@@ -190,11 +186,11 @@ async function mount(start: { mb: OnboardingMailbox; ai?: OnboardingAi; senders?
   };
   /** Consent → window → Agree → AI answered. */
   const agreeThenAnswer = async (answer: "yes" | "no" = "no") => {
-    expect(heading()).toBe(t.consentTitle);
+    expect(heading()).toBe(t.mapTitle);
     await press(t.continue);
-    expect(heading()).toBe(t.windowTitle);
+    expect(heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await press(t.agree);
-    expect(heading()).toBe(t.aiTitle);
+    expect(heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     await choose(answer);
     await press(t.continue);
   };
@@ -211,7 +207,7 @@ describe("Cloud: the import is over before the run's Agree", () => {
       // The sweep lands after the press; the next re-ask brings it to the client.
       s.sweepLands(2);
       await s.advance(AGREE_REREAD_MS);
-      expect(s.heading()).toBe(t.decideTitle);
+      expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
       expect(s.headings.filter((x) => SUMMARY.includes(x))).toEqual([]);
       await s.key("o");
       expect(SUMMARY).toContain(s.heading());
@@ -229,7 +225,7 @@ describe("Cloud: the import is over before the run's Agree", () => {
     expect(s.eta()).toBe(t.pullScreener);
     s.sweepLands(3);
     await s.advance(AGREE_REREAD_MS);
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
   });
 
   it("a sweep that never lands releases at the bound, onto the summary", async () => {
@@ -257,14 +253,14 @@ describe("Cloud: the import is over before the run's Agree", () => {
 
   it("CONTROL — the senders arrived before the AI answer: the decision at once, the line never said", async () => {
     const s = await mount({ mb: { ...READER, initialImportCompletedAt: IMPORTED } });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(t.mapTitle);
     await s.press(t.continue);
     await s.press(t.agree);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     s.sweepLands(2);
     await s.engineReasks();
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
     expect(s.etas).not.toContain(t.pullScreener);
   });
 });
@@ -277,6 +273,6 @@ describe("CONTROL: the import ends after the run's Agree", () => {
     expect(s.eta(), "the Screener line over a running import").not.toBe(t.pullScreener);
     s.sweepLands(2);
     await s.pollRow({ initialImportCompletedAt: IMPORTED });
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
   });
 });

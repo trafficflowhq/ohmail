@@ -8,6 +8,7 @@
  * no such route. Nothing moves without the press, and the press writes intents only.
  */
 
+import type { MailboxFacts } from "../mail-state/mail-state.js";
 import type { UnscreenedPileWire } from "@ohmail/wire";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 
@@ -85,4 +86,24 @@ export function usePileNote(
 
   if (answer === null || answer.total <= 0) return null;
   return { count: answer.total, atLeast: answer.atLeast, screening, screen };
+}
+
+/** Name a shared, known organizer. A pile can cover more than one mailbox. */
+export function pileOrganizer(
+  mailboxes:
+    readonly Pick<MailboxFacts, "status" | "organizerRole" | "organizerState" | "organizedBy">[] | null,
+  cloud: boolean,
+): string | null {
+  const live =
+    mailboxes?.filter(
+      (mailbox) =>
+        mailbox.status !== "disabled" &&
+        mailbox.organizerRole === "organizer" &&
+        mailbox.organizerState !== "stopped",
+    ) ?? [];
+  const name = live[0]?.organizedBy?.name?.trim();
+  if (name && live.every((mailbox) => mailbox.organizedBy?.name?.trim() === name)) return name;
+  return cloud && live.every((mailbox) => !mailbox.organizedBy?.kind || mailbox.organizedBy.kind === "cloud")
+    ? "Cloud"
+    : null;
 }

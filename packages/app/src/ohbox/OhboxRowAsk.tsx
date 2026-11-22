@@ -6,7 +6,7 @@
  */
 import type { RowAsk } from "@ohmail/app-logic/ohbox";
 import { MOVE_TARGETS } from "@ohmail/app-logic/press/actions";
-import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { EndDot, Menu, MenuItem } from "@ohmail/ui/base";
 import { useText } from "../text/index.js";
 
 const ICON = {
@@ -58,14 +58,12 @@ export function OhboxRowAsk({
         anchored
         kind="ask"
         label={t("deleteAsk")}
-        title={t("deleteAsk")}
       >
-        {/* Where the letter goes, said before it goes, as the picked rows' ask says it. */}
-        <MenuNote>{t("deleteNote")}</MenuNote>
+        <h4 className="oh-text oh-menu-title">
+          <EndDot kind="hot">{t("deleteAsk").slice(0, -1)}</EndDot>
+        </h4>
+        <MenuItem onPress={answer(() => ask?.act("delete"))}>{t("deleteConfirm")}</MenuItem>
         <MenuItem onPress={onClose}>{t("moveCancel")}</MenuItem>
-        <MenuItem dot="hot" onPress={answer(() => ask?.act("delete"))}>
-          {t("actionDelete")}
-        </MenuItem>
       </Menu>
     </>
   );

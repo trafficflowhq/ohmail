@@ -6,7 +6,7 @@
  */
 import { useConversationColumn } from "./conversation-column.js";
 import type { EngineMessage } from "@ohmail/wire";
-import { memo, useEffect, useRef, type MutableRefObject, type WheelEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, type MutableRefObject, type WheelEvent } from "react";
 import { JumpBack } from "@ohmail/ui/base";
 import { Sheet } from "@ohmail/ui/mail";
 import { baseSubject, isForwardedByUs, isProtected, type ThreadWalk } from "@ohmail/app-logic/reader";
@@ -115,18 +115,20 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     scroller,
     under,
   } = useConversationColumn(route, openId, keysHere, keyboard, phone);
+  useHeadingStepBack(scroller, phone, opened !== null);
   const back = phone ? readerBack(from, t("back"), () => commands.open(null)) : undefined;
   const calendarAction = useCalendarAction(opened, host.features.calendar !== NONE);
   /* Only a letter the engine tombstoned is said to be gone; one not here yet is a sheet with nothing said. */
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
   if (opened === null) return <Sheet kind="reading" label={t("pane")} back={back} />;
-  const squares =
-    messages.length > 1 ? (
-      <Squares messages={messages} walk={walk} axis={phone ? "head" : "column"} column={scroller.current} />
-    ) : null;
+  const place = phone ? "top" : narrow ? "heading" : "column";
+  const squares = messages.length > 1 && (
+    <Squares messages={messages} walk={walk} place={place} column={scroller.current} />
+  );
   const latest = phone && messages.length > 1 ? messages.at(-1) : undefined;
   const eachSubject = readSubjectDisplay(host.session.scope) === "each";
   const subject = baseSubject(shownSubject);
+  const screeningDialog = canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined;
   return (
     <div
       className="rd-column"
@@ -145,11 +147,12 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
         label={t("pane")}
         back={back}
         top={phone ? squares : undefined}
-        gutter={phone ? undefined : squares}
+        gutter={place === "column" ? squares : undefined}
         head={
           <RunReadingHead
             run={step}
             under={under}
+            squares={narrow ? squares : undefined}
             subject={eachSubject ? undefined : shownSubject}
             {...facesOf(messages.length > 1 ? people : [])}
             tags={opened.labels.length > 0 ? <Tags labels={opened.labels} /> : undefined}
@@ -167,9 +170,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             run={step}
             onScreen={canScreen ? screenSender : undefined}
             onScreenKey={canScreen ? screenByKey : undefined}
-            screeningDialog={
-              canScreen ? { id: screeningId, open: person?.cardId === screeningId } : undefined
-            }
+            screeningDialog={screeningDialog}
             onCalendar={calendarAction}
           />
         }
@@ -202,6 +203,45 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
       <Contact person={person} onClose={closeCard} />
     </div>
   );
+}
+
+/** Let the subject's last line remain as the rest of the heading scrolls away. */
+function useHeadingStepBack(scroller: MutableRefObject<HTMLElement | null>, phone: boolean, ready: boolean) {
+  useLayoutEffect(() => {
+    const port = scroller.current;
+    const head = port?.querySelector<HTMLElement>(".oh-readinghead");
+    const short = head?.querySelector<HTMLElement>(".oh-readinghead-short");
+    if (!port || !head || !short || phone) return;
+    const squares = head.querySelector<HTMLElement>(".oh-readinghead-sub > .oh-readsquares");
+    const room = port.ownerDocument.defaultView?.matchMedia?.("(max-height: 899px)");
+    if (!room) return;
+    let up = 0;
+    const update = () =>
+      head.toggleAttribute("data-back", room.matches && up > 0 && port.scrollTop >= up - 1);
+    const measure = () => {
+      const squaresTop = squares
+        ? squares.getBoundingClientRect().top - head.getBoundingClientRect().top
+        : head.offsetHeight;
+      up = room.matches ? Math.max(0, Math.min(head.offsetHeight - short.offsetHeight, squaresTop)) : 0;
+      head.style.setProperty("--oh-head-squares", `${squares?.offsetWidth ?? 0}px`);
+      head.style.setProperty("--oh-head-up", `${up}px`);
+      update();
+    };
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    observer?.observe(head);
+    if (squares) observer?.observe(squares);
+    room.addEventListener("change", measure);
+    port.addEventListener("scroll", update, { passive: true });
+    measure();
+    return () => {
+      observer?.disconnect();
+      room.removeEventListener("change", measure);
+      port.removeEventListener("scroll", update);
+      head.style.removeProperty("--oh-head-up");
+      head.style.removeProperty("--oh-head-squares");
+      head.removeAttribute("data-back");
+    };
+  }, [scroller, phone, ready]);
 }
 
 function readerBack(from: string, fallback: string, onPress: () => void): ReadingBack {

@@ -1,12 +1,12 @@
 /**
  * WHAT A RESULT SAYS, from its letter and its matches: who, the address under the name, the subject with the word it
- * was found by marked, and the closest word it was taken for. Pure: the shell's words name, print and place it.
+ * was found by marked. Pure: the shell's words name, print and place it.
  */
 import type { SearchHit } from "@ohmail/client-engine";
 import type { RowPerson } from "@ohmail/ui/mail";
 import type { SearchWords } from "./beside.js";
 
-/** The subject cut around the first word a search matched exactly or by its start; null where none stands in it. */
+/** The subject cut around the first matched word that appears in it; null where none stands in it. */
 export interface MarkedSubject {
   readonly before: string;
   readonly marked: string;
@@ -14,17 +14,13 @@ export interface MarkedSubject {
 }
 
 export function markedSubject(subject: string, hit: Pick<SearchHit, "matches">): MarkedSubject | null {
-  const exact = hit.matches.find((x) => !x.fuzzy);
-  if (!exact || exact.term === "") return null;
-  const at = subject.toLowerCase().indexOf(exact.term.toLowerCase());
+  const lower = subject.toLowerCase();
+  const match = hit.matches.find(({ term }) => term !== "" && lower.includes(term.toLowerCase()));
+  if (!match) return null;
+  const at = lower.indexOf(match.term.toLowerCase());
   if (at < 0) return null;
-  const end = at + exact.term.length;
+  const end = at + match.term.length;
   return { before: subject.slice(0, at), marked: subject.slice(at, end), after: subject.slice(end) };
-}
-
-/** The word a result was taken for when it matched by a typo's nearest word, else null. */
-export function fuzzyTerm(hit: Pick<SearchHit, "matches">): string | null {
-  return hit.matches.find((x) => x.fuzzy)?.term ?? null;
 }
 
 export interface HitWho {

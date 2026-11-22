@@ -57,37 +57,48 @@ async function atTheAiStep(door: "cloud" | "selfhost", selfhostAi?: boolean) {
   };
   await press(t.continue);
   await press(t.agree);
-  expect((el.querySelector("h1")?.textContent ?? "").trim()).toBe(t.aiTitle);
-  const choices = () => [...el.querySelectorAll("[role=radio]")].map((r) => (r.textContent ?? "").trim());
-  return { el, press, writes, choices };
+  expect((el.querySelector("h1")?.textContent ?? "").trim()).toContain(t.aiSay.split("<on>")[0]!.trim());
+  const slot = el.querySelector<HTMLButtonElement>('.oh-page-say [aria-haspopup="menu"]');
+  const choices = async () => {
+    if (slot && slot.getAttribute("aria-expanded") !== "true") await act(async () => { slot.click(); });
+    return [...el.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+  };
+  const on = async () => {
+    const item = (await choices()).find((row) => row.textContent === t.aiOn);
+    expect(item).toBeDefined();
+    await act(async () => { item!.click(); });
+  };
+  return { el, writes, press, slot, choices, on };
 }
 
 describe("the AI question in setup", () => {
   it("a self-hosted server with no model offers no Yes, says why, and stores no", async () => {
     const s = await atTheAiStep("selfhost", false);
-    expect(s.choices().some((c) => c.startsWith(t.aiYesSelfhost) && c.includes(t.aiYesSelfhostWhy))).toBe(false);
-    expect(s.choices().some((c) => c.startsWith(t.aiNo))).toBe(true);
-    expect(s.el.textContent).toContain(t.providerSelfhostOff);
+    expect(s.slot).toBeNull();
+    expect(s.el.textContent).toContain(t.aiRulesOnly);
     await s.press(t.continue);
-    // The account rested ON; the answer this step stores is the one it offered.
     expect(s.writes).toEqual([false]);
   });
 
-  it("a server that has not said whether it has a model is not assumed to have one", async () => {
+  it("a self-hosted server with no model information offers no on choice", async () => {
     const s = await atTheAiStep("selfhost");
-    expect(s.choices().some((c) => c.includes(t.aiYesSelfhostWhy))).toBe(false);
+    expect(s.slot).toBeNull();
+    expect(s.el.textContent).toContain(t.aiRulesOnly);
   });
 
-  it("a self-hosted server with a model offers Yes on the operator's key", async () => {
+  it("a self-hosted server with a model offers AI without a Cloud label", async () => {
     const s = await atTheAiStep("selfhost", true);
-    expect(s.choices().some((c) => c.includes(t.aiYesSelfhostWhy))).toBe(true);
-    expect(s.el.textContent).not.toContain(t.providerSelfhostOff);
+    await s.on();
+    expect(s.el.textContent).toContain(t.aiServerTag);
+    expect(s.el.textContent).not.toContain(t.aiCloudTag);
     await s.press(t.continue);
     expect(s.writes).toEqual([true]);
   });
 
-  it("Cloud is unchanged: Yes is offered", async () => {
+  it("Cloud offers AI and labels the service", async () => {
     const s = await atTheAiStep("cloud");
-    expect(s.choices().some((c) => c.includes(t.aiYesCloudWhy))).toBe(true);
+    await s.on();
+    expect(s.el.textContent).toContain(t.aiCloudTag);
+    expect(s.el.textContent).toContain(t.aiSends);
   });
 });

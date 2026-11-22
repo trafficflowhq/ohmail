@@ -193,21 +193,29 @@ export async function mountStage(opts: {
     heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
     press: async (n) => {
       const button = [...el.querySelectorAll("button")].find(named(n));
-      if (!button) throw new Error(`no button named ${JSON.stringify(n)}`);
+      if (button) {
+        await act(async () => { button.click(); await settle(); });
+        return;
+      }
       await act(async () => {
-        button.click();
+        el.querySelector<HTMLButtonElement>('.oh-page-aside button[aria-haspopup="menu"]')?.click();
         await settle();
       });
+      const menu = [...el.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(named(n));
+      if (!menu) throw new Error(`no setup action named ${JSON.stringify(n)}`);
+      await act(async () => { menu.click(); await settle(); });
     },
     pick: async (n) => {
-      const radio = [...el.querySelectorAll<HTMLElement>("[role=radio], input[type=radio]")].find(
-        (r) => (r.getAttribute("aria-label") ?? r.closest("label")?.textContent ?? r.textContent ?? "").trim().startsWith(n),
+      const choice = () => [...el.querySelectorAll<HTMLElement>('[role="radio"], [role="menuitemradio"], input[type="radio"]')].find(
+        (item) => (item.getAttribute("aria-label") ?? item.closest("label")?.textContent ?? item.textContent ?? "").trim().startsWith(n),
       );
-      if (!radio) throw new Error(`no radio named ${JSON.stringify(n)}`);
-      await act(async () => {
-        radio.click();
+      if (choice() === undefined) await act(async () => {
+        el.querySelector<HTMLButtonElement>('.oh-page-say button[aria-haspopup="menu"]')?.click();
         await settle();
       });
+      const item = choice();
+      if (item === undefined) throw new Error(`no setup choice named ${JSON.stringify(n)}`);
+      await act(async () => { item.click(); await settle(); });
     },
   };
 }

@@ -1005,7 +1005,7 @@ export function replyAllRecipients(
 }
 
 /**
- * WHERE A MESSAGE CAN BE MOVED — the webapp's `MOVE_TARGETS` (MessagePane.tsx), the same
+ * WHERE A MESSAGE CAN BE MOVED — the webapp's `MOVE_TARGETS` (`packages/app-logic/src/press/actions.ts`), the same
  * vocabulary in the same order; `test/action-parity.test.ts` compares the two.
  */
 export type MoveTarget = "ohbox" | "reads" | "receipts" | "screened" | "spam";
@@ -5163,7 +5163,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
       parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false })));
     }
-    /* The waterline commit rides the SAME press (the webapp's ReadsView shape): an empty
+    /* The waterline commit rides the SAME press (the web app's stream shape): an empty
        `messageIds` with the anchor alone, so a fresh-only stream ("2 new", nothing unread)
        still has a control that clears its line. No undo on this half — the line moves once. */
     if (feed !== undefined) {

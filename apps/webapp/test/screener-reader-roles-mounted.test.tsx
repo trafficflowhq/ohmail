@@ -168,9 +168,10 @@ async function blocked(
     expect(bar.queryByRole("button", { name: copy.pileSpam })).toBeNull();
     if (oauth) expect(within(shell).getByText(copy.oauthDecideElsewhere)).toBeTruthy();
     else expect(within(shell).queryByText(copy.oauthDecideElsewhere)).toBeNull();
-    if (nobody) expect(within(shell).getByText(copy.readerBarNoneWhy)).toBeTruthy();
-    else expect(within(shell).queryByText(copy.readerBarNoneWhy)).toBeNull();
-    expect(within(shell).queryByText(copy.pendingBarWhy)).toBeNull();
+    const list = within(shell).getByRole("region", { name: "Messages" });
+    expect(within(list).queryByText(copy.oauthDecideElsewhere) !== null).toBe(oauth);
+    if (nobody) expect(bar.getByText(copy.readerBarNoneTitle)).toBeTruthy();
+    expect(shell.textContent).not.toContain("No install is filing it");
     await act(async () => {
       fireEvent.keyDown(document, { key: "o" });
     });
@@ -234,7 +235,7 @@ describe("screenerMode — what the Screener may do on this install", () => {
     await withRoster(facts, async (shell, writes) => {
       const bar = actions(shell);
       expect(bar.getByText(copy.pendingBarTitle.replace("{name}", holder))).toBeTruthy();
-      expect(within(shell).getByText(copy.pendingBarWhy)).toBeTruthy();
+      expect(shell.textContent).not.toContain("Your decision is sent to it");
       expect(bar.queryByRole("button", { name: copy.readerBarOpenMailboxes })).toBeNull();
       expect(writes).toEqual([]);
       journalUntouched();
@@ -254,8 +255,9 @@ describe("screenerMode — what the Screener may do on this install", () => {
         },
       ]);
       const list = within(shell).getByRole("listbox", { name: copy.title });
-      expect(within(list).getByText(copy.pendingHeading)).toBeTruthy();
-      const queued = within(list).getByRole("group", { name: copy.pendingHeading });
+      const pendingHeading = copy.pendingHeading.replace("{name}", holder);
+      expect(within(list).getByText(pendingHeading)).toBeTruthy();
+      const queued = within(list).getByRole("group", { name: pendingHeading });
       expect(within(queued).getByRole("option").getAttribute("data-id")).toBe(heldId);
       expect(within(list).getAllByRole("option").filter((row) => row.getAttribute("data-id") === heldId))
         .toEqual([within(queued).getByRole("option")]);
@@ -322,8 +324,9 @@ describe("screenerMode — what the Screener may do on this install", () => {
   });
 });
 
-const decisionRefusal = copy.readerRefused.replace("{name}", holder);
-const moveRefusal = copy.readerMoveRefused.replace("{name}", holder);
+const withoutOhDot = (line: string) => line.replace(/\.$/, "");
+const decisionRefusal = withoutOhDot(copy.readerRefused.replace("{name}", holder));
+const moveRefusal = withoutOhDot(copy.readerMoveRefused.replace("{name}", holder));
 const decideOhbox = (model: ScreenerState) =>
   model.decide(model.waiting[0]!, "ohbox", { read: false, scope: "sender" });
 
@@ -381,7 +384,7 @@ describe("the Screener state refuses every write on a mailbox this install does 
       await act(async () => {
         model().decide(model().waiting[0]!, "spam", { read: false, scope: "sender" });
       });
-      expect(screenerReport()).toBe(copy.readerRefusedUnknown);
+      expect(screenerReport()).toBe(withoutOhDot(copy.readerRefusedUnknown));
       expect(screenerReport()).not.toContain("{name}");
       expect(writes).toEqual([]);
       journalUntouched();
@@ -395,7 +398,7 @@ describe("the Screener state refuses every write on a mailbox this install does 
         await act(async () => {
           decideOhbox(model());
         });
-        expect(screenerReport()).toBe(german.screener.readerRefused.replace("{name}", holder));
+        expect(screenerReport()).toBe(withoutOhDot(german.screener.readerRefused.replace("{name}", holder)));
         expect(screenerReport()).not.toBe(decisionRefusal);
         expect(writes).toEqual([]);
         journalUntouched();

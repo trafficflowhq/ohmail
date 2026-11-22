@@ -20,6 +20,25 @@ const card = (who: string): HTMLElement | null =>
   screen.queryByRole("dialog", { name: `Options for ${who}` });
 
 describe("the letter's head", () => {
+  it("marks a sensitive letter as kept out of AI", () => {
+    mountReader({
+      letters: [
+        letter("m1", {
+          sensitivity: {
+            sensitive: true,
+            category: null,
+            no_ai: true,
+            no_forward: false,
+            no_kb: false,
+            priority: false,
+          },
+        }),
+      ],
+      open: "m1",
+    });
+    expect(head().textContent).toContain("Verification code · kept out of AI");
+  });
+
   it("puts the letter's instant behind its printed stamp", () => {
     mountReader({ letters: [letter("m1", { date: "2026-08-05T14:32:00.000Z" })], open: "m1" });
     const when = head().querySelector("time");

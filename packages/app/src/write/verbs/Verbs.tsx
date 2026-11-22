@@ -17,6 +17,7 @@ import "./verb-style.css";
 export function Verbs({
   canSend,
   compact = false,
+  forward = false,
   going,
   keysHere,
   discardHeld,
@@ -29,6 +30,7 @@ export function Verbs({
 }: {
   canSend: boolean;
   compact?: boolean;
+  forward?: boolean;
   going: boolean;
   keysHere?: boolean;
   discardHeld: boolean;
@@ -38,7 +40,7 @@ export function Verbs({
   said?: SendSaid;
   onSend: () => void;
   /** Send later: a verb of its own, pressed while its card is open. */
-  later: { open: boolean; onPress: () => void };
+  later: { open: boolean; onPress: (at: HTMLElement) => void };
   discardReason?: string | null;
   onDiscard: () => void;
 }) {
@@ -54,7 +56,7 @@ export function Verbs({
       rank: 0,
       pressed: later.open,
       /* A letter that may not be sent now may not be scheduled either: Later is off while Send rests. */
-      disabled: !canSend || going,
+      disabled: !canSend || going || forward,
       onPress: later.onPress,
     },
     { ...discardVerb(t("discard"), discardHeld, onDiscard, discardReason), rank: 0 },

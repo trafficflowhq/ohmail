@@ -206,7 +206,7 @@ describe("a password typed at the sign-up's mailbox step", () => {
     await ui.press(en.stepUp.verify, ui.dialog()!);
     expect(connects()).toHaveLength(4);
     expect(connects()[3]!.body).toEqual(connects()[2]!.body);
-    expect(ui.heading()).toBe(J.step_connected_title);
+    expect(ui.heading()).toBe(J.myMailboxes.replace(/\.$/, ""));
 
     // Every request that connected carried it in the two servers' `pass`, and the factor's own request did not.
     for (const c of connects()) {

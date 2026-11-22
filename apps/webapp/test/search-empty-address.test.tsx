@@ -110,7 +110,7 @@ async function settleArchive(): Promise<void> {
 
 const CORPUS = [msg("studio", "Notes from the studio", "ben@lichtgrat.example")];
 
-const door = () => within(host).queryByRole("button", { name: "Everything from and to them" });
+const door = () => within(host).queryByRole("list", { name: "People" });
 
 describe("the empty state's address door", () => {
   it("offers the address door for an address-shaped query, naming both scopes", async () => {
@@ -120,10 +120,8 @@ describe("the empty state's address door", () => {
 
     const a = door();
     expect(a).not.toBeNull();
-    expect(host.textContent).toContain(
-      "An address is its own search — everything hallo@quarzwerk.zzz sent, or anything from or to them.",
-    );
-    await act(async () => { fireEvent.click(a!); });
+    expect(host.textContent).not.toContain("An address is its own search");
+    await act(async () => { fireEvent.click(within(a!).getByRole("button", { name: /hallo/ })); });
     expect(window.location.hash).toBe(`#/address/${encodeURIComponent("hallo@quarzwerk.zzz")}`);
   });
 
@@ -133,8 +131,7 @@ describe("the empty state's address door", () => {
     await settleArchive();
 
     // The empty state itself is up — only the door is withheld.
-    const result = within(host).getByText(/^nothing matched · [1-9]\d* ms$/);
-    expect(result.parentElement?.textContent).toBe(`Searched your whole mailbox — ${result.textContent}`);
+    expect(within(host).getByText((_, node) => node?.textContent === "Nothing matched", { selector: ".oh-empty-label" })).toBeTruthy();
     expect(door()).toBeNull();
   });
 

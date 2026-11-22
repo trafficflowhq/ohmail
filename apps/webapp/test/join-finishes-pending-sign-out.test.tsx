@@ -412,7 +412,7 @@ describe("THE CONTROL — no pending sign-out, both pages as before", () => {
     expect(count("session")).toBeGreaterThan(0);
     expect(count("door")).toBe(0);
     expect(el.querySelector("#join-email")).not.toBeNull();
-    expect(text(el)).toContain(J.createAccount);
+    expect(text(el)).toContain(J.continue);
   });
 
   it("/verify-email: the confirmation leaves at once; the door is never asked", async () => {

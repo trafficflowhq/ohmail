@@ -4,27 +4,24 @@
  * the place above the line. A press opens the item in the stream. On a phone's width the place is the stream itself.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useContext, useRef, type RefObject, type ReactNode } from "react";
+import { useCallback, useContext, useRef, useState, type RefObject, type ReactNode } from "react";
 import { useZoneNav } from "@ohmail/app-logic/keys";
-import { useEngineOrNull } from "@ohmail/app-logic/engine";
 import { PileNoteContext } from "@ohmail/app-logic/lists/pile-note";
 import { useListWindow } from "@ohmail/app-logic/lists";
 import { lineStampOf, presentsUnread, useStreamModel, type StreamModel } from "@ohmail/app-logic/streams";
 import { sentRowRecipient } from "@ohmail/app-logic/text/format";
 import { useSentLabel } from "@ohmail/app-logic/text/row-copy";
-import { Empty } from "@ohmail/ui/base";
+import { Button, Empty } from "@ohmail/ui/base";
 import { GroupHeading, ListHead, Row, Rows } from "@ohmail/ui/mail";
 import { useFrame } from "../frame/commands.js";
 import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { NONE } from "../host/index.js";
 import type { PaneProps } from "../frame/contract.js";
-import { useMailboxWord } from "../frame/room.js";
 import { ListColumn, ListMenu } from "../place-list/index.js";
-import { DeliveryLabel } from "../place-list/DeliveryLabel.js";
 import { useRowPeople } from "../place-list/people.js";
 import { useLocale, useText, type Text } from "../text/index.js";
-import { FilingChip, FilingChoiceContext, type FilingChipData } from "./FilingChip.js";
 import { PileNote } from "./PileNote.js";
+import { StreamBackToTop } from "./StreamBackToTop.js";
 import { StreamColumn } from "./StreamColumn.js";
 import { StreamReplyContext } from "./StreamAbove.js";
 import { useStreamKeys } from "./keys.js";
@@ -42,7 +39,6 @@ function ItemRow({
   model,
   t,
   locale,
-  delivery,
   answered,
   sentLabel,
   rowPeople,
@@ -57,7 +53,6 @@ function ItemRow({
   locale: string;
   selection: RowSelection;
   contact: RowContact;
-  delivery?: { label: string; title: string };
   answered?: EngineMessage;
   sentLabel: ReturnType<typeof useSentLabel>;
   rowPeople: ReturnType<typeof useRowPeople>;
@@ -86,25 +81,17 @@ function ItemRow({
       amount={model.place === "receipts" ? m.amount : undefined}
       file={m.hasAttachments ? t("item.file") : undefined}
       open={model.openId === m.id}
+      cursor={selected && !model.openId}
       stream
       unread={unread}
       onOpen={() => model.open(m.id, false, true)}
       onKeyboardOpen={() => model.open(m.id, true, true)}
-      tag={
-        delivery ? (
-          <DeliveryLabel place title={delivery.title}>
-            {delivery.label}
-          </DeliveryLabel>
-        ) : undefined
-      }
       listing={{
         name: m.subject ? `${byline}: ${m.subject}` : byline,
         selected: selection.ids.length ? pick.picked === true : selected,
         stop: selected,
         place: position,
-        spoken: [delivery?.title, t("item.keyboardOpen"), unread ? message("rowUnread") : null]
-          .filter(Boolean)
-          .join(". "),
+        spoken: [t("item.keyboardOpen"), unread ? message("rowUnread") : null].filter(Boolean).join(". "),
       }}
       mark={{ id: m.id, index, unseen: m.unread }}
     />
@@ -123,7 +110,7 @@ export function StreamList({ plan, keysHere }: PaneProps) {
   /* On a phone the place is the stream itself, under its head. */
   if (plan.device === "phone")
     return empty === null ? (
-      <div className="pl-list st-phone-list" data-stream-phone-list="" data-cursor-tint="">
+      <div className="pl-list st-phone-list" data-stream-phone-list="">
         {head}
         <div className="pl-fill">
           <StreamColumn phone keysHere={keysHere} selection={selection} />
@@ -135,22 +122,24 @@ export function StreamList({ plan, keysHere }: PaneProps) {
         {empty}
       </ListColumn>
     );
-  return <StreamRowsList plan={plan} model={model} head={head} empty={empty} selection={selection} />;
+  return (
+    <StreamRowsList
+      plan={plan}
+      model={model}
+      head={head}
+      empty={empty}
+      selection={selection}
+      keysHere={keysHere}
+    />
+  );
 }
 
-function useRowsWindow(
-  model: StreamModel,
-  rowsRef: RefObject<HTMLDivElement | null>,
-  line: number,
-  chip: number,
-  after: number,
-) {
+function useRowsWindow(model: StreamModel, rowsRef: RefObject<HTMLDivElement | null>, line: number) {
   const cursor = model.openId === null ? -1 : model.items.findIndex((item) => item.id === model.openId);
-  const slot =
-    cursor + (line === 1 && cursor >= model.freshCount ? 1 : 0) + (chip === 1 && cursor > after ? 1 : 0);
+  const slot = cursor + (line === 1 && cursor >= model.freshCount ? 1 : 0);
   return useListWindow({
     scrollerRef: rowsRef,
-    count: model.items.length + line + chip,
+    count: model.items.length + line,
     cursor: model.openId === null ? undefined : { id: model.openId, index: slot },
   });
 }
@@ -160,49 +149,35 @@ interface StreamRowsListProps {
   model: StreamModel;
   head: ReactNode;
   empty: ReactNode;
+  keysHere: boolean;
   selection: RowSelection;
 }
 
-function StreamRowsList({ plan, model, head, empty, selection }: StreamRowsListProps) {
+/** Window the new rows, waterline and seen rows together, then render each run as its own list. */
+function StreamRowsList({ plan, model, head, empty, keysHere, selection }: StreamRowsListProps) {
   const contact = useRowContact();
   const reply = useContext(StreamReplyContext);
   const sentLabel = useSentLabel(useText("ohbox"));
   const rowPeople = useRowPeople();
-  const filingChoice = useContext(FilingChoiceContext);
-  const engine = useEngineOrNull();
-  const filingChip =
-    model.place === "news" && filingChoice
-      ? engine?.read().get<FilingChipData>("view_meta", "reads_ai_chip")
-      : undefined;
   const t = useStreamText(model.place);
   const locale = useLocale();
-  const mailboxWord = useMailboxWord();
-  const place = useFrame().host.features.places[model.place];
-  const message = useText("message");
+  const { host, commands } = useFrame();
   const rowsRef = useRef<HTMLDivElement>(null);
-  /* One index space: the new rows, the line, the seen rows. The line is an item with its own measured height. */
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const attach = useCallback((node: HTMLDivElement | null) => {
+    rowsRef.current = node;
+    setScroller(node);
+  }, []);
   const fresh = model.freshCount;
   const seenCount = model.items.length - fresh;
   const line = model.lineShown && seenCount > 0 ? 1 : 0;
-  const after = filingChip ? model.items.slice(0, fresh).findIndex((m) => m.id === filingChip.afterId) : -1;
-  const chip = after >= 0 ? 1 : 0;
-  const lineAt = fresh + chip;
-  const win = useRowsWindow(model, rowsRef, line, chip, after);
+  const win = useRowsWindow(model, rowsRef, line);
   const lineStamp = model.lineAt ? lineStampOf(model.lineAt, new Date(), locale) || undefined : undefined;
-  /* The rows above the line, the line where it is in the window, the rows below it: each run its own list. */
   const above: ReactNode[] = [];
   const below: ReactNode[] = [];
   let lineNode: ReactNode = null;
   for (let w = win.start; w < win.end; w++) {
-    if (filingChip && filingChoice && chip === 1 && w === after + 1) {
-      above.push(
-        <div className="st-filing-chip" role="presentation" key="filing" data-index={w}>
-          <FilingChip example={filingChip} {...filingChoice} />
-        </div>,
-      );
-      continue;
-    }
-    if (line === 1 && w === lineAt) {
+    if (line === 1 && w === fresh) {
       lineNode = (
         <div data-index={w}>
           <GroupHeading count={lineStamp}>{t("waterline.label")}</GroupHeading>
@@ -210,17 +185,13 @@ function StreamRowsList({ plan, model, head, empty, selection }: StreamRowsListP
       );
       continue;
     }
-    const past = line === 1 && w > lineAt;
-    const index = w - (chip === 1 && w > after ? 1 : 0) - (past ? 1 : 0);
+    const past = line === 1 && w > fresh;
+    const index = w - (past ? 1 : 0);
     const m = model.items[index];
     if (m) {
       const position = past
         ? { at: index - fresh + 1, of: seenCount }
         : { at: index + 1, of: line === 1 ? fresh : model.items.length };
-      const mailbox = place !== NONE && place.rowMailboxLabels ? mailboxWord(m.mailboxId) : null;
-      const delivery = mailbox
-        ? { label: mailbox, title: message("deliveredToTitle", { label: mailbox }) }
-        : undefined;
       (past ? below : above).push(
         <ItemRow
           key={m.id}
@@ -230,7 +201,6 @@ function StreamRowsList({ plan, model, head, empty, selection }: StreamRowsListP
           model={model}
           t={t}
           locale={locale}
-          delivery={delivery}
           answered={reply?.conversations.get(m.id)?.messages.at(-1)}
           sentLabel={sentLabel}
           rowPeople={rowPeople}
@@ -244,11 +214,22 @@ function StreamRowsList({ plan, model, head, empty, selection }: StreamRowsListP
     <ListColumn
       plan={plan}
       label={t("list.label")}
-      cursorTint
-      scrollerRef={rowsRef}
+      scrollerRef={attach}
       cursor={model.openId}
       head={head}
-      foot={<MailSelectionFoot selection={selection} verbs={model.verbs} />}
+      foot={
+        <>
+          <div data-stream-list-top="">
+            <StreamBackToTop
+              scroller={scroller}
+              keysHere={keysHere}
+              onPress={() => scroller?.scrollTo({ top: 0 })}
+              lifted={selection.active}
+            />
+          </div>
+          <MailSelectionFoot selection={selection} verbs={model.verbs} />
+        </>
+      }
     >
       <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
       {above.length > 0 ? (
@@ -263,6 +244,16 @@ function StreamRowsList({ plan, model, head, empty, selection }: StreamRowsListP
         </Rows>
       ) : null}
       {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
+      {model.place === "receipts" &&
+      model.items.length > 0 &&
+      host.features.places.search !== NONE &&
+      win.end === model.items.length + line ? (
+        <div className="st-search-tail">
+          <Button kind="quiet" size="s" icon="search" onPress={() => commands.go({ place: "search" })}>
+            {t("search.older")}
+          </Button>
+        </div>
+      ) : null}
       {empty}
       {contact.card}
     </ListColumn>
@@ -303,20 +294,17 @@ function StreamHead({ model, dock }: { model: StreamModel; dock: boolean }) {
             ) : null}
             <ListMenu
               label={t("list.menu")}
-              items={
-                model.mayState && clear === undefined
-                  ? []
-                  : [
-                      {
-                        label: t("markAll.label"),
-                        spoken: model.mayState ? clear : undefined,
-                        icon: "read",
-                        note: model.mayState && unread > 0 ? unread.toLocaleString(locale) : undefined,
-                        disabled: !model.mayState,
-                        onPress: model.markAllRead,
-                      },
-                    ]
-              }
+              mail
+              items={[
+                {
+                  label: t("markAll.label"),
+                  spoken: model.mayState ? clear : undefined,
+                  icon: "read",
+                  note: model.mayState && unread > 0 ? unread.toLocaleString(locale) : undefined,
+                  disabled: !model.mayState || clear === undefined,
+                  onPress: model.markAllRead,
+                },
+              ]}
             />
           </>
         }

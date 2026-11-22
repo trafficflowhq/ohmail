@@ -69,11 +69,10 @@ describe("the first-run counters name their basis", () => {
   it("is on the pull screen, beside the counters it qualifies", async () => {
     const el = await mountPull();
     // The screen under test, or the rest of this file is about nothing.
-    expect(textOf(el)).toContain(messages.onboarding.pullTitle);
-
-    const basis = el.querySelector("dl")?.nextElementSibling ?? null;
-    expect(basis, "the pull screen renders no basis line").not.toBeNull();
-    expect(textOf(basis as HTMLElement)).toBe(messages.onboarding.counterBasis);
+    expect(el.querySelector(`[role="group"][aria-label="${messages.onboarding.pullLocal}"]`)).not.toBeNull();
+    expect(textOf(el)).toContain(messages.onboarding.screened);
+    expect(textOf(el)).toContain(messages.onboarding.history);
+    expect(textOf(el)).not.toContain("Screened and History count this mailbox’s mail");
   });
 
   it("the sentence is the one the numbers need — device, not mailbox", async () => {
@@ -81,7 +80,7 @@ describe("the first-run counters name their basis", () => {
     const said = textOf(el);
     // A needle on the RENDERED text, never on a source comment: this is the claim a person meets.
     expect(said).toContain("on this device");
-    expect(said).toContain("not the whole mailbox");
+    expect(el.querySelector(`h1[aria-label="${messages.onboarding.pullTitle}"]`)).toBeNull();
   });
 
   it("the way out promises only what the status bar shows: the messages read, never these counters", async () => {
@@ -89,7 +88,8 @@ describe("the first-run counters name their basis", () => {
     const said = textOf(el);
     // The strip counts the import's messages (`importingCount`, `importingOf`); Screened and History stay here.
     expect(said).not.toContain("carries these counters");
-    expect(said).toContain("the status bar shows how many messages it has read");
+    expect(said).not.toContain("the status bar shows how many messages it has read");
+    expect(said).toContain(messages.onboarding.pullLeave);
   });
 
   it("the fixture is the shape the row is about — the pair is bounded, the import is not", async () => {

@@ -6,6 +6,7 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useContext, useMemo } from "react";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state";
 import {
   isOwnVerb,
   markSeenOver,
@@ -87,8 +88,10 @@ export interface Verbs {
    * visit stands, where the press marks the open letter alone). The slot says the count where it is more than one.
    */
   readonly readCount: number;
-  /** Put a tag on the letter or take it off, through the room's seam; null where no seam stands. */
+  /** Put a tag on the letter or take it off. */
   readonly tag: ((tagId: string, name: string, on: boolean) => void) | null;
+  /** Create a tag with the assignment when the letter's mailbox permits it. */
+  readonly createTag: ((name: string) => void) | null;
   /** The letter's tags, by id. */
   readonly tagged: readonly string[];
   /**
@@ -121,7 +124,6 @@ export function useVerbs(
   /* The account's resurface hour, as the shell handed it to the room: what the quick return books at. */
   const hour = useResurfaceTime();
   const t = useText("reader");
-  const tagText = useText("tag");
   const locale = useLocale();
   const words: VerbWords = useMemo(
     () => ({
@@ -136,7 +138,7 @@ export function useVerbs(
   );
   const whenLabel = useMemo(() => {
     const f = new Intl.DateTimeFormat(locale, {
-      weekday: "long",
+      weekday: "short",
       day: "numeric",
       month: "short",
       hour: "2-digit",
@@ -193,14 +195,7 @@ export function useVerbs(
     /* The person's own Delete leaves the letter, as today's reader does; its Undo brings it back on reopening. */
     if (action === "delete" && acted) commands.open(null);
   };
-  const tag =
-    press === null || message === null
-      ? null
-      : (tagId: string, name: string, on: boolean) =>
-          press.mutateAndReportConfirmed(
-            { kind: "tag_assign", messageId: message.id, tagId, assigned: on },
-            tagText(on ? "toastTagged" : "toastUntagged", { name }),
-          );
+  const tagVerbs = useTagVerbs(message, press);
   const moves = (visit !== null || listMove !== null) && message !== null ? moveTargetsOf(message) : [];
   const replyAll = hasReplyAll(message, useOwnAddresses());
   const pile = message?.triage?.state;
@@ -211,11 +206,38 @@ export function useVerbs(
     readSlot,
     readCount: visit?.readSet.length ?? 0,
     idle: visit === null && press === null,
-    tag,
-    tagged: message?.labels ?? [],
+    ...tagVerbs,
     moves,
     replyAll,
     draft: drafter !== null && message !== null ? () => drafter(message.id) : null,
     filed,
+  };
+}
+
+function useTagVerbs(
+  message: EngineMessage | null,
+  press: ReturnType<typeof usePressWhereOn>,
+): Pick<Verbs, "tag" | "createTag" | "tagged"> {
+  const t = useText("tag");
+  const mailboxes = useMailboxFacts();
+  const tagged = message?.labels ?? [];
+  if (message === null || press === null) return { tag: null, createTag: null, tagged };
+
+  const tag = (tagId: string, name: string, assigned: boolean, createName?: string) =>
+    press.mutateAndReportConfirmed(
+      {
+        kind: "tag_assign",
+        messageId: message.id,
+        tagId,
+        assigned,
+        ...(createName === undefined ? {} : { createName }),
+      },
+      t(assigned ? "toastTagged" : "toastUntagged", { name }),
+    );
+  const readsOnly = mailboxes?.find(({ id }) => id === message.mailboxId)?.organizerRole === "reader";
+  return {
+    tag,
+    createTag: readsOnly ? null : (name) => tag(crypto.randomUUID(), name, true, name),
+    tagged,
   };
 }

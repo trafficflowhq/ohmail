@@ -14,7 +14,7 @@ describe("the AI-credit fact is said one way on the Screener", () => {
     it(`${locale}: strip, row and toast open with one sentence`, () => {
       const fact = cat.aiRefusal.insufficientCredits;
       expect(cat.screener.suggest.noCredits).toBe(fact);
-      expect(cat.screener.noSuggestionNoBudget.startsWith(`${fact} `)).toBe(true);
+      expect(cat.screener.noSuggestionNoBudget).toBe(fact);
       const where = cat.screener.suggest.noCreditsWhere;
       expect(where.startsWith(fact.slice(0, -1))).toBe(true);
       expect(cat.screener.noSuggestionNoBudgetWhere.startsWith(where.slice(0, -1))).toBe(true);

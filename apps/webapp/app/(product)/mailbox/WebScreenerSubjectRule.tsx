@@ -8,7 +8,6 @@ import { useMailState } from "@ohmail/app-logic/mail-state";
 import { otherOrganizerOf } from "@ohmail/app-logic/mail-state/mail-state";
 import { browserOffline, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";
 import { rulesPostureOf } from "@ohmail/app-logic/press/rules-posture";
-import { attributeMessages } from "@ohmail/app-logic/press/sender-audit";
 import { isOwnSubject, senderScreening, worstStatus, type ScreeningDest } from "@ohmail/app-logic/press/sender-screening";
 import {
   MAX_SUBJECT_TERM_CHARS,
@@ -24,7 +23,7 @@ import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { usePress, useReport, useScopeHere } from "@ohmail/app/frame";
 import type { SubjectRulePartProps } from "@ohmail/app/screener";
 import { ruleKeyOf } from "@ohmail/client-engine";
-import { Button, cssRect } from "@ohmail/ui/base";
+import { MenuItem, cssRect } from "@ohmail/ui/base";
 import type { EngineMessage } from "@ohmail/wire";
 import { SenderAuditPanel } from "../../screening/SenderAuditPanel";
 import { usePileNames } from "../../shell/decision-copy";
@@ -40,11 +39,11 @@ interface SubjectInvocation {
 }
 
 type SubjectEntry = Pick<SubjectRulePartProps,
-  "messageId" | "senderAddress" | "eligible" | "open" | "onOpen" | "onClose"
+  "messageId" | "senderAddress" | "eligible" | "open" | "onOpen" | "onClose" | "onBack"
 >;
 
 export function useWebSubjectRule(
-  { messageId, senderAddress, eligible, open, onOpen, onClose }: SubjectEntry,
+  { messageId, senderAddress, eligible, open, onOpen, onClose, onBack }: SubjectEntry,
   from: "held" | "letter",
 ) {
   const engine = useEngine();
@@ -93,6 +92,10 @@ export function useWebSubjectRule(
     invocation.current = null;
     onClose();
   };
+  const back = onBack ? () => {
+    invocation.current = null;
+    onBack();
+  } : close;
   const begin = (anchor: Element | null) => {
     const seed = liveSeed();
     const context = seed && subjectRuleContext(engine.read(), messageId, engine.store);
@@ -166,6 +169,7 @@ export function useWebSubjectRule(
       ctx={pressed.context}
       nobody={pressed.nobody}
       onClose={close}
+      onBack={back}
       onConfirm={confirm}
     />
   ) : null;
@@ -173,13 +177,13 @@ export function useWebSubjectRule(
 }
 
 export function WebScreenerSubjectRule({
-  messageId, senderAddress, anchor, eligible, cardOpen, domainScope, auditOpen, onAudit, open, onOpen, onClose, children,
+  messageId, senderAddress, anchor, eligible, cardOpen, domainScope, auditOpen, onAudit, open, onOpen, onClose, onBack, children,
 }: SubjectRulePartProps) {
   const engine = useEngine();
   const scope = useScopeHere();
   const t = useTranslations("screening");
   const { available, begin, sheet, ownsEngine } = useWebSubjectRule(
-    { messageId, senderAddress, eligible, open, onOpen, onClose }, "held",
+    { messageId, senderAddress, eligible, open, onOpen, onClose, onBack }, "held",
   );
   const screening = (cardOpen || auditOpen) && ownsEngine()
     ? senderScreening(engine.read(), messageId)
@@ -188,21 +192,19 @@ export function WebScreenerSubjectRule({
     .filter((message) => message.accountId === scope);
   return (
     <>
-      {children(
-        <>
-          {available ? <Button kind="quiet" size="s" opens="dialog" onPress={() => begin(anchor.current)}>{t("subjectRuleOpen")}</Button> : null}
-          {audited?.length ? (
-            <Button kind="quiet" size="s" opens="dialog" onPress={onAudit}>{t("auditOpen", { count: audited.length })}</Button>
-          ) : null}
-        </>,
-      )}
+      {children({
+        subject: available ? <MenuItem icon="plus" onPress={() => begin(anchor.current)}>{t("cardSubject")}</MenuItem> : undefined,
+        seeAll: audited?.length ? onAudit : undefined,
+      })}
       {auditOpen && audited ? (
         <SenderAuditPanel
           onClose={onClose}
+          onBack={onBack}
           state={{
             title: domainScope ? displayDomainLabel(senderAddress) : displayAddress(senderAddress),
             domain: domainScope,
-            rows: attributeMessages(engine.read(), audited),
+            name: screening?.name ?? undefined,
+            rows: audited,
           }}
         />
       ) : null}

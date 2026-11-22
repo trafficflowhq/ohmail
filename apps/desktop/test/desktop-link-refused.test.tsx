@@ -119,7 +119,8 @@ async function clickInApp(href: string): Promise<void> {
 }
 
 const said = (): string => document.body.textContent ?? "";
-const sentence = (address: string): string => DOOR_COPY.linkNoBrowser(machineWord(), address);
+const reportWords = (text: string): string => text.replace(/\.$/u, "");
+const sentence = (address: string): string => reportWords(DOOR_COPY.linkNoBrowser(machineWord(), address));
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
@@ -195,7 +196,7 @@ describe("a refused link says whose refusal it was", () => {
       const url = `https://example.test/${why}`;
       await act(async () => { emit(LINK_REFUSED_EVENT, refusal(url, why)); });
       await turns(5);
-      expect(said(), `a ${why} refusal`).toContain(DOOR_COPY.linkNotOpened(url));
+      expect(said(), `a ${why} refusal`).toContain(reportWords(DOOR_COPY.linkNotOpened(url)));
       expect(said(), `a ${why} refusal blamed the computer`).not.toContain(sentence(url));
       expect(copyButtons().length, `a ${why} refusal offers no way to copy its address`).toBe(1);
     }
@@ -206,7 +207,7 @@ describe("a refused link says whose refusal it was", () => {
     await act(async () => { emit(LINK_REFUSED_EVENT, refusal("https://example.test/opener", "opener")); });
     await turns(5);
     expect(said()).toContain(sentence("https://example.test/opener"));
-    expect(said()).not.toContain(DOOR_COPY.linkNotOpened("https://example.test/opener"));
+    expect(said()).not.toContain(reportWords(DOOR_COPY.linkNotOpened("https://example.test/opener")));
     expect(copyButtons().length).toBe(1);
   });
 
@@ -215,7 +216,7 @@ describe("a refused link says whose refusal it was", () => {
     const long = `https://example.test/gate/${"p".repeat(200)}`;
     await act(async () => { emit(LINK_REFUSED_EVENT, refusal(long, "unrendered")); });
     await turns(5);
-    expect(said()).toContain(DOOR_COPY.linkNotOpened(`${long.slice(0, 80)}…`));
+    expect(said()).toContain(reportWords(DOOR_COPY.linkNotOpened(`${long.slice(0, 80)}…`)));
     expect(said()).not.toContain(long);
   });
 });
@@ -272,7 +273,7 @@ describe("a refused link's address is copied whole with one press", () => {
     });
     await act(async () => { settle!(true); });
     await turns(5);
-    expect(said()).toContain(DOOR_COPY.linkAddressCopied);
+    expect(said()).toContain(reportWords(DOOR_COPY.linkAddressCopied));
   });
 
   it("says copied only after the write fulfils", async () => {
@@ -280,10 +281,10 @@ describe("a refused link's address is copied whole with one press", () => {
     await act(async () => { button.click(); });
     await turns(5);
     expect(written).toEqual(["https://example.test/held"]);
-    expect(said(), "copied was said before the write settled").not.toContain(DOOR_COPY.linkAddressCopied);
+    expect(said(), "copied was said before the write settled").not.toContain(reportWords(DOOR_COPY.linkAddressCopied));
     await act(async () => { settle!(true); });
     await turns(5);
-    expect(said()).toContain(DOOR_COPY.linkAddressCopied);
+    expect(said()).toContain(reportWords(DOOR_COPY.linkAddressCopied));
   });
 
   it("a refused write says the address was not copied", async () => {
@@ -291,8 +292,8 @@ describe("a refused link's address is copied whole with one press", () => {
     await act(async () => { button.click(); });
     await act(async () => { settle!(false); });
     await turns(5);
-    expect(said()).toContain(DOOR_COPY.linkAddressNotCopied);
-    expect(said()).not.toContain(DOOR_COPY.linkAddressCopied);
+    expect(said()).toContain(reportWords(DOOR_COPY.linkAddressNotCopied));
+    expect(said()).not.toContain(reportWords(DOOR_COPY.linkAddressCopied));
   });
 });
 
@@ -326,8 +327,9 @@ describe("a marked link the shell holds is asked about in the window", () => {
     await ask(ASK);
     expect(dialog(), "a held press asked nothing").not.toBeNull();
     expect(dialog()!.getAttribute("aria-modal")).toBe("true");
-    expect(dialog()!.textContent).toContain(COPY.linkAskTitle);
-    expect(dialog()!.textContent).toContain(COPY.linkAskGoes("evil.example"));
+    expect(dialog()!.textContent).toContain(COPY.linkAskElsewhere);
+    expect(dialog()!.textContent).toContain(ASK.url);
+    expect(dialog()!.querySelector("h2")!.textContent).not.toMatch(/\.$/);
     expect(document.activeElement, "the ask did not start on Cancel").toBe(button(COPY.linkAskCancel));
     await act(async () => { button(COPY.linkAskOpen("evil.example")).click(); });
     await turns(5);
@@ -361,7 +363,7 @@ describe("a marked link the shell holds is asked about in the window", () => {
     await act(async () => { button(COPY.linkAskOpen("evil.example")).click(); });
     await turns(5);
     expect(answered).toEqual([TOKEN]);
-    expect(said()).toContain(COPY.linkAskGone);
+    expect(said()).toContain(reportWords(COPY.linkAskGone));
   });
 
   it("a payload that is not an ask shows nothing", async () => {

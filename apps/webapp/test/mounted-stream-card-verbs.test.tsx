@@ -62,8 +62,8 @@ async function openReply() {
 }
 
 describe("the mounted stream's verbs", () => {
-  it("reading by scroll alone leaves the action panel closed", async () => {
-    seat();
+  it("scrolling retargets the footer without unfolding the card", async () => {
+    const { mail } = seat();
     const scroll = read().querySelector<HTMLElement>("[data-reading-scroll]")!;
     Object.defineProperty(scroll, "clientHeight", { value: 300 });
     Object.defineProperty(scroll, "scrollHeight", { value: 900 });
@@ -73,7 +73,7 @@ describe("the mounted stream's verbs", () => {
         top: top - scroll.scrollTop, bottom: top + 400 - scroll.scrollTop, height: 400,
       } as DOMRect);
     }
-    expect(panel()).toBeNull();
+    expect(panel()).toBeTruthy();
     await act(async () => {
       fireEvent.wheel(scroll, { deltaY: 400 });
       scroll.scrollTop = 400;
@@ -81,7 +81,11 @@ describe("the mounted stream's verbs", () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     });
     expect(card(19).hasAttribute("data-open")).toBe(true);
-    expect(panel()).toBeNull();
+    expect(within(card(19)).getByRole("button", { name: "Expand" })).toBeTruthy();
+    fireEvent.click(within(panel()!).getByRole("button", { name: "Later" }));
+    expect(mail.mutations.filter((write) => write.kind === "triage_set")).toEqual([
+      expect.objectContaining({ messageId: "two", state: "reply_later" }),
+    ]);
   });
 
   it("the clicked letter opens and gets the stream's only action panel", async () => {

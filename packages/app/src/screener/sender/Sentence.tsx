@@ -1,9 +1,4 @@
-/**
- * THE OPEN SENDER'S SENTENCE: who, and where their mail goes, the place a word you press. A real suggestion is the
- * slot's proposal; with none the slot says nobody has chosen. Under it, the address (the way to the sender's card)
- * and how wide a decision reaches, then the lines: what ohmail measured, the advice or why there is none, what a
- * whole-domain press also files, and what Screen out and Spam also send. Every line is said before the press.
- */
+/** A sender’s place, identity, scope and advice. */
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { RefObject } from "react";
 import {
@@ -14,16 +9,22 @@ import {
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
-import { Button, Dot, Menu, MenuItem, Sentence as KitSentence, Slot, Tag } from "@ohmail/ui/base";
+import { Button, Dot, Icon, Menu, MenuItem, Sentence as KitSentence, Slot, Tag } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
 import { useNoAdvice, useScreener } from "../contract.js";
-import { unsubscribeDisclosure } from "./unsubscribe-disclosure.js";
+import "./sentence.css";
 
 const chunkText = (chunks: unknown): string =>
   (Array.isArray(chunks) ? chunks : [chunks]).filter((c) => typeof c === "string").join("");
 
 export function whoOf(sender: ScreenerSenderDTO): string {
   return sender.from.name?.trim() || displayAddress(sender.from.address);
+}
+
+export function lookalikeBrand(sender: ScreenerSenderDTO): string | undefined {
+  if (sender.checked?.reason === "impersonation") return sender.checked.brand;
+  if (sender.checked?.reason === "unverified") return undefined;
+  return sender.ai?.reasonCode === "impersonation" ? sender.ai.reasonBrand : undefined;
 }
 
 export function Sentence({
@@ -36,6 +37,7 @@ export function Sentence({
   cardAt,
   scopeAt,
   onCard,
+  unsubscribed,
 }: {
   view: ScreenerView;
   sender: ScreenerSenderDTO;
@@ -46,22 +48,30 @@ export function Sentence({
   cardAt: RefObject<HTMLButtonElement | null>;
   scopeAt: RefObject<HTMLButtonElement | null>;
   onCard: () => void;
+  unsubscribed: boolean;
 }) {
   const t = useText("screener");
   const words = suggestionWords(sender, useNoAdvice());
+  const model = useScreener();
+  const waiting = view.segment === "waiting";
   const place =
     view.segment !== "waiting"
       ? t(view.segment === "screened" ? "pileScreened" : "pileSpam")
       : words.dest === null
         ? t("place.nowhere")
         : t(PILE_KEY[words.dest]);
-  /* What ohmail measured, said as facts beside the sentence: a claimed company, how sure the advice is. */
-  const facts = [
-    ...(sender.checked?.reason === "impersonation"
-      ? [t("senderCheck.chip", { brand: sender.checked.brand })]
-      : []),
-    ...(view.segment === "waiting" && words.sure !== null ? [t("place.sure", { sure: words.sure })] : []),
-  ];
+  const checked = sender.checked;
+  const brand = lookalikeBrand(sender);
+  const identity = brand
+    ? { icon: "warn" as const, label: t("senderCheck.chip", { brand }) }
+    : checked?.reason === "unverified"
+      ? { icon: "ask" as const, label: t("place.notConfirmed") }
+      : null;
+  const detection =
+    view.segment === "spam" && view.open && "pinned" in view.open && !view.open.pinned
+      ? sender.detection
+      : undefined;
+  const offered = waiting && model.unsubClaimOf(sender, scope) !== "none";
   const lead = t.rich("place.goes", {
     who: whoOf(sender),
     place,
@@ -84,12 +94,20 @@ export function Sentence({
     <div>
       <KitSentence level={2}>
         {lead}
-        <Dot kind="ink" />
+        <Dot kind={waiting ? "hot" : "ink"} />
       </KitSentence>
       <p className="oh-text sc-sentence-tools">
-        <Button kind="quiet" size="s" opens="dialog" ref={cardAt} onPress={onCard}>
-          {displayAddress(sender.from.address)}
-        </Button>
+        <span className="sc-identity">
+          {identity ? (
+            <Icon name={identity.icon} size={18} />
+          ) : model.senderConfirmed?.(sender) ? (
+            <Icon name="check" size={18} label={t("place.confirmed")} />
+          ) : null}
+          <Button kind="quiet" size="s" opens="dialog" ref={cardAt} onPress={onCard}>
+            {displayAddress(sender.from.address)}
+          </Button>
+        </span>
+        {identity ? <b>{identity.label}</b> : null}
         {choosing && !shared ? (
           <Slot
             ref={scopeAt}
@@ -100,64 +118,55 @@ export function Sentence({
             {t(scope === "domain" ? "barScopeDomain" : "barScopeSender")}
           </Slot>
         ) : null}
-        {facts.map((fact) => (
-          <Tag key={fact}>{fact}</Tag>
-        ))}
+        {shared && waiting ? <Tag>{t("place.perAddress")}</Tag> : null}
+        {offered ? <Tag>{t("unsubOffered")}</Tag> : null}
+        {view.segment === "screened" ? (
+          <>
+            {sender.scope === "domain" ? <Tag>{t("barScopeDomain")}</Tag> : null}
+            <Tag>{t("place.heldLabel", { count: sender.held.length })}</Tag>
+            <Tag>{t("place.screenedOn", { date: sender.screenedOn ?? sender.time })}</Tag>
+          </>
+        ) : null}
+        {unsubscribed ? <Tag>{t("place.unsubscribed")}</Tag> : null}
+        {detection ? (
+          <span className="sc-shelf-advice">
+            {t("place.sure", { sure: detection.confidence })} · {detection.reason}
+          </span>
+        ) : null}
       </p>
       <ScopeMenu view={view} sender={sender} scope={scope} anchor={scopeAt} />
     </div>
   );
 }
 
-/** The lines under the sentence, each said before the press. */
-export function DecisionLines({
-  view,
-  sender,
-  choosing,
-  scope,
-  shared,
-}: {
-  view: ScreenerView;
-  sender: ScreenerSenderDTO;
-  choosing: boolean;
-  scope: DecisionScope;
-  shared: boolean;
-}) {
+/** Show the current advice and any actionable refusal. */
+export function DecisionLines({ sender }: { sender: ScreenerSenderDTO }) {
   const t = useText("screener");
   const rules = useText("rules");
-  const model = useScreener();
   const words = suggestionWords(sender, useNoAdvice());
-  const reach = choosing && scope === "domain" ? model.reachOf(sender, scope) : null;
-  const unsubscribe = choosing
-    ? unsubscribeDisclosure(t, sender.from.address, scope, model.unsubClaimOf(sender, scope))
-    : null;
+  const advice = words.badge !== null || words.sure !== null || words.reason !== null;
   return (
     <>
-      {(view.segment === "waiting" ? words.lines : []).map((line) => (
+      {advice ? (
+        <p className="oh-text sc-advice">
+          <Icon name="spark" size={18} />
+          {words.badge !== null ? <Tag>{t(words.badge)}</Tag> : null}
+          {words.sure !== null ? (
+            <b title={t("place.confidence")}>{t("place.sure", { sure: words.sure })}</b>
+          ) : null}
+          {words.reason ? <span>{t(words.reason.key, words.reason.values)}</span> : null}
+        </p>
+      ) : null}
+      {words.lines.map((line) => (
         <p key={line.key} className="oh-text">
           {line.key === "aiActRefused"
             ? t("aiActRefused", { accept: t(words.dest === null ? "rowAccept" : PILE_VERB_KEY[words.dest]) })
-            : t(line.key, line.values as Record<string, string | number> | undefined)}
+            : t(line.key, line.values)}
         </p>
       ))}
-      {view.segment === "waiting" && sender.inertRule ? (
+      {sender.inertRule ? (
         <p className="oh-text">{rules("sharedProviderInert", { domain: sender.inertRule.domain })}</p>
       ) : null}
-      {reach !== null && reach.others.length > 0 ? (
-        <p className="oh-text">
-          {t("domainAlsoFiles", {
-            count: reach.others.reduce((n, o) => n + o.count, 0),
-            senders: reach.others.map((o) => `${displayAddress(o.address)} (${o.count})`).join(", "),
-          })}
-        </p>
-      ) : null}
-      {choosing && sender.checked?.claimsOnly && (shared || scope === "sender") ? (
-        <>
-          <p className="oh-text">{t("listClaimDecision", { brand: sender.checked.brand })}</p>
-          <p className="oh-text">{t("barRuleListClaim", { target: displayAddress(sender.from.address) })}</p>
-        </>
-      ) : null}
-      {unsubscribe ? <p className="oh-text">{unsubscribe}</p> : null}
     </>
   );
 }
@@ -181,17 +190,21 @@ function ScopeMenu({
       onClose={() => view.show(null)}
       anchor={anchor}
       label={t("barScopeAria")}
+      title={t("place.ruleFor")}
     >
       {(["sender", "domain"] as const).map((s) => (
         <MenuItem
           key={s}
           checked={scope === s}
+          note={
+            s === "domain" ? displayDomainLabel(sender.from.address) : displayAddress(sender.from.address)
+          }
           onPress={() => {
             view.setScope(sender, s);
             view.show(null);
           }}
         >
-          {t(s === "domain" ? "barScopeDomain" : "barScopeSender")}
+          {t(s === "domain" ? "place.scopeDomain" : "place.scopeSender")}
         </MenuItem>
       ))}
     </Menu>

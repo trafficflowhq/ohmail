@@ -18,17 +18,11 @@ import {
   PROFILE_RULES_SENT_MAX,
   ruleDestinationPile,
   useRuleSettings,
-  walkOwed,
 } from "@ohmail/app-logic/press/rule-settings";
 import type { EngineMessage, Folder, RuleEntity } from "@ohmail/wire";
 import { PILE_KEY } from "@ohmail/app-logic/screener";
 import { placeLabel } from "@ohmail/app-logic/text/format";
-import {
-  useRuleActions,
-  pileOf,
-  rulePastMail,
-  walkedMailboxes,
-} from "@ohmail/app-logic/press/rule-management";
+import { useRuleActions, rulePastMail, walkedMailboxes } from "@ohmail/app-logic/press/rule-management";
 import { useRuleDescriptions } from "@ohmail/app-logic/press/rule-descriptions";
 import {
   bodyTermOf,
@@ -37,7 +31,7 @@ import {
   subjectTermOf,
 } from "@ohmail/app-logic/press/rule-list";
 
-export function BrowserRulesPane({ scroller }: PaneBodyProps) {
+export function BrowserRulesPane({ scroller, sheet }: PaneBodyProps) {
   const engine = useEngine();
   const { report } = usePlaceLiveArgs();
   const { mailboxes, rosterProbed } = useMailState();
@@ -79,7 +73,7 @@ export function BrowserRulesPane({ scroller }: PaneBodyProps) {
     onRevoke: (ruleId) => engine.mutate({ kind: "rule_delete", ruleId }),
     onRetarget: retarget,
   });
-  const items = rules.map((rule) => ruleItem(rule, factsOf(rule), t, placeName, pastMail));
+  const items = rules.map((rule) => ruleItem(rule, factsOf(rule), t, placeName));
   const holder = data.holder ?? t("theOrganizer");
   const max = PROFILE_RULES_SENT_MAX;
   const bound = published
@@ -92,7 +86,8 @@ export function BrowserRulesPane({ scroller }: PaneBodyProps) {
   const model: RulesModel = {
     rules: items,
     waiting: apart.map((row, i) => ({ key: row.requestId ?? String(i), ...apartLine(row) })),
-    intro: published ? t(posture.mode === "pending" ? "introHeld" : "introCopy", { holder }) : t("intro"),
+    intro: published ? t(posture.mode === "pending" ? "introHeld" : "introCopy", { holder }) : null,
+    holder,
     locked: actions.lockedWhy,
     refusal: actions.refusal,
     bound,
@@ -118,7 +113,7 @@ export function BrowserRulesPane({ scroller }: PaneBodyProps) {
   };
   return (
     <>
-      <RulesPane model={model} scroller={scroller} />
+      <RulesPane model={model} scroller={scroller} sheet={sheet} />
       <ContactDetails
         person={card}
         onClose={closeCard}
@@ -136,7 +131,6 @@ function ruleItem(
   facts: ReturnType<ReturnType<typeof useRuleDescriptions>["factsOf"]>,
   t: ReturnType<typeof useText>,
   placeName: (folder: Folder) => string,
-  pastMail: (rule: RuleEntity, destination: Folder | null) => number | null,
 ): RuleItem {
   const { what, meta, waits, q, queuedLine, rank, inert, twinNote } = facts;
   const who = displayRuleMatch(rule.match);
@@ -164,18 +158,5 @@ function ruleItem(
     queued: !!q,
     places: changePlaces(rule).map((p) => ({ ...p, name: placeName(p.folder) })),
     finds: [rule.match, who, subjectTermOf(rule), bodyTermOf(rule)].join(" ").toLowerCase(),
-    get refile() {
-      const from = placeName(pileOf(rule));
-      const walk = walkOwed(rule);
-      const count = pastMail(rule, null);
-      return {
-        label: t(walk ? "retroToggleWalk" : "retroToggle", { from }),
-        note:
-          count === null
-            ? t("retroToggleUncounted")
-            : t(walk ? "retroToggleNoteWalk" : "retroToggleNote", { count, from }),
-        on: t(walk ? "retargetExplainWalk" : "retargetExplainRetro", { from }),
-      };
-    },
   };
 }

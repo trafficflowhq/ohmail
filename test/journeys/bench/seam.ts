@@ -188,7 +188,7 @@ export interface Bench {
    * session of the account's own made for this one request, for the far end after the account signed out of the
    * browser (its server still keeps its letters); refused on a bench that cannot make one.
    */
-  ask(a: Account, method: string, path: string, o?: { session?: "fresh" }): Promise<{ status: number; body: unknown }>;
+  ask(a: Account, method: string, path: string, o?: { session?: "fresh"; body?: unknown }): Promise<{ status: number; body: unknown }>;
   /** A new account with a live session. Not on the demo. */
   account(): Promise<Account>;
   /**

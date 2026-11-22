@@ -594,7 +594,9 @@ describe("the head", () => {
     });
     await screen.findByRole("button", { name: "you" });
     const one = screen.getByRole("heading", { name: "Kiln schedule" }).closest("header")!;
-    expect(one.textContent).toBe("Kiln schedule");
+    const subjectOnly = one.cloneNode(true) as HTMLElement;
+    subjectOnly.querySelector(".oh-readinghead-short")?.remove();
+    expect(subjectOnly.textContent).toBe("Kiln schedule");
   });
 
   it("its details name when, who, to whom with every address whole, and where it is", async () => {
@@ -1020,9 +1022,11 @@ describe("the panel's menus", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "Tag" }));
-    expect(screen.getByRole("menuitemradio", { name: "Studio" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Studio" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
     await act(async () => {
-      fireEvent.click(screen.getByRole("menuitemradio", { name: "Kiln" }));
+      fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Kiln" }));
     });
     expect(mail.mutations).toEqual([
       { kind: "tag_assign", messageId: "m1", tagId: "t-kiln", assigned: true },
@@ -1030,6 +1034,13 @@ describe("the panel's menus", () => {
   });
 
   describe("what does not fit the panel", () => {
+    function expectMenuOrder(labels: readonly string[]) {
+      const menu = within(screen.getByRole("menu", { name: "More" }));
+      expect(menu.getAllByRole("menuitem")).toEqual(
+        labels.map((name) => menu.getByRole("menuitem", { name, exact: true })),
+      );
+    }
+
     /* jsdom lays nothing out: the panel's bar is as wide as its shown verbs, 100 each, in a room of 350. */
     const shownVerbs = (el: Element) =>
       [...el.querySelectorAll<HTMLElement>("[data-rank]")].filter((v) => !v.hidden).length;
@@ -1052,20 +1063,14 @@ describe("the panel's menus", () => {
       const panel = screen.getByRole("toolbar", { name: "Actions" });
       expect(within(panel).queryByRole("button", { name: "Park" })).toBeNull();
       fireEvent.click(within(panel).getByRole("button", { name: "More" }));
-      expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-        "Later",
-        "Park",
-        "Resurface",
-        "Tag",
-        "Delete",
-      ]);
+      expectMenuOrder(["Later", "Park", "Resurface", "Tag", "Delete"]);
       await act(async () => {
         fireEvent.click(screen.getByRole("menuitem", { name: "Park" }));
       });
       expect(mail.mutations).toEqual([{ kind: "triage_set", messageId: "m1", state: "set_aside" }]);
       fireEvent.click(within(panel).getByRole("button", { name: "More" }));
       fireEvent.click(screen.getByRole("menuitem", { name: "Tag" }));
-      expect(screen.getByRole("menuitemradio", { name: "Kiln" })).toBeTruthy();
+      expect(screen.getByRole("menuitemcheckbox", { name: "Kiln" })).toBeTruthy();
     });
 
     /* The design's order (the simulator's panel): Reply, Forward and the read slot never fold; on the upright
@@ -1112,7 +1117,7 @@ describe("the panel's menus", () => {
           standing.filter((b) => b.dataset.short !== undefined).map((b) => b.getAttribute("aria-label")),
         ).toEqual([...iconOnly]);
         fireEvent.click(within(panel).getByRole("button", { name: "More" }));
-        expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([...moreIs]);
+        expectMenuOrder([...moreIs]);
       },
     );
   });

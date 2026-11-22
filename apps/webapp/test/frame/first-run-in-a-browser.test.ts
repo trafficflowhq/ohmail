@@ -26,9 +26,9 @@ const ROOT = process.cwd();
 const ORIGIN = "https://app.ohmail.test";
 const t = en.onboarding;
 /** The steps a connected, not yet organized mailbox walks first, by the heading each one says. */
-const ORGANIZE = t.consentTitle;
-const HOW_FAR = t.windowTitle;
-const AI = t.aiTitle;
+const ORGANIZE = t.mapTitle;
+const HOW_FAR = t.organizeLast.replace("<window></window>.", t.windowYear);
+const AI = t.aiSay.replace("<on></on>.", t.aiOff);
 
 let browser: Browser | null = null;
 const page$ = { js: "", css: "" };
@@ -115,7 +115,7 @@ for (const size of SIZES) {
   describe(`setup over the frame at ${size.name}`, () => {
     it("nothing of setup stands in what the frame makes inert", async () => {
       const page = await setup(size.width, size.height);
-      const held = { continue: await inert(page, t.continue), cancel: await inert(page, t.cancel) };
+      const held = { continue: await inert(page, t.continue), cancel: await inert(page, t.setupMenu) };
       await page.context().close();
       expect(held, "setup's controls stand in an inert subtree").toEqual({ continue: false, cancel: false });
     }, 60_000);
@@ -164,13 +164,15 @@ for (const size of SIZES) {
 
     it("with the mouse: Cancel setup asks, Back takes it back, Close setup closes and the app stands", async () => {
       const page = await setup(size.width, size.height);
-      await button(page, t.cancel).click({ timeout: 5000 });
+      await button(page, t.setupMenu).click({ timeout: 5000 });
+      await dialog(page).getByRole("menuitem", { name: new RegExp(`^${escape(t.cancel)}`) }).click({ timeout: 5000 });
       await button(page, t.cancelConfirm).waitFor({ timeout: 5000 });
       /* The confirm's Back, not the foot's: the confirm's is the last of the name in the dialog. */
       await button(page, t.back).last().click({ timeout: 5000 });
       await expect.poll(() => button(page, t.cancelConfirm).count(), { message: "Back left the confirm open", timeout: 5000 }).toBe(0);
       const stood = await stepOn(page);
-      await button(page, t.cancel).click({ timeout: 5000 });
+      await button(page, t.setupMenu).click({ timeout: 5000 });
+      await dialog(page).getByRole("menuitem", { name: new RegExp(`^${escape(t.cancel)}`) }).click({ timeout: 5000 });
       await button(page, t.cancelConfirm).click({ timeout: 5000 });
       await expect.poll(() => dialog(page).count(), { message: "Close setup did not close it", timeout: 5000 }).toBe(0);
       const app = await appStands(page);
@@ -201,8 +203,8 @@ describe("setup's foot stands inside its card", () => {
       const seen: string[] = [];
       for (const title of [ORGANIZE, HOW_FAR, AI]) {
         await step(page, title).waitFor({ timeout: 5000 });
-        /* The foot is where Cancel setup stands; a person scrolls a tall step down to its end. */
-        const at = await button(page, t.cancel).evaluate(async (el) => {
+        const action = title === HOW_FAR ? t.agree : t.continue;
+        const at = await button(page, action).evaluate(async (el) => {
           const box = (e: Element | null) => {
             const r = e!.getBoundingClientRect();
             return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
@@ -211,13 +213,17 @@ describe("setup's foot stands inside its card", () => {
           const card = el.closest("main")!;
           /* Read where the card comes to rest: its entrance moves it. */
           await Promise.all(card.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => undefined)));
-          const foot = el.parentElement!;
+          const foot = el.closest(".oh-page-acts")!;
           foot.scrollIntoView({ block: "end" });
           /* The text column runs across the Page grid. The heading inside it has its own line-length limit. */
           const column = box(card.querySelector(".oh-page-say"));
           const inner = { left: column.left, right: column.right };
           const controls = [...foot.children].filter((c) => c.tagName === "BUTTON").map(box);
-          return { card: box(card), inner, foot: box(foot), controls, view: { right: innerWidth, bottom: innerHeight } };
+          const rect = box(foot);
+          const padding = getComputedStyle(foot);
+          const scale = rect.right - rect.left === 0 ? 1 : (rect.right - rect.left) / (foot as HTMLElement).offsetWidth;
+          const content = { left: rect.left + scale * parseFloat(padding.paddingLeft), right: rect.right - scale * parseFloat(padding.paddingRight), top: rect.top + scale * parseFloat(padding.paddingTop), bottom: rect.bottom - scale * parseFloat(padding.paddingBottom) };
+          return { card: box(card), inner, foot: content, controls, view: { right: innerWidth, bottom: innerHeight } };
         });
         const inside = (b: { left: number; top: number; right: number; bottom: number }, o: typeof b) =>
           b.left >= o.left - 0.5 && b.right <= o.right + 0.5 && b.top >= o.top - 0.5 && b.bottom <= o.bottom + 0.5;

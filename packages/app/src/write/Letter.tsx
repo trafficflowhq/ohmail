@@ -19,6 +19,7 @@ import { useNeedsContent, type NeedsContent } from "./status/needs-content.js";
 import { letterNote } from "./status/LetterNote.js";
 import { canReassure, saveLines } from "./status/save-note.js";
 import { elsewhereForSave, useWentElsewhere } from "./status/elsewhere.js";
+import { useEmoji } from "./text/Emoji.js";
 import { useMarks } from "./text/Marks.js";
 import { modalIsOpen } from "@ohmail/app-logic/session/modal-gate";
 import { useFiles } from "./files/Files.js";
@@ -39,15 +40,14 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const tc = useText("compose");
   const w = useWriting();
   const { compose } = w;
-  const going = letterGoing(w.composeSend);
-  const { showSend } = w;
-  useEffect(() => showSend(COMPOSE_SEND_KEY), [showSend]);
+  const going = useComposeSending(w);
   const locked = w.composeLocked !== null || going;
   const { files, forwarded, notKept } = useLetterFiles(locked);
   const fromLine = useFromLine(w.composeFrom, locked, (fromMailboxId) =>
     w.onComposeFields({ ...compose, fromMailboxId }),
   );
-  const [laterOpen, setLaterOpen] = useState(false);
+  const [laterAnchor, setLaterAnchor] = useState<HTMLElement | null>(null);
+  const laterOpen = laterAnchor !== null;
   const { mayGo, long, empty, went, pressable, signature, then } = useLetterSend(
     files.model.attaching.length > 0,
   );
@@ -66,8 +66,9 @@ export function Letter({ keysHere, plan }: PaneProps) {
   );
   useLetterWriting(keysHere);
   const { saving, reassurance } = useLetterSaveLines(long.line !== null, fromLine !== undefined);
-  const stamp = letterStamp(going, drafting, w, t, tc);
-  const from = fromLine && { ...fromLine, stamp: { label: stamp, hint: reassurance } };
+  const emoji = useEmoji(handle, locked || drafting);
+  const from = withStamp(fromLine, letterStamp(going, drafting, w, t, tc), reassurance);
+
   const { sheet, first } = useComposeFocus(keysHere, compose, t);
   const compact = useWritingViewport(sheet, plan.pointer === "coarse");
   return (
@@ -81,6 +82,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
         foot={
           <Verbs
             compact={compact}
+            forward={Boolean(compose.forwardOf)}
             canSend={mayGo}
             going={going}
             keysHere={keysHere}
@@ -90,7 +92,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
             onSend={() => {
               if (!modalIsOpen()) then("send");
             }}
-            later={{ open: laterOpen, onPress: () => setLaterOpen(true) }}
+            later={{ open: laterOpen, onPress: setLaterAnchor }}
             discardReason={went.discardReason}
             onDiscard={w.discardCompose}
           />
@@ -123,6 +125,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
             label: t("foot"),
             attach: files.attach,
             format: marks.format,
+            emoji: emoji.control,
             ...(draft === null ? {} : { draft: draft.control }),
           }}
           placeholder={unwritten({ text: compose.body, html: compose.html }) ? placeholder : undefined}
@@ -140,19 +143,51 @@ export function Letter({ keysHere, plan }: PaneProps) {
           />
         </Composer>
         {marks.card}
+        {emoji.menu}
       </Sheet>
-      <Later
-        open={laterOpen}
-        onClose={() => setLaterOpen(false)}
-        onPick={(at) => {
-          if (mayGo) w.sendCompose(at);
-        }}
-        forward={Boolean(compose.forwardOf)}
-        hasFiles={(compose.attachments?.length ?? 0) > 0}
+      <ComposeLater
+        anchor={laterAnchor}
+        close={() => setLaterAnchor(null)}
+        mayGo={mayGo}
         attaching={files.model.attaching}
       />
     </>
   );
+}
+
+function useComposeSending({ showSend, composeSend }: Writing): boolean {
+  useEffect(() => showSend(COMPOSE_SEND_KEY), [showSend]);
+  return letterGoing(composeSend);
+}
+
+function ComposeLater({
+  anchor,
+  close,
+  mayGo,
+  attaching,
+}: {
+  anchor: HTMLElement | null;
+  close: () => void;
+  mayGo: boolean;
+  attaching: readonly string[];
+}) {
+  const w = useWriting();
+  return (
+    <Later
+      anchor={w.compose.forwardOf ? null : anchor}
+      onClose={close}
+      onPick={(at) => {
+        if (mayGo) w.sendCompose(at);
+      }}
+      forward={Boolean(w.compose.forwardOf)}
+      hasFiles={(w.compose.attachments?.length ?? 0) > 0}
+      attaching={attaching}
+    />
+  );
+}
+
+function withStamp(from: RecipientsProps["from"], label?: string, hint?: string): RecipientsProps["from"] {
+  return from && { ...from, stamp: { label, hint } };
 }
 
 function letterStamp(

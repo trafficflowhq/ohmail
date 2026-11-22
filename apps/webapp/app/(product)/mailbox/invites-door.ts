@@ -48,7 +48,7 @@ export function invitesDoor(say: (err: unknown) => string, day: (iso: string) =>
     make: (name) =>
       tried(async () => {
         const made = await pair.mint(name ? { label: name } : {}, expectedOwner);
-        return { link: `${window.location.origin}/join/invite#${made.token}`, name: made.label };
+        return { id: made.id, expires: day(made.expiresAt), link: `${window.location.origin}/join/invite#${made.token}`, name: made.label };
       }),
     revoke: (id) =>
       tried(async () => {

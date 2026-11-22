@@ -152,10 +152,9 @@ describe("the Similar section", () => {
     await settleArchive();
 
     // A part-shaped query: the head also says where a part inside a word is looked for (search-part-reach.test.tsx).
-    const hint = within(host).getByText(messages.search.similarHint);
     const reach = within(host).getByText(messages.search.saidPart);
-    expect(heading()!.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(hint.compareDocumentPosition(reach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading()!.compareDocumentPosition(reach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(host).queryByText("Nothing matched exactly, so these are the closest words.")).toBeNull();
     expect(similarSubjects()[0]).toContain("Invoice 078");
     // Everything on screen is under the heading — there is no exact row to be above it.
     expect(subjects()).toEqual(similarSubjects());
@@ -188,7 +187,8 @@ describe("the Similar section", () => {
     /* The bare count line yields to the verdict when the verdict carries the count, so the
        count on screen is the verdict's "N with a close word" (near, never matched), and it is the rows on screen. */
     expect(host.querySelector(".results-head.num")).toBeNull();
-    expect(host.textContent).toContain(`— ${similarSubjects().length} with a close word`);
+    expect(within(host).getByRole("heading", { name: `Similar ${similarSubjects().length}` })).toBeTruthy();
+    expect(host.textContent).not.toContain("with a close word");
   });
 
   it("the keyboard cursor walks INTO the Similar rows", async () => {

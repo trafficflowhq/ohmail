@@ -4,32 +4,10 @@
  * wall's "Start your free trial" anyway, so "Later" stands only where there is no account page to open.
  */
 import type { ReactNode } from "react";
-import { Page } from "@ohmail/ui/base";
-import { Said } from "../stage/Said.js";
+import { Page, Tag } from "@ohmail/ui/base";
+import { Said, SaidWith } from "../stage/Said.js";
 import { WayButton } from "../stage/way.js";
-import type { JoinPlanChosen } from "./door.js";
 import { refusalOf, SignOutAgain, type StepProps } from "./parts.js";
-import type { Text } from "../../text/index.js";
-
-/** What the site's button chose, as a sentence, and the trial's term where one is offered; never a price. */
-function choiceOf(chosen: JoinPlanChosen, trial: boolean, join: Text): string | undefined {
-  const said = [
-    chosen.name === null
-      ? null
-      : join(
-          chosen.interval === "year"
-            ? "planChosenYear"
-            : chosen.interval === "month"
-              ? "planChosenMonth"
-              : "planChosen",
-          {
-            plan: chosen.name,
-          },
-        ),
-    trial ? join("planTrial") : null,
-  ].filter((s): s is string => s !== null);
-  return said.length === 0 ? undefined : said.join(" ");
-}
 
 export function PlanStep({ door, state, join, progress }: StepProps<"plan">): ReactNode {
   const { pending, busy } = door;
@@ -50,6 +28,8 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
       </Page>
     );
   const trial = state.trial;
+  const plan = state.chosen.name;
+  const interval = state.chosen.interval;
   const material =
     state.link === "none"
       ? waitLine(join("planUnavailable"))
@@ -73,8 +53,13 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
       aside={progress}
       refusal={refusalOf(pending, door.refusal)}
       material={material}
-      line={join(trial ? "step_plan_lead" : "planLeadNoTrial")}
-      note={choiceOf(state.chosen, trial, join)}
+      line={[
+        ...(plan !== null && !trial ? [{ tag: plan }] : []),
+        ...(plan !== null && interval !== null
+          ? [{ tag: join(interval === "year" ? "planYearly" : "planMonthly") }]
+          : []),
+        ...(trial ? [{ tag: join("planNoCard") }] : []),
+      ]}
       acts={
         <>
           {acts}
@@ -82,7 +67,11 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
         </>
       }
     >
-      <Said text={join("step_plan_title")} level={1} />
+      {trial && plan !== null ? (
+        <SaidWith level={1} parts={join.rich("startOn", { plan: () => <Tag>{plan}</Tag> })} />
+      ) : (
+        <Said text={join(trial ? "startTrialTitle" : "step_plan_title")} level={1} />
+      )}
     </Page>
   );
 }
@@ -111,15 +100,24 @@ export function DoneStep({ door, state, join, progress }: StepProps<"done">): Re
     <Page
       aside={progress}
       refusal={refusalOf(door.pending, door.refusal)}
-      line={join(ahead ? "step_connected_lead" : "step_done_lead")}
-      note={state.mailbox === null ? undefined : join("mailboxConnected", { address: state.mailbox })}
+      material={
+        state.mailbox === null ? undefined : (
+          <p>
+            <Tag>{state.mailbox}</Tag> <Tag>{join("connected")}</Tag>
+          </p>
+        )
+      }
       acts={
         <WayButton way={door.open} size="l">
           {join(ahead ? "continue" : "openOhmail")}
         </WayButton>
       }
     >
-      <Said text={join(ahead ? "step_connected_title" : "step_done_title")} dot="ink" level={1} />
+      <Said
+        text={join(ahead && state.mailbox !== null ? "myMailboxes" : "step_done_title")}
+        dot="ink"
+        level={1}
+      />
     </Page>
   );
 }

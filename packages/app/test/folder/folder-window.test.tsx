@@ -29,7 +29,7 @@ it("renders a window over a large folder and reveals a linked letter when it arr
     consent: FOLDERS_ON,
     more: { "folder:projects": { id: "projects", name: path, mailboxId: mail[0]!.mailboxId } },
   });
-  const list = await screen.findByRole("listbox", { name: "Earlier" });
+  const list = await screen.findByRole("listbox", { name: "Projects" });
   expect(within(list).getAllByRole("option").length).toBeLessThan(119);
   expect(within(list).queryByRole("option", selected)).toBeNull();
   act(() => mirror.add(mail.at(-1)!));

@@ -139,35 +139,35 @@ describe("a browser already signed in continues without the form", () => {
   });
 });
 
-describe("the form says where it goes", () => {
+describe("the continuation stays off the form", () => {
   const status = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>("[role=status]")];
 
-  it("names the account page in the context slot when there is a continuation, and says nothing extra otherwise", async () => {
+  it("offers the same password form with and without an account continuation", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     await mount("/account/manage");
-    // In the one status slot, not a second lede beside the factor sentence.
-    expect(status().map((el) => el.textContent)).toEqual([messages.login.continueManage]);
+    expect(status()).toEqual([]);
     expect(assigned).toEqual([]);
     await act(() => root!.unmount());
     root = null;
     await mount(null);
-    expect(host.textContent).not.toContain(messages.login.continueManage);
+    expect(host.textContent).not.toContain("Sign in, and your account page opens.");
     expect(status()).toEqual([]);
   });
 
-  it("names the setup, not the account page, when the continuation is the wizard", async () => {
+  it("omits both context sentences when the continuation is setup", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     await mount("/join");
-    expect(status().map((el) => el.textContent)).toEqual([messages.login.continueJoin]);
-    expect(host.textContent).not.toContain(messages.login.continueManage);
+    expect(status()).toEqual([]);
+    expect(host.textContent).not.toContain("Sign in, and your setup carries on where it stopped.");
+    expect(host.textContent).not.toContain("Sign in, and your account page opens.");
   });
 
-  it("a sign-out's reason and the continuation share that one slot, the reason first", async () => {
+  it("leaves the sign-out reason on the signed-out page", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     sessionStorage.setItem("ohmail.signed-out-reason", "expired");
     await mount("/account/manage");
-    const slots = status();
-    expect(slots).toHaveLength(1);
-    expect(slots[0]!.textContent).toBe(`${messages.resume.expiredBody} ${messages.login.continueManage}`);
+    expect(status()).toEqual([]);
+    expect(host.textContent).not.toContain(messages.resume.expiredBody);
+    expect(host.querySelector("#login-email")).not.toBeNull();
   });
 });

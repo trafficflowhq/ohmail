@@ -194,9 +194,9 @@ describe("the contact popover", () => {
     expect(popover()).toBeTruthy();
     const card = within(popover()!);
     expect(card.getByRole("button", { name: "Copy address" })).toBeTruthy();
-    expect(card.getByRole("radiogroup", { name: "Where their mail goes" })).toBeTruthy();
+    expect(card.getByRole("radiogroup", { name: "Goes to" })).toBeTruthy();
     expect(items().map((item) => item.textContent)).toEqual(["Write", "Everything from and to this address"]);
-    expect(card.queryByText("Only some of their mail? Make a rule on the subject too")).toBeNull();
+    expect(card.queryByText("Rule on a subject")).toBeNull();
     await click(itemByText("Everything from and to this address"));
     expect(openedAddress).toBe(message.to[0]!.address);
     expect(popover()).toBeNull();
@@ -247,7 +247,7 @@ describe("the contact popover", () => {
     await click(chipByText("Cy Cole"));
     const card = within(popover()!);
     await click(card.getByRole("radio", { name: /^Everyone at / }));
-    await click(card.getByRole("switch", { name: "Also apply the rule to mail already here" }));
+    await click(card.getByRole("switch", { name: "Move mail already here" }));
     await click(news());
     expect(newRules().slice(1)).toEqual([expect.objectContaining({
       ruleKind: "domain", match: message.cc[0]!.address.split("@")[1], applyRetro: false,
@@ -263,9 +263,10 @@ describe("the contact popover", () => {
     expect(open).toHaveLength(1);
     expect(open[0]!.textContent).toContain("Cy Cole");
     await click(screen.getByRole("button", { name: /^Sender One / }));
-    await click(itemByText("Only some of their mail? Make a rule on the subject too"));
-    const dialog = screen.getByRole("dialog", { name: /Make a rule for mail from Sender One/ });
-    expect(within(dialog).getByRole("textbox", { name: "Which subject term" })).toBeTruthy();
+    await click(itemByText("Rule on a subject"));
+    const dialog = screen.getByRole("dialog", { name: "Rule on a subject" });
+    expect(within(dialog).getByRole("textbox", { name: "Subject has" })).toBeTruthy();
+    expect(within(dialog).getByText(/^Goes to · \d+ of \d+ match$/)).toBeTruthy();
     await click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(newRules()).toEqual([]);
   });

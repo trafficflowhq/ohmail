@@ -179,9 +179,9 @@ describe("the column's keys in the key map's registry", () => {
     });
     expect([...LETTER, "shift+i", "x", "j", "k"].map(times)).toEqual([...LETTER.map(() => 1), 1, 1, 0, 0]);
     const reply = table.find((b) => b.chord === "r");
-    expect(reply).toMatchObject({ group: "message", label: "Reply inside the message" });
-    expect(table.find((b) => b.chord === "shift+f")).toMatchObject({ label: "Forward the message on" });
-    expect(table.find((b) => b.chord === "Backspace")).toMatchObject({ label: "Move it to Trash" });
+    expect(reply).toMatchObject({ group: "message", label: "Reply" });
+    expect(table.find((b) => b.chord === "shift+f")).toMatchObject({ label: "Forward" });
+    expect(table.find((b) => b.chord === "Backspace")).toMatchObject({ label: "Move to Trash" });
     const move = table.find((b) => b.chord === "m");
     expect(move, "no list's visit: nothing to move to").toMatchObject({ disabled: true });
   });

@@ -104,9 +104,6 @@ export function TrashList({ plan }: PaneProps) {
           {page.loading ? t("liveOlderLoading") : t("liveOlder")}
         </Button>
       ) : null}
-      {page.available && !model.deletedEmpty && !page.loading && page.error === null ? (
-        <p className="trash-detail">{t(model.live.shown ? "footLive" : "foot")}</p>
-      ) : null}
       {model.live.shown ? <LiveSection model={model} t={t} contact={contact} /> : null}
       {contact.card}
     </ListColumn>

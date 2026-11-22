@@ -51,7 +51,13 @@ export function Quality({
           </Slot>
         ),
       })}
-      <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} label={t("files.qualityLabel")}>
+      <Menu
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        label={t("files.qualityLabel")}
+        title={t("files.qualityLabel")}
+      >
         {IMAGE_QUALITY_LEVELS.map((l) => (
           <MenuItem
             key={l}

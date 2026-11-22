@@ -322,7 +322,7 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
     expect(sent).toEqual([]);
     // Every request the app made, so a new call added later has to be accounted for here.
     expect(new Set(calls.map((c) => `${c.method} ${c.path.split("?")[0]}`)))
-      .toEqual(new Set(["GET /screener", "POST /screener/suggest"]));
+      .toEqual(new Set(["GET /screener", "GET /screener/held-releases", "POST /screener/suggest"]));
   });
 
   it("A COLD MIRROR still gets its batch — the queue is empty for the first renders", async () => {
@@ -387,11 +387,11 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
     // FROM THE CATALOGUE, by the refusal's `code` — not the server's `message`, which is English
     // written for a log and was being rendered verbatim onto a German screen. The fact is the
     // same fact; the sentence is the reader's.
-    expect(toasts.join(" | ")).toContain(messages.aiRefusal.aiDisabled);
+    expect(toasts.join(" | ")).toContain(messages.aiRefusal.aiDisabled.replace(/\.$/u, ""));
     // Still the RIGHT refusal, and not a generic one: re-deriving a reason from the status code
     // is how a user with an empty balance gets told the model is down.
     expect(toasts.join(" | ")).not.toContain("Something went wrong");
-    expect(toasts.join(" | ")).not.toContain(messages.aiRefusal.insufficientCredits);
+    expect(toasts.join(" | ")).not.toContain(messages.aiRefusal.insufficientCredits.replace(/\.$/u, ""));
   });
 
   it("A CLIENT REFUSAL DOES NOT DISARM, and speaks in this client's voice, not the server's", async () => {
@@ -410,7 +410,7 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
     const view = await mountView(TWELVE, { autoSuggest: true });
     expect(attempt).toHaveBeenCalledTimes(1);
     expect(suggestCalls()).toHaveLength(0);
-    expect(toasts.join(" | ")).toContain(messages.screener.suggest.refusedOwnerAbsent);
+    expect(toasts.join(" | ")).toContain(messages.screener.suggest.refusedOwnerAbsent.replace(/\.$/u, ""));
     expect(toasts.join(" | ")).not.toContain("different account");
     expect(toasts.join(" | ")).not.toContain("This browser has lost the name");
 
@@ -435,16 +435,30 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
 /**
  * SCREENER-SUGGEST-REFUSAL-IS-SILENT: on the live Cloud, opening the Screener sent the automatic
  * batch, the server answered 402 (no credits), and after the toast nothing on screen said so.
- * The strip now keeps one sentence while that standing holds, naming where credits come from
+ * The Suggest menu keeps one sentence while that standing holds, naming where credits come from
  * only where Settings lists the Subscription pane.
  */
 describe("a refused automatic batch stays said", () => {
-  const strip = (): string | null => {
-    const tools = within(host!).getByRole("group", { name: messages.screener.bulkAria });
-    return within(tools).queryAllByRole("status")
+  const creditsIn = (surface: HTMLElement): string | null => {
+    return within(surface).queryAllByRole("status")
       .map((line) => line.textContent)
       .find((line) => line === messages.screener.suggest.noCredits
         || line === messages.screener.suggest.noCreditsWhere) ?? null;
+  };
+
+  const openSuggest = async () => {
+    const tools = within(host!).getByRole("group", { name: messages.screener.bulkAria });
+    const inline = within(tools).queryByRole("button", { name: messages.screener.suggest.open });
+    if (inline) {
+      await act(async () => { inline.click(); });
+    } else {
+      const list = within(tools).getByRole("button", { name: messages.screener.place.listMenu });
+      await act(async () => { list.click(); });
+      const suggest = within(document.body).getByRole("menuitem", { name: messages.screener.suggest.open });
+      await act(async () => { suggest.click(); });
+    }
+    await tick(1000);
+    return within(document.body).getByRole("dialog", { name: messages.screener.suggest.aria });
   };
 
   it("402 no credits: the strip says suggestions need credits, and points nowhere it cannot", async () => {
@@ -452,25 +466,27 @@ describe("a refused automatic batch stays said", () => {
     await mountView(TWELVE, { autoSuggest: true });
     expect(purchases(), "premise: the automatic batch went out and was refused").toHaveLength(1);
     await tick(12000);
-    expect(strip(), "the refusal left nothing on screen").toBe(messages.screener.suggest.noCredits);
+    expect(creditsIn(host!)).toBeNull();
+    expect(creditsIn(await openSuggest())).toBe(messages.screener.suggest.noCredits);
   });
 
   it("…and names Settings → Subscription where Settings lists it", async () => {
     suggestReply = () => refusal(402, "insufficient_credits", "no AI credits remain on this account");
     await mountView(TWELVE, { autoSuggest: true, subscriptionPane: true });
-    expect(strip()).toBe(messages.screener.suggest.noCreditsWhere);
+    expect(creditsIn(host!)).toBeNull();
+    expect(creditsIn(await openSuggest())).toBe(messages.screener.suggest.noCreditsWhere);
     expect(messages.screener.suggest.noCreditsWhere).toContain(messages.settings.billing);
   });
 
   it("control: a funded batch and a switched-off AI say no credits line", async () => {
     await mountView(TWELVE, { autoSuggest: true, subscriptionPane: true });
     expect(purchases()).toHaveLength(1);
-    expect(strip()).toBeNull();
+    expect(creditsIn(host!)).toBeNull();
     await unmountView();
 
     suggestReply = () => refusal(409, "ai_disabled", "managed AI is switched off for this account");
     await mountView(TWELVE, { autoSuggest: true, subscriptionPane: true });
     expect(purchases()).toHaveLength(1);
-    expect(strip(), "the credits line spoke for a refusal that was not about credits").toBeNull();
+    expect(creditsIn(host!), "the credits line spoke for a refusal that was not about credits").toBeNull();
   });
 });

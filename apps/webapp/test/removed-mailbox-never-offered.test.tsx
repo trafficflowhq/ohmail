@@ -154,7 +154,7 @@ describe("setup offers live mailboxes only", () => {
   it("the connect form does not name a removed mailbox's holder", async () => {
     await launchOverTheNewShell([...GONE_A], "#/first-run/add", true);
     await waitFor(() => heading() !== "", "the connect form");
-    expect(document.body.textContent).not.toContain(t.doorReader);
+    expect(document.body.textContent).not.toContain(t.readerTag);
   });
 });
 

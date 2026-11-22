@@ -63,6 +63,7 @@ it("the tag picker focuses the menu field and Enter applies the filtered choice"
   const words = {
     tag: {
       pickerAria: "Tag",
+      pickerTitle: "Tag",
       pickerPlaceholder: "Tag this message…",
       pickerCreate: "Create {name}",
       pickerNone: "No tags",
@@ -73,7 +74,7 @@ it("the tag picker focuses the menu field and Enter applies the filtered choice"
     <TextProvider locale="en" messages={words} timeZone="Europe/Zurich">
       <TagPicker
         anchor={null}
-        tags={[TAG("t1", "Invoices"), TAG("t2", "Family")]}
+        tags={[TAG("t1", "March Invoices"), TAG("t2", "Family")]}
         assigned={["t2"]}
         onToggle={onToggle}
         onCreate={onCreate}
@@ -86,12 +87,38 @@ it("the tag picker focuses the menu field and Enter applies the filtered choice"
   expect(document.activeElement).toBe(field);
   fireEvent.change(field, { target: { value: "family" } });
   expect(screen.getByRole("menuitemcheckbox", { name: "Family" }).getAttribute("aria-checked")).toBe("true");
-  expect(screen.queryByRole("menuitemcheckbox", { name: "Invoices" })).toBeNull();
+  expect(screen.queryByRole("menuitemcheckbox", { name: "March Invoices" })).toBeNull();
   fireEvent.keyDown(field, { key: "Enter" });
   expect(onToggle.mock.calls).toEqual([["t2", false]]);
+  fireEvent.change(field, { target: { value: "  march   invoices  " } });
+  expect(screen.getByRole("menuitemcheckbox", { name: "March Invoices" })).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: /Create/ })).toBeNull();
   fireEvent.change(field, { target: { value: "  Travel  " } });
   fireEvent.keyDown(field, { key: "Enter" });
   expect(onCreate.mock.calls).toEqual([["Travel"]]);
+});
+
+it("shows a saved tag colour consistently in the picker and sidebar", () => {
+  const denim = { ...TAG("t1", "Invoices"), hue: "denim" };
+  listSeat({ letters: [], more: { "tag:t1": denim }, first: "#/ohbox" });
+  const rail = within(screen.getByRole("navigation", { name: "Places" }));
+  fireEvent.click(rail.getByRole("button", { name: "Tags", expanded: false }));
+  const railColour = rail
+    .getByRole("button", { name: "Invoices" })
+    .style.getPropertyValue("--oh-railentry-dot");
+  render(
+    <TextProvider
+      locale="en"
+      messages={{ tag: { pickerAria: "Tag", pickerTitle: "Tag", pickerPlaceholder: "Tag this message…" } }}
+      timeZone="Europe/Zurich"
+    >
+      <TagPicker anchor={null} tags={[denim]} assigned={[]} onToggle={() => {}} onClose={() => {}} />
+    </TextProvider>,
+  );
+  const choice = screen.getByRole("menuitemcheckbox", { name: "Invoices" });
+  const dot = choice.querySelector<HTMLElement>("[style]");
+  expect(railColour).toBe(dot?.style.getPropertyValue("--oh-hue-dot"));
+  expect(railColour).toContain("214");
 });
 
 describe("Tags' own seat, over the mail ground", () => {
@@ -99,6 +126,8 @@ describe("Tags' own seat, over the mail ground", () => {
     listSeat({ letters: LETTERS, more: MORE, first: "#/tag/t1" });
     expect(rows().map((r) => r.dataset.id)).toEqual(["b", "a"]);
     expect(screen.getByRole("heading", { name: "Invoices" })).toBeTruthy();
+    expect(within(rows()[0]!).getByText("News")).toBeTruthy();
+    expect(within(rows()[1]!).getByText("Ohbox")).toBeTruthy();
   });
 
   it("a row opens its letter beside the list: the address stays the tag's", async () => {
@@ -113,6 +142,12 @@ describe("Tags' own seat, over the mail ground", () => {
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const field = screen.getByRole("textbox", { name: "Name" });
+    expect(
+      screen.getByRole("heading", { name: "Invoices" }).compareDocumentPosition(field) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(field).toBe(document.activeElement);
     fireEvent.change(field, { target: { value: "family" } });
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(field, { target: { value: "Bills" } });
@@ -120,7 +155,7 @@ describe("Tags' own seat, over the mail ground", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
     });
     expect(sent(mail)).toEqual(["tag_rename t1 Bills"]);
-    await waitFor(() => expect(said()).toBe("Renamed to “Bills”."));
+    await waitFor(() => expect(said()).toBe("Renamed to “Bills”"));
   });
 
   it("Delete says how many letters carry it and that they stay; it sends one delete and names the tag", async () => {
@@ -133,7 +168,7 @@ describe("Tags' own seat, over the mail ground", () => {
       fireEvent.click(within(ask).getByRole("button", { name: "Delete" }));
     });
     expect(sent(mail)).toEqual(["tag_delete t1"]);
-    await waitFor(() => expect(said()).toBe("Tag “Invoices” deleted."));
+    await waitFor(() => expect(said()).toBe("Tag “Invoices” deleted"));
   });
 
   it("makes a tag in the open sidebar without assigning it to any letter", async () => {
@@ -212,6 +247,8 @@ describe("Tags' own seat, over the mail ground", () => {
     expect(within(rail).getByRole("button", { name: "Family 1" })).toBeTruthy();
     fireEvent.click(within(rail).getByRole("button", { name: "Invoices 2" }));
     expect(screen.getByRole("heading", { name: "Invoices" })).toBeTruthy();
+    expect(within(rows()[0]!).getByText("News")).toBeTruthy();
+    expect(within(rows()[1]!).getByText("Ohbox")).toBeTruthy();
   });
 });
 
@@ -260,6 +297,58 @@ const ADMITTED = {
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
 };
+
+it("a row's context menu opens the picker and returns focus to the row on Escape", async () => {
+  const { mail } = listSeat({
+    letters: [at(15, { id: "kiln", subject: "Kiln firing", labels: ["t2"] })],
+    more: { ...MORE, ...ADMITTED },
+    first: "#/ohbox",
+  });
+  const row = await screen.findByRole("option", { name: /Kiln firing/ });
+  fireEvent.contextMenu(row, { clientX: 40, clientY: 140 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Tag" }));
+  const menu = within(screen.getByRole("menu", { name: "Tag" }));
+  const field = menu.getByRole("textbox", { name: "Tag this message…" });
+  fireEvent.change(field, { target: { value: "family" } });
+  await act(async () => menu.getByRole("menuitemcheckbox", { name: "Family", checked: true }).click());
+  expect(mail.mutations.filter(({ kind }) => kind === "tag_assign")).toEqual([
+    { kind: "tag_assign", messageId: "kiln", tagId: "t2", assigned: false },
+  ]);
+  fireEvent.keyDown(field, { key: "Escape" });
+  expect(document.activeElement).toBe(row);
+});
+
+it("a selection applies an existing tag to the whole set", async () => {
+  const { mail } = listSeat({
+    letters: [
+      at(15, { id: "order", subject: "Clay order", labels: ["t2"] }),
+      at(14, { id: "studio", subject: "Open studio", labels: [] }),
+    ],
+    more: { ...MORE, ...ADMITTED },
+    first: "#/ohbox",
+  });
+  const pick = (row: HTMLElement) => {
+    fireEvent.contextMenu(row);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select" }));
+  };
+  const order = await screen.findByRole("option", { name: /Clay order/ });
+  pick(order);
+  pick(screen.getByRole("option", { name: /Open studio/ }));
+  const selection = within(screen.getByRole("toolbar", { name: "Selection" }));
+  fireEvent.click(selection.getByRole("button", { name: "Tag" }));
+  const menu = within(screen.getByRole("menu", { name: "Tag" }));
+  const field = menu.getByRole("textbox", { name: "Tag this message…" });
+  fireEvent.change(field, { target: { value: "Travel" } });
+  expect(menu.queryByRole("menuitem", { name: /Create/ })).toBeNull();
+  fireEvent.change(field, { target: { value: "invoices" } });
+  await act(async () => menu.getByRole("menuitemcheckbox", { name: "Invoices", checked: false }).click());
+  expect(
+    sent(mail)
+      .filter((write) => write.startsWith("tag_assign"))
+      .sort(),
+  ).toEqual(["tag_assign order t1", "tag_assign studio t1"]);
+});
+
 const pointer = (type: string, target: EventTarget, x: number, y: number) =>
   act(() => {
     target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y }));

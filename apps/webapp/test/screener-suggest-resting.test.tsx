@@ -89,6 +89,17 @@ async function press(name: string | RegExp): Promise<void> {
   await tick(0);
 }
 
+async function againItem() {
+  await press(messages.screener.place.listMenu);
+  return within(document.body).getByRole("menuitem", { name: "Suggest again…" });
+}
+
+async function pressAgain() {
+  const item = await againItem();
+  await act(async () => { fireEvent.click(item); });
+  await tick(0);
+}
+
 const pressConfirmAgain = () => press(/^Suggest again for /);
 
 beforeEach(() => {
@@ -161,16 +172,16 @@ describe("a Screener with nothing left to buy still shows the AI surface", () =>
   it("states how many senders have an answer, instead of vanishing", async () => {
     listReply = () => answers(SEVENTY_FOUR);
     await mountLive(SEVENTY_FOUR);
-    expect(within(buttons().getByRole("group", { name: "Act on all waiting senders" }))
-      .getByRole("status").textContent).toBe("All 74 senders have a suggestion.");
-    expect(buttons().queryByRole("button", { name: "All 74 senders have a suggestion." })).toBeNull();
+    expect(text()).not.toContain("All 74 senders have a suggestion.");
     expect(buttons().queryByRole("button", { name: "Suggest…" })).toBeNull();
+    expect((await againItem()).textContent).toContain("74");
   });
 
   it("offers the re-ask beside it — the one action still true", async () => {
     listReply = allAnswered;
     await mountLive();
-    expect(buttons().getByRole("button", { name: "Suggest again…" })).toBeTruthy();
+    expect(buttons().queryByRole("button", { name: "Suggest again…" })).toBeNull();
+    expect(await againItem()).toBeTruthy();
   });
 
   it("renders NOTHING when there is also nothing to ask about again", async () => {
@@ -183,8 +194,13 @@ describe("a Screener with nothing left to buy still shows the AI surface", () =>
     listReply = () => answers(TWELVE, 7);
     await mountLive();
     expect(buttons().getByRole("button", { name: "Suggest…" })).toBeTruthy();
-    expect(buttons().getByRole("button", { name: "Suggest again…" })).toBeTruthy();
     expect(text()).not.toContain("have a suggestion.");
+    await press("Suggest…");
+    const buy = within(document.body).getByRole("dialog", { name: messages.screener.suggest.aria });
+    expect(within(buy).getByRole("button", { name: "Suggest again…" })).toBeTruthy();
+    await press("Suggest again…");
+    expect(within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain })).toBeTruthy();
+    expect(purchases()).toHaveLength(0);
   });
 
   it("labels the ladder's largest size off the set it is bound to, not off the buy list", async () => {
@@ -198,15 +214,15 @@ describe("a Screener with nothing left to buy still shows the AI surface", () =>
       });
     };
     await mountLive(SEVENTY_FOUR);
-    await press("Suggest again…");
-    expect(document.body.textContent).toContain("all 74");
+    await pressAgain();
+    expect(document.body.textContent).toContain("All 74");
     expect(within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain })).toBeTruthy();
     expect(document.body.textContent).toContain("Suggest again for 3 senders");
     await press("10");
     const menu = within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain });
     expect(within(menu).getByRole("status").textContent).toBe("No senders in this selection need a new suggestion.");
     expect(within(menu).queryByRole("button", { name: /^Suggest again for / })).toBeNull();
-    await press("all 74");
+    await act(() => within(menu).getByRole("button", { name: "All 74" }).click());
     expect(within(menu).getByRole("button", { name: "Suggest again for 3 senders" })).toBeTruthy();
     expect(purchases()).toHaveLength(0);
   });
@@ -223,9 +239,9 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
       });
     await mountLive();
     expect(buttons().queryByRole("button", { name: "Suggest…" })).toBeNull();
-    expect(buttons().getByRole("button", { name: /^Apply 12 —/ })).toBeTruthy();
+    expect(buttons().getByRole("button", { name: /^Apply 12$/ })).toBeTruthy();
 
-    await press("Suggest again…");
+    await pressAgain();
     // A DRY RUN FIRST, over the senders that HAVE an answer — never the (empty) buy list.
     // RED if `confirm`/`price` slice `addresses`: the posted set is empty and no price arrives.
     expect(dryRuns()).toHaveLength(1);
@@ -245,9 +261,10 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
     const tools = within(buttons().getByRole("group", { name: messages.screener.bulkAria }));
     const filter = tools.getByRole("button", { name: /^All/ });
     expect(filter.getAttribute("aria-haspopup")).toBe("menu");
-    expect(tools.getByRole("button", { name: /^Apply \d+ —/ })).toBeTruthy();
-    expect(tools.getByRole("button", { name: "Suggest again…" })).toBeTruthy();
-    expect(text()).toContain("All 12 senders have a suggestion.");
+    expect(tools.getByRole("button", { name: /^Apply \d+$/ })).toBeTruthy();
+    expect(tools.queryByRole("button", { name: "Suggest again…" })).toBeNull();
+    expect(text()).not.toContain("All 12 senders have a suggestion.");
+    expect((await againItem()).textContent).toContain("12");
   });
 
   it("buys the same set on confirm, with an idempotency key", async () => {
@@ -262,7 +279,7 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
         skipped: [],
       });
     await mountLive();
-    await press("Suggest again…");
+    await pressAgain();
     await pressConfirmAgain();
 
     expect(purchases()).toHaveLength(1);
@@ -286,7 +303,7 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
         quoted: 0, quotedCredits: 0, charged: 0, suggestions: [], skipped: [],
       });
     await mountLive();
-    await press("Suggest again…");
+    await pressAgain();
     const menu = within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain });
     expect(within(menu).getByRole("status").textContent).toBe("No senders need a new suggestion.");
     expect(within(menu).queryByRole("button", { name: /^Suggest again for / })).toBeNull();
@@ -302,7 +319,7 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
       });
     await mountLive(TWELVE, true);
     expect(calls.some((call) => call.method === "GET" && !call.path.includes("live=1"))).toBe(true);
-    expect(buttons().getByRole("button", { name: /^Apply 12 —/ })).toBeTruthy();
+    expect(buttons().getByRole("button", { name: /^Apply 12$/ })).toBeTruthy();
     // RED if `io.current.queue` is widened to include the re-ask list. The automatic batch's
     // licence is a figure quoted when the setting was turned on, over senders with no answer;
     // there are none, so it must buy nothing at all rather than spend on twelve unpressed.

@@ -1,115 +1,90 @@
-/**
- * The join's first steps: the invite code where the deployment asks for one, the account, the mail sent on the public
- * path, and the address confirmed. Each is one form or one sentence on the stage; every press is the door's.
- */
 import { useState, type ReactNode } from "react";
-import { Button, Field, Page } from "@ohmail/ui/base";
-import { JOIN_INVITE_KEY } from "../sign-in/invite-posture.js";
-import { DoorFields, DoorForm } from "../stage/DoorForm.js";
-import { accountReady } from "../stage/fields.js";
-import { Said } from "../stage/Said.js";
+import { Button, Dot, Page, Tag } from "@ohmail/ui/base";
+import { AccountSentence, useWanted, type AccountField } from "../stage/AccountSentence.js";
+import { DoorForm } from "../stage/DoorForm.js";
+import { PASSWORD_MIN, accountReady } from "../stage/fields.js";
+import { Address, SaidWith } from "../stage/Said.js";
+import { SentenceBlank } from "../stage/SentenceBlank.js";
 import { WayButton } from "../stage/way.js";
 import { refusalOf, SignOutAgain, type StepProps } from "./parts.js";
 
+const ACCOUNT_FIELDS = ["name", "email", "password"] as const;
+const ACCOUNT_IDS = { name: "join-name", email: "join-email", password: "join-pw" };
+
+function InviteSentence({
+  door,
+  join,
+  separate,
+}: Pick<StepProps<"invite">, "door" | "join"> & { separate?: boolean }): ReactNode {
+  return (
+    <SaidWith
+      level={separate ? 1 : undefined}
+      parts={join.rich("myInvite", {
+        blank: () => (
+          <SentenceBlank
+            id={separate ? "join-code" : "join-code-opt"}
+            label={join("inviteLabel")}
+            placeholder={join("inviteBlank")}
+            value={door.fields.code}
+            onChange={(value) => door.type("code", value)}
+          />
+        ),
+      })}
+    />
+  );
+}
+
 export function InviteStep({ door, join, progress }: StepProps<"invite">): ReactNode {
-  const { fields, pending } = door;
+  const { pending, busy } = door;
   return (
     <DoorForm onSubmit={door.redeem}>
       <Page
         aside={progress}
         refusal={refusalOf(pending, door.refusal)}
-        material={
-          <DoorFields>
-            <Field
-              id="join-code"
-              label={join("inviteLabel")}
-              hint={join("inviteHint")}
-              value={fields.code}
-              onChange={(v) => door.type("code", v)}
-            />
-          </DoorFields>
-        }
-        line={join(JOIN_INVITE_KEY[door.note])}
         acts={
           <>
-            <Button type="submit" size="l" keyHint="↵" disabled={door.busy || pending.signingOut}>
+            <Button type="submit" size="l" keyHint="↵" disabled={busy || pending.signingOut}>
               {join("continue")}
             </Button>
-            <SignOutAgain pending={pending} busy={door.busy} />
+            <SignOutAgain pending={pending} busy={busy} />
           </>
         }
       >
-        <Said text={join("step_invite_title")} level={1} />
+        <InviteSentence door={door} join={join} separate />
       </Page>
     </DoorForm>
   );
 }
 
-/**
- * The account: the address, the name and the password, and an invite code where the deployment does not ask for one
- * (a person sent one may still redeem it; it is one press away, so the open path stays three blanks).
- */
 export function AccountStep({ door, join, progress }: StepProps<"account">): ReactNode {
   const { fields, pending, busy } = door;
   const [withCode, setWithCode] = useState(fields.code.trim() !== "");
+  const { at, wanted, typed } = useWanted(ACCOUNT_FIELDS);
+  const type = (field: AccountField, value: string): void => {
+    typed(field);
+    door.type(field, value);
+  };
   return (
     <DoorForm onSubmit={door.register}>
       <Page
+        smaller
         aside={progress}
-        refusal={refusalOf(pending, door.refusal)}
-        material={
-          <DoorFields>
-            <Field
-              id="join-email"
-              label={join("emailLabel")}
-              type="email"
-              autoComplete="email"
-              hint={join(door.invited ? "emailHint" : "emailHintOpen")}
-              value={fields.email}
-              onChange={(v) => door.type("email", v)}
-            />
-            {door.suggestion === null ? null : (
-              <span>
-                <Button kind="two" size="s" onPress={door.takeSuggestion}>
-                  {join("didYouMean", { address: door.suggestion })}
-                </Button>
-              </span>
-            )}
-            <Field
-              id="join-name"
-              label={join("nameLabel")}
-              autoComplete="name"
-              value={fields.name}
-              onChange={(v) => door.type("name", v)}
-            />
-            <Field
-              id="join-pw"
-              label={join("passwordLabel")}
-              type="password"
-              autoComplete="new-password"
-              hint={join("passwordHint")}
-              value={fields.password}
-              onChange={(v) => door.type("password", v)}
-            />
-            {door.invited ? null : (
-              <span>
-                <Button kind="quiet" size="s" pressed={withCode} onPress={() => setWithCode(!withCode)}>
-                  {join("inviteOptional")}
-                </Button>
-              </span>
-            )}
-            {door.invited || !withCode ? null : (
-              <Field
-                id="join-code-opt"
-                label={join("inviteLabel")}
-                hint={join("inviteOptionalHint")}
-                value={fields.code}
-                onChange={(v) => door.type("code", v)}
-              />
-            )}
-          </DoorFields>
+        back={
+          door.invited ? (
+            <Button kind="quiet" icon="back" label={join("back")} onPress={door.toInvite} />
+          ) : undefined
         }
-        line={join("step_account_lead")}
+        refusal={refusalOf(pending, door.refusal)}
+        afterLine={
+          <span className="way-join-row">
+            <Tag>{join(door.note === "selfhost" ? "whereServer" : "whereCloud")}</Tag>
+            {door.invited ? null : (
+              <Button kind="quiet" size="s" pressed={withCode} onPress={() => setWithCode(!withCode)}>
+                {join("inviteLabel")}
+              </Button>
+            )}
+          </span>
+        }
         acts={
           <>
             <Button
@@ -118,36 +93,66 @@ export function AccountStep({ door, join, progress }: StepProps<"account">): Rea
               keyHint="↵"
               disabled={busy || pending.signingOut || !accountReady(fields)}
             >
-              {busy ? join("working") : join("createAccount")}
+              {busy ? join("working") : join("continue")}
             </Button>
-            {door.invited ? (
-              <Button kind="quiet" size="l" onPress={door.toInvite}>
-                {join("back")}
-              </Button>
-            ) : null}
             <SignOutAgain pending={pending} busy={busy} />
             <WayButton way={door.signIn} kind="quiet" size="l">
-              {join("accountSignIn")}
+              {join("signIn")}
             </WayButton>
           </>
         }
       >
-        <Said text={join("step_account_title")} level={1} />
+        <AccountSentence
+          t={join}
+          ids={ACCOUNT_IDS}
+          passwordHint="minimum"
+          fields={fields}
+          at={at}
+          wanted={wanted}
+          type={type}
+        />
+        <span className="oh-stepdots-mark" aria-hidden="true">
+          {Array.from({ length: PASSWORD_MIN }, (_, i) => (
+            <Dot key={i} kind={i < fields.password.length ? "ink" : "todo"} />
+          ))}
+        </span>
+        {door.suggestion === null ? null : (
+          <Button kind="two" size="s" onPress={door.takeSuggestion}>
+            {join("didYouMean", { address: door.suggestion })}
+          </Button>
+        )}
+        {!door.invited && withCode ? <InviteSentence door={door} join={join} /> : null}
       </Page>
     </DoorForm>
   );
 }
 
-/**
- * The public path's last screen: true whether or not the address already had an account. It says a mail went to
- * the address and what to do with it, never that an account was made; the tab goes on when the link is opened.
- */
+function OpenLink({ door, join }: Pick<StepProps<"sent">, "door" | "join">): ReactNode {
+  const email = door.fields.email.trim();
+  return (
+    <SaidWith
+      level={1}
+      parts={join.rich("openLink", {
+        email,
+        a: () =>
+          door.state.at === "sent" ? (
+            <Button kind="two" label={join("changeAddress")} onPress={door.changeAddress}>
+              {email}
+            </Button>
+          ) : (
+            <Address value={email} />
+          ),
+      })}
+    />
+  );
+}
+
+/** The public path sends mail for both new and existing addresses. The tab waits for the link. */
 export function SentStep({ door, state, join, progress }: StepProps<"sent">): ReactNode {
-  const { pending } = door;
   return (
     <Page
       aside={progress}
-      refusal={refusalOf(pending, door.refusal)}
+      refusal={refusalOf(door.pending, door.refusal)}
       material={
         state.continuing ? (
           <p className="way-join-status" role="status">
@@ -155,34 +160,26 @@ export function SentStep({ door, state, join, progress }: StepProps<"sent">): Re
           </p>
         ) : undefined
       }
-      line={join("step_sent_lead", { email: door.fields.email.trim() })}
-      note={join("sentNote")}
       acts={
         <>
-          <Button kind="two" size="l" onPress={door.changeAddress}>
-            {join("wrongAddress")}
-          </Button>
-          <SignOutAgain pending={pending} busy={door.busy} />
+          <SignOutAgain pending={door.pending} busy={door.busy} />
           <WayButton way={door.signIn} kind="quiet" size="l">
             {join("signIn")}
           </WayButton>
         </>
       }
     >
-      <Said text={join("step_sent_title")} level={1} />
+      <OpenLink door={door} join={join} />
     </Page>
   );
 }
 
-/** The address, proven before a plan or a mailbox: the link in the mail, or a new one. */
 export function VerifyStep({ door, state, join, progress }: StepProps<"verify">): ReactNode {
   const { pending, busy } = door;
   return (
     <Page
       aside={progress}
       refusal={refusalOf(pending, door.refusal)}
-      line={join("step_verify_lead", { email: door.fields.email })}
-      note={join("verifyWhy")}
       acts={
         <>
           <Button size="l" disabled={busy} onPress={door.recheck}>
@@ -195,7 +192,7 @@ export function VerifyStep({ door, state, join, progress }: StepProps<"verify">)
         </>
       }
     >
-      <Said text={join("step_verify_title")} level={1} />
+      <OpenLink door={door} join={join} />
     </Page>
   );
 }

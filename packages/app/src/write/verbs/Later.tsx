@@ -6,30 +6,17 @@
  * While it stands, Mod+Enter schedules the time it holds (never sends now), and the digits take the presets, 4 the
  * day of one's own.
  */
-import { useEffect, useRef, useState } from "react";
-import { Button, Field, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { useCallback, useRef, useState } from "react";
+import { Button, Field, FieldStack, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
+import "./later.css";
 import { localInputValue } from "@ohmail/app-logic/text/format";
 import { LATER_CHOICES, SCHEDULE_KEY, laterPlan, type LaterRefusal } from "@ohmail/app-logic/write/later";
 import { useText, type Text } from "../../text/index.js";
 import { useWriteBeside } from "../above.js";
 
-function presetWords(t: Text, id: string, when: string): string {
-  switch (id) {
-    case "evening":
-      return t("later.evening", { when });
-    case "tomorrow":
-      return t("later.tomorrow", { when });
-    case "monday":
-      return t("later.monday", { when });
-    default:
-      return t("later.at", { when });
-  }
-}
-
-function refusalWords(t: Text, r: LaterRefusal): string {
+function refusalWords(t: Text, r: LaterRefusal): string | undefined {
   switch (r.why) {
-    case "forward":
-      return t("later.noForwards");
     case "filesNotHere":
       return t("later.filesNotHere");
     case "filesUnknown":
@@ -41,12 +28,14 @@ function refusalWords(t: Text, r: LaterRefusal): string {
 
 /** The card, standing open; it reads the clock once, when it opens. */
 function LaterCard({
+  anchor,
   onClose,
   onPick,
   forward,
   hasFiles,
   attaching,
 }: {
+  anchor: HTMLElement;
   onClose: () => void;
   onPick: (at: string) => void;
   forward: boolean;
@@ -55,6 +44,7 @@ function LaterCard({
 }) {
   const t = useText("write");
   const { later } = useWriteBeside();
+  const [picking, setPicking] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [typed, setTyped] = useState(() => later.seed(openedAt));
   const files = later.useFiles(true);
@@ -73,89 +63,144 @@ function LaterCard({
     onClose();
     onPick(at);
   };
-  const [day = "", clock = ""] = typed.split("T");
-  const lastDay =
-    plan.latest === null ? undefined : localInputValue(new Date(plan.latest).toISOString()).slice(0, 10);
   const custom = later.compose(typed, floor);
-  const own = useRef<HTMLFormElement | null>(null);
-  const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
-  keys.current = laterKeys(plan.refusal === null, plan.custom?.at ?? null, plan.presets, pick, () =>
-    own.current?.querySelector("input")?.focus({ preventScroll: true }),
-  );
-  /* On the card itself, before it keeps the key from what lies under it. */
-  useEffect(() => {
-    const card = own.current?.closest('[role="dialog"], [role="menu"]');
-    if (!card) return undefined;
-    const listen = (e: Event): void => keys.current(e as KeyboardEvent);
-    card.addEventListener("keydown", listen);
-    return () => card.removeEventListener("keydown", listen);
+  const own = useRef<HTMLInputElement | null>(null);
+  const title = t("later.title");
+  const refusal = plan.refusal === null ? undefined : refusalWords(t, plan.refusal);
+  const dateField = useCallback((node: HTMLInputElement | null) => {
+    own.current = node;
+    node?.focus({ preventScroll: true });
   }, []);
+  const handleKey = laterKeys(plan.refusal === null, plan.custom?.at ?? null, plan.presets, pick, () => {
+    if (picking) own.current?.focus({ preventScroll: true });
+    else setPicking(true);
+  });
   return (
-    <Menu open onClose={onClose} label={t("later.title")} kind="card" title={t("later.what")}>
+    <Menu
+      open
+      anchor={anchor}
+      fit="whole"
+      up
+      onClose={onClose}
+      label={title}
+      kind="card"
+      title={title}
+      aside={t("later.zone", { zone: later.zone() })}
+      onKey={(e) => {
+        handleKey(e.nativeEvent);
+        return e.defaultPrevented || e.nativeEvent.defaultPrevented;
+      }}
+    >
       {plan.refusal !== null ? (
-        <MenuNote>{refusalWords(t, plan.refusal)}</MenuNote>
+        refusal === undefined ? null : (
+          <MenuNote>{refusal}</MenuNote>
+        )
+      ) : picking ? (
+        <>
+          <LaterFields
+            typed={typed}
+            setTyped={setTyped}
+            plan={plan}
+            shifted={custom?.shifted}
+            pick={pick}
+            dateField={dateField}
+            onBack={() => setPicking(false)}
+          />
+        </>
       ) : (
         <>
           {plan.presets.map((p) => (
-            <MenuItem key={p.id} icon="later" onPress={() => pick(p.at)}>
-              {presetWords(t, p.id, later.label(p.at))}
+            <MenuItem
+              key={p.id}
+              note={later.label(p.at)}
+              keyHint={Object.keys(LATER_CHOICES).find(
+                (key) => LATER_CHOICES[key as keyof typeof LATER_CHOICES] === p.id,
+              )}
+              onPress={() => pick(p.at)}
+            >
+              {t(`later.${p.id}`)}
             </MenuItem>
           ))}
-          <form
-            ref={own}
-            aria-label={t("later.pick")}
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (plan.custom !== null) pick(plan.custom.at);
-            }}
-          >
-            <Field
-              label={t("later.day")}
-              type="date"
-              max={lastDay}
-              value={day}
-              onChange={(d) => setTyped(`${d}T${clock}`)}
-            />
-            <Field
-              label={t("later.time")}
-              type="time"
-              value={clock}
-              onChange={(c) => setTyped(`${day}T${c}`)}
-              refusal={
-                plan.customRefused === "past"
-                  ? t("later.past")
-                  : plan.customRefused === "tooFar"
-                    ? t("later.filesTooFar", { days: plan.horizonDays ?? 0 })
-                    : undefined
-              }
-              hint={
-                custom?.shifted
-                  ? t("later.skipped", { booked: custom.shifted.booked, asked: custom.shifted.asked })
-                  : undefined
-              }
-            />
-            <Button
-              kind="ink"
-              size="s"
-              disabled={plan.custom === null}
-              onPress={() => {
-                if (plan.custom !== null) pick(plan.custom.at);
-              }}
-            >
-              {t("later.confirm")}
-            </Button>
-          </form>
-          <MenuNote>{t("later.zone", { zone: later.zone() })}</MenuNote>
-          {plan.horizonDays !== null ? (
-            <MenuNote>{t("later.filesDays", { days: plan.horizonDays })}</MenuNote>
-          ) : null}
-          {plan.thisComputer ? <MenuNote>{t("later.thisComputer")}</MenuNote> : null}
+          <MenuItem keyHint="4" onPress={() => setPicking(true)}>
+            {t("later.pick")}
+          </MenuItem>
         </>
       )}
-      <MenuItem icon="back" onPress={onClose}>
-        {t("later.back")}
-      </MenuItem>
     </Menu>
+  );
+}
+
+function LaterFields({
+  typed,
+  setTyped,
+  plan,
+  shifted,
+  pick,
+  dateField,
+  onBack,
+}: {
+  typed: string;
+  setTyped: (value: string) => void;
+  plan: ReturnType<typeof laterPlan>;
+  shifted?: { booked: string; asked: string } | null;
+  pick: (at: string) => void;
+  dateField: (node: HTMLInputElement | null) => void;
+  onBack: () => void;
+}) {
+  const t = useText("write");
+  const mod = useModGlyph();
+  const [day = "", clock = ""] = typed.split("T");
+  const lastDay =
+    plan.latest === null ? undefined : localInputValue(new Date(plan.latest).toISOString()).slice(0, 10);
+  return (
+    <form
+      aria-label={t("later.pick")}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (plan.custom !== null) pick(plan.custom.at);
+      }}
+    >
+      <FieldStack>
+        <Field
+          ref={dateField}
+          label={t("later.day")}
+          type="date"
+          max={lastDay}
+          value={day}
+          onChange={(d) => setTyped(`${d}T${clock}`)}
+        />
+        <Field
+          label={t("later.time")}
+          type="time"
+          value={clock}
+          onChange={(c) => setTyped(`${day}T${c}`)}
+          refusal={
+            plan.customRefused === "past"
+              ? t("later.past")
+              : plan.customRefused === "tooFar"
+                ? t("later.filesTooFar", { days: plan.horizonDays ?? 0 })
+                : undefined
+          }
+          hint={shifted ? t("later.skipped", { booked: shifted.booked, asked: shifted.asked }) : undefined}
+        />
+      </FieldStack>
+      <div className="write-later-actions">
+        <Button
+          keyHint={chordKeys("mod+Enter", mod).join(" ")}
+          kind="ink"
+          size="s"
+          disabled={plan.custom === null}
+          onPress={() => {
+            if (plan.custom !== null) pick(plan.custom.at);
+          }}
+        >
+          {t("later.confirm")}
+        </Button>
+        <Button kind="quiet" size="s" onPress={onBack}>
+          {t("later.back")}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -191,12 +236,12 @@ function laterKeys(
 }
 
 export function Later(props: {
-  open: boolean;
+  anchor: HTMLElement | null;
   onClose: () => void;
   onPick: (at: string) => void;
   forward: boolean;
   hasFiles: boolean;
   attaching: readonly string[];
 }) {
-  return props.open ? <LaterCard {...props} /> : null;
+  return props.anchor === null ? null : <LaterCard {...props} anchor={props.anchor} />;
 }

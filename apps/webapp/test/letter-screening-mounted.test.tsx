@@ -246,11 +246,11 @@ it.each(["en", "de"] as const)("the sender and subject sheets tell the truth aft
   await click(within(sheet).getByRole("menuitem", { name: words.screening.cardSubject }));
   const editor = within(document.body).getByRole("dialog", { name: words.screening.subjectAria.replace("{who}", SENDER) });
   expect(within(editor).getByText(words.screening.subjectOrgNobody)).toBeTruthy();
-  await click(within(editor).getByRole("option", { name: words.screener.pileReads }));
+  await click(within(editor).getByRole("radio", { name: words.screener.pileReads }));
   expect(within(editor).getByText(words.screening.subjectOrgNobody)).toBeTruthy();
   expect(within(editor).queryByText(/ohmail applies the rule|ohmail wendet die Regel/)).toBeNull();
   await click(within(editor).getByRole("button", {
-    name: words.screening.subjectConfirmGo.replace("{dest}", words.screener.pileReads),
+    name: words.screening.subjectMakeRule,
   }));
   await tick(250);
   expect(writes).toEqual([]);
@@ -263,12 +263,15 @@ it("an organizing mailbox previews and writes the exact subject rule for the cur
     .toBe(messages.screening.footWillRuleRetro.replace("{sender}", SENDER));
   await click(within(sheet).getByRole("menuitem", { name: messages.screening.cardSubject }));
   const editor = within(document.body).getByRole("dialog", { name: messages.screening.subjectAria.replace("{who}", SENDER) });
-  await click(within(editor).getByRole("option", { name: messages.screener.pileReads }));
-  expect(within(editor).getByText(/ohmail applies the rule/)).toBeTruthy();
+  await click(within(editor).getByRole("radio", { name: messages.screener.pileReads }));
+  expect(within(editor).getByRole("radio", { name: messages.screener.pileReads, checked: true })).toBeTruthy();
+  expect(within(editor).getByRole("switch", { name: messages.screening.retroToggleAria, checked: true })).toBeTruthy();
+  expect(within(editor).getByText("1 of 1 match")).toBeTruthy();
+  expect(within(editor).queryByText(/ohmail applies the rule/)).toBeNull();
   expect(within(editor).queryByText(messages.screening.subjectOrgNobody)).toBeNull();
   expect(writes).toEqual([]);
   await click(within(editor).getByRole("button", {
-    name: messages.screening.subjectConfirmGo.replace("{dest}", messages.screener.pileReads),
+    name: messages.screening.subjectMakeRule,
   }));
   await tick(250);
   expect(writes).toContainEqual({

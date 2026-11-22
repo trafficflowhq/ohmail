@@ -794,18 +794,6 @@ const model = {
     load: nothing,
   },
   rereadWaiting: nothing,
-  heldRelease:
-    state === "held"
-      ? {
-          total: 3,
-          rulesTotal: 3,
-          groups: [],
-          senders: [],
-          releasing: false,
-          release: nothing,
-          dismiss: nothing,
-        }
-      : null,
   impersonationFiled:
     state === "claimed" || state === "claimed-list"
       ? {

@@ -1,14 +1,10 @@
 {
   "folder": {
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
-    "emptyTitle": "Nichts in diesem Ordner",
+    "emptyTitle": "Nichts hier",
     "emptyHint": "Er enthält keine Mail. Die Ordnerliste folgt deinem Mailserver: Ein dort gelöschter Ordner verschwindet auch hier.",
     "gone": "„{name}“ gibt es auf deinem Mailserver nicht mehr.",
     "loading": "Dieser Ordner wird geladen",
-    "group": {
-      "new": "Neu",
-      "earlier": "Gesehen"
-    },
     "step": {
       "up": "Neuer",
       "down": "Älter"
@@ -28,7 +24,7 @@
       "allUnread": "Alle Ordner, {count} ungelesen",
       "unread": "{name}, {count} ungelesen",
       "find": "Ordner suchen",
-      "none": "Kein Ordner passt.",
+      "none": "Kein Ordner passt",
       "expand": "{name} aufklappen",
       "collapse": "{name} zuklappen",
       "menu": "Ordnermenü für {name}",
@@ -39,7 +35,7 @@
       "menu": "Liste"
     },
     "move": {
-      "title": "In einen Ordner verschieben",
+      "title": "Verschieben",
       "moved": "Verschoben: {name}.",
       "outdated": "{by} organisiert dieses Postfach mit einer älteren ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
       "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, hat eine ältere ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",

@@ -11,7 +11,7 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useMemo, useState, useSyncExternalStore } from "react";
-import { isOwnOutbound, type ThreadMark } from "@ohmail/client-engine";
+import { threadMarkOf, type ThreadMark } from "@ohmail/client-engine";
 import type { ThreadWalkChannel, ThreadWalkSnapshot } from "../reading/thread-walk-channel.js";
 
 export interface WalkedSquares {
@@ -28,8 +28,6 @@ export interface WalkedRowModel {
   stripOpen: (target: EngineMessage) => void;
   conversationOf?: (messageId: string) => readonly EngineMessage[];
 }
-
-const markOf = (m: EngineMessage): ThreadMark => (m.unread ? "unread" : isOwnOutbound(m) ? "mine" : "read");
 
 /**
  * The walked conversation's squares for a row, or null when the walk is not this row's (or has fewer than two
@@ -54,7 +52,7 @@ export function useWalkedSquares(
       ? null
       : [
           snap.openedId ?? snap.messages[0]?.id ?? "",
-          snap.messages.map((m) => `${m.id}:${markOf(m)}`).join(" "),
+          snap.messages.map((m) => `${m.id}:${threadMarkOf(m)}`).join(" "),
           marks?.join(" ") ?? "",
         ].join("\n");
   const [held, setHeld] = useState({ drawing, snap });
@@ -66,7 +64,7 @@ export function useWalkedSquares(
     const now = anchor !== null && conversationOf ? conversationOf(anchor) : [];
     return now.length > 0 ? now : drawn.messages;
   }, [held, conversationOf]);
-  const kinds = useMemo(() => messages.map(markOf), [messages]);
+  const kinds = useMemo(() => messages.map(threadMarkOf), [messages]);
   if (snap === null || messages.length < 2) return null;
   const at = snap.here === null ? -1 : messages.findIndex((m) => m.id === snap.here);
   const target = row.openTarget;

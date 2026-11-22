@@ -75,7 +75,7 @@ afterEach(unmount);
 /** The chrome as of the LAST render — how a test presses the group verb the way a panel does. */
 let latestChrome: ReturnType<typeof useMessageAttachments>;
 
-/** `MessagePane`'s own wiring — the hook, nothing else; the strip's render is held elsewhere. */
+/** The shared Reader's own wiring — the hook, nothing else; the strip's render is held elsewhere. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string | null }) {
   latestChrome = useMessageAttachments(engine, messageId, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return null;

@@ -8,17 +8,18 @@ import {
   type ActionWords,
   type OpenPanel,
   type PanelRoom,
+  type Placed,
 } from "./panel-verbs.js";
 export type { PanelRoom } from "./panel-verbs.js";
 import type { EngineMessage, TagEntity } from "@ohmail/wire";
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
 import type { ReplyRunState } from "@ohmail/app-logic/piles";
 import { useMirror } from "@ohmail/app-logic/reader";
 import { useListVisit } from "@ohmail/app-logic/reading";
 import { useResurfaceTime } from "../../frame/room.js";
 import { useText } from "../../text/index.js";
-import { useCardKeys, useLetterKeys, type DeleteKeyTarget, type PanelMenu } from "../keys.js";
+import { useCardKeys, useLetterKeys, useReaderKeys, type DeleteKeyTarget, type PanelMenu } from "../keys.js";
 import { useReplyVerbs } from "../parts.js";
 import { ReplyPanel } from "./ReplyRun.js";
 import { ActionMenus } from "./ActionMenus.js";
@@ -34,17 +35,30 @@ interface ActionBarProps {
     keysHere: boolean;
     deleteTarget: DeleteKeyTarget | null;
     canAnswerKey?: (id: string) => boolean;
+    watchAnswerKey?: (update: () => void) => () => void;
   };
   /** An open reply's verbs (`write`'s), shown in the letter's place: one panel for the column. Null: the letter's. */
   reply: readonly PanelVerb[] | null;
   run?: ReplyRunState | null;
   focus?: boolean;
   showPanel?: boolean;
+  canAnswerFromPanel?: boolean;
   conversation?: boolean;
   onScreen?: (anchor: HTMLElement) => void;
   onScreenKey?: () => void;
   screeningDialog?: PanelVerb["dialog"];
   onCalendar?: () => void;
+}
+
+const noWatch = () => () => {};
+const noAnswerHint = () => false;
+
+function useAnswerHint(card: ActionBarProps["card"], active: boolean): boolean {
+  return useSyncExternalStore(
+    active ? (card?.watchAnswerKey ?? noWatch) : noWatch,
+    () => card === undefined || (active && card.canAnswerKey?.(card.letter.id) !== false),
+    noAnswerHint,
+  );
 }
 
 function openScreening(root: HTMLElement | null, fallback?: () => void): void {
@@ -54,7 +68,7 @@ function openScreening(root: HTMLElement | null, fallback?: () => void): void {
 }
 
 function menuAnchor(root: HTMLElement | null, which: PanelMenu): HTMLElement | null {
-  const target = which === "resurface" || which === "tag" ? which : null;
+  const target = which === "resurface" || which === "tag" || which === "move" ? which : null;
   const own = target ? root?.querySelector<HTMLElement>(`[data-id="${target}"]:not([hidden])`) : null;
   return own ?? root?.querySelector<HTMLElement>("[data-more]") ?? null;
 }
@@ -68,6 +82,7 @@ export function ActionBar({
   run = null,
   focus = false,
   showPanel = true,
+  canAnswerFromPanel = showPanel,
   conversation = false,
   onScreen,
   onScreenKey,
@@ -99,16 +114,18 @@ export function ActionBar({
   const hour = useResurfaceTime();
   const { mirror } = useMirror();
   const tags = verbs.tag === null ? [] : (mirror?.list<TagEntity>("tag") ?? []);
+  const canTag = tags.length > 0 || verbs.createTag !== null;
   const cardKeys = card?.keysHere === true && reply === null;
-  const hintsActive = card === undefined ? keys != null : cardKeys && showPanel;
-  const hints = usePanelHints(verbs.readSlot, hintsActive, card?.canAnswerKey?.(card.letter.id) !== false);
+  const hintsActive = card === undefined ? keys != null : cardKeys;
+  const canHintAnswer = useAnswerHint(card, cardKeys && canAnswerFromPanel);
+  const hints = usePanelHints(verbs.readSlot, hintsActive, canHintAnswer);
   const calendarAction = useCalendarVerb(reply === null && run === null ? onCalendar : undefined);
   const all = panelVerbs(
     t,
     words,
     ohbox,
     verbs,
-    tags.length > 0,
+    canTag,
     toggle,
     room,
     hints,
@@ -117,8 +134,13 @@ export function ActionBar({
   );
   const items = all.filter((v) => !v.behind);
   const replyItems = reply && card ? [...reply, ...all.filter((v) => v.id === "later")] : reply;
-  /* Behind More, in the panel's order: what stands there in this room and what folded; Move before the read slot. */
-  const behind = all.filter((v) => v.behind || folded.includes(v.id));
+  const behind = behindMore(all, folded, reply !== null, card !== undefined);
+  const more = {
+    label: words.more,
+    behind: true,
+    expanded: menu === "more" || menu === "cardDelete",
+    onPress: toggle("more"),
+  };
   /* A key opens a menu as its button does: out of the verb's own button, else out of More where it stands behind it. */
   const byKey = (which: PanelMenu): void => {
     if (which === "screening") return openScreening(stop.current, onScreenKey);
@@ -129,7 +151,7 @@ export function ActionBar({
     card,
     cardKeys,
     byKey,
-    showPanel,
+    showPanel: canAnswerFromPanel,
     keys,
     verbs,
     stop,
@@ -137,25 +159,19 @@ export function ActionBar({
     replying: reply !== null,
     screeningLabel: onScreenKey ? shortcuts("screen") : undefined,
     calendarAction,
-    tagLabel: tags.length > 0 && reply === null && run === null ? words.tag : undefined,
+    tagLabel: canTag && reply === null && run === null ? words.tag : undefined,
   });
   return (
     <div className="rd-stop" data-read-stop={showPanel ? "" : undefined} ref={stop}>
       {!showPanel ? null : run !== null || reply !== null ? (
-        <ReplyPanel run={run} reply={replyItems} />
+        <ReplyPanel run={run} reply={replyItems} more={more} />
       ) : (
         <ActionPanel
           label={t("panel")}
           items={items}
           folded={folded}
           onFold={setFolded}
-          more={{
-            label: words.more,
-            behind: true,
-            apart: verbs.done && room === "phone",
-            expanded: menu === "more" || menu === "cardDelete" || undefined,
-            onPress: toggle("more"),
-          }}
+          more={{ ...more, apart: verbs.done && room === "phone" }}
         />
       )}
       <ActionMenus
@@ -169,11 +185,19 @@ export function ActionBar({
         tags={tags}
         verbs={verbs}
         behind={behind}
+        separate={reply !== null}
         calendarAction={calendarAction}
         calendarKeyHint={hints.calendar.keyHint}
         confirm={card !== undefined}
       />
     </div>
+  );
+}
+
+function behindMore(all: readonly Placed[], folded: readonly string[], replying: boolean, card: boolean) {
+  if (!replying) return all.filter((verb) => verb.behind || folded.includes(verb.id));
+  return all.filter(
+    ({ id }) => id !== "reply" && id !== "reply_all" && id !== "forward" && (!card || id !== "later"),
   );
 }
 
@@ -191,18 +215,24 @@ export function LetterActions({
   deleteKeyId = messageId,
   canDeleteKey,
   canAnswerKey,
+  watchAnswerKey,
   keysHere,
   focus,
   showPanel,
+  canAnswerFromPanel,
+  room,
   markUnread,
 }: {
   messageId: string;
   deleteKeyId?: string;
   canDeleteKey?: (id: string) => boolean;
   canAnswerKey?: (id: string) => boolean;
+  watchAnswerKey?: (update: () => void) => () => void;
   keysHere: boolean;
   focus?: boolean;
   showPanel?: boolean;
+  canAnswerFromPanel?: boolean;
+  room?: PanelRoom;
   markUnread?: (id: string) => void;
 }) {
   const { mirror } = useMirror();
@@ -225,10 +255,12 @@ export function LetterActions({
     <ActionBar
       key={messageId}
       verbs={verbs}
-      card={{ letter: message, keysHere, deleteTarget, canAnswerKey }}
+      card={{ letter: message, keysHere, deleteTarget, canAnswerKey, watchAnswerKey }}
       reply={reply}
       focus={focus}
       showPanel={showPanel}
+      canAnswerFromPanel={canAnswerFromPanel}
+      room={room}
     />
   );
 }
@@ -281,10 +313,11 @@ function usePanelKeyboard({
 }): void {
   useCardKeys(
     cardKeys,
-    card ? { letter: card.letter, verbs, menu: byKey, canAnswerKey: card.canAnswerKey } : null,
+    card ? { letter: card.letter, verbs, menu: byKey, canAnswerKey: card.canAnswerKey, tagLabel } : null,
     card?.deleteTarget ?? null,
     showPanel,
   );
+  useReaderKeys(cardKeys && verbs.readSlot !== null, { verbs, visit: null });
   useLetterKeys(
     keys != null,
     keys == null

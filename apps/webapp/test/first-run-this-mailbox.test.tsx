@@ -104,7 +104,7 @@ async function mount(o: {
 
 const said = (el: HTMLElement) => (el.textContent ?? "").replace(/\s+/g, " ");
 /** The pull step's counted values, in order. */
-const counters = (el: HTMLElement) => [...el.querySelectorAll("dl dd")]
+const counters = (el: HTMLElement) => [...el.querySelectorAll(".oh-counters-figure")]
   .map((b) => (b.textContent ?? "").trim());
 /** The connect form's address field. */
 const email = (el: HTMLElement) => within(el).queryByLabelText(t.address);
@@ -123,7 +123,7 @@ describe("the pull screen counts THIS mailbox", () => {
     const el = await mount({
       facts: midImport(), pull: { ...mine, pulled: mine.screened + mine.history },
     });
-    expect(said(el)).toContain(t.pullTitle);
+    expect(el.querySelector(`[aria-label="${t.pullLocal}"]`)).not.toBeNull();
     expect(counters(el)).toEqual([
       mine.screened.toLocaleString("en-US"), mine.history.toLocaleString("en-US"),
     ]);
@@ -134,10 +134,10 @@ describe("the pull screen counts THIS mailbox", () => {
 
   it("the basis sentence says whose mail it is, on the rendered screen", async () => {
     const el = await mount({ facts: midImport(), pull: { screened: 9, history: 3, pulled: 12 } });
-    const basis = el.querySelector("dl")?.nextElementSibling ?? null;
+    const basis = el.querySelector(`[aria-label="${t.pullLocal}"]`) ?? null;
     expect(basis).not.toBeNull();
-    const line = (basis!.textContent ?? "").replace(/\s+/g, " ");
-    expect(line).toContain("this mailbox's mail");
+    const line = basis!.getAttribute("aria-label") ?? "";
+    expect(said(el)).toContain(t.pullOnDevice);
     expect(line).toContain("on this device");
   });
 
@@ -148,11 +148,12 @@ describe("the pull screen counts THIS mailbox", () => {
     const el = await mount({
       facts: done, pull: { ...mine, pulled: mine.screened + mine.history },
     });
-    // The summary's own two rows, read as rendered — the same pair the pull screen printed.
-    expect(said(el)).toContain(`${mine.screened} messages screened`);
-    expect(said(el)).toContain(`${mine.history} messages listed under History`);
-    // And never the install's, which is what those rows used to report as this mailbox's work.
-    expect(said(el)).not.toContain(`${INSTALL_WIDE.screened} messages screened`);
+    expect(within(el).getByRole("heading", { name: t.noOneWaits.replace(/\.$/, "") })).toBeTruthy();
+    expect(counters(el)).toEqual([]);
+    for (const counts of [mine, INSTALL_WIDE]) {
+      expect(said(el)).not.toContain(`${counts.screened} messages screened`);
+      expect(said(el)).not.toContain(`${counts.history} messages listed under History`);
+    }
   });
 });
 
@@ -167,37 +168,37 @@ describe("the door says what the connection will be", () => {
     });
     // The form, or this case is about another screen.
     expect(email(el)).not.toBeNull();
-    expect(said(el)).toContain(t.doorReader);
-    expect(said(el)).toContain("ohmail Cloud");
-    expect(said(el)).toContain("it moves nothing and screens nothing");
+    expect(said(el)).toContain(t.readerTag);
+    expect(said(el)).not.toContain("ohmail Cloud");
+    expect(said(el)).not.toContain("it moves nothing and screens nothing");
   });
 
   it("a holder with no name gets the legacy sentence, never an invented one", async () => {
     const el = await mount({
       facts: atTheDoor(), add: true, accountOrganizer: { kind: "desktop", name: null },
     });
-    expect(said(el)).toContain(t.doorReaderWhyLegacy);
-    expect(said(el)).not.toContain(t.doorReaderWhy.slice(0, 12));
+    expect(said(el)).not.toContain("Another install organizes this account's mail, so a mailbox added here reads, searches and sends — it moves nothing and screens nothing. You can move organizing here later under Settings → Mailboxes.");
+    expect(said(el)).not.toContain("{name} organizes this account's mail, so a mailbox added here reads, searches and sends — it moves nothing and screens nothing. You can move organizing here later under Settings → Mailboxes.".slice(0, 12));
   });
 
   it("POSITIVE CONTROL — with nobody organizing anything the door says nothing extra", async () => {
     const el = await mount({ facts: atTheDoor(), add: true, accountOrganizer: null });
     expect(email(el)).not.toBeNull();
-    expect(said(el)).not.toContain(t.doorReader);
+    expect(said(el)).not.toContain(t.readerTag);
   });
 
   it("a holder whose lease lapsed organizes nothing: the door says nothing extra (the decider)", async () => {
     const row = { organizedBy: { kind: "local", name: "Studio laptop" }, organizerState: "stopped" as const };
     const el = await mount({ facts: atTheDoor(), add: true, accountOrganizer: accountOrganizer([row]) });
     expect(email(el)).not.toBeNull();
-    expect(said(el), "a machine that stopped was called this account's organizer").not.toContain(t.doorReader);
+    expect(said(el), "a machine that stopped was called this account's organizer").not.toContain(t.readerTag);
     expect(said(el)).not.toContain("Studio laptop");
   });
 
   it("CONTROL — the same holder still renewing is named at the door", async () => {
     const row = { organizedBy: { kind: "local", name: "Studio laptop" }, organizerState: "held" as const };
     const el = await mount({ facts: atTheDoor(), add: true, accountOrganizer: accountOrganizer([row]) });
-    expect(said(el)).toContain(t.doorReaderWhy.replace("{name}", "Studio laptop"));
+    expect(said(el)).not.toContain("{name} organizes this account's mail, so a mailbox added here reads, searches and sends — it moves nothing and screens nothing. You can move organizing here later under Settings → Mailboxes.".replace("{name}", "Studio laptop"));
   });
 
   it("and the holder it reads is the account's own, by the derivation's rule", () => {

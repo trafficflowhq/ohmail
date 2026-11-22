@@ -257,8 +257,8 @@ describe("quick-adjust — the decision on the row", () => {
       const menu = within(document.body).getByRole("menu", { name: "Choose where this sender's mail goes" });
       const items = within(menu).getAllByRole("menuitem");
       const labels = items.map((item) => item.querySelector(".oh-menu-word")?.textContent);
-      expect(labels.pop()).toBe("Change this sender's screening");
-      expect(labels).toEqual(["Ohbox", "News", "Receipts", "Screened out", "Spam"]);
+      expect(labels.pop()).toBe("Screening");
+      expect(labels).toEqual(["Ohbox", "News", "Receipts", "Screen out", "Spam"]);
       await act(async () => { fireEvent.keyDown(menu, { key: "Escape" }); });
       expect(menu.isConnected).toBe(false);
     }
@@ -493,7 +493,7 @@ describe("the selection is the person's, not the arrival's", () => {
   async function chooseDomain() {
     await act(async () => { scopeButton().click(); });
     const menu = within(within(document.body).getByRole("menu", { name: "Decision scope" }));
-    await act(async () => { menu.getByRole("menuitemradio", { name: "whole domain" }).click(); });
+    await act(async () => { menu.getByRole("menuitemradio", { name: /^Whole domain/i }).click(); });
     expect(scopeButton().textContent).toBe("whole domain");
   }
 

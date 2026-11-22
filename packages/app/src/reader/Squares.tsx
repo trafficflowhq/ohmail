@@ -6,7 +6,7 @@
  * phone (the tokens' row of squares).
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ReadSquares, type SquaresRun } from "@ohmail/ui/mail";
 import { squaresWindow } from "@ohmail/ui/squares-window";
 import { squareKindsOf, squareStamp, type ThreadWalk } from "@ohmail/app-logic/reader";
@@ -19,36 +19,45 @@ interface Fit {
 }
 
 /** The room the squares have, read off the tokens and the column; null where nothing is laid out. */
-function useFit(axis: "column" | "head", column: HTMLElement | null): Fit | null | undefined {
+function useFit(
+  axis: "column" | "head",
+  column: HTMLElement | null,
+  head: RefObject<HTMLSpanElement | null> | undefined,
+): Fit | null | undefined {
   const [fit, setFit] = useState<Fit | null>();
   useLayoutEffect(() => {
-    const win = column?.ownerDocument.defaultView;
-    if (!column || !win) return;
+    const capsule = head?.current;
+    const line = capsule?.parentElement;
+    const box = line ?? column;
+    const win = box?.ownerDocument.defaultView;
+    if (!box || !win) return;
     const read = (): void => {
-      const cs = win.getComputedStyle(column.ownerDocument.documentElement);
+      const cs = win.getComputedStyle(box.ownerDocument.documentElement);
       const px = (name: string): number => parseFloat(cs.getPropertyValue(name));
       /* The column's room is the studio's (`sqLayout`): the column's height less the capsule's own padding, on a
          desktop at most a little over half of it, and never less than five squares and a count. The capsule is
          handed that room, so the run fitted to it stands inside it. */
       const pitchY = px("--sq-y") + px("--sq-y-gap");
       const countY = px("--sq-more-y");
-      const tall = column.clientHeight;
-      const desktop = column.ownerDocument.documentElement.dataset.device === "desktop";
+      const tall = box.clientHeight;
+      const desktop = box.ownerDocument.documentElement.dataset.device === "desktop";
       const next =
-        axis === "column"
-          ? {
-              room: Math.max(
-                5 * pitchY + countY,
-                Math.min(tall - 2 * (px("--s2") || 0) - 4, desktop ? tall * 0.56 : tall),
-              ),
-              pitch: pitchY,
-              count: countY,
-            }
-          : {
-              room: px("--sq-slots") * (px("--sq") + px("--sq-gap")) + px("--sq-more"),
-              pitch: px("--sq") + px("--sq-gap"),
-              count: px("--sq-more"),
-            };
+        capsule && line
+          ? fitInHeading(win.getComputedStyle(capsule), line.clientWidth)
+          : axis === "column"
+            ? {
+                room: Math.max(
+                  5 * pitchY + countY,
+                  Math.min(tall - 2 * (px("--s2") || 0) - 4, desktop ? tall * 0.56 : tall),
+                ),
+                pitch: pitchY,
+                count: countY,
+              }
+            : {
+                room: px("--sq-slots") * (px("--sq") + px("--sq-gap")) + px("--sq-more"),
+                pitch: px("--sq") + px("--sq-gap"),
+                count: px("--sq-more"),
+              };
       const ok = next.room > 0 && next.pitch > 0 && next.count >= 0;
       setFit((was) =>
         !ok
@@ -61,25 +70,34 @@ function useFit(axis: "column" | "head", column: HTMLElement | null): Fit | null
     read();
     win.addEventListener("resize", read);
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(read);
-    ro?.observe(column);
+    ro?.observe(box);
     return () => {
       win.removeEventListener("resize", read);
       ro?.disconnect();
     };
-  }, [axis, column]);
+  }, [axis, column, head]);
   return fit;
+}
+
+function fitInHeading(styles: CSSStyleDeclaration, width: number): Fit {
+  const px = (name: string): number => parseFloat(styles.getPropertyValue(name));
+  return {
+    room: Math.min(px("--sq-head-max-w"), width - px("padding-left") - px("padding-right")),
+    pitch: px("--oh-readsquares-pitch"),
+    count: px("--oh-readsquares-count"),
+  };
 }
 
 export function Squares({
   messages,
   walk,
-  axis,
+  place,
   column,
   waitForFit = true,
 }: {
   messages: readonly EngineMessage[];
   walk: ThreadWalk;
-  axis: "column" | "head";
+  place: "column" | "top" | "heading";
   /** The column the squares stand beside: their room. */
   column: HTMLElement | null;
   waitForFit?: boolean;
@@ -91,7 +109,10 @@ export function Squares({
   const [keyboard, setKeyboard] = useState<{ here: string | undefined; at: string } | null>(null);
   const kinds = useMemo(() => squareKindsOf(messages), [messages]);
   const unread = kinds.filter((k) => k === "unseen").length;
-  const fit = useFit(axis, column);
+  const axis = place === "column" ? "column" : "head";
+  const fitToHead = place === "heading";
+  const capsule = useRef<HTMLSpanElement>(null);
+  const fit = useFit(axis, column, fitToHead ? capsule : undefined);
   const n = kinds.length;
   const current = walk.here >= 0 ? walk.here : n - 1;
   const currentId = messages[current]?.id;
@@ -119,9 +140,11 @@ export function Squares({
         name,
         tip: (
           <>
-            <b>{sender}</b>
-            {when ? <time className="oh-square-tip-time">{when}</time> : null}
-            {line ? <span className="oh-square-tip-line">{line}</span> : null}
+            <span className="oh-square-tip-head">
+              <b className="oh-text oh-display oh-square-tip-from">{sender}</b>
+              {when ? <time className="oh-square-tip-time">{when}</time> : null}
+            </span>
+            {line ? <span>{line}</span> : null}
           </>
         ),
       };
@@ -134,19 +157,22 @@ export function Squares({
       from: w.from,
       to: w.to,
       scale: w.scale,
-      ...(axis === "column" ? { room: fit.room, column: { pitch: fit.pitch, count: fit.count } } : {}),
+      room: axis === "column" || fitToHead ? fit.room : undefined,
+      column: axis === "column" ? { pitch: fit.pitch, count: fit.count } : undefined,
     };
-  }, [fit, n, current, focus, axis]);
+  }, [fit, n, current, focus, axis, fitToHead]);
   // Mount the run at its measured size so its transitions only animate subsequent changes.
-  if (waitForFit && fit === undefined) return null;
+  if (waitForFit && !fitToHead && fit === undefined) return null;
   return (
     <ReadSquares
+      ref={fitToHead ? capsule : undefined}
       squares={kinds}
       ids={messages.map((message) => message.id)}
       here={walk.here >= 0 ? walk.here : undefined}
       axis={axis}
       label={t("squares", { count: messages.length, unread })}
       run={run}
+      touchWalk={run !== undefined}
       names={labels.map(({ name }) => name)}
       tips={labels.map(({ tip }) => tip)}
       onFocusSquare={(at) => {

@@ -1,5 +1,6 @@
 import { useContext, useState, type ComponentProps } from "react";
 import { ContactCard } from "@ohmail/ui/mail";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { Dialog, Field, MenuItem, RadioLines, Switch } from "@ohmail/ui/base";
 import { placeOfFolder } from "@ohmail/app-logic/reader";
 import { ConsentContext } from "@ohmail/app-logic/consent";
@@ -21,6 +22,7 @@ import {
   planSubjectRule,
   subjectOrganizerMissing,
   subjectRuleContext,
+  subjectMatchCount,
   subjectRuleToast,
 } from "@ohmail/app-logic/press/subject-rule";
 import { browserOffline, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";
@@ -123,14 +125,7 @@ function ScreeningContact({
     const nobody =
       otherOrganizerOf(facts, new Set(subject.messages.map((message) => message.mailboxId)))?.nobody === true;
     return (
-      <SubjectContact
-        input={input}
-        context={subject}
-        who={person.name}
-        places={places}
-        onClose={onClose}
-        nobody={nobody}
-      />
+      <SubjectContact input={input} context={subject} places={places} onClose={onClose} nobody={nobody} />
     );
   }
   const extras = screeningExtras({
@@ -252,7 +247,11 @@ function screeningExtras({
             place: current,
             all:
               scopeHere === "sender" && openAudit
-                ? { label: t("auditOpen", { count }), onPress: openAudit }
+                ? {
+                    label: t("auditOpen"),
+                    ariaLabel: t("auditOpenAria", { count: model.messages.length }),
+                    onPress: openAudit,
+                  }
                 : undefined,
           }
         : undefined,
@@ -282,14 +281,12 @@ function screeningExtras({
 function SubjectContact({
   input,
   context,
-  who,
   places,
   onClose,
   nobody,
 }: {
   input: NonNullable<Parameters<typeof contactScreening>[0]>;
   context: NonNullable<ReturnType<typeof subjectRuleContext>>;
-  who: string;
   places: readonly { value: ScreeningDest; label: string }[];
   onClose: () => void;
   nobody: boolean;
@@ -314,22 +311,35 @@ function SubjectContact({
       if (key) report(t(key, { term: plan.term, place, count: plan.matched }));
     });
   };
+  const where = t("subjectMatchCount", {
+    hit: subjectMatchCount(context.messages, term),
+    total: context.messages.length,
+  });
   return (
     <Dialog
       open
-      title={t("subjectAria", { who })}
+      title={t("subjectAria")}
+      line={displayAddress(context.address)}
       onClose={onClose}
       cancel={{ label: t("cancel") }}
       keysOn="cancel"
       confirm={{
-        label: t("subjectConfirmGo", { dest: place }),
+        label: t("subjectConfirmGo"),
         onPress: confirm,
         disabled: !dest || term.trim() === "" || term.trim().length > MAX_SUBJECT_TERM_CHARS,
       }}
     >
-      <Field label={t("subjectTermAria")} value={term} onChange={setTerm} />
+      <Field
+        label={t("subjectTermAria")}
+        placeholder={t("subjectTermPlaceholder")}
+        value={term}
+        onChange={setTerm}
+      />
+      <p className="oh-text" aria-hidden="true">
+        {where}
+      </p>
       <RadioLines
-        label={t("sectionWhere")}
+        label={where}
         options={places}
         value={dest ?? ""}
         onChange={(value) => {

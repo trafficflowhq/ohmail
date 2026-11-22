@@ -34,6 +34,6 @@ it.each([
   ]);
   fireEvent.click(within(earlier).getByRole("button", { name: "Collapse" }));
   expect(address.read()).toBe(`#/${route}`);
-  expect(within(region).queryByRole("toolbar", { name: "Actions" })).toBeNull();
+  expect(within(region).getAllByRole("toolbar", { name: "Actions" })).toHaveLength(1);
   expect(within(card(second.subject!)).getByRole("button", { name: "Collapse" })).toBeTruthy();
 });

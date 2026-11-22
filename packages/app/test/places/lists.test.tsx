@@ -136,7 +136,8 @@ describe("History", () => {
     expect([...rows].map((r) => r.getAttribute("data-id"))).toEqual(["new", "mid", "old"]);
     expect(rows[0]!.textContent).toContain("News");
     expect(rows[1]!.textContent).toContain("Ohbox");
-    expect(screen.getByTestId("column").textContent).toBe("3 messages");
+    expect(screen.getByRole("banner").textContent).toContain("3 messages");
+    expect(screen.getByTestId("column").textContent).toBe("Nothing open");
   });
 
   it("the title ends in the hot dot while an unread letter stands in it; a letter with a file shows the paper-clip", () => {
@@ -148,6 +149,7 @@ describe("History", () => {
     const more = [...mail, msg({ id: "u", date: at(6), unread: true, hasAttachments: true })];
     draw(<History messages={more} seen={fresh()} />);
     expect(title().getAttribute("data-kind")).toBe("hot");
+    expect(screen.getByTestId("column").textContent).toBe("1 unread");
     // The row is one option to a screen reader; the paper-clip is named inside it.
     expect(document.querySelectorAll('[aria-label="Has an attachment"]')).toHaveLength(1);
   });
@@ -334,7 +336,7 @@ describe("Tags", () => {
     ).toHaveLength(2);
     fireEvent.click(within(groups[1]!).getByRole("button", { name: /Pottery/ }));
     expect(within(screen.getAllByRole("region")[1]!).queryAllByRole("option")).toEqual([]);
-    expect(screen.getByTestId("column").textContent).toBe("2 tags");
+    expect(screen.getByTestId("column").textContent).toBe("Nothing open");
   });
 
   it("with no tag named, a letter that carries two tags is one stop of the walk: the steps go on past it to the end", () => {
@@ -423,7 +425,7 @@ describe("Tags", () => {
 
   it("speaks German", () => {
     draw(<Tags tagId={null} seen={fresh()} />, "de");
-    expect(screen.getByTestId("column").textContent).toBe("2 Tags");
+    expect(screen.getByTestId("column").textContent).toBe("Nichts geöffnet");
   });
 });
 
@@ -476,8 +478,13 @@ describe("a folder", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: /Gartenlokal Rosa/ })).toBeTruthy();
-    const groups = screen.getAllByRole("region");
-    expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["New", "Earlier"]);
+    const rows = within(screen.getByRole("listbox", { name: "Gartenlokal Rosa" })).getAllByRole("option");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Unread one"),
+      expect.stringContaining("Read one"),
+    ]);
+    expect(screen.queryByRole("heading", { name: /^(New|Earlier)$/ })).toBeNull();
+    expect(screen.getByTestId("column").textContent).toBe("1 unread");
   });
 
   it("says the way to it: Folders, then each folder above it, a press on one the mirror holds opening it", () => {
@@ -518,9 +525,9 @@ describe("a folder", () => {
   it("an empty folder says it holds nothing; a folder that left the server says so by name", () => {
     const seen = fresh();
     const view = draw(<Folder folder={folder} seen={seen} messages={[]} />);
-    expect(document.body.textContent).toContain("Nothing in this folder");
+    expect(document.body.textContent).toContain("Nothing here");
     act(() => view.rerender(inWords(<Folder folder={null} seen={seen} messages={[]} />)));
-    expect(document.body.textContent).toContain("“Gartenlokal Rosa” is no longer on your mail server.");
+    expect(document.body.textContent).toContain("“Gartenlokal Rosa” is no longer on your mail server");
   });
   it("a folder the mirror never held is not said to be loading once the mirror is read", () => {
     draw(<Folder folder={null} seen={fresh()} messages={[]} />);
@@ -554,6 +561,26 @@ describe("an address", () => {
       </AddressAbove>
     );
   }
+
+  it("filters the selected direction by words and restores the letters when cleared", () => {
+    draw(<Address seen={fresh()} />);
+    const field = screen.getByRole("textbox", { name: "Search" });
+    expect(field.getAttribute("placeholder")).toBe("In this mail");
+    fireEvent.change(field, { target: { value: "  YOUR talk " } });
+    expect(screen.getByRole("option", { name: "Petra Wyss: Your talk" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Re: Your talk/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /The stand/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "From them 2" }));
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.queryByRole("option", { name: /Re: Your talk/ })).toBeNull();
+    fireEvent.change(field, { target: { value: "missing" } });
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(
+      screen.getByText((_, el) => el?.tagName === "P" && el.textContent === "Nothing matched"),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.getByRole("option", { name: /The stand/ })).toBeTruthy();
+  });
 
   it("says who it is, and counts all, from them and to them", () => {
     draw(<Address seen={fresh()} />);

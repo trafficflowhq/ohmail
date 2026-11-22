@@ -137,7 +137,7 @@ describe("the pane exists and says what the rule is", () => {
     const text = within(row(item));
     expect(text.getByRole("button", { name: item.match })).toBeTruthy();
     expect(text.getByRole("button", { name: "Files into Ohbox" })).toBeTruthy();
-    expect(text.getByText("from a Screener decision · 1 Aug 2026")).toBeTruthy();
+    expect(text.getByText("Screener decision · 1 Aug 2026")).toBeTruthy();
   });
 
   it("says 'anyone at' for a domain rule — a domain is a different promise from an address", async () => {
@@ -157,7 +157,7 @@ describe("against a row the production API actually returned", () => {
     const text = within(row(PRODUCTION_RULE));
     expect(text.getByRole("button", { name: PRODUCTION_RULE.match })).toBeTruthy();
     expect(text.getByRole("button", { name: "Files into Ohbox" })).toBeTruthy();
-    expect(text.getByText("from a Screener decision · 3 Aug 2026")).toBeTruthy();
+    expect(text.getByText("Screener decision · 3 Aug 2026")).toBeTruthy();
     expect(pane.queryByText(/\b0 messages\b/)).toBeNull();
   });
 });
@@ -193,15 +193,15 @@ describe("rule confirmations", () => {
     const { row } = await renderRules(three);
     await click(filesInto(row(target)));
     const picker = within(dialogs().getByRole("dialog", { name: R.change }));
-    expect(picker.getByText(sentence(target))).toBeTruthy();
-    expect(picker.queryByText(sentence(first))).toBeNull();
-    expect(picker.queryByText(sentence(last))).toBeNull();
+    expect(picker.getByText(target.match)).toBeTruthy();
+    expect(picker.queryByText(first.match)).toBeNull();
+    expect(picker.queryByText(last.match)).toBeNull();
   });
 
   it("the revoke confirmation names only the selected rule", async () => {
     const { row } = await renderRules(three);
     await click(within(row(target)).getByRole("button", { name: R.revoke }));
-    const confirm = within(dialogs().getByRole("dialog", { name: R.revokeConfirm }));
+    const confirm = within(dialogs().getByRole("dialog", { name: "Revoke 1 rule" }));
     expect(confirm.getByText(sentence(target))).toBeTruthy();
     expect(confirm.queryByText(sentence(first))).toBeNull();
     expect(confirm.queryByText(sentence(last))).toBeNull();

@@ -84,7 +84,7 @@ export { LetterViews } from "./Reading/LetterViews.js";
 export type { LetterView, LetterViewsProps } from "./Reading/LetterViews.js";
 export { TextNotKept } from "./Reading/TextNotKept.js";
 export type { TextNotKeptProps } from "./Reading/TextNotKept.js";
-export { ContactCard } from "./Reading/ContactCard.js";
+export { ContactCard, ContactCardHeader, ContactDestinations } from "./Reading/ContactCard.js";
 export type { ContactCardProps } from "./Reading/ContactCard.js";
 export { QuickLook } from "./Reading/QuickLook.js";
 export type { QuickLookProps } from "./Reading/QuickLook.js";

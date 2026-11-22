@@ -30,6 +30,8 @@ export interface AddressModel {
   /** The newest name the address goes by as a sender or recipient, else the address. */
   readonly name: string;
   readonly side: AddressSide;
+  readonly query: string;
+  readonly setQuery: (text: string) => void;
   readonly choose: (side: AddressSide) => void;
   readonly counts: Readonly<Record<AddressSide, number>>;
   readonly archive?: AddressView;
@@ -52,6 +54,9 @@ function newestName(messages: readonly EngineMessage[], address: string): string
 
 export function useAddressList(input: AddressInput): AddressModel {
   const { address, messages, settled, owed } = input;
+  const [filter, setFilter] = useState({ address, text: "" });
+  if (filter.address !== address) setFilter({ address, text: "" });
+  const query = filter.address === address ? filter.text : "";
   const [localSide, choose] = useState<AddressSide>(input.side ?? "all");
   const side = input.choose ? (input.side ?? "all") : localSide;
   const { archive } = input;
@@ -62,7 +67,22 @@ export function useAddressList(input: AddressInput): AddressModel {
     const both = sorted.filter((m) => fromThem.includes(m) || toThem.includes(m));
     return { from: fromThem, to: toThem, all: both };
   }, [messages, address]);
-  const rows = archive?.rows ?? (side === "from" ? from : side === "to" ? to : all);
+  const letters = archive?.rows ?? (side === "from" ? from : side === "to" ? to : all);
+  const rows = useMemo(() => {
+    const text = query.trim().toLowerCase();
+    if (!text) return letters;
+    const words = text.split(/\s+/);
+    return letters.filter((letter) => {
+      const people = [letter.from, ...letter.to, ...letter.cc].flatMap(({ name, address }) => [
+        name,
+        address,
+      ]);
+      const content = [letter.subject, letter.snippet, letter.body, letter.attachment?.filename, ...people]
+        .join(" ")
+        .toLowerCase();
+      return words.every((word) => content.includes(word));
+    });
+  }, [letters, query]);
   const counts = archive
     ? { all: archive.counts.any, from: archive.counts.from, to: archive.counts.to }
     : { all: all.length, from: from.length, to: to.length };
@@ -78,8 +98,10 @@ export function useAddressList(input: AddressInput): AddressModel {
   return {
     list,
     address,
-    name: newestName([...all, ...rows].sort(newestFirst), address),
+    name: newestName([...all, ...letters].sort(newestFirst), address),
     side,
+    query,
+    setQuery: (text) => setFilter({ address, text }),
     choose: input.choose ?? choose,
     counts,
     archive,

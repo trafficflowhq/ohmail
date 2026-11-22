@@ -56,8 +56,6 @@ function said(
 }
 const settings = (key: string, values: Record<string, string | number> = {}, lang: "en" | "de" = "en") =>
   said({ namespace: "settings", key }, values, lang);
-const life = (key: string, values: Record<string, string | number> = {}) =>
-  said({ namespace: "accountLifecycle", key }, values);
 const text = () => document.body.textContent ?? "";
 const seen = (words: string) => text().includes(words);
 const line = (name: string) => screen.getByRole("group", { name });
@@ -85,7 +83,7 @@ describe("where the account stands, from the access answer alone", () => {
     drawn(TODAY.trial.model);
     expect(screen.getByRole("heading", { name: settings("storagePlanHead") })).toBeTruthy();
     expect(seen(said("trial"))).toBe(true);
-    expect(seen(life("trialEnds", { date: "Nov 18, 2026" }))).toBe(true);
+    expect(line(said("trialEnds")).textContent).toContain("Nov 18, 2026");
     expect(line(settings("mailboxes")).textContent).toContain(said("mailboxesUpTo", { count: 5 }));
     expect(line(settings("storage")).textContent).toContain("235 MB of 5 GB");
     expect(screen.queryByRole("heading", { name: settings("storagePlansHead") })).toBeNull();
@@ -113,7 +111,7 @@ describe("where the account stands, from the access answer alone", () => {
 
   it("says the day a trial ends and the day a grace runs out, and no day it does not know", () => {
     drawn(withStanding({ state: "grace", until: "Nov 24, 2026" }));
-    expect(seen(life("graceEnds", { date: "Nov 24, 2026" }))).toBe(true);
+    expect(seen(said("organizingUntil", { date: "Nov 24, 2026" }))).toBe(true);
     cleanup();
     drawn(withStanding({ state: "trial", ends: null }));
     const before = (WORDS.en.accountLifecycle as Record<string, string>).trialEnds!.split("{date}")[0]!;
@@ -124,7 +122,7 @@ describe("where the account stands, from the access answer alone", () => {
   it("wants the person where a payment failed, with the day to fix it by, or without one", () => {
     drawn(TODAY.overdue.model);
     expect(seen(said("paymentFailed"))).toBe(true);
-    expect(seen(life("paymentFailed", { date: "Nov 24, 2026" }))).toBe(true);
+    expect(seen(said("organizingUntil", { date: "Nov 24, 2026" }))).toBe(true);
     cleanup();
     drawn(TODAY.incomplete.model);
     expect(seen(said("paymentFailedUndated"))).toBe(true);
@@ -137,7 +135,7 @@ describe("where the account stands, from the access answer alone", () => {
     expect(toStorage).toHaveBeenCalledTimes(1);
     cleanup();
     drawn(TODAY.trial.model);
-    expect(within(line(settings("storage"))).queryByRole("button")).toBeNull();
+    expect(within(line(settings("storage"))).queryByRole("button", { name: said("openStorage") })).toBeNull();
   });
 
   it("draws the press alone before the standing has answered", () => {
@@ -153,7 +151,7 @@ describe("the press that opens the account page", () => {
   it("stands on the Subscription line and hands the door no plan", () => {
     const model = { ...TODAY.trial.model, manage: vi.fn() };
     drawn(model);
-    expect(within(line(settings("subscription"))).getByRole("button")).toBe(manage());
+    expect(within(line(settings("paymentInvoices"))).getByRole("button")).toBe(manage());
     fireEvent.click(manage());
     expect(model.manage).toHaveBeenCalledWith();
   });
@@ -195,26 +193,33 @@ describe("the plans, where the server answers them", () => {
     const model = { ...STATES.trial.model, choose: vi.fn() };
     drawn(model);
     expect(screen.getByRole("heading", { name: "Plus" })).toBeTruthy();
-    expect(line("Plus").textContent).toContain(settings("storageTagYours"));
-    expect(line("Plus").textContent).toContain(settings("storagePriceMonth", { price: "$15" }));
+    const plus = screen.getByRole("radio", { name: /^Plus/ });
+    expect(plus.textContent).toContain(settings("storageTagYours"));
+    expect(plus.textContent).toContain("$15");
     expect(seen(said("planFacts", { mailboxes: 10, credits: 4_000, storage: "10 GB" }))).toBe(true);
-    // The add-on's line is named by the shipped word, as the standing's storage line is: its tag tells them apart.
-    const addon = screen
-      .getAllByRole("group", { name: settings("storageAddonName") })
-      .find((group) => group.textContent?.includes(settings("storageTagAddon")));
-    expect(addon?.textContent).toContain(settings("storagePriceMonth", { price: "$5" }));
-    expect(seen(settings("storageAddonMax", { count: 4 }))).toBe(true);
+    expect(seen(settings("storageTagAddon"))).toBe(false);
+    expect(seen(settings("storageAddonMax", { count: 4 }))).toBe(false);
     const interval = screen.getByRole("group", { name: said("billing") });
     fireEvent.click(within(interval).getByRole("button", { name: said("yearly") }));
     expect(model.choose).toHaveBeenCalledWith("year");
+  });
+
+  it("subscribes to the plan and interval selected after a trial ends", () => {
+    const manage = vi.fn();
+    const model = withStanding({ state: "grace", until: null }, STATES.trial.model);
+    if (model.plans.at !== "read") throw new Error("the state holds the read");
+    drawn({ ...model, plans: { ...model.plans, interval: "year" }, manage });
+    fireEvent.click(screen.getByRole("radio", { name: /^Pro/ }));
+    fireEvent.click(screen.getByRole("button", { name: said("subscribeTo", { plan: "pro" }) }));
+    expect(manage).toHaveBeenCalledWith({ plan: "pro", interval: "year" });
   });
 
   it("draws a price that is not there as no figure, never zero and never the other interval's, and keeps its line", () => {
     const plans = STATES.trial.model.plans;
     if (plans.at !== "read") throw new Error("the card's state holds the read");
     drawn({ ...STATES.trial.model, plans: { ...plans, interval: "year" } });
-    expect(line("Pro").textContent).toBe("Pro");
-    expect(line("Solo").textContent).toContain(settings("storagePriceYear", { price: "$90" }));
+    expect(screen.getByRole("radio", { name: /^Pro/ }).textContent).not.toMatch(/\$|€|£/);
+    expect(screen.getByRole("radio", { name: /^Solo/ }).textContent).toContain("$90");
     expect(seen("$29")).toBe(false);
     expect(text()).not.toMatch(/\$0\b/);
   });

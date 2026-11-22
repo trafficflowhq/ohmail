@@ -56,7 +56,7 @@ describe("the Screener's place", () => {
     const list = screen.getByRole("region", { name: "Messages" });
     expect(within(list).getByText("Screener")).toBeTruthy();
     const reading = screen.getByRole("region", { name: "Reading" });
-    expect(reading.textContent).toBe("3 first-time senders waiting");
+    expect(reading.textContent).toBe("3 waiting");
   });
 
   it("the rail states no count until the queue has settled, then the waiting count, hot", () => {

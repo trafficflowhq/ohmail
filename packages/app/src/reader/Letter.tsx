@@ -14,7 +14,6 @@ import {
 } from "@ohmail/ui/mail";
 import {
   emptiedForSpace,
-  isProtected,
   letterPictures,
   letterReady,
   letterStampInstant,
@@ -60,6 +59,7 @@ export interface LetterViewProps {
   readonly retryBody?: () => void;
   readonly clip?: MessageClip;
   readonly streamCard?: "open";
+  readonly markUnread?: LetterHeadProps["markUnread"];
   readonly showSubject?: boolean;
   /** A heading inside the latest sheet when the conversation heading can scroll out of view. */
   readonly subject?: string;
@@ -88,6 +88,7 @@ export function Letter({
   showSubject,
   clip,
   streamCard,
+  markUnread,
   subject,
   opened,
   previewSelection,
@@ -112,7 +113,6 @@ export function Letter({
     copy,
     views,
     history,
-    protectedLetter,
     invitation,
     Body,
     renderedText,
@@ -122,9 +122,7 @@ export function Letter({
     setNotice,
     setControls,
   } = useLetterContent({ message, offMirrorBody, opened, look, unread, reading, presented }, t);
-  const text = protectedLetter ? (
-    <p>{t("protected")}</p>
-  ) : (
+  const text = (
     <Body
       {...letterPictures(message, body.loadedRemoteContent, parts.pictures, parts.files, reading, presented)}
       messageId={message.id}
@@ -137,7 +135,6 @@ export function Letter({
       onControls={setControls}
     />
   );
-
   const textState = (
     <TextState message={message} body={body} live={live} retry={retryBody} refillExpired={refillExpired} />
   );
@@ -162,6 +159,7 @@ export function Letter({
             copy={copy}
             narrow={narrow ?? false}
             streamCard={streamCard ?? (clip ? "open" : undefined)}
+            markUnread={markUnread}
             onPerson={onPerson}
             card={card ?? null}
           />
@@ -185,14 +183,9 @@ export function Letter({
             <LetterHistory label={history.label} open={history.expanded} onPress={history.onPress} />
           ) : undefined
         }
-        files={
-          protectedLetter ? undefined : (
-            <LetterFiles messageId={message.id} selection={previewSelection} parts={parts} />
-          )
-        }
+        files={<LetterFiles messageId={message.id} selection={previewSelection} parts={parts} />}
       >
         <div data-read-body="">
-          {/* What is kept elsewhere is said under the preview; a load on its way, over it. */}
           {kept ? null : textState}
           {text}
           {kept ? textState : null}
@@ -244,10 +237,9 @@ function useLetterContent(
   const Body = parts.body;
   const Invitation = parts.invitation;
   const renderedText = loaded ? loaded.text : body.text;
-  const protectedLetter = isProtected(message);
   /* What the shell says of the letter's invitation stands over its text and outside it, after the text's views. */
   const invitation =
-    Invitation === NONE || protectedLetter ? null : (
+    Invitation === NONE ? null : (
       <Invitation
         messageId={message.id}
         invitationWithoutEvent={message.invitationWithoutEvent === true}
@@ -266,7 +258,6 @@ function useLetterContent(
     copy,
     views,
     history,
-    protectedLetter,
     invitation,
     Body,
     renderedText,

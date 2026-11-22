@@ -55,7 +55,7 @@ describe("the signed-out page, state by state", () => {
   it("says what it waits for once the wait outlasts the grace", () => {
     const { door } = doorOf({ at: "checking", slow: true });
     draw(door);
-    expect(screen.getByText(en.resume.workingBody)).toBeTruthy();
+    expect(document.body.textContent).toContain(en.resume.workingBody.replace(/\.$/, ""));
     expect(buttons()).toEqual([]);
   });
 
@@ -114,7 +114,7 @@ describe("the signed-out page, state by state", () => {
   });
 
   it.each([
-    [false, "Your mailbox has not been opened. Try again in a moment."],
+    [false, en.session.unconfirmedLine],
     [true, en.session.unconfirmedBodyWarm],
   ] as const)("unchecked (warm %s): the check did not finish; Try again, then Sign in", (warm, said) => {
     const { door, acts } = doorOf({ at: "unchecked", warm });

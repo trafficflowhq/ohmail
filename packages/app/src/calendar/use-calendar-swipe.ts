@@ -6,6 +6,7 @@ export function useCalendarSwipe(step?: (direction: -1 | 1) => void, fold?: (fol
   const consumed = useRef(false);
   if (!step) return undefined;
   return {
+    "data-calendar-swipe": "",
     onPointerDown(event: PointerEvent<HTMLElement>) {
       consumed.current = false;
       if (event.pointerType !== "touch" || !event.isPrimary) return;

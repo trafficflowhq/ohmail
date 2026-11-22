@@ -3,25 +3,25 @@
  * its ink button. Everything the ceremony does is the door's, the blanks as typed among it: the page draws them, hands
  * each change back, and says what the door's state says. A press with a blank empty sends nothing: the first empty
  * blank takes the keys and says it is wanted. The ways to the join and to the demo are the ways the host hands, links
- * on the web. Its words are the `login` namespace's and, for a sign-out's reason, `resume`'s.
+ * on the web. Its words are the `login` namespace's.
  */
-import { useEffect, useRef, type FormEvent, type ReactNode } from "react";
-import { Button, Field, Page } from "@ohmail/ui/base";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Button, EndDot, Menu, MenuItem, Page, RefusalLine, Slot, Tag } from "@ohmail/ui/base";
 import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
 import { useWanted } from "../stage/AccountSentence.js";
-import { REASON_SAID } from "../stage/reasons.js";
-import { Said } from "../stage/Said.js";
+import { DoorLine } from "../stage/DoorLine.js";
+import { Said, SaidWith } from "../stage/Said.js";
+import { SentenceBlank } from "../stage/SentenceBlank.js";
 import { WayButton } from "../stage/way.js";
 import { SIGN_IN_REFUSAL_SAID, type SignInDoor, type SignInFactor, type SignInRefusal } from "./door.js";
-import { LOGIN_INVITE_KEY, anyoneCanSignUp } from "./invite-posture.js";
 import "./placement.css";
 
 /** The words of the toggle that turns to each factor. */
-const USE_FACTOR: Readonly<Record<SignInFactor, string>> = {
-  passkey: "usePasskey",
-  code: "totpToggle",
-  recovery: "useRecovery",
+const FACTOR_WORD: Readonly<Record<SignInFactor, string>> = {
+  passkey: "factorPasskey",
+  code: "factorCode",
+  recovery: "factorRecovery",
 };
 
 type Ongoing = Exclude<SignInDoor["state"], { at: "unavailable" }>;
@@ -33,18 +33,18 @@ function refusalWords(refusal: SignInRefusal, login: Text): string {
 
 export function SignInPage({ door }: { door: SignInDoor | None }): ReactNode {
   const login = useText("login");
-  const resume = useText("resume");
+  const gate = useText("gate");
   if (door === NONE || door.state.at === "unavailable") {
     const demo = door === NONE ? NONE : door.demo;
     const acts =
       demo === NONE ? null : (
         <WayButton way={demo} size="l">
-          {login("betaCta")}
+          {gate("openDemo")}
         </WayButton>
       );
     return (
-      <Page line={login("betaBody")} acts={acts}>
-        <Said text={login("betaNote")} />
+      <Page line={gate("body")} note={gate("note")} acts={acts}>
+        <Said text={gate("lede")} level={1} />
       </Page>
     );
   }
@@ -56,7 +56,7 @@ export function SignInPage({ door }: { door: SignInDoor | None }): ReactNode {
   const refusal: Refusal =
     said.length === 0 ? undefined : said.length === 1 ? [said[0]!] : [said[0]!, said[1]!];
   return state.at === "password" ? (
-    <PasswordStep door={door} busy={state.busy} refusal={refusal} login={login} resume={resume} />
+    <PasswordStep door={door} busy={state.busy} refusal={refusal} login={login} />
   ) : (
     <FactorStep door={door} state={state} refusal={refusal} login={login} />
   );
@@ -68,14 +68,8 @@ type Blank = (typeof BLANKS)[number];
 /** Each blank's sentence when a press found it empty. */
 const WANTED: Readonly<Record<Blank, string>> = { email: "emailWanted", password: "passwordWanted" };
 
-function PasswordStep(p: {
-  door: SignInDoor;
-  busy: boolean;
-  refusal: Refusal;
-  login: Text;
-  resume: Text;
-}): ReactNode {
-  const { door, busy, refusal, login, resume } = p;
+function PasswordStep(p: { door: SignInDoor; busy: boolean; refusal: Refusal; login: Text }): ReactNode {
+  const { door, busy, refusal, login } = p;
   const { pending, fields } = door;
   /* The blank a press found empty takes the keys and says it is wanted: nothing leaves half filled. */
   const { wanted, want, typed, at } = useWanted(BLANKS);
@@ -83,12 +77,6 @@ function PasswordStep(p: {
     typed(field);
     door.type(field, value);
   };
-  const context = [
-    door.why === null ? null : resume(REASON_SAID[door.why]),
-    door.continues === null ? null : login(door.continues === "manage" ? "continueManage" : "continueJoin"),
-  ]
-    .filter((line): line is string => line !== null)
-    .join(" ");
   const submit = (e: FormEvent): void => {
     e.preventDefault();
     if (busy || pending.signingOut) return;
@@ -97,45 +85,18 @@ function PasswordStep(p: {
     want(missing);
     if (missing === null) door.begin();
   };
-  const wantedSaid = (field: Blank): string | undefined =>
-    wanted === field ? login(WANTED[field]) : undefined;
+  const errorId = useId();
+  const missing = wanted === null ? null : login(WANTED[wanted]);
   return (
     <form className="way-form" onSubmit={submit}>
       <Page
-        trail={
-          context === "" ? undefined : (
-            <p className="way-context" role="status">
-              {context}
-            </p>
+        back={
+          door.back === undefined ? undefined : (
+            <Button kind="quiet" icon="back" label={login("back")} href={door.back} />
           )
         }
         refusal={refusal}
-        material={
-          <div className="way-fields">
-            {/* The ids the sign-in's blanks always carried: a password manager that learned them still finds them. */}
-            <Field
-              ref={at.email}
-              id="login-email"
-              label={login("emailLabel")}
-              type="email"
-              autoComplete="username"
-              value={fields.email}
-              onChange={(v) => type("email", v)}
-              refusal={wantedSaid("email")}
-            />
-            <Field
-              ref={at.password}
-              id="login-pw"
-              label={login("passwordLabel")}
-              type="password"
-              autoComplete="current-password"
-              value={fields.password}
-              onChange={(v) => type("password", v)}
-              refusal={wantedSaid("password")}
-            />
-          </div>
-        }
-        line={login(LOGIN_INVITE_KEY[door.note])}
+        line={[{ tag: login(door.note === "selfhost" ? "whereServer" : "whereCloud") }]}
         acts={
           <>
             {/* Named by its words alone, the key it prints left out: the journeys find the sign-in's Continue by
@@ -154,18 +115,56 @@ function PasswordStep(p: {
                 {pending.act}
               </Button>
             )}
-            {anyoneCanSignUp(door.note) ? (
-              <WayButton way={door.join} kind="quiet" size="l">
-                {login("createAccount")}
-              </WayButton>
-            ) : null}
             <WayButton way={door.join} kind="quiet" size="l">
-              {login("haveInvite")}
+              {login("createAccount")}
             </WayButton>
           </>
         }
       >
-        <Said text={login("title")} level={1} />
+        <SaidWith
+          level={1}
+          parts={login.rich("iAm", {
+            email: () => (
+              <SentenceBlank
+                ref={at.email}
+                id="login-email"
+                label={login("emailLabel")}
+                placeholder={login("emailBlank")}
+                type="email"
+                autoComplete="username"
+                value={fields.email}
+                onChange={(v) => type("email", v)}
+                refused={wanted === "email"}
+                describedBy={wanted === "email" ? errorId : undefined}
+              />
+            ),
+            password: () => (
+              <SentenceBlank
+                ref={at.password}
+                id="login-pw"
+                label={login("passwordLabel")}
+                placeholder={login("credentialPrompt")}
+                type="password"
+                autoComplete="current-password"
+                value={fields.password}
+                onChange={(v) => type("password", v)}
+                refused={wanted === "password"}
+                describedBy={wanted === "password" ? errorId : undefined}
+              />
+            ),
+          })}
+        />
+        {missing === null ? null : (
+          <RefusalLine
+            alert
+            start
+            ref={(line) => {
+              if (line) line.id = errorId;
+            }}
+          >
+            {missing}
+          </RefusalLine>
+        )}
       </Page>
     </form>
   );
@@ -179,78 +178,95 @@ function FactorStep(p: {
 }): ReactNode {
   const { door, state, refusal, login } = p;
   const { factor, offered, busy } = state;
-  const { code } = door.fields;
-  const codeField = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
-  /* The code step is time-boxed: its one field takes the focus on arrival and on a change of factor. */
+  const { code, email } = door.fields;
+  const codeField = useRef<HTMLInputElement>(null);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
   useEffect(() => {
     codeField.current?.focus();
   }, [factor]);
-  const others = (
-    <>
-      {offered
-        .filter((f) => f !== factor)
-        .map((f) => (
-          <Button key={f} kind="quiet" size="l" onPress={() => door.use(f)}>
-            {login(USE_FACTOR[f])}
-          </Button>
-        ))}
-      <Button kind="quiet" size="l" onPress={door.restart}>
-        {login("startOver")}
-      </Button>
-    </>
-  );
-  if (factor === "passkey") {
-    return (
-      <Page
-        refusal={refusal}
-        line={login("passkeyNote")}
-        acts={
-          <>
+  const finish = (e: FormEvent): void => {
+    e.preventDefault();
+    if (!busy && code.trim() !== "") door.finish();
+  };
+  const page = (
+    <Page
+      back={<Button kind="quiet" icon="back" label={login("back")} onPress={door.restart} />}
+      trail={
+        <DoorLine>
+          <EndDot kind="ink">{login("iAmSaid", { email: email.trim() }).replace(/\.$/, "")}</EndDot>
+        </DoorLine>
+      }
+      refusal={refusal}
+      acts={
+        <>
+          {factor === "passkey" ? (
             <Button size="l" disabled={busy} onPress={door.passkey}>
               {busy ? login("working") : login("passkey")}
             </Button>
-            {others}
-          </>
-        }
-      >
-        <Said text={login("sub")} />
-      </Page>
-    );
-  }
-  const finish = (e: FormEvent): void => {
-    e.preventDefault();
-    if (busy || code.trim().length === 0) return;
-    door.finish();
-  };
-  return (
-    <form className="way-form" onSubmit={finish}>
-      <Page
-        refusal={refusal}
-        material={
-          <div className="way-fields">
-            {/* An authenticator's code opens the number pad on a phone; a recovery code has letters. */}
-            <Field
-              ref={codeField}
-              id="login-code"
-              label={login(factor === "recovery" ? "recoveryLabel" : "totpLabel")}
-              autoComplete="one-time-code"
-              inputMode={factor === "code" ? "numeric" : "text"}
-              value={code}
-              onChange={(v) => door.type("code", v)}
-            />
-          </div>
-        }
-        acts={
-          <>
-            <Button type="submit" size="l" keyHint="↵" disabled={busy || code.trim().length === 0}>
+          ) : (
+            <Button type="submit" size="l" keyHint="↵" disabled={busy || code.trim() === ""}>
               {busy ? login("working") : login("totpVerify")}
             </Button>
-            {others}
-          </>
-        }
-      >
-        <Said text={login("subCode")} />
-      </Page>
+          )}
+          <Button kind="quiet" size="l" onPress={door.restart}>
+            {login("startOver")}
+          </Button>
+        </>
+      }
+    >
+      <SaidWith
+        level={1}
+        parts={login.rich("confirmWith", {
+          how: () =>
+            offered.length > 1 ? (
+              <Slot ref={anchor} expanded={open} onPress={() => setOpen(!open)}>
+                {login(FACTOR_WORD[factor])}
+              </Slot>
+            ) : (
+              <Tag>{login(FACTOR_WORD[factor])}</Tag>
+            ),
+        })}
+      />
+      <Menu anchor={anchor} open={open} label={login("factorMenu")} onClose={() => setOpen(false)}>
+        {offered.map((choice) => (
+          <MenuItem
+            key={choice}
+            checked={choice === factor}
+            onPress={() => {
+              setOpen(false);
+              if (choice !== factor) door.use(choice);
+            }}
+          >
+            {login(FACTOR_WORD[choice])}
+          </MenuItem>
+        ))}
+      </Menu>
+      {factor === "passkey" ? null : (
+        <SaidWith
+          parts={login.rich("codeIs", {
+            blank: () => (
+              <SentenceBlank
+                ref={codeField}
+                id="login-code"
+                label={login(factor === "recovery" ? "recoveryLabel" : "totpLabel")}
+                placeholder={login(factor === "recovery" ? "recoveryBlank" : "totpBlank")}
+                autoComplete="one-time-code"
+                inputMode={factor === "code" ? "numeric" : "text"}
+                value={code}
+                onChange={(v) => door.type("code", v)}
+              />
+            ),
+          })}
+        />
+      )}
+    </Page>
+  );
+  return factor === "passkey" ? (
+    page
+  ) : (
+    <form className="way-form" onSubmit={finish}>
+      {page}
     </form>
   );
 }

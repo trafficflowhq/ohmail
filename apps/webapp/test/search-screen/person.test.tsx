@@ -158,9 +158,7 @@ describe("a person first", () => {
     expect(["relevance", "date_desc"]).toContain(pages(world.asked).at(-1)?.opts.sort);
     expect(screen.getByRole("heading", { name: "Results 1" })).toBeTruthy();
     expect(screen.getByText(/^[1-9]\d* ms$/)).toBeTruthy();
-    expect(screen.getAllByRole("status").map((line) => line.textContent)).toEqual([
-      expect.stringMatching(/^Searched your whole mailbox — 1 matched · [1-9]\d* ms$/),
-    ]);
+    expect(screen.queryByRole("status")).toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /^Sorted by/ }));
     });
@@ -334,7 +332,7 @@ describe("the filters beside the words", () => {
     await settle();
     await press("Date");
     await act(async () => {
-      fireEvent.click(within(screen.getByRole("menu", { name: "Date" })).getByText("This week"));
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Date" })).getByText("This week"));
     });
     await settle(100);
     const filters = pages(world.asked).at(-1)?.opts.filters as { dateFrom: string; dateTo: string };
@@ -344,6 +342,25 @@ describe("the filters beside the words", () => {
     await settle(100);
     expect(pages(world.asked).at(-1)?.opts.filters).toBeUndefined();
   });
+  it("applies custom dates in order and says which days were picked", async () => {
+    const world = await search([BEN], { store: page([BEN]), side: people, searchBy: "people" });
+    await type("kiln");
+    await settle();
+    await press("Date");
+    const date = within(screen.getByRole("dialog", { name: "Date" }));
+    await act(async () => {
+      fireEvent.change(date.getByLabelText("Since"), { target: { value: "2026-11-10" } });
+      fireEvent.change(date.getByLabelText("Until"), { target: { value: "2026-11-01" } });
+    });
+    expect(pages(world.asked).at(-1)?.opts.filters).toBeUndefined();
+    await act(async () => fireEvent.click(date.getByRole("menuitem", { name: /^Apply/ })));
+    await settle(100);
+    const filters = pages(world.asked).at(-1)?.opts.filters as { dateFrom: string; dateTo: string };
+    expect(filters.dateFrom).toBe(new Date(2026, 10, 1).toISOString());
+    expect(filters.dateTo).toBe(new Date(new Date(2026, 10, 11).getTime() - 1).toISOString());
+    expect(screen.getByRole("button", { name: "1 Nov – 10 Nov" })).toBeTruthy();
+  });
+
 });
 
 describe("a host whose server takes words only", () => {
@@ -351,9 +368,9 @@ describe("a host whose server takes words only", () => {
     const world = await search([BEN], { store: page([BEN]), side: people, searchBy: "words" });
     await type("from:ben ");
     await settle();
-    expect(screen.queryByRole("button", { name: "Unread" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Unread" })).toHaveProperty("disabled", true);
     expect(screen.queryByRole("button", { name: "Remove Ben Arnold" })).toBeNull();
-    expect(document.body.textContent).toContain("from: and in: are not filters here.");
+    expect(document.body.textContent).not.toContain("from: and in: are not filters here.");
     expect(pages(world.asked).map((a) => a.opts.filters)).toEqual([undefined]);
     expect(pages(world.asked).map((a) => a.q)).toEqual(["from:ben"]);
   });

@@ -164,6 +164,8 @@ export interface JunkSweepControl {
    */
   phase: "unknown" | "none" | "offer" | "pending" | "done" | "stranded" | "failed";
   preview: JunkSweepWire | null;
+  /** The size of the exact preview accepted by the server for this session's request. */
+  requestedCount?: number;
   requesting: boolean;
   request: (confirmation?: string) => void;
   dismiss: () => void;
@@ -617,8 +619,8 @@ export function useJunkWindow(
   const heldKey = useRef<string | null>(null);
   const previewAskedAt = useRef<number | null>(null);
   const previewInFlight = useRef(false);
-  /** Set once the human pressed THIS session — what turns an emptied pile into "done". */
-  const pressed = useRef(false);
+  /** Set once the server accepted a press in this session. */
+  const requestedCount = useRef<number | undefined>(undefined);
   /** A press waits for its sweep to finish, then the page is read once: the moved mail is in Junk now. */
   const rereadAfterSweep = useRef(false);
 
@@ -635,7 +637,7 @@ export function useJunkWindow(
       setSweepPhase("pending");
     } else if (total === 0) {
       // Genuinely empty — "done" only after a press THIS session, else nothing to say.
-      setSweepPhase(pressed.current && !pv.held?.ids.length ? "done" : "none");
+      setSweepPhase(requestedCount.current !== undefined && !pv.held?.ids.length ? "done" : "none");
     } else if (pv.movable === 0) {
       // Candidates remain and none can move: every mailbox holding them has no Junk folder.
       // Not "empty", not an offer — the stranded rows are named and nothing is pressable.
@@ -758,11 +760,12 @@ export function useJunkWindow(
   }, [active, sweepPhase, wire, absorbPreview]);
 
   const request = useStableCallback((confirmation?: string) => {
-    if (requesting || !confirmation || confirmation !== sweepPreview?.confirmation) return;
+    if (requesting || !confirmation || sweepPreview === null || confirmation !== sweepPreview.confirmation) return;
+    const count = sweepPreview.movable;
     setRequesting(true);
     void wire.sweepRequest(confirmation).then(
       (pv) => {
-        pressed.current = true;
+        requestedCount.current = count;
         rereadAfterSweep.current = true;
         setRequesting(false);
         absorbPreview(pv);
@@ -795,7 +798,7 @@ export function useJunkWindow(
       mailboxes: searchBoxes, truncated,
       searchServer: () => searchServer(),
     },
-    sweep: { phase: sweepPhase, preview: sweepPreview, requesting, request, dismiss },
+    sweep: { phase: sweepPhase, preview: sweepPreview, requestedCount: requestedCount.current, requesting, request, dismiss },
     held,
   };
 }

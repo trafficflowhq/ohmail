@@ -26,6 +26,7 @@ export interface SlotReport {
   readonly scope?: symbol;
   readonly id: number;
   readonly message: string;
+  readonly line?: string;
   readonly kind: ReportClass;
   /** `undo`: the way back. `why`: the one press that closes it. */
   readonly press: { readonly label: string; readonly keyHint?: string; readonly onPress: () => void } | null;
@@ -92,6 +93,7 @@ export function reportOf(
     id,
     message,
     kind: options?.yields ? "aside" : "plain",
+    ...(options?.line === undefined ? {} : { line: options.line }),
     press: null,
     stands: options?.duration ?? PLAIN_MS,
   };

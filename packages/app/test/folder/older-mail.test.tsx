@@ -30,7 +30,7 @@ it("asks for older mail before calling an empty mirror an empty folder and reset
   await waitFor(() => expect(listOlder.mock.calls.length).toBe(1));
   expect(await screen.findByRole("option", { name: /Prior note/ })).toBeTruthy();
   expect(screen.getByText("That is everything on your server.")).toBeTruthy();
-  expect(screen.queryByText("Nothing in this folder")).toBeNull();
+  expect(screen.queryByText("Nothing here")).toBeNull();
 
   act(() => address.visit("#/folder/archive"));
   act(() => address.visit("#/folder/projects"));

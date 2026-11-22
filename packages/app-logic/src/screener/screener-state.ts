@@ -15,7 +15,6 @@ import type {
   EngineMutation,
   FailedAtGateDTO,
   Folder,
-  HeldReleaseGroupDTO,
   RuleEntity as RuleDTO,
   ScreenDest,
   ScreenerSenderDTO,
@@ -30,10 +29,6 @@ import {
   oneRowPerKey,
   outrankCoveringDomains,
   physicalFolderOf,
-  heldReleaseDismissedOf,
-  heldReleaseFingerprintOf,
-  heldReleaseGroups,
-  heldReleaseTotalOf,
   pressGained,
   unscreenedGroups,
   unscreenedTotalOf,
@@ -86,6 +81,7 @@ import {
 import { screeningShown, verdictSentence } from "../press/press-verdict.js";
 import { confirmedSyncEngine, mirrorOwnerOf, syncIdentityOf } from "../session/sync-scheduler.js";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "../text/idn.js";
+import type { ToastFn } from "../press/report.js";
 import type { UndoToastFn } from "../press/undo-door.js";
 import type { ScreenerReleaseWindow } from "../press/release-window.js";
 import { UNDO_MS } from "../press/undo-window.js";
@@ -208,38 +204,6 @@ interface PendingEntry {
 }
 
 /**
- * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — the header's release row.
- *
- * `null` when there is nothing to offer, and that covers two cases on purpose: no such mail, and a
- * door that cannot say (a reader's mailbox answers no groups; an older server has no route). Both
- * render as no row, which is the same sentence; "you have none" is a claim this never makes.
- */
-export interface HeldReleaseOffer {
-  /** Distinct messages across every group and sender — the press's number. Never the sum of the counts. */
-  total: number;
-  /** Distinct messages behind the RULE groups alone — the lead sentence's number; 0 with none. */
-  rulesTotal: number;
-  /** One per rule, largest first: what would be filed, and where. */
-  groups: HeldReleaseGroupDTO[];
-  /** Contacts nobody wrote a rule for, one line each, largest first. */
-  senders: Array<{ sender: string; count: number }>;
-  /** A press is in flight; a second one is refused rather than queued. */
-  releasing: boolean;
-  /**
-   * Release every rule group AND every sender line shown, or just the named rules. Re-reads
-   * afterwards and says what it released.
-   */
-  release: (ruleIds?: readonly string[]) => void;
-  /**
-   * "NOT NOW" — dismiss this exact set, persisted per account so the offer stays away on every
-   * device and session until the set CHANGES (new held mail from a decided sender re-offers).
-   * `null` where the door cannot persist one (an older server sends no fingerprint), and the
-   * surface then offers no dismiss control rather than a press that forgets by tomorrow.
-   */
-  dismiss: (() => void) | null;
-}
-
-/**
  * OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the header's screening row.
  *
  * `null` when there is nothing to offer, and that covers two cases on purpose: no such mail, and a
@@ -275,6 +239,8 @@ export interface ScreenerState {
   waiting: ScreenerSenderDTO[];
   /** Waiting minus everything decided — rail badge, doorbell, meta. */
   waitingCount: number;
+  /** Senders decided in this session, including those whose Undo window is still open. */
+  decidedThisSession?: number;
   /**
    * WHOSE COUNT `waitingCount` IS. `store`: the store's own queue, exact whatever the mirror
    * holds. `device`: this device's derivation over its windowed mirror, because the store has not
@@ -320,18 +286,14 @@ export interface ScreenerState {
    * to offer "Apply all suggestions" over an empty set.
    */
   /**
-   * The release offer, or `null`. Read off the mirror, which holds what the DOOR said: the fact
-   * that decides this set is who placed each message at the gate, and `/sync` does not carry it,
-   * so a derivation here would put one number on screen and release another.
-   */
-  heldRelease: HeldReleaseOffer | null;
-  /**
    * THE LETTERS OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY, newer than this device's mark — the
    * waiting header's one line (`impersonation-filed.ts`). `null` with none to say; absent reads as none.
    */
   impersonationFiled?: ImpersonationFiledNotice | null;
+  /** The mirror's Spam shelf can say its origin where the service confirmed this filing. */
+  wasAutoFiledSpam?: (messageId: string) => boolean;
   /**
-   * The screening offer, or `null`. Read off the mirror for {@link heldRelease}'s reason: the fact
+   * The screening offer, or `null`. Read off the mirror: the fact
    * that decides this set is what the ARRIVAL GATE would answer, and `/sync` does not carry it, so
    * a derivation here would put one number on screen and move another.
    */
@@ -402,6 +364,8 @@ export interface ScreenerState {
   reachOf: (sender: ScreenerSenderDTO, scope: DecisionScope) => CardReach;
   /** The number of undecided senders at this domain if the waiting queue is fully known. */
   domainWaitingCount?: (sender: ScreenerSenderDTO) => number | null;
+  /** The mirror confirms every shown letter's sender. */
+  senderConfirmed?: (sender: ScreenerSenderDTO) => boolean;
   /**
    * What a Screen out or Spam press on this sender says about the one-click unsubscribe BEFORE it is
    * made (`unsubscribeClaim`), over the held letters the scope moves. `none` where nothing is sent.
@@ -691,6 +655,7 @@ export function useScreenerState(
   decisionVerdict?: DecisionVerdict,
   hostMirrorAccount?: string,
   drawKeptFirst = false,
+  screenedBy: string | null = role.name,
 ): ScreenerState {
   const owner = useRef(usePinnedScope(scope));
   const mirrorAccount = hostMirrorAccount ?? mirrorOwnerOf(engine) ?? owner.current;
@@ -730,6 +695,7 @@ export function useScreenerState(
   const onwardIds = useRef<ReadonlySet<string>>(new Set());
   const store = useRef({
     pending: new Map<string, PendingEntry>(),
+    decidedHere: new Map<string, { sender: string }>(),
     out: new Set<string>(),
     pins: [] as ScreenerSenderDTO[],
     overrides: new Set<string>(),
@@ -851,8 +817,28 @@ export function useScreenerState(
   useEffect(() => {
     void engine.refreshScreenerWaiting().catch(() => { /* the device's own count stands, and says so */ });
   }, [engine]);
+  // Keep the failure report tied to the current account even after leaving the Screener.
+  const heldFiling = useMemo<{
+    canFile: () => boolean; onFailure: () => void; opened: boolean; blocked: boolean;
+  }>(() => ({ canFile: () => false, onFailure: () => {}, opened: false, blocked: false }), [engine, mirrorAccount]);
+  useLayoutEffect(() => {
+    const wasBlocked = heldFiling.blocked;
+    heldFiling.blocked = role.mode === "blocked";
+    heldFiling.canFile = () => !heldFiling.blocked &&
+      activeMirror.current?.engine === engine && activeMirror.current.account === mirrorAccount;
+    heldFiling.onFailure = () => {
+      if (confirmedSyncEngine(engine) !== null) toast(t("heldReleaseFailed"));
+    };
+    if (heldFiling.opened && wasBlocked && !heldFiling.blocked) engine.fileHeldDecisions(heldFiling);
+    return () => {
+      heldFiling.canFile = () => false;
+      heldFiling.onFailure = () => {};
+    };
+  }, [engine, heldFiling, mirrorAccount, role.mode, t, toast]);
   const rereadWaiting = (): void => {
     void engine.refreshScreenerWaiting().catch(() => { /* as above */ });
+    heldFiling.opened = true;
+    engine.fileHeldDecisions(heldFiling);
   };
 
   // Both of these end up inside toast and confirmation SENTENCES, so both name the sender the way
@@ -1216,7 +1202,13 @@ export function useScreenerState(
       if (held.length) s.pins = [{ ...entry.sender, held }, ...s.pins];
     }
     s.overrides.delete(id);
-    dispatchDecision(intentOf(id, entry));
+    const record = { sender: senderKey(entry.sender.from.address) };
+    s.decidedHere.set(id, record);
+    dispatchDecision(intentOf(id, entry), () => {
+      if (s.decidedHere.get(id) !== record) return;
+      s.decidedHere.delete(id);
+      bump();
+    });
     bump();
   };
 
@@ -1254,7 +1246,7 @@ export function useScreenerState(
     });
   };
 
-  const dispatchDecision = (d: ScreenerIntent) => {
+  const dispatchDecision = (d: ScreenerIntent, forgetDecision?: () => void) => {
     const done = () => disarmScreenerIntent(d.id, owner.current);
     const derived = d.derived;
     const heldIds = d.heldIds;
@@ -1263,7 +1255,7 @@ export function useScreenerState(
     const mayReport = () => activeMirror.current?.engine === engine && activeMirror.current.account === mirrorAccount
       && confirmedSyncEngine(engine) !== null;
     const mayDispatch = () => confirmed === undefined || mayReport();
-    if (!mayDispatch()) { done(); return; }
+    if (!mayDispatch()) { done(); forgetDecision?.(); return; }
     const explainDecision = (retro: boolean): boolean => {
       if (d.quiet || !mayReport()) return true;
       const verdict = decisionVerdict?.(engine, d, retro);
@@ -1296,7 +1288,11 @@ export function useScreenerState(
     const cardFiled = card ? [...new Set(d.inboxIds ?? [])].filter(stillInInbox) : [];
     const id = confirmed !== undefined && derived
       ? (confirmed.includes(d.id) ? d.id : confirmed[0] ?? cardFiled[0]) : d.id;
-    if (id === undefined || (confirmed !== undefined && !confirmed.length && !cardFiled.length)) { done(); return; }
+    if (id === undefined || (confirmed !== undefined && !confirmed.length && !cardFiled.length)) {
+      done();
+      forgetDecision?.();
+      return;
+    }
     const cardMoves: Array<Extract<EngineMutation, { kind: "move" }>> = cardTo === FOLDER_OF_VIEW.ohbox
       ? []
       : cardFiled.map((m) => ({ kind: "move" as const, messageId: m, folder: cardTo, from: FOLDER_OF_VIEW.ohbox, pressRule: true as const }));
@@ -1371,6 +1367,7 @@ export function useScreenerState(
         } : {}),
       }).then((res) => {
         done();
+        if (res.status === "rolled_back" || res.status === "superseded") forgetDecision?.();
         if (!mayDispatch()) return;
         // A wait keeps the sender out as an answer does: the decision still stands.
         settleOnward(pressVerdict(res).kind !== "refused");
@@ -1391,6 +1388,7 @@ export function useScreenerState(
           if (mayReport()) markQueued(d, res.pendingWith.name);
         }
         else if (res.status === "confirmed") {
+          if (mayReport()) engine.fileHeldDecisions(heldFiling);
           if (moves.length === 0) explainDecision(retroOf ?? true);
           else void Promise.allSettled(moves).then((answers) => {
             if (answers.every((answer) => answer.status === "fulfilled" && answer.value.status === "confirmed")) {
@@ -1398,7 +1396,7 @@ export function useScreenerState(
             }
           });
         }
-      }, () => { done(); settleOnward(false); refuse(d); });
+      }, () => { done(); forgetDecision?.(); settleOnward(false); refuse(d); });
     } else {
       // Past the gate: a rule, not a decide (#116). The sender's mail is
       // physically in the INBOX, presented in the Screener because they are
@@ -1437,6 +1435,7 @@ export function useScreenerState(
         }, card ? cardFiled.length : seedMoves.length, card || plan.ruleState === "promoted").then((key) => {
           done();
           // Replaced by a newer press about this sender: that press says the sentence.
+          if (key === null || key === "toastOwnAddress" || key === "toastDecideRefused" || key === "toastRuleFailed") forgetDecision?.();
           if (key === null) return;
           if (key === "toastRuleOrganizer" && heldBy.current) {
             if (!mayReport()) return;
@@ -1453,11 +1452,12 @@ export function useScreenerState(
           // looking untouched while the only record faded with the toast.
           if (key === "toastRuleFailed") markRefused(id);
           if (key === "toastRuled" || key === "toastRetargeted" || key === "toastRuledMoved" || key === "toastRuledFuture") {
+            if (mayReport()) engine.fileHeldDecisions(heldFiling);
             if (explainDecision(plan.retro)) return;
           }
           const why = key === "toastRuleFailed" ? whyOf(refused) : null;
           toast(ts(key, { sender: who, place, count: pressGained(before, shownAt(subject, dest)) }) + (why ? ` ${why}` : ""));
-        }, () => { done(); refuse(d); });
+        }, () => { done(); forgetDecision?.(); refuse(d); });
       } else {
         // The representative is gone from the mirror — and this branch was
         // EMPTY. `senderScreening` answers null exactly when `reader.get("message", id)` finds nothing; this runs up to
@@ -1470,6 +1470,7 @@ export function useScreenerState(
         // and the message is not there — holding the decision would be a
         // retry loop with no terminating condition but the TTL.
         done();
+        forgetDecision?.();
         refuse(d);
       }
     }
@@ -2469,79 +2470,9 @@ export function useScreenerState(
     (role.takeoverAsked !== true && (role.mode === "blocked" || isNothingOrganizes(role.pressRefusal))
       ? ((..._args: A) => refuseReadOnly()) : verb);
 
-  /* ── MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE ──────────────────────────────
-   *
-   * Asked of the door ONCE per mount, not per version bump: the set changes only when a rule or a
-   * placement does, and re-asking on every mirror bump would put a request behind every body that
-   * lands during a drain. A door that cannot answer leaves the mirror empty and no row appears. */
-  const [releasing, setReleasing] = useState(false);
-  useEffect(() => {
-    void engine.refreshHeldReleases().catch(() => {
-      /* Silent, and deliberately: this is an OFFER. A door that will not answer means no offer to
-         make, which the absent row already says — a toast here would raise a sentence about a
-         feature the person has not asked for yet. */
-    });
-  }, [engine]);
-
-  const heldRows = useMemo(() => heldReleaseGroups(engine.read()), [engine, version]);
-  const heldGroups = useMemo(() => heldRows.filter((g) => g.sender === undefined), [heldRows]);
-  const heldSenders = useMemo(() => heldRows.flatMap((g) =>
-    (g.sender === undefined ? [] : [{ sender: g.sender, count: g.count }])), [heldRows]);
-  const heldTotal = useMemo(() => heldReleaseTotalOf(engine.read()), [engine, version]);
-  const heldDismissed = useMemo(() => heldReleaseDismissedOf(engine.read()), [engine, version]);
-  const heldFingerprint = useMemo(() => heldReleaseFingerprintOf(engine.read()), [engine, version]);
-
-  /* NOT `useCallback`, and the census in `render-scope-census.test.ts` is why. A memoized closure
-     declared in this hook shares ONE runtime context with everything else the invocation binds — the
-     projected reader, the queue, the suggestion overlay — so keeping one across renders pins that
-     whole frame for as long as the callback lives (the renderer that reached 1 GB an idle hour).
-     A press handler is cheap to rebuild and is handed straight to a button, so there is nothing to
-     memoize for: the identity is read once per render and never used as a dependency. */
-  const pressHeldRelease = (ruleIds?: readonly string[]): void => {
-    if (releasing) return;
-    setReleasing(true);
-    // Before the account is confirmed the press waits for it (`sync-scheduler.ts#gatedPress`).
-    if (syncIdentityOf(engine) === "unconfirmed") toast(t("heldReleaseWaiting"));
-    // "Release all" names every contact line it SHOWED; a press naming rules names no sender.
-    const senders = ruleIds === undefined && heldSenders.length > 0 ? heldSenders.map((s) => s.sender) : undefined;
-    void engine.releaseHeldMail(ruleIds, senders)
-      .then((count) => {
-        // The count the SERVER released, never the one on screen when the press happened: another
-        // door may have decided a sender in between, and the sentence names what actually moved.
-        toast(count > 0 ? t("heldReleased", { count }) : t("heldReleasedNone"));
-      })
-      .catch(() => { toast(t("heldReleaseFailed")); })
-      .finally(() => { setReleasing(false); });
-  };
-
-  /* "Not now", built like the release press and for the press handler's non-memoized reason.
-     The engine reads the fingerprint off its own mirror, so this closure carries nothing. */
-  const pressHeldDismiss = (): void => {
-    if (releasing) return;
-    setReleasing(true);
-    void engine.dismissHeldRelease()
-      .catch(() => { toast(t("heldDismissFailed")); })
-      .finally(() => { setReleasing(false); });
-  };
-
-  /* NO ROW WITHOUT MAIL TO RELEASE — and a reader never sees one either, because the server
-     answers no groups for a mailbox this install does not organize. The `blocked` check is the
-     belt: a mode that renders an inert press is its own small lie (the bulk strip's argument).
-     DISMISSED hides it the same way: the account said "not now" to exactly this set, on some
-     device, and the server re-offers by construction the moment the set changes. */
-  const heldRelease: HeldReleaseOffer | null =
-    heldTotal > 0 && heldRows.length > 0 && role.mode !== "blocked" && !heldDismissed
-      ? {
-          total: heldTotal, groups: heldGroups, senders: heldSenders, releasing, release: pressHeldRelease,
-          // Contact lines are disjoint from the rule groups, so the rules' figure is the rest.
-          rulesTotal: heldTotal - heldSenders.reduce((n, s) => n + s.count, 0),
-          dismiss: heldFingerprint === "" ? null : pressHeldDismiss,
-        }
-      : null;
-
   /* ── OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT ────────────────────────────────────
    *
-   * Asked of the door ONCE per mount, like the offer above and for its reason: the set changes
+   * Asked of the door ONCE per mount: the set changes
    * only when a rule, a contact or a placement does, and re-asking on every mirror bump would put
    * a request behind every body that lands during a drain. */
   const [screening, setScreening] = useState(false);
@@ -2566,7 +2497,7 @@ export function useScreenerState(
       .then((count) => {
         // The count the SERVER moved, never the one on screen when the press happened: another
         // door may have decided a sender in between, and the sentence names what actually moved.
-        toast(count > 0 ? t("unscreenedMoved", { count }) : t("unscreenedMovedNone"));
+        reportScreened(toast, t, count, screenedBy);
       })
       .catch(() => { toast(t("unscreenedFailed")); })
       .finally(() => { setScreening(false); });
@@ -2582,13 +2513,14 @@ export function useScreenerState(
 
   /* WHAT OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY — asked at mount and again when Spam's letters change. */
   const spamMark = useMemo(() => spamLettersMark(segments.spam), [segments]);
-  const impersonationFiled = useImpersonationFiled(engine, role.mode === "blocked", spamMark, owner.current);
+  const { notice: impersonationFiled, autoFiledSpam } = useImpersonationFiled(engine, role.mode === "blocked", spamMark, owner.current);
 
   return {
     accountScope: scope,
     bulkUnsubscribeIds,
-    heldRelease,
     impersonationFiled,
+    wasAutoFiledSpam: (id) => autoFiledSpam.has(id)
+      && engine.read().get<EngineMessage>("message", id)?.placeDecided !== true,
     unscreened,
     failedAtGate: segments.failedAtGate,
     fileFailed: guardMove((id: string, to: "spam" | "ohbox") => { void fileFailed(id, to); }),
@@ -2601,8 +2533,17 @@ export function useScreenerState(
       const domain = domainOfAddress(senderKey(sender.from.address));
       return undecided.filter((row) => domainOfAddress(senderKey(row.from.address)) === domain).length;
     },
+    senderConfirmed: (sender) => {
+      if (!sender.derived || sender.held.length === 0) return false;
+      const reader = engine.read();
+      return sender.held.every(({ id }) => unsubscribeLetterOf(reader, id).authVerdict === "pass");
+    },
     unsubClaimOf,
     waitingCount,
+    decidedThisSession: new Set([
+      ...Array.from(s.decidedHere.values(), (record) => record.sender),
+      ...Array.from(s.pending.values(), (entry) => senderKey(entry.sender.from.address)),
+    ]).size,
     waitingSource: segments.source === "store" ? "store" : engine.screenerWaitingAvailable() ? "device" : "local",
     queueAnswered: firstPage !== null,
     copyBehind: firstPage?.page.copyBehind === true,
@@ -2655,4 +2596,19 @@ export function useScreenerState(
     decided,
     notApplied,
   };
+}
+
+export function reportScreened(
+  report: ToastFn,
+  t: Translator,
+  count: number,
+  organizer: string | null,
+): void {
+  if (count <= 0) {
+    report(t("unscreenedMovedNone"));
+    return;
+  }
+  report(t("unscreenedMoved", { count }), {
+    line: t("unscreenedMovedLine", { who: organizer ?? t("unscreenedOrganizer") }),
+  });
 }

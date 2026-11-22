@@ -114,14 +114,14 @@ export function ContactCard(props: ContactCardProps) {
       initialFocus={goes?.focus === undefined ? undefined : destination}
       closeWhenFull={closeWhenFull}
     >
-      <div className="oh-contactcard-head">
-        <Avatar name={person.name} address={person.address} size="l" />
-        <span className="oh-contactcard-who">
-          <b className="oh-display oh-contactcard-name">{person.name}</b>
-          <span className="oh-contactcard-address">{person.address}</span>
-        </span>
-        {copy ? <Button kind="quiet" size="s" icon="copy" label={copy.label} onPress={copy.onPress} /> : null}
-      </div>
+      <ContactCardHeader
+        title={person.name}
+        note={person.address}
+        lead={<Avatar name={person.name} address={person.address} size="l" />}
+        action={
+          copy ? <Button kind="quiet" size="s" icon="copy" label={copy.label} onPress={copy.onPress} /> : null
+        }
+      />
       {notice}
       {scope ? (
         <RadioLines
@@ -179,12 +179,41 @@ export function ContactCard(props: ContactCardProps) {
   );
 }
 
-function ContactDestinations({
+/** The same title and secondary line in a contact card or one of its pages. */
+export function ContactCardHeader({
+  title,
+  note,
+  lead,
+  action,
+  heading,
+}: {
+  title: string;
+  note: string;
+  lead: ReactNode;
+  action?: ReactNode;
+  heading?: boolean;
+}) {
+  const Title = heading ? "h3" : "b";
+  return (
+    <div className="oh-contactcard-head">
+      {lead}
+      <div className="oh-contactcard-who">
+        <Title className="oh-text oh-display oh-contactcard-name">{title}</Title>
+        <span className="oh-contactcard-address">{note}</span>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+export function ContactDestinations({
   goes,
   destination,
+  note,
 }: {
   goes: NonNullable<ContactCardProps["goes"]>;
-  destination: RefObject<HTMLButtonElement | null>;
+  destination?: RefObject<HTMLButtonElement | null>;
+  note?: string;
 }) {
   const group = useRef<HTMLDivElement | null>(null);
   const walk = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -208,7 +237,10 @@ function ContactDestinations({
   const taken = goes.places.some((p) => p.value === goes.value);
   return (
     <>
-      <h4 className="oh-text oh-contactcard-title">{goes.label}</h4>
+      <h4 className="oh-text oh-contactcard-title">
+        {goes.label}
+        {note ? <span role="status">{note}</span> : null}
+      </h4>
       <div
         ref={group}
         className="oh-contactcard-places"

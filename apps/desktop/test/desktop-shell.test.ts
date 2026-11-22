@@ -3444,8 +3444,8 @@ describe("the UI bundle's build config", () => {
     expect(live).toMatch(/!demo && suggestControl && suggestWire !== "none" && suggestWire\.configured\(\)/);
     expect(live).toMatch(/run\.forSenders\(\s*model\.unsuggestedSenders,\s*model\.suggestedSenders,/);
     expect(live).toMatch(/suggestions: suggestWire === "none" && !ownSuggest \? null : run\.suggestions/);
-    expect(tools).toMatch(/const \{ suggest, ownSuggest \} = useScreenerBeside\(\)/);
-    expect(tools).toMatch(/<Suggest suggest=\{suggest\}/);
+    expect(tools).toMatch(/const \{ suggest, ownSuggest, facts \} = useScreenerBeside\(\)/);
+    expect(tools).toMatch(/<Suggest\s+suggest=\{suggest\}/);
 
     for (const shared of [mount, live, tools]) {
       expect(shared).not.toMatch(/local\/ai|bridgeFetch|__TAURI|anthropic|ollama/i);

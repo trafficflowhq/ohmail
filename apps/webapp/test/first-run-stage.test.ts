@@ -492,8 +492,8 @@ describe("the structural rules that do not render", () => {
     // `serverMessageCount` is absent until a cycle has counted a folder, and a "0 still to read"
     // over a running pull is a confident wrong answer.
     const pull = screen("Pull.tsx");
-    expect(pull).toMatch(/remaining !== null \? \(/);
-    expect(pull).toMatch(/"onboarding\.etaSoon"/);
+    expect(pull).toMatch(/if \(pull\.remaining !== null\) \{\s*counts\.push/);
+    expect(pull).not.toContain("onboarding.etaSoon");
   });
 });
 
@@ -503,16 +503,18 @@ describe("each promise is rendered on the step that makes it", () => {
 
   it("`consentBody` and `consentHistory` are on the CONSENT screen", () => {
     const body = stepBody("Consent.tsx");
-    expect(body).toMatch(/say\("onboarding\.consentBody"\)/);
-    expect(body).toMatch(/say\("onboarding\.consentHistory"\)/);
+    expect(body).not.toContain("onboarding.consentBody");
+    expect(body).not.toContain("onboarding.consentHistory");
+    expect(body).toMatch(/<FolderMap say=\{say\}/);
     // And the promise that nothing has happened yet, which is true only because the consent
     // screen writes nothing at all — the write is one screen later.
-    expect(body).toMatch(/say\("onboarding\.consentNothingYet"\)/);
+    expect(body).not.toContain("onboarding.consentNothingYet");
     expect(body, "the consent screen writes something").not.toMatch(/\.organize\(|writes\.run\(/);
   });
 
   it("`windowLater` is on the WINDOW screen, beside the choice it qualifies", () => {
-    expect(stepBody("Window.tsx")).toMatch(/say\("onboarding\.windowLater"\)/);
+    expect(stepBody("Window.tsx")).not.toContain("onboarding.windowLater");
+    expect(stepBody("Window.tsx")).toMatch(/say\("onboarding\.nothingMoves"\)/);
   });
 
   it("`probeOk` is filled from the probe's own three answers and nothing else", () => {
@@ -529,8 +531,9 @@ describe("each promise is rendered on the step that makes it", () => {
 
   it("`elsewhereChoiceHereWhy` is on the ELSEWHERE screen, naming the holder", () => {
     const body = stepBody("Elsewhere.tsx");
-    expect(body).toMatch(/"onboarding\.elsewhereChoiceHereWhy"/);
-    expect(body).toMatch(/say\("onboarding\.elsewhereQueued"\)/);
+    expect(body).not.toContain("onboarding.elsewhereChoiceHereWhy");
+    expect(body).toMatch(/"onboarding\.elsewhereSay", \{ name \}/);
+    expect(body).not.toContain("onboarding.elsewhereQueued");
   });
 
   /**
@@ -545,7 +548,8 @@ describe("each promise is rendered on the step that makes it", () => {
    */
   it("promises the pass on every door, because every door now makes it", () => {
     const body = stepBody("Elsewhere.tsx");
-    expect(body).toMatch(/\{run\.agree\.claimed \? <SettingNote>\{say\("onboarding\.elsewhereQueued"\)\}<\/SettingNote> : null\}/);
+    expect(body).not.toContain("onboarding.elsewhereQueued");
+    expect(body).toContain("submit={run.acts.answerClaim}");
     expect(body, "the door-aware branch survived its own premise")
       .not.toMatch(/organizeHereQueued/);
   });
@@ -836,7 +840,8 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     const body = screen("MailboxStep.tsx");
     expect(body).toContain("if (mailbox !== null)");
     // The statement names the mailbox and offers only the forward verb.
-    expect(body).toContain('say("join.mailboxConnected", { address: mailbox.address })');
+    expect(body).toContain('say("onboarding.myMailboxes")');
+    expect(body).toContain("label={row.address}");
     // The form — provider picker, fields, Test — is on the OTHER arm.
     expect(body.indexOf("if (mailbox !== null)")).toBeLessThan(body.indexOf("<ConnectForm"));
   });

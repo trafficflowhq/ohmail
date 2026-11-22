@@ -74,8 +74,8 @@ export function Empty({ view }: { view: ScreenerView }) {
     return (
       <div role="list">
         <WaitRow
-          what={t(title, { count: notYet.mailboxes.length })}
-          why={t(why === "never_agreed" ? "notYetWhy" : "notOrganizingWhy")}
+          what={t(title, { count: notYet.mailboxes.length, address: displayAddress(first?.address ?? "") })}
+          why={t(why === "handed_back" ? "handedBackWhy" : "notYetWhy")}
           acts={press === null ? [] : [press]}
         />
       </div>
@@ -88,7 +88,12 @@ export function Empty({ view }: { view: ScreenerView }) {
     notYet !== null && !notYet.every ? (
       <>
         {notYet.mailboxes.map((m) => (
-          <ListLine key={m.id}>{t(one(m.why), { address: displayAddress(m.address) })}</ListLine>
+          <div role="list" key={m.id}>
+            <WaitRow
+              what={t(one(m.why), { address: displayAddress(m.address) })}
+              why={t(m.why === "handed_back" ? "handedBackWhy" : "notOrganizingWhy")}
+            />
+          </div>
         ))}
         {press !== null ? <ListLine act={{ ...press, quiet: true }} /> : null}
       </>
@@ -97,7 +102,7 @@ export function Empty({ view }: { view: ScreenerView }) {
   if (view.segment === "waiting")
     return (
       <>
-        {plan.columns === 2 ? null : <AllDecided />}
+        {plan.columns === 2 ? <KitEmpty label={t("place.empty.waiting")} /> : <AllDecided />}
         {some}
       </>
     );
@@ -109,10 +114,12 @@ export function AllDecided() {
   const t = useText("screener");
   const places = useText("place");
   const { commands } = useFrame();
+  const count = useScreener().decidedThisSession ?? 0;
+  if (count === 0) return <KitEmpty label={t("place.empty.waiting")} />;
   return (
     <KitEmpty
       mark="oh"
-      label={t("place.empty.waiting")}
+      label={t("decidedCount", { count })}
       act={{ label: places("ohbox"), onPress: () => commands.go({ place: "ohbox" }) }}
     />
   );

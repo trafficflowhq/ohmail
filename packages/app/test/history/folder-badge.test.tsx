@@ -24,7 +24,7 @@ it("names the full folder in History while still listing the letter in its folde
   await screen.findByRole("button", { name: "Folders" });
   act(() => address.visit("#/folder/projects"));
   expect(
-    within(await screen.findByRole("listbox", { name: "Earlier" })).getByRole("option", {
+    within(await screen.findByRole("listbox", { name: "Acme" })).getByRole("option", {
       name: /Studio order/,
     }),
   ).toBeTruthy();

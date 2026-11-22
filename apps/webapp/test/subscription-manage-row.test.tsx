@@ -160,7 +160,7 @@ describe("the row itself", () => {
     stubDoor(offered);
     await mount(h(await shell()));
 
-    expect(text()).toContain("Subscription");
+    expect(text()).toContain(messages.settings.paymentInvoices);
     const [b] = buttons();
     expect(b, "the row rendered no control").toBeDefined();
     expect(b!.textContent).toBe("Manage");
@@ -177,7 +177,7 @@ describe("the row itself", () => {
     // sampled: a sentence added here is a claim about money the open app cannot make.
     stubDoor(offered);
     await mount(h(await shell()));
-    expect(text()).not.toMatch(/credit|plan|solo|plus|renew|invoice|€|\$|trial/i);
+    expect(text()).not.toMatch(/credit|plan|solo|plus|renew|€|\$|trial/i);
   });
 });
 

@@ -89,10 +89,12 @@ const press = (el: HTMLElement) => fireEvent.click(el);
 describe("what the pane lists", () => {
   it("at rest: the lead, the name's blank and the verb by the names the journeys find, and what is signed in", () => {
     drawn(STATES.rest.model);
-    expect(seen(dev("intro"))).toBe(true);
-    expect((screen.getByRole("textbox", { name: dev("addFor") }) as HTMLInputElement).maxLength).toBe(100);
+    expect(seen(dev("intro"))).toBe(false);
+    expect((screen.getByRole("textbox", { name: dev("whoseDevice") }) as HTMLInputElement).maxLength).toBe(
+      100,
+    );
     expect(button(dev("addAction"))).toBeTruthy();
-    expect(seen(dev("addHint"))).toBe(true);
+    expect(seen(dev("addHint"))).toBe(false);
     expect(screen.getByRole("heading", { name: dev("devicesTitle") })).toBeTruthy();
     expect(seen(dev("codesTitle"))).toBe(false);
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -110,9 +112,10 @@ describe("what the pane lists", () => {
   it("every other device has its kind, the day it was added, the day last seen, and its way out", () => {
     drawn(STATES.rest.model);
     expect(within(line("Mila's phone")).getByRole("button", { name: dev("remove") })).toBeTruthy();
+    expect(line("Mila's phone").textContent).toContain(dev("kindAndroid"));
     expect(
       seen(dev("deviceMeta", { kind: dev("kindAndroid"), created: PHONE.added, seen: PHONE.seen })),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("a device that paired without a name is named by ohmail, in the reader's language", () => {
@@ -130,12 +133,12 @@ describe("what the pane lists", () => {
     drawn(STATES.rest.model);
     const group = line(dev("webGroup", { count: 2 }));
     expect(within(group).getByRole("button", { name: dev("webGroupAction") })).toBeTruthy();
-    expect(seen(dev("webGroupMeta", { seen: plain(3).seen }))).toBe(true);
+    expect(seen(dev("webGroupMeta", { seen: plain(3).seen }))).toBe(false);
     expect(screen.getAllByRole("button").map((each) => each.textContent)).toEqual([
-      dev("addAction"),
       dev("remove"),
       dev("remove"),
       dev("webGroupAction"),
+      dev("addAction"),
     ]);
   });
 
@@ -182,24 +185,24 @@ describe("what the pane lists", () => {
 });
 
 describe("the link, shown once", () => {
-  it("is drawn as its picture and printed for typing, under the sentence that says so, with the name it was made for", () => {
+  it("shows the named QR and scan instructions without printing the link", () => {
     drawn(STATES.pair.model);
     expect(screen.getByRole("heading", { name: "Ben" })).toBeTruthy();
-    expect(seen(dev("mintedLeadFor", { name: "Ben" }))).toBe(true);
+    expect(line(dev("scanWith")).textContent).toContain(dev("scanApp"));
     expect(pictured).toEqual([{ value: LINK, label: dev("qrAria") }]);
-    expect(seen(dev("typedEntry"))).toBe(true);
-    expect((document.body.textContent ?? "").split(LINK)).toHaveLength(2);
-    expect(seen(dev("mintedOnce"))).toBe(true);
+    expect(seen(dev("typedEntry"))).toBe(false);
+    expect((document.body.textContent ?? "").split(LINK)).toHaveLength(1);
+    expect(seen(dev("onceUntil", { time: "09:29" }))).toBe(true);
     expect(button(dev("addAction"))).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(within(line("Ben")).getByRole("button", { name: dev("revoke") })).toBeTruthy();
+    expect(button(dev("revokePairingLink"))).toBeTruthy();
   });
 
-  it("a link made for nobody is named by the fallback and says the plain lead", () => {
+  it("a link made for nobody is named by the fallback and shows scan instructions", () => {
     const model = { ...STATES.pair.model, made: { id: "c-1", link: LINK, name: "" } };
     drawn(model);
-    expect(screen.getByRole("heading", { name: dev("codeFallback") })).toBeTruthy();
-    expect(seen(dev("mintedLead"))).toBe(true);
+    expect(screen.getByRole("heading", { name: dev("newDevice") })).toBeTruthy();
+    expect(line(dev("scanWith")).textContent).toContain(dev("scanApp"));
   });
 
   it("Copy and Done are the model's two verbs", () => {
@@ -227,7 +230,7 @@ describe("what the last read, verb or copy left to say", () => {
   it("a copy the clipboard refused is said by the sentence it has today", () => {
     drawn(STATES.pairNotCopied.model);
     expect(seen(own("notCopied"))).toBe(true);
-    expect(seen(dev("copyFailed"))).toBe(true);
+    expect(seen(dev("copyPairingFailed"))).toBe(true);
     expect(seen(dev("copied"))).toBe(false);
   });
 
@@ -280,7 +283,7 @@ describe("what the last read, verb or copy left to say", () => {
     expect(button(dev("addAction"))).toBeNull();
     const off = screen.getAllByRole("button") as HTMLButtonElement[];
     expect(off.map((each) => each.disabled)).toEqual([true, true, true, true, true]);
-    expect(off[0]!.textContent).toBe(dev("working"));
+    expect(button(dev("working"))).toBeTruthy();
   });
 });
 
@@ -289,7 +292,7 @@ describe("the presses", () => {
     const type = vi.fn();
     const add = vi.fn();
     drawn(listening(STATES.rest.model, { type, add }));
-    const name = screen.getByRole("textbox", { name: dev("addFor") });
+    const name = screen.getByRole("textbox", { name: dev("whoseDevice") });
     fireEvent.change(name, { target: { value: "Ben" } });
     expect(type).toHaveBeenCalledWith("Ben");
     press(button(dev("addAction"))!);
@@ -298,7 +301,7 @@ describe("the presses", () => {
     expect(add).toHaveBeenCalledTimes(2);
     cleanup();
     drawn(listening(STATES.working.model, { add }));
-    fireEvent.keyDown(screen.getByRole("textbox", { name: dev("addFor") }), { key: "Enter" });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: dev("whoseDevice") }), { key: "Enter" });
     expect(add).toHaveBeenCalledTimes(2);
   });
 
@@ -320,7 +323,7 @@ describe("the presses", () => {
     drawn(listening(STATES.asked.model, { confirm, dismiss }));
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain(dev("removeAsk", { name: "Mila's phone" }));
-    expect(dialog.textContent).toContain(dev("removeWhat"));
+    expect(dialog.textContent).not.toContain(dev("removeWhat"));
     press(within(dialog).getByRole("button", { name: dev("cancel") }));
     expect([confirm.mock.calls.length, dismiss.mock.calls.length]).toEqual([0, 1]);
     press(within(dialog).getByRole("button", { name: dev("remove") }));
@@ -332,7 +335,7 @@ describe("the presses", () => {
     drawn(listening(STATES.askedWeb.model, { confirm }));
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain(dev("webGroupAsk", { count: 2 }));
-    expect(dialog.textContent).toContain(dev("webGroupWhat"));
+    expect(dialog.textContent).toContain(dev("webGroupScope"));
     press(within(dialog).getByRole("button", { name: dev("webGroupAction") }));
     expect(confirm).toHaveBeenCalledTimes(1);
   });
@@ -401,13 +404,15 @@ describe("the pane over its door", () => {
       adds: [ok(made)],
     });
     await over(door);
-    fireEvent.change(screen.getByRole("textbox", { name: dev("addFor") }), { target: { value: " Ben " } });
+    fireEvent.change(screen.getByRole("textbox", { name: dev("whoseDevice") }), {
+      target: { value: " Ben " },
+    });
     await pressed(dev("addAction"));
     expect(door.calls()).toEqual(["read", "groupsWebSessions", "add:Ben", "read"]);
-    expect(seen(LINK)).toBe(true);
+    expect(seen(LINK)).toBe(false);
     await pressed(dev("mintedDone"));
     expect(document.body.innerHTML.includes(PART)).toBe(false);
-    expect((screen.getByRole("textbox", { name: dev("addFor") }) as HTMLInputElement).value).toBe("");
+    expect((screen.getByRole("textbox", { name: dev("whoseDevice") }) as HTMLInputElement).value).toBe("");
   });
 
   it("revoking the code on show takes its picture and its link down with the row", async () => {
@@ -418,7 +423,7 @@ describe("the pane over its door", () => {
     });
     await over(door);
     await pressed(dev("addAction"));
-    await pressed(dev("revoke"));
+    await pressed(dev("revokePairingLink"));
     expect(document.body.innerHTML.includes(PART)).toBe(false);
     expect(seen("the picture to scan")).toBe(false);
     expect(seen(dev("revoked"))).toBe(true);

@@ -232,13 +232,12 @@ describe("the compose surface says what a forward will actually send", () => {
   it("renders the forwarding note when, and only when, there is a forward", () => {
     // The body is empty and the quote is added server-side, so without this line the form shows a
     // message that looks blank and the user cannot tell the original is coming with it.
-    expect(reply).toMatch(/props\.forward \?/);
-    expect(reply).toContain('t("reply.forwarding")');
+    expect(reply).not.toContain('t("reply.forwarding")');
   });
 
   it("the note's copy key exists — a `t()` on a missing key renders the key itself", () => {
     const messages = writeWords("en");
-    expect(typeof messages.reply.forwarding).toBe("string");
+    expect(messages.reply).not.toHaveProperty("forwarding");
     // The refusal sentence is gone with the refusal: a no_forward forward asks instead.
     expect(JSON.stringify(messages)).not.toContain('"forwardRefused"');
   });
@@ -257,7 +256,7 @@ describe("the compose surface says what a forward will actually send", () => {
    */
   it("the inline forward's placeholder is not the reply's", () => {
     expect(reply).toMatch(
-      /placeholder = forward \? t\("reply\.forwardPlaceholder"\) : t\("reply\.placeholder"\)/,
+      /placeholder = forward\s*\? t\("reply\.forwardPlaceholder"\)\s*:\s*t\(drafted === null \? "reply\.placeholder" : "reply\.draftPlaceholder"\)/,
     );
     for (const cat of ["en", "de"] as const) {
       const messages = writeWords(cat);

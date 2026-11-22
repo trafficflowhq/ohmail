@@ -158,10 +158,25 @@ describe("the Screener's line for letters filed to Spam for claiming a company",
   });
 
   it("OK lets the line go on this device until a newer filing", async () => {
-    await mount(await engineWith(true));
+    const engine = await engineWith(true);
+    await mount(engine);
     await press(button("OK"));
     expect(lead()).toBeNull();
     expect(localStorage.getItem(impersonationSeenKey(ACCOUNT))).toBe(PHISH.filedAt);
+    const manual = held("manual", "manual@elsewhere.invalid", "ohmail/Quarantine");
+    filed = [...filed, { ...ACT, messageId: manual.id, from: manual.from.address }];
+    incoming = [
+      created(held(PHISH.messageId, PHISH.from!, "ohmail/Quarantine")),
+      created(held(ACT.messageId, ACT.from!, "ohmail/Quarantine")),
+      created({ ...manual, placeDecided: true }),
+    ];
+    await pull(engine);
+    const segments = within(host).getByRole("group", { name: "Screener sections" });
+    await press(within(segments).getByRole("button", { name: /^Spam/ }));
+    const spam = within(within(host).getByRole("listbox", { name: "Screener" }));
+    expect(spam.getByRole("option", { name: /Subject p1/ }).textContent).toContain("Auto-detected");
+    expect(spam.getByRole("option", { name: /Subject a1/ }).textContent).toContain("Auto-detected");
+    expect(spam.getByRole("option", { name: /Subject manual/ }).textContent).not.toContain("Auto-detected");
     await remount(await engineWith(true));
     expect(lead(), "an acknowledged filing came back").toBeNull();
     filed = [...filed, { ...PHISH, messageId: "p2", filedAt: "2026-11-09T11:45:00.000Z" }];

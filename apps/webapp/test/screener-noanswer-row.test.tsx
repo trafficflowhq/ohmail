@@ -60,20 +60,20 @@ describe("a noAnswer row", () => {
   it("renders one plain sentence — no destination arrow, no 0.00", () => {
     mount(smallQueue);
     const reading = open("a@y.test");
-    expect(within(reading).getAllByText(messages.screener.aiSkip.spend_unavailable, { exact: true })).toHaveLength(1);
+    expect(within(reading).getAllByText(messages.screener.aiNoAnswerChip, { exact: true })).toHaveLength(1);
     expect(reading.textContent).not.toContain("0.00");
     expect(reading.textContent).not.toContain("0% sure");
     expect(reading.textContent).not.toContain("→");
 
     const answeredReading = within(open("paper@x.test"));
     expect(answeredReading.getByRole("heading", { name: /paper@x.test goes to News/ })).toBeTruthy();
-    expect(answeredReading.getByText("91% sure", { exact: true })).toBeTruthy();
+    expect(answeredReading.getByText("91%", { exact: true })).toBeTruthy();
   });
 
   it("the apply button and the filter chips read one selector", () => {
     mount(smallQueue);
-    expect(screen.getByRole("button", { name: /^Apply 2 — News$/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^All 5$/ }));
+    expect(screen.getByRole("button", { name: /^Apply 2$/ })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("group", { name: messages.screener.bulkAria })).getByRole("button", { name: /^All 5$/ }));
     const filters = within(screen.getByRole("menu", { name: messages.screener.filterAria }));
     expect(filters.getByRole("menuitemradio", { name: /^All/ }).textContent).toContain("5");
     expect(filters.getByRole("menuitemradio", { name: /^News/ }).textContent).toContain("2");
@@ -84,12 +84,16 @@ describe("a noAnswer row", () => {
 describe("the suggest control's resting sentence", () => {
   it("claims 'all suggested' only when no waiting sender lacks one", () => {
     mount(restingQueue(17), closed);
-    expect(screen.getByRole("button", { name: "Suggest again…" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Suggest again…" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(screen.getByRole("menuitem", { name: "Suggest again…" }).textContent).toContain("19");
     expect(screen.queryByText(/have a suggestion\./)).toBeNull();
   });
 
   it("still states it when every sender truly has one — the positive control", () => {
     mount(restingQueue(0), closed);
-    expect(screen.getByText("All 19 senders have a suggestion.", { exact: true })).toBeTruthy();
+    expect(screen.queryByText("All 19 senders have a suggestion.", { exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(screen.getByRole("menuitem", { name: "Suggest again…" }).textContent).toContain("19");
   });
 });

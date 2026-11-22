@@ -1,6 +1,13 @@
-import { Fragment, type KeyboardEvent, type ReactNode } from "react";
+import { type KeyboardEvent, type ReactNode } from "react";
 import { Button, Empty, Field } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingsSheet, type SettingsSheetProps } from "@ohmail/ui/mail";
+import {
+  ActionPanel,
+  SettingLine,
+  SettingNote,
+  SettingsSheet,
+  type SettingsSheetProps,
+} from "@ohmail/ui/mail";
+import type { PaneSheet } from "../../settings/contract.js";
 import { useText } from "../../text/index.js";
 import { ACCOUNT_REFUSALS, type FactorSlot, type QrSlot } from "../contract.js";
 import type { InvitesModel } from "./model.js";
@@ -12,6 +19,7 @@ export interface InvitesPaneProps {
   readonly factor: FactorSlot;
   /** The picture of the invite link to scan, filled by the shell. */
   readonly qr: QrSlot;
+  readonly sheet?: PaneSheet;
 }
 
 type Wants = NonNullable<SettingsSheetProps["wants"]>;
@@ -20,12 +28,38 @@ type Wants = NonNullable<SettingsSheetProps["wants"]>;
  * Settings › Invites: an invite made for somebody as a link that is shown once, and the open invites, each with
  * its way back. It holds no state and reaches nothing: it draws its model, and its verbs are the model's.
  */
-export function InvitesPane({ model, factor, qr }: InvitesPaneProps) {
-  return (
+export function InvitesPane({ model, factor, qr, sheet }: InvitesPaneProps) {
+  const t = useText("invites");
+  const body = (
     <>
       {model.made === null ? <NewInvite model={model} /> : <MadeInvite model={model} qr={qr} />}
       <OpenInvites model={model} />
       {model.ask ? factor(model.ask) : null}
+    </>
+  );
+  const foot = (
+    <ActionPanel
+      label={t("title")}
+      items={[
+        model.made === null
+          ? {
+              id: "make",
+              icon: "plus",
+              label: model.working?.kind === "make" ? t("working") : t("mintAction"),
+              kind: "ink",
+              disabled: model.working !== null,
+              onPress: model.make,
+            }
+          : { id: "done", icon: "check", label: t("mintedDone"), kind: "ink", onPress: model.done },
+      ]}
+    />
+  );
+  return sheet ? (
+    sheet(body, foot)
+  ) : (
+    <>
+      {body}
+      {foot}
     </>
   );
 }
@@ -37,6 +71,7 @@ export function InvitesPane({ model, factor, qr }: InvitesPaneProps) {
 function FirstSheet(p: {
   readonly model: InvitesModel;
   readonly title?: string;
+  readonly aside?: string;
   readonly children: ReactNode;
 }) {
   const t = useText("invites");
@@ -53,7 +88,7 @@ function FirstSheet(p: {
     wants = line === "" ? { word } : { word, line };
   }
   return (
-    <SettingsSheet title={p.title} hot={p.title !== undefined} wants={wants}>
+    <SettingsSheet title={p.title} aside={p.aside} hot={p.title !== undefined} wants={wants}>
       {problem !== null && nothingRan ? <SettingNote>{nothingRanSaid}</SettingNote> : null}
       {p.children}
       {/* What the last verb did, where a screen reader hears it arrive. */}
@@ -73,14 +108,15 @@ function NewInvite({ model }: { readonly model: InvitesModel }) {
   };
   return (
     <FirstSheet model={model}>
-      <SettingNote>{t("intro")}</SettingNote>
       <div className="account-invite-name" onKeyDown={onKey}>
-        <Field label={t("mintFor")} value={model.name} onChange={model.type} maxLength={100} />
+        <Field
+          label={t("mintFor")}
+          placeholder={t("namePlaceholder")}
+          value={model.name}
+          onChange={model.type}
+          maxLength={100}
+        />
       </div>
-      <SettingNote>{t("mintHint")}</SettingNote>
-      <Button kind="ink" size="s" disabled={off} onPress={model.make}>
-        {model.working?.kind === "make" ? t("working") : t("mintAction")}
-      </Button>
     </FirstSheet>
   );
 }
@@ -94,19 +130,24 @@ function MadeInvite({ model, qr }: { readonly model: InvitesModel; readonly qr: 
   const t = useText("invites");
   const { made } = model;
   if (made === null) return null;
+  const openInvite = model.invites?.find((invite) => invite.id === made.id);
   return (
-    <FirstSheet model={model} title={made.name === "" ? t("rowFallback") : made.name}>
-      <SettingNote>
-        {made.name === "" ? t("mintedLead") : t("mintedLeadFor", { name: made.name })}
-      </SettingNote>
+    <FirstSheet model={model} title={made.name || t("rowFallback")} aside={t("onceSevenDays")}>
       {qr(made.link, t("qrAria"))}
+      {made.expires ? <SettingLine label={t("expires")} value={made.expires} /> : null}
       <Button kind="two" size="s" onPress={model.copy}>
         {t("copyLink")}
       </Button>
-      <Button kind="ink" size="s" onPress={model.done}>
-        {t("mintedDone")}
-      </Button>
-      <SettingNote>{t("mintedOnce")}</SettingNote>
+      {openInvite ? (
+        <Button
+          kind="quiet"
+          size="s"
+          disabled={model.working !== null}
+          onPress={() => model.revoke(openInvite.id)}
+        >
+          {t("revoke")}
+        </Button>
+      ) : null}
     </FirstSheet>
   );
 }
@@ -124,14 +165,16 @@ function OpenInvites({ model }: { readonly model: InvitesModel }) {
     <SettingsSheet title={t("liveTitle")} aside={String(invites.length)}>
       {invites.length === 0 ? <Empty label={own("none")} /> : null}
       {invites.map((invite) => (
-        <Fragment key={invite.id}>
-          <SettingLine label={invite.name ?? t("rowFallback")} icon="invite">
-            <Button kind="two" size="s" disabled={working !== null} onPress={() => model.revoke(invite.id)}>
-              {working?.kind === "revoke" && working.id === invite.id ? t("working") : t("revoke")}
-            </Button>
-          </SettingLine>
-          <SettingNote>{t("rowMeta", { created: invite.made, expires: invite.expires })}</SettingNote>
-        </Fragment>
+        <SettingLine
+          key={invite.id}
+          label={invite.name ?? t("rowFallback")}
+          icon="invite"
+          value={t("rowMeta", { created: invite.made, expires: invite.expires })}
+        >
+          <Button kind="two" size="s" disabled={working !== null} onPress={() => model.revoke(invite.id)}>
+            {working?.kind === "revoke" && working.id === invite.id ? t("working") : t("revoke")}
+          </Button>
+        </SettingLine>
       ))}
     </SettingsSheet>
   );

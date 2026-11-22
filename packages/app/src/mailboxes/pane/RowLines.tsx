@@ -2,14 +2,21 @@ import type { ReactNode } from "react";
 import { Button } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
-import { notCheckedOf, quietSaid, type RowState, type Standing } from "@ohmail/app-logic/mailboxes/pane/said";
+import {
+  notCheckedOf,
+  providerName,
+  quietSaid,
+  type RowState,
+  type Standing,
+} from "@ohmail/app-logic/mailboxes/pane/said";
+import { useText } from "../../text/index.js";
 import { NONE } from "../../host/index.js";
 import { ConnectForm } from "../connect/index.js";
 import type { ConnectResult, ConnectSubject } from "../connect/contract.js";
 import { Checks } from "./Checks.js";
 import { Organizing, StandDown } from "./Organizer.js";
 import { formOf, type RowProps } from "./Row.js";
-import { useSay, useStamps } from "./say.js";
+import { useFigure, useSay, useStamps } from "./say.js";
 
 /**
  * AN OPENED ROW'S LINES: first its state with the exact time (the shipped row's pointer hint), then in the shipped
@@ -24,6 +31,8 @@ export function RowLines(
   const { m, model, verbs, standing, state, filer } = props;
   const say = useSay();
   const stamps = useStamps();
+  const picker = useText("providerPicker");
+  const figure = useFigure();
   const now = model.list.now;
   const quiet = verbs.dismissQuiet ? quietSaid(m, { now, stamps }) : null;
   const late = notCheckedOf(m, { now, stamps });
@@ -33,8 +42,10 @@ export function RowLines(
   const erasing = Boolean(m.erasure);
   return (
     <div className="mbx-row-lines">
-      {/* Its state with the exact time: when it last synced, or since when and how often it fails. */}
-      {"title" in state && state.title ? <SettingLine label={state.text} value={state.title} /> : null}
+      <SettingLine label={say({ key: "lineProvider" })} value={providerName(m) ?? picker("otherLabel")} />
+      {state.kind !== "ok" && "title" in state && state.title ? (
+        <SettingLine label={state.text} value={state.title} />
+      ) : null}
       {props.superseded > 0 ? <SettingNote>{say({ key: "superseded" })}</SettingNote> : null}
       <StandDown {...props} />
       {standing.organizerBlock ? <Organizing {...props} /> : null}
@@ -57,18 +68,27 @@ export function RowLines(
       {(m.setAside ?? 0) > 0 ? (
         <SettingNote>{say({ key: "desktopSetAside", values: { n: m.setAside! } })}</SettingNote>
       ) : null}
+      <SettingLine
+        label={say({ key: "lineSynced" })}
+        value={m.lastSyncAt ? stamps.when(m.lastSyncAt, now) : undefined}
+      >
+        {verbs.resync && m.status !== "disabled" && !erasing ? (
+          <Button
+            kind="two"
+            size="s"
+            disabled={model.acts.queued.has(m.id)}
+            onPress={() => model.acts.resync(m.id)}
+          >
+            {say({ key: "syncNow" })}
+          </Button>
+        ) : null}
+      </SettingLine>
+      {typeof m.messageCount === "number" && !erasing ? (
+        <SettingLine label={say({ key: "lineMessages" })} value={figure(m.messageCount)} />
+      ) : null}
+      {verbs.check && !erasing && m.status !== "disabled" ? <Checks {...props} /> : null}
       {m.status === "disabled" || erasing ? null : (
         <div className="mbx-pane-acts">
-          {verbs.resync ? (
-            <Button
-              kind="two"
-              size="s"
-              disabled={model.acts.queued.has(m.id)}
-              onPress={() => model.acts.resync(m.id)}
-            >
-              {say({ key: "syncNow" })}
-            </Button>
-          ) : null}
           {form === "edit" && editing !== m.id ? (
             <Button
               kind="quiet"
@@ -107,7 +127,6 @@ export function RowLines(
           factor={props.factor}
         />
       ) : null}
-      {verbs.check && !erasing && m.status !== "disabled" ? <Checks {...props} /> : null}
       {props.calendar !== NONE ? props.calendar({ mailboxId: m.id, provider: m.provider }) : null}
     </div>
   );

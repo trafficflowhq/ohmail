@@ -2,11 +2,11 @@
  * RESURFACE: WHEN. The chooser of today's reader in the new design's menu: the time, visible before any choice;
  * Now (a state, not a date); Tomorrow and Next week, each naming the day and the hour it books; Pick a date, a month
  * floored at the first day the time is still ahead; Cancel. Every dated answer is minted AT THE PRESS from the
- * horizons of `@ohmail/app-logic/reader` (the reader's zone, the clocks' two nights said out loud), never from the
+ * horizons of `@ohmail/app-logic/reader` (the reader's zone), never from the
  * moment the menu painted. The time starts at the account's stored hour where one is handed, else the product's.
  */
 import { useEffect, useState, type RefObject } from "react";
-import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { Menu, MenuItem, MenuRule } from "@ohmail/ui/base";
 import { MiniMonth, type MiniMonthDay } from "@ohmail/ui/calendar";
 import {
   dayAtIn,
@@ -87,11 +87,6 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
   };
   const { tomorrow, nextWeek } = resurfaceHorizonsIn(now, at, zone);
   const note = (h: ResurfaceHorizon) => horizonStamp(h, now, zone, locale);
-  const skipped = [
-    { name: t("resurface.tomorrow"), horizon: tomorrow },
-    ...(nextWeek ? [{ name: t("resurface.nextWeek"), horizon: nextWeek }] : []),
-  ].find((x) => x.horizon.verdict === "shifted_forward");
-
   if (picking)
     return (
       <PickDay
@@ -99,6 +94,7 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
         onClose={onClose}
         anchor={anchor}
         at={at}
+        onChangeTime={setAt}
         floor={floor}
         today={today}
         onPick={(id) => dated(() => dayAtIn(id, at, zone))}
@@ -115,24 +111,9 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
       title={t("verb.resurface")}
       up
     >
-      <label className="rd-resurface-at">
-        <span>{t("resurface.time")}</span>
-        <input
-          className="rd-resurface-time"
-          type="time"
-          aria-label={t("resurface.time")}
-          value={at}
-          onChange={(e) => {
-            /* Cleared mid-edit is no time: the last real one stands, so the field never disagrees with the days. */
-            if (e.target.value !== "") setAt(e.target.value);
-          }}
-        />
-      </label>
-      <MenuItem icon="resurface" onPress={() => answer("resurface_now")}>
-        {t("resurface.now")}
-      </MenuItem>
+      <ResurfaceTime at={at} onChange={setAt} />
+      <MenuItem onPress={() => answer("resurface_now")}>{t("resurface.now")}</MenuItem>
       <MenuItem
-        icon="day"
         note={note(tomorrow)}
         onPress={() => dated(() => resurfaceHorizonsIn(new Date(), at, zone).tomorrow)}
       >
@@ -140,7 +121,6 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
       </MenuItem>
       {nextWeek ? (
         <MenuItem
-          icon="week"
           note={note(nextWeek)}
           onPress={() =>
             dated(() => {
@@ -152,14 +132,8 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
           {t("resurface.nextWeek")}
         </MenuItem>
       ) : null}
-      {skipped ? (
-        <MenuNote>
-          {t("resurface.skip", { horizon: skipped.name, booked: skipped.horizon.time, asked: at })}
-        </MenuNote>
-      ) : null}
-      <MenuItem icon="calendar" onPress={() => setPicking(true)}>
-        {t("resurface.pick")}
-      </MenuItem>
+      <MenuItem onPress={() => setPicking(true)}>{t("resurface.pick")}</MenuItem>
+      <MenuRule />
       <MenuItem onPress={onClose}>{t("resurface.cancel")}</MenuItem>
     </Menu>
   );
@@ -171,6 +145,7 @@ function PickDay({
   onClose,
   anchor,
   at,
+  onChangeTime,
   floor,
   today,
   onPick,
@@ -180,6 +155,7 @@ function PickDay({
   onClose: () => void;
   anchor: RefObject<HTMLElement | null>;
   at: string;
+  onChangeTime: (at: string) => void;
   /** The first day (`YYYY-MM-DD`) the time is still ahead. */
   floor: string;
   today: string;
@@ -211,7 +187,15 @@ function PickDay({
       return { year: s.year + Math.floor(m / 12), month: (((m % 12) + 12) % 12) + 1 };
     });
   return (
-    <Menu open={open} onClose={onClose} anchor={anchor} label={t("resurface.pick")} up>
+    <Menu
+      open={open}
+      onClose={onClose}
+      anchor={anchor}
+      label={t("resurface.pick")}
+      title={t("verb.resurface")}
+      up
+    >
+      <ResurfaceTime at={at} onChange={onChangeTime} />
       <MiniMonth
         takesKeys
         size="widget"
@@ -232,9 +216,26 @@ function PickDay({
           if (id >= floor) onPick(id);
         }}
       />
-      <MenuItem icon="back" onPress={onBack}>
-        {t("resurface.back")}
-      </MenuItem>
+      <MenuRule />
+      <MenuItem onPress={onBack}>{t("resurface.back")}</MenuItem>
     </Menu>
+  );
+}
+
+function ResurfaceTime({ at, onChange }: { at: string; onChange: (value: string) => void }) {
+  const t = useText("reader");
+  return (
+    <label className="rd-resurface-at">
+      <span>{t("resurface.time")}</span>
+      <input
+        className="rd-resurface-time"
+        type="time"
+        aria-label={t("resurface.time")}
+        value={at}
+        onChange={(e) => {
+          if (e.target.value !== "") onChange(e.target.value);
+        }}
+      />
+    </label>
   );
 }

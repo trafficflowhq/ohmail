@@ -123,7 +123,7 @@ describe("the mailbox step keeps its own refusals", () => {
     const ui = await mailboxForm(en, "mail.home.lan");
     await ui.submit(en.join.connectMailbox);
     expect(ui.h1()).toBe(en.join.step_mailbox_title);
-    expect(ui.h1()).not.toBe(en.join.step_invite_title);
+    expect(ui.h1()).not.toBe(en.join.myInvite.replace("<blank></blank>.", en.join.inviteLabel));
     expect(ui.alertText()).toContain(said);
     expect(ui.alertText()).not.toContain(en.join.inviteRequiredAfterAll);
     expect(ui.value("join-imap")).toBe("mail.home.lan");
@@ -154,7 +154,7 @@ describe("the account step keeps its own refusals, and the invite step opens onl
   const openAccountForm = async (address: string) => {
     signedIn = false;
     const ui = await mount(en);
-    expect(ui.h1()).toBe(en.join.step_account_title);
+    expect(ui.h1()).toBe(en.join.account.replace("<name>,</name>", `${en.join.nameLabel},`).replace("<email>,</email>", `${en.join.emailLabel},`).replace("<password></password>.", en.join.passwordLabel));
     await ui.type("join-email", address);
     await ui.type("join-name", "Mila Reyes");
     await ui.type("join-pw", "a-long-enough-password");
@@ -164,8 +164,8 @@ describe("the account step keeps its own refusals, and the invite step opens onl
   it("an address the browser takes and the server does not (mila@gmailcom): still the account step, its own sentence", async () => {
     registerAnswer = refusal(400, "validation_failed", "email must be a valid address");
     const ui = await openAccountForm("mila@gmailcom");
-    await ui.submit(en.join.createAccount);
-    expect(ui.h1()).toBe(en.join.step_account_title);
+    await ui.submit(en.join.continue);
+    expect(ui.h1()).toBe(en.join.account.replace("<name>,</name>", `${en.join.nameLabel},`).replace("<email>,</email>", `${en.join.emailLabel},`).replace("<password></password>.", en.join.passwordLabel));
     expect(ui.alertText()).toContain(en.join.refusedEmail);
     expect(ui.value("join-email")).toBe("mila@gmailcom");
   });
@@ -173,8 +173,8 @@ describe("the account step keeps its own refusals, and the invite step opens onl
   it("the control: an API that still wants an invite under open signup opens the invite step", async () => {
     registerAnswer = refusal(400, "validation_failed", "inviteCode is required");
     const ui = await openAccountForm("mila@example.com");
-    await ui.submit(en.join.createAccount);
-    expect(ui.h1()).toBe(en.join.step_invite_title);
+    await ui.submit(en.join.continue);
+    expect(ui.h1()).toBe(en.join.myInvite.replace("<blank></blank>.", en.join.inviteLabel));
     expect(ui.alertText()).toContain(en.join.inviteRequiredAfterAll);
   });
 });

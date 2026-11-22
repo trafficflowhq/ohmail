@@ -25,7 +25,7 @@ import { Elsewhere } from "./Elsewhere.js";
 import { useStepEntry } from "./focus.js";
 import { MailboxStep } from "./MailboxStep.js";
 import { Choose, Vanished, Welcome } from "./Opening.js";
-import { Confirms, Progress, type StepProps } from "./parts.js";
+import { Confirms, type StepProps } from "./parts.js";
 import { Pull } from "./Pull.js";
 import { runWordsOf } from "./run-words.js";
 import { SeedReview } from "./SeedReview.js";
@@ -51,9 +51,6 @@ const STEPS: Readonly<Record<OnboardingStep, (props: StepProps) => ReactNode>> =
   summary: Summary,
   pair: Pair,
 };
-
-/** The screens that are no phase of the walk draw no rail. */
-const NO_RAIL: ReadonlySet<OnboardingStep> = new Set(["welcome", "vanished", "choose"]);
 
 /** The stage's registration. Made once by the shell that mounts it, never inline. */
 export function firstRunStage(slots: FirstRunSlots): StageEntry {
@@ -158,7 +155,6 @@ function Walk(p: RunProps & { ground: FirstRunGround }): ReactNode {
         run.acts.escape();
       }}
     >
-      {NO_RAIL.has(step) ? null : <Progress run={run} say={say} />}
       <Step {...props} />
       <Confirms run={run} say={say} />
       {/* The second factor, asked beside the step it unblocks; a verified factor sends the parked press once more. */}

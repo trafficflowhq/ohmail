@@ -294,7 +294,9 @@ describe("the plan", () => {
     expect(subjectRuleToast(plan, "confirmed")).toBe("subjectAlready");
     const filed = await pressSubject(CORPUS(), [ruleRow({ destination: "ohmail/News", subjectContains: TOKEN })]);
     expect(filed.ruleWrites()).toEqual([]);
-    expect(filed.report()).toContain("You already had that rule. 2 messages moved to News.");
+    expect(filed.moves()).toEqual(["alert-1", "alert-2"]);
+    expect(filed.report()).toContain("You already had that rule. 2 messages moved to News");
+    expect(filed.report()).not.toContain("2 messages moved to News.");
   });
 
   it("an identical rule stored before the News rename is the same rule — nothing is written", async () => {
@@ -476,9 +478,9 @@ const click = async (node: Element | null | undefined) => {
 };
 
 const option = (el: HTMLElement, name: string) =>
-  within(el).getByRole("option", { name: new RegExp(`^${name}`) });
-const go = (el: HTMLElement, dest: string) =>
-  within(el).getByRole<HTMLButtonElement>("button", { name: messages.screening.subjectConfirmGo.replace("{dest}", dest) });
+  within(el).getByRole("radio", { name });
+const go = (el: HTMLElement) =>
+  within(el).getByRole<HTMLButtonElement>("button", { name: messages.screening.subjectMakeRule });
 
 /** Type into a controlled input: the native setter plus a bubbling `input`, inside act. */
 const type = async (input: HTMLInputElement, value: string) => {
@@ -548,7 +550,7 @@ async function pressSubject(list: EngineMessage[], rules: RuleDTO[], applyRetro 
   const retro = within(mounted.el).queryByRole("switch", { name: messages.screening.retroToggleAria });
   if (!applyRetro && retro) await click(retro);
   if (!applyRetro && rules.length > 0) expect(retro).toBeNull();
-  await click(go(mounted.el, "News"));
+  await click(go(mounted.el));
   await tick(500);
   return mounted;
 }
@@ -584,19 +586,17 @@ describe("the sheet a person actually presses", () => {
     const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1");
     await click(option(el, "News"));
 
-    const confirm = el.querySelector(".sm-confirm p");
-    expect(confirm, "pressing a destination did not open the confirm").toBeTruthy();
-    const text = confirm!.textContent ?? "";
-    expect(text).toContain(SENDER);
-    expect(text).toContain(TOKEN);
-    expect(text).toContain("News");
-    expect(text.toLowerCase()).toContain("and");   // it reads as a conjunction, not a list
-
-    // …and the FIRST press committed nothing.
+    const form = within(el);
+    expect(form.getByText(SENDER, { exact: true })).toBeTruthy();
+    expect(form.getByRole("radio", { name: (name) => name.includes(TOKEN), checked: true })).toBeTruthy();
+    expect(form.getByRole("radio", { name: "News", checked: true })).toBeTruthy();
+    expect(form.getByText("2 of 3 match")).toBeTruthy();
+    expect(form.queryByText(/AND subject contains/)).toBeNull();
+    // The term and the pile are selected before anything leaves.
     expect(ruleWrites()).toEqual([]);
-    await click(go(el, "News"));
+    await click(go(el));
     expect(ruleWrites()).toEqual([expect.objectContaining({
-      kind: "rule_create", subjectContains: TOKEN, destination: "ohmail/News", applyRetro: true,
+      kind: "rule_create", match: SENDER, subjectContains: TOKEN, destination: "ohmail/News", applyRetro: true,
     })]);
   });
 
@@ -606,7 +606,7 @@ describe("the sheet a person actually presses", () => {
     const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1");
     await click(within(el).getByRole("radio", { name: messages.screening.subjectEditLead }));
     await click(option(el, "Receipts"));
-    await click(go(el, "Receipts"));
+    await click(go(el));
     expect(ruleWrites()).toEqual([expect.objectContaining({
       kind: "rule_create", subjectContains: `${TOKEN} Alert: brute-force attempt blocked`,
       destination: "ohmail/Receipts", applyRetro: true,
@@ -642,8 +642,10 @@ describe("the sheet a person actually presses", () => {
     expect(tile.textContent).toContain("1 of this sender's messages");
 
     await click(option(el, "News"));
-    expect(el.querySelector(".sm-confirm p")!.textContent).toContain("Alert:");
-    await click(go(el, "News"));
+    expect(editField(el).value).toBe("Alert:");
+    expect(within(el).getByText("1 of 3 match")).toBeTruthy();
+    expect(ruleWrites()).toEqual([]);
+    await click(go(el));
     expect(ruleWrites()).toEqual([expect.objectContaining({
       kind: "rule_create", subjectContains: "Alert:", destination: "ohmail/News", applyRetro: true,
     })]);
@@ -669,7 +671,7 @@ describe("the sheet a person actually presses", () => {
     await type(editField(el), "");
     expect(el.querySelector(".sm-edit-warn")!.textContent).toContain("Type part of the subject");
     await click(option(el, "News"));
-    const commit = go(el, "News");
+    const commit = go(el);
     expect(commit.disabled, "an empty term must not be committable").toBe(true);
     await click(commit);
     expect(ruleWrites()).toEqual([]);
@@ -682,7 +684,7 @@ describe("the sheet a person actually presses", () => {
       msg("only", SENDER, "[OneOff] a thing that happened once"),
       msg("other", SENDER, "Rechnung 2026-08"),
     ], "only");
-    expect(el.textContent).toContain("No repeating tag");
+    expect(el.textContent).not.toContain("No repeating tag");
     // …and the manual door is the standing offer: the field, prefilled with the full subject.
     expect(editField(el).value).toBe("[OneOff] a thing that happened once");
     expect(within(el).queryByRole("radio", { name: /\[OneOff\]/ })).toBeFalsy();
@@ -696,7 +698,7 @@ describe("the sheet a person actually presses", () => {
     await type(editField(el), "A".repeat(201));
     expect(el.querySelector(".sm-edit-warn")!.textContent).toContain("at most 200 characters");
     await click(option(el, "News"));
-    const commit = go(el, "News");
+    const commit = go(el);
     expect(commit.disabled).toBe(true);
     await click(commit);
     expect(ruleWrites()).toEqual([]);
@@ -711,7 +713,7 @@ describe("the sheet a person actually presses", () => {
     ]);
     await type(editField(el), "");
     await click(option(el, "News"));
-    const commit = go(el, "News");
+    const commit = go(el);
     expect(commit.disabled, "an empty term must never ride an unrelated rule's `already`").toBe(true);
     await click(commit);
     expect(ruleWrites()).toEqual([]);
@@ -722,7 +724,7 @@ describe("the sheet a person actually presses", () => {
       ruleRow({ destination: "ohmail/News", subjectContains: TOKEN }),
     ]);
     await click(option(el, "News"));
-    expect(el.querySelector(".sm-confirm")!.textContent).toContain("already have this rule");
+    expect(within(el).getByText(messages.screening.subjectConfirmAlready)).toBeTruthy();
   });
 });
 

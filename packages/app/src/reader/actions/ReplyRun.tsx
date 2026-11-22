@@ -24,13 +24,15 @@ export function RunReadingHead({
 export function ReplyPanel({
   run,
   reply,
+  more,
 }: {
   readonly run: ReplyRunState | null;
   readonly reply: readonly PanelVerb[] | null;
+  readonly more?: ComponentProps<typeof ActionPanel>["more"];
 }) {
   const reader = useText("reader");
   const t = useText("later");
-  if (run === null) return <ActionPanel label={reader("panel")} items={reply ?? []} />;
+  if (run === null) return <ActionPanel label={reader("panel")} items={reply ?? []} more={more} />;
   const send = reply?.find(({ id }) => id === "send");
   const items: PanelVerb[] = [
     ...(send ? [{ ...send, label: t("run.done"), rank: 0, wordOrder: 1 }] : []),

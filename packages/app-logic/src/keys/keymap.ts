@@ -745,7 +745,7 @@ export function useOptionalKeyBindings(
  * this registry deleted from the (i) panel — so the bar reads the same registry the `?` sheet does, and a
  * hint cannot be wrong: change the chord and the button follows. Returns the binding that would WIN this
  * keypress (`bindings` is in dispatch order), answering "what will this key do HERE". It does not throw,
- * unlike `useKeymap`: reading is not declaring — `MessagePane` renders in provider-less mounts, and a
+ * unlike `useKeymap`: reading is not declaring — the shared Reader renders in provider-less mounts, and a
  * message must stay readable. No provider means no hint, never a guessed one.
  */
 export function useBinding(chord: string): BoundKey | null {

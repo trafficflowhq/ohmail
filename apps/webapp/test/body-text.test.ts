@@ -42,7 +42,7 @@ async function unmount(): Promise<void> {
   host = null;
 }
 
-/** Render a body and hand back the container — the `.msg-body` div `MessagePane` wraps it in. */
+/** Render a body and hand back the container — the `.msg-body` div the shared Reader wraps it in. */
 async function render(text: string): Promise<HTMLDivElement> {
   await unmount();
   const { BodyText } = await import("../../../packages/letter-body/src/BodyText.js");

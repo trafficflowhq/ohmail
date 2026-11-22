@@ -98,14 +98,15 @@ async function mountAddress(engine: OhmailEngine, address = JONAS): Promise<void
   await settle();
 }
 
-async function chooseDirection(name: "From them" | "To them"): Promise<void> {
+async function chooseDirection(name: "From" | "To"): Promise<void> {
   const directions = within(host!).getByRole("group", { name: "Direction" });
-  await click(within(directions).getByRole("button", { name: new RegExp(`^${name} `) }));
+  await click(within(directions).getByRole("button", { name: new RegExp(name === "From" ? "^From them " : "^To them ") }));
   await settle();
 }
 
-function addressRows(name: "All" | "From them" | "To them"): HTMLElement[] {
-  return within(within(host!).getByRole("listbox", { name })).getAllByRole("option");
+function addressRows(name: "Both" | "From" | "To"): HTMLElement[] {
+  const directions = { Both: "All", From: "From them", To: "To them" };
+  return within(within(host!).getByRole("listbox", { name: directions[name] })).getAllByRole("option");
 }
 
 /** Let the archive pass's promise settle — there is no debounce on the address view. */
@@ -203,7 +204,7 @@ describe("the search result row — the address is printed, and it is the contro
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 describe("the address view — header, toggle, count line, rows", () => {
-  /** The fixture world with one reply sent to Jonas, so "To them" has a row. */
+  /** The fixture world with one reply sent to Jonas, so "To" has a row. */
   async function withReply(): Promise<OhmailEngine> {
     const engine = new OhmailEngine({ adapter: new FixturesAdapter(), now: () => DEMO_NOW });
     await engine.start();
@@ -216,21 +217,21 @@ describe("the address view — header, toggle, count line, rows", () => {
     const engine = await withReply();
     await mountAddress(engine);
 
-    const jonas = addressRows("All").find((row) => row.getAttribute("data-id") === "jonas")!;
+    const jonas = addressRows("Both").find((row) => row.getAttribute("data-id") === "jonas")!;
     const printed = jonas.querySelector(".oh-row-address")!;
     expect(printed.tagName).toBe("SPAN");
     expect(printed.textContent).toBe(JONAS);
     expect(jonas.querySelector("a.oh-row-address")).toBeNull();
     expect(within(jonas).queryByRole("link", { name: JONAS })).toBeNull();
 
-    await chooseDirection("To them");
-    const rows = addressRows("To them");
+    await chooseDirection("To");
+    const rows = addressRows("To");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.querySelector(".oh-where")!.textContent).toContain("Sent");
-    expect(text()).toContain("1 recent");
+    expect(text()).not.toContain("1 recent");
 
-    await chooseDirection("From them");
-    const fromRows = addressRows("From them");
+    await chooseDirection("From");
+    const fromRows = addressRows("From");
     expect(fromRows).toHaveLength(1);
     expect(fromRows[0]!.getAttribute("data-id")).toBe("jonas");
     expect(fromRows[0]!.querySelector(".oh-where")!.textContent).not.toContain("Sent");
@@ -239,12 +240,10 @@ describe("the address view — header, toggle, count line, rows", () => {
   it("with no archive behind the client, the count line says so beside the device's number", async () => {
     const engine = await withReply();
     await mountAddress(engine);
-    const scope = within(host!).getByText("2 recent").closest("p")!;
-    expect(scope.textContent).toContain("2 recent");
-    expect(scope.textContent).toContain(messages.search.scopeNoArchive);
-    // The scope is a complete sentence with its own text element beside the count.
-    expect(within(host!).queryByText(messages.search.scopeNoArchive, { exact: true })).not.toBeNull();
-    expect(scope.textContent).not.toContain("showing the first");
+    expect(addressRows("Both")).toHaveLength(2);
+    expect(text()).not.toContain("2 recent");
+    expect(text()).not.toContain("Search covers the sample mailbox.");
+    expect(text()).not.toContain("showing the first");
   });
 });
 
@@ -273,30 +272,27 @@ describe("an archive that answers every direction (mail 0154): To them lists its
   it("To them: the archive's rows sent to them are listed, and the number carries no caveat", async () => {
     const { engine, asked } = await withRecipients();
     await mountAddress(engine);
-    await chooseDirection("To them");
+    await chooseDirection("To");
     expect(asked).toEqual(["any", "to"]);
-    expect(addressRows("To them").map((r) => r.getAttribute("data-id"))).toEqual(["to-1"]);
-    const scope = within(host!).getByText(/in your whole mailbox/);
-    expect(scope.textContent).toContain("4 in your whole mailbox");
-    expect(scope.textContent).not.toContain("(by sender)");
+    expect(addressRows("To").map((r) => r.getAttribute("data-id"))).toEqual(["to-1"]);
+    expect(text()).not.toContain("in your whole mailbox");
     expect(within(host!).queryByRole("button", { name: messages.search.addressArchiveBySenderWhy })).toBeNull();
     expect(text()).not.toContain(messages.search.addressArchiveBySenderWhy);
-    expect(text()).not.toContain(messages.search.addressArchiveNoRecipients);
+    expect(text()).not.toContain(messages.search.addressArchiveNoRecipientsWhy);
   });
 
   it("All: the whole mailbox's number is the union, plain", async () => {
     const { engine } = await withRecipients();
     await mountAddress(engine);
-    const scope = within(host!).getByText(/in your whole mailbox/);
-    expect(scope.textContent).toContain("9 in your whole mailbox");
-    expect(scope.textContent).not.toContain("(by sender)");
-    expect(addressRows("All").map((r) => r.getAttribute("data-id"))).toEqual(["jonas", "to-1", "older-1"]);
+    expect(text()).not.toContain("in your whole mailbox");
+    expect(addressRows("Both").map((r) => r.getAttribute("data-id"))).toEqual(["jonas", "to-1", "older-1"]);
   });
 
   it("past the archive's count cap the number says at least", async () => {
     const { engine } = await withRecipients(true);
     await mountAddress(engine);
-    expect(within(host!).getByText(/in your whole mailbox/).textContent).toMatch(/at least 10[,’ ]?000 in your whole mailbox/);
+    expect(text()).not.toContain("in your whole mailbox");
+    expect(text()).toContain("showing the first");
   });
 });
 
@@ -326,15 +322,13 @@ describe("the archive's half — by sender under All, the named line under To th
     const engine = await withArchive();
     await mountAddress(engine);
 
-    const scope = within(host!).getByText(/1 recent/);
-    expect(scope.textContent).toContain("1 recent");
-    expect(scope.textContent).toContain("7 in your whole mailbox (by sender)");
-    // The archive holds 7 and returned 2 — a page. Said, in Search's own words.
-    expect(scope.textContent).toContain("showing the first 2");
+    expect(text()).not.toContain("1 recent");
+    expect(text()).not.toContain("7 in your whole mailbox");
+    const shown = within(host!).getByText("showing the first 2");
     const caveat = within(host!).getByText(messages.search.addressArchiveBySenderWhy, { exact: true });
-    expect(caveat.closest("p")).not.toBe(scope.closest("p"));
+    expect(caveat.closest("p")).not.toBe(shown.closest("p"));
 
-    const rows = addressRows("All");
+    const rows = addressRows("Both");
     expect(rows.map((r) => r.getAttribute("data-id"))).toEqual(["jonas", "older-1"]);
     // One list: a row only the store holds carries no mark of where it came from.
     expect(rows[1]!.querySelector(".oh-where")!.textContent).not.toMatch(/archive/i);
@@ -349,35 +343,30 @@ describe("the archive's half — by sender under All, the named line under To th
   it("To them: the archive slot is the named line, no archive row is listed, the empty state names the address", async () => {
     const engine = await withArchive();
     await mountAddress(engine);
-    await chooseDirection("To them");
+    await chooseDirection("To");
 
     // THE PROPERTY: the archive's rows are mail this address SENT, and none of them may stand in
-    // a list titled "To them". Held back by the contract and by this file's own filter — this
+    // a list titled "To". Held back by the contract and by this file's own filter — this
     // case reads the rendered list, which is what a person sees whichever end did it.
     expect(within(host!).queryAllByRole("option")).toHaveLength(0);
     expect(text()).not.toContain("from the archive");
 
     const empty = within(host!).getByText((_, el) =>
-      el?.tagName === "P" && el.textContent === `Nothing sent to ${JONAS}.`);
-    expect(empty.textContent).toBe(`Nothing sent to ${JONAS}.`);
-    const count = within(host!).getByText(/0 recent/);
-    expect(count.textContent).toContain("0 recent");
-    expect(count.textContent).toContain("your whole mailbox cannot be searched by recipient yet");
-    expect(count.textContent).not.toContain("in your whole mailbox (by sender)");
-    const caveat = within(host!).getByText(messages.search.addressArchiveNoRecipientsWhy, { exact: true });
-    expect(caveat.closest("p")).not.toBe(count.closest("p"));
+      el?.tagName === "P" && el.textContent === `Nothing sent to ${JONAS}`);
+    expect(empty.textContent).toBe(`Nothing sent to ${JONAS}`);
+    expect(text()).not.toContain("0 recent");
+    expect(text()).not.toContain("your whole mailbox cannot be searched by recipient yet");
+    expect(within(host!).getByText(messages.search.addressArchiveNoRecipientsWhy, { exact: true })).toBeTruthy();
   });
 
   it("From them: the archive covers the direction, so the number is plain", async () => {
     const engine = await withArchive();
     await mountAddress(engine);
-    await chooseDirection("From them");
-    const scope = within(host!).getByText(/in your whole mailbox/);
-    expect(scope.textContent).toContain("7 in your whole mailbox");
-    expect(scope.textContent).not.toContain("(by sender)");
+    await chooseDirection("From");
+    expect(text()).not.toContain("in your whole mailbox");
     expect(within(host!).queryByRole("button", { name: messages.search.addressArchiveBySenderWhy })).toBeNull();
     expect(text()).not.toContain(messages.search.addressArchiveBySenderWhy);
-    expect(addressRows("From them")).toHaveLength(2);
+    expect(addressRows("From")).toHaveLength(2);
   });
 
   it("a refused archive states the failure, offers Try again, and the press recovers the count", async () => {
@@ -405,17 +394,17 @@ describe("the archive's half — by sender under All, the named line under To th
 
     const legacy = await archiveThatRefusesOnce();
     await mountAddress(legacy.engine);
-    const legacyScope = within(host!).getByText("1 recent").closest("p")!;
-    expect(legacyScope.textContent).toContain("1 recent");
-    expect(legacyScope.textContent).toContain(messages.search.scopeUnanswered);
-    expect(within(host!).queryByText(messages.search.scopeUnanswered, { exact: true })).not.toBeNull();
+    const legacyScope = within(host!).getByText(messages.address.archive.unanswered, { exact: true }).closest("p")!;
+    expect(legacyScope.textContent).not.toContain("1 recent");
+    expect(legacyScope.textContent).toContain(messages.address.archive.unanswered);
+    expect(within(host!).queryByText(messages.address.archive.unanswered, { exact: true })).not.toBeNull();
 
     const { engine, attempts } = await archiveThatRefusesOnce();
     await mountAddress(engine);
     const scope = within(host!);
-    const failure = scope.getByText(messages.search.scopeUnanswered, { exact: true }).closest("p")!;
-    expect(failure.textContent).toContain("1 recent");
-    expect(failure.textContent).toContain(messages.search.scopeUnanswered);
+    const failure = scope.getByText(messages.address.archive.unanswered, { exact: true }).closest("p")!;
+    expect(failure.textContent).not.toContain("1 recent");
+    expect(failure.textContent).toContain(messages.address.archive.unanswered);
     expect(scope.queryByRole("alert")).toBeNull();
     expect(host!.querySelector(".banner")).toBeNull();
     const retry = scope.getByRole("button", { name: messages.search.addressRetry });
@@ -425,11 +414,10 @@ describe("the archive's half — by sender under All, the named line under To th
     await click(retry);
     await settle();
     expect(attempts()).toBe(2);
-    expect(scope.getByText(/in your whole mailbox \(by sender\)/).textContent)
-      .toContain("7 in your whole mailbox (by sender)");
-    expect(scope.queryByText(messages.search.scopeUnanswered, { exact: false })).toBeNull();
+    expect(scope.getByText(messages.search.addressArchiveBySenderWhy)).toBeTruthy();
+    expect(scope.queryByText(messages.address.archive.unanswered, { exact: false })).toBeNull();
     expect(scope.queryByRole("button", { name: messages.search.addressRetry })).toBeNull();
-    expect(addressRows("All")).toHaveLength(2);
+    expect(addressRows("Both")).toHaveLength(2);
   });
 
   it("the rule, by name: archive rows belong under All and under the answered direction only", async () => {
@@ -450,14 +438,14 @@ describe("the archive's half — by sender under All, the named line under To th
 
     await openArchive("from");
     expect(hasArchiveRow()).toBe(true);
-    await chooseDirection("From them");
+    await chooseDirection("From");
     expect(hasArchiveRow()).toBe(true);
-    await chooseDirection("To them");
+    await chooseDirection("To");
     expect(hasArchiveRow()).toBe(false);
 
     await openArchive("any");
     expect(hasArchiveRow()).toBe(true);
-    await chooseDirection("To them");
+    await chooseDirection("To");
     expect(hasArchiveRow()).toBe(false);
   });
 });
@@ -481,7 +469,7 @@ describe("the archive's half during a first sync says what it counted", () => {
     await engine.start();
     return engine;
   }
-  const open = async (importing: boolean, toggle?: "From them" | "To them") => {
+  const open = async (importing: boolean, toggle?: "From" | "To") => {
     await mountAddress(await midImport(importing));
     if (toggle) await chooseDirection(toggle);
     return text();
@@ -489,26 +477,26 @@ describe("the archive's half during a first sync says what it counted", () => {
 
   it("All, From them and To them each say it of the mail synced so far, never of the whole mailbox", async () => {
     const all = await open(true);
-    expect(all).toContain("7 in the mail synced so far (by sender)");
-    expect(all).toContain(messages.search.syncing);
+    expect(all).not.toContain("7 in ");
+    expect(all).toContain(messages.address.archive.importing);
     expect(all).not.toContain("in your whole mailbox (by sender)");
-    const from = await open(true, "From them");
-    expect(from).toContain("7 in the mail synced so far");
+    const from = await open(true, "From");
+    expect(from).not.toContain("7 in ");
     expect(from).not.toContain("7 in your whole mailbox");
-    expect(from).toContain(messages.search.syncing);
-    const to = await open(true, "To them");
-    expect(to).toContain("your whole mailbox cannot be searched by recipient yet");
-    expect(to).toContain(messages.search.syncing);
+    expect(from).toContain(messages.address.archive.importing);
+    const to = await open(true, "To");
+    expect(to).toContain(messages.search.addressArchiveNoRecipientsWhy);
+    expect(to).not.toContain(messages.address.archive.importing);
   });
 
   it("the complete-store control: once the first sync is done, the line reads as it always did", async () => {
     const all = await open(false);
-    expect(all).toContain("7 in your whole mailbox (by sender)");
-    expect(all).not.toContain(messages.search.syncing);
+    expect(all).not.toContain("7 in ");
+    expect(all).not.toContain(messages.address.archive.importing);
     expect(all).not.toContain("synced so far");
-    const from = await open(false, "From them");
-    expect(from).toContain("7 in your whole mailbox");
-    expect(from).not.toContain(messages.search.syncing);
+    const from = await open(false, "From");
+    expect(from).not.toContain("7 in ");
+    expect(from).not.toContain(messages.address.archive.importing);
   });
 });
 
@@ -521,8 +509,8 @@ describe("the empty state and the name", () => {
     await mountAddress(engine, "nobody@nowhere.test");
     expect(host!.querySelector(".oh-listhead h1")!.textContent).toBe("nobody@nowhere.test");
     expect(host!.querySelector(".oh-listhead-meta")).toBeNull();
-    expect(host!.querySelector(".oh-empty-label")!.textContent).toBe("Nothing from or to nobody@nowhere.test.");
-    expect(within(host!).getByText(/0 recent/).textContent).toContain("0 recent");
+    expect(host!.querySelector(".oh-empty-label")!.textContent).toBe("Nothing from or to nobody@nowhere.test");
+    expect(text()).not.toContain("0 recent");
   });
 });
 

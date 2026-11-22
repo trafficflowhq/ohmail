@@ -55,7 +55,7 @@ function PileItem({
       {...(m && who ? rowPeople(m, who) : { people: [] })}
       subject={subject}
       preview={row.entry.preview ?? m?.snippet ?? undefined}
-      when={back ? tl("row.resurfaces", { when: back }) : m?.date ? model.stamp(m.date) : undefined}
+      when={back ?? (m?.date ? model.stamp(m.date) : undefined)}
       unread={m?.unread}
       open={open}
       own={

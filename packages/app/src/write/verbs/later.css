@@ -1,0 +1,6 @@
+.write-later-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}

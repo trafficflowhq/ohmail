@@ -40,8 +40,6 @@ export interface RuleItem {
   readonly queued: boolean;
   /** The places the change menu offers. */
   readonly places: readonly RulePlace[];
-  /** What moving its past mail means for this rule, said: the switch's name, its count, and the explanation with it on. */
-  readonly refile: { readonly label: string; readonly note: string; readonly on: string };
   /** What the search finds it by, lower case: the match as stored and as shown, and its subject and body terms. */
   readonly finds: string;
 }
@@ -49,6 +47,9 @@ export interface RuleItem {
 /** A request waiting on the install that organizes that has no line of its own here. */
 export interface RuleWaiting {
   readonly key: string;
+  readonly holder?: string;
+  readonly who?: string;
+  readonly place?: string;
   readonly what: string;
   readonly line: string;
 }
@@ -57,7 +58,8 @@ export interface RulesModel {
   readonly rules: readonly RuleItem[];
   readonly waiting: readonly RuleWaiting[];
   /** Whose rules these are: the person's own, or a copy the install that organizes published. */
-  readonly intro: string;
+  readonly intro: string | null;
+  readonly holder?: string;
   /** Why nothing here can be pressed now (this install only reads), or `null`. */
   readonly locked: string | null;
   /** The last change refused, standing on the pane: its lead and the reason, when there is one. */

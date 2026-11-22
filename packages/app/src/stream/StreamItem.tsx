@@ -27,6 +27,7 @@ interface StreamItemProps {
   opened: boolean;
   active: boolean;
   preview: boolean;
+  markUnread: StreamModel["markUnread"];
   scroller: StreamModel["scroller"];
   open: StreamModel["open"];
   closeAddress: (id: string) => void;
@@ -87,7 +88,7 @@ export const StreamItem = memo(function StreamItem(props: StreamItemProps) {
           (whole || conversation !== undefined) &&
           !addressed &&
           card.contains(event.target) &&
-          !event.target.closest(".oh-over") &&
+          !event.target.closest('.oh-over, .oh-messagehead-tools [aria-haspopup="menu"]') &&
           !card.contains(event.relatedTarget)
         )
           open(m.id);
@@ -106,6 +107,7 @@ export const StreamItem = memo(function StreamItem(props: StreamItemProps) {
       {(whole || conversation !== undefined) && reader !== NONE && reader.OpenCard ? (
         <reader.OpenCard
           message={m}
+          markUnread={props.markUnread}
           opened={opened}
           conversation={conversation}
           scroller={scroller}
@@ -132,6 +134,7 @@ function FoldedCard({
   phone,
   whole,
   preview,
+  markUnread,
   onPress,
   receiptEvents,
 }: StreamItemProps & {
@@ -146,7 +149,12 @@ function FoldedCard({
   const PreviewBody = reader !== NONE && preview ? reader.PreviewBody : undefined;
   const previewHead =
     reader !== NONE && reader.PreviewHead ? (
-      <reader.PreviewHead message={m} hideBodyNotice={text === null} selection={selection} />
+      <reader.PreviewHead
+        message={m}
+        hideBodyNotice={text === null}
+        selection={selection}
+        markUnread={markUnread}
+      />
     ) : (
       <MessageHead
         sender={{ ...who, displayAddress: displayAddress(who.address) }}

@@ -1,5 +1,6 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { useId, useState, type ReactNode } from "react";
+import { Icon } from "@ohmail/ui/base";
 import { BlockedImages, type MessageHeadProps } from "@ohmail/ui/mail";
 import {
   awayAnswerStamp,
@@ -36,6 +37,7 @@ export interface LetterHeadProps {
   onPerson: (person: ContactOf) => void;
   card: string | null;
   preview?: boolean;
+  markUnread?: (id: string) => void;
   selection?: MessageHeadProps["selection"];
   streamCard?: "open";
 }
@@ -72,6 +74,7 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
     recipientName,
     lines,
   } = useLetterHead(props);
+  const hasMenu = !preview || props.markUnread !== undefined;
   const head: Omit<MessageHeadProps, "stamp"> = {
     preview: preview,
     selection: props.selection,
@@ -108,9 +111,7 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
         onClose={() => setNoticeOpen(false)}
       />
     ) : undefined,
-    menu: preview
-      ? undefined
-      : { label: t("head.menu"), expanded: menu !== null || undefined, onPress: (at) => setMenu(at) },
+    menu: hasMenu ? { label: t("head.menu"), expanded: menu !== null, onPress: setMenu } : undefined,
     to: groups,
     details: {
       label: tm("details"),
@@ -139,7 +140,14 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
     stamp,
     full,
     setFull,
-    menu: !preview && <LetterMenu message={message} anchor={menu} onClose={() => setMenu(null)} />,
+    menu: hasMenu && menu !== null && (
+      <LetterMenu
+        message={message}
+        anchor={menu}
+        onClose={() => setMenu(null)}
+        markUnread={props.markUnread}
+      />
+    ),
   };
 }
 
@@ -184,6 +192,17 @@ function useLetterHead({ message, copy, onPerson, card, preview = false, streamC
   });
   const answered = awayAnswerStamp(message, now, timeZone, locale);
   const marks: NonNullable<MessageHeadProps["marks"]>[number][] = [];
+  if (message.sensitivity?.sensitive) {
+    const label = t("head.sensitive");
+    marks.push({
+      text: label,
+      content: (
+        <>
+          <Icon name="shield" size={16} /> {label}
+        </>
+      ),
+    });
+  }
   if (copy !== null) marks.push({ text: copy });
   if (answered !== null) {
     const label = tm("awayAnswered");

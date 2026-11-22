@@ -183,10 +183,6 @@ export interface SearchListModel {
   readonly nothingMatched: boolean;
   /** The wait the head states beside its count, in ms: this device's pass, else the store's measured wait. */
   readonly headMs: number | null;
-  /** A `from:` or `in:` was typed: it is searched as words, and that is said. */
-  readonly operatorsTyped: boolean;
-  /** The one word that answers with a small surprise instead of nothing. */
-  readonly egg: boolean;
   /** Whether a person, unread and the days may be set (the host's server takes them). */
   readonly searchBy: "people" | "words";
   /** The person the question is about, and on which side; null for everybody. */

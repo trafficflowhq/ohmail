@@ -251,7 +251,7 @@ describe("a remembered account opens its mailbox in the first render", () => {
     const el = await mount();
     await settle();
     expect(mailbox(el)).toBeNull();
-    expect(el.textContent).toContain(messages.session.endedTitle);
+    expect(el.textContent).toContain(messages.session.endedTitle.replace(/\.$/, ""));
   });
 });
 
@@ -267,7 +267,7 @@ describe("the check is not weakened by one step", () => {
     check.resolve({ kind: "owner", accountId: ACCOUNT_B });
     await settle();
     expect(mailbox(el), "a mismatched session kept the mailbox on screen").toBeNull();
-    expect(el.textContent).toContain(messages.session.endedTitle);
+    expect(el.textContent).toContain(messages.session.endedTitle.replace(/\.$/, ""));
   });
 
   it("A REFUSAL ENDS THE TAB: the server will not confirm a full session", async () => {
@@ -302,7 +302,7 @@ describe("the check is not weakened by one step", () => {
     await settle();
     expect(mailbox(el), "a server that could not answer tore the mailbox down").not.toBeNull();
     expect(el.textContent, "an unanswered check was rendered as a sign-out")
-      .not.toContain(messages.session.endedBody);
+      .not.toContain(messages.session.endedLine);
   });
 
   it("A RESOLVER THAT THROWS reports the failure instead of accusing the session", async () => {
@@ -313,9 +313,9 @@ describe("the check is not weakened by one step", () => {
     const el = await mount(async () => { throw new Error("network down"); });
     await settle();
     expect(el.textContent, "a thrown resolver was rendered as a sign-out")
-      .not.toContain(messages.session.endedBody);
+      .not.toContain(messages.session.endedLine);
     expect(el.textContent, "the failure was not reported at all")
-      .toContain(messages.session.unconfirmedTitle);
+      .toContain(messages.session.unconfirmedTitle.replace(/\.$/, ""));
     expect(mailbox(el), "the mail this device holds was thrown away on a local failure")
       .not.toBeNull();
   });
@@ -428,7 +428,7 @@ describe("under the word wait, a remembered mailbox is opened but not drawn befo
       check.resolve(answer);
       await settle();
       expect(mailbox(el), JSON.stringify(answer)).toBeNull();
-      expect(el.textContent).toContain(messages.session.endedTitle);
+      expect(el.textContent).toContain(messages.session.endedTitle.replace(/\.$/, ""));
       const r = root!;
       await act(async () => { r.unmount(); });
       root = null;

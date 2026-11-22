@@ -78,8 +78,8 @@ afterEach(() => {
 });
 
 describe("the card being read carries the message's verbs", () => {
-  it("keeps the bar off a card the cursor merely rests on (scroll must not surface it)", async () => {
-    mountRegisteredReads();
+  it("scrolling retargets the footer without unfolding the card", async () => {
+    const { mail } = mountRegisteredReads();
 
     const scroll = stream().querySelector<HTMLElement>("[data-reading-scroll]")!;
     Object.defineProperty(scroll, "clientHeight", { value: 300 });
@@ -91,7 +91,7 @@ describe("the card being read carries the message's verbs", () => {
       } as DOMRect);
     }
 
-    expect(within(stream()).queryByRole("toolbar", { name: "Actions" })).toBeNull();
+    expect(within(stream()).getByRole("toolbar", { name: "Actions" })).toBeTruthy();
     await act(async () => {
       fireEvent.wheel(scroll, { deltaY: 400 });
       scroll.scrollTop = 400;
@@ -100,7 +100,11 @@ describe("the card being read carries the message's verbs", () => {
     });
 
     expect(card("two").hasAttribute("data-open")).toBe(true);
-    expect(within(stream()).queryByRole("toolbar", { name: "Actions" }), "scroll surfaced the reply pill").toBeNull();
+    expect(within(card("two")).getByRole("button", { name: "Expand" })).toBeTruthy();
+    fireEvent.click(within(within(stream()).getByRole("toolbar", { name: "Actions" })).getByRole("button", { name: "Later" }));
+    expect(mail.mutations.filter((write) => write.kind === "triage_set")).toEqual([
+      expect.objectContaining({ messageId: "two", state: "reply_later" }),
+    ]);
   });
 });
 

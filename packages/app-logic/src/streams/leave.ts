@@ -2,7 +2,7 @@
  * THE WATERLINE MOVES ON LEAVING. The line is "new since the last visit": it holds still for the whole visit and moves
  * once, on the way out, in one anchored commit. The anchor is the newest item the visit showed; the flip set is the
  * unread ids from it down to the foot of the last screen that this visit read by the rule. A visit no hand drove
- * writes nothing. As today's two streams derive it (`ReadsView`, `ReceiptsView`) and the shell commits it
+ * writes nothing. As the streams in `packages/app/src/stream` derive it and the shell commits it
  * (`commitFeedSeen`).
  */
 

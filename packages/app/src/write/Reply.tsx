@@ -6,9 +6,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useReplyRunState } from "@ohmail/app-logic/piles";
+import { Dialog } from "@ohmail/ui/base";
 import { Composer, SendStatus, type RecipientsProps } from "@ohmail/ui/mail";
 import { inlineForwardKey, SEND_IN_FLIGHT_PHASES } from "@ohmail/app-logic/writing/mail-send";
-import { hasEditedQuotedHistory, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { letterCap } from "@ohmail/app-logic/write/files";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { pageModal } from "@ohmail/app-logic/session/modal-gate";
@@ -30,6 +30,7 @@ import { FilesNote, useFiles } from "./files/Files.js";
 import { ForwardRefusal, useForwarded } from "./files/Forwarded.js";
 import { useReplyGate, useReplyVerbs, useShowsSend } from "./reply-gate.js";
 import { useDraftOffer } from "./draft/Draft.js";
+import { useEmoji } from "./text/Emoji.js";
 import { useReplyKeys } from "./keys.js";
 
 /** The reader's slot: the open reply, when the letter it answers is one of these. */
@@ -55,23 +56,18 @@ export function ReplySheet({
 function ForwardAsk({ ask }: { readonly ask: string }) {
   const t = useText("write");
   const w = useWriting();
-  const holds = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const answers = holds.current?.querySelectorAll<HTMLButtonElement>("button");
-    answers?.[answers.length - 1]?.focus({ preventScroll: true });
-  }, []);
   return (
-    <div ref={holds} role="alertdialog" aria-label={t("reply.ask.question")}>
-      <SendStatus
-        place="top"
-        acts={[
-          { label: t("reply.ask.confirm"), onPress: w.confirmForward },
-          { label: t("reply.ask.cancel"), onPress: w.closeReply },
-        ]}
-      >
-        {`${askWords(t, ask)} ${t("reply.ask.question")}`}
-      </SendStatus>
-    </div>
+    <Dialog
+      open
+      alert
+      hot
+      title={t("reply.ask.question")}
+      line={askWords(t, ask)}
+      onClose={w.closeReply}
+      confirm={{ label: t("reply.ask.confirm"), onPress: w.confirmForward }}
+      cancel={{ label: t("reply.ask.cancel"), keyHint: "Esc" }}
+      keysOn="cancel"
+    />
   );
 }
 
@@ -148,17 +144,18 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
   useReplyModalKeys(keysHere, then, step !== null, sheet);
   /* Send + Done, asked at every render of the letter as the Ohbox shows it: null where it has nothing to finish. */
   useReplyVerbs(reply, gate, () => then("send"));
-  const onText = (next: RichValue): void => w.onReplyBody(next);
   /* The drafter writes replies: a forward's note is never drafted into; a host with no draft wire offers none. */
   const draft = useDraftOffer(reply.messageId);
   const drafted = forward ? null : draft;
   const label = replyLabel(t, reply.audience);
   useForwardAsksWhom(forward, reply.messageId, sheet, t("to"));
   const notice = drafted?.notice ?? null;
-  const placeholder = forward ? t("reply.forwardPlaceholder") : t("reply.placeholder");
+  const placeholder = forward
+    ? t("reply.forwardPlaceholder")
+    : t(drafted === null ? "reply.placeholder" : "reply.draftPlaceholder");
+  const emoji = useEmoji(handle, going || drafted?.drafting === true);
   const refusedLine = longLine ?? empty.line;
   const noted =
-    forward ||
     reply.saveRefused ||
     refusedLine !== null ||
     notice !== null ||
@@ -194,7 +191,6 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
         note={
           noted ? (
             <ReplyNote
-              forward={forward && !hasEditedQuotedHistory(w.replyBody.html)}
               tooLong={refusedLine}
               saveRefused={reply.saveRefused === true}
               notice={notice}
@@ -210,13 +206,14 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
           label: t("foot"),
           attach: files.attach,
           format: marks.format,
+          emoji: emoji.control,
           ...(drafted === null ? {} : { draft: drafted.control }),
         }}
       >
         <Editor
           quotedHistory={quotedHistory}
           value={w.replyBody}
-          onChange={onText}
+          onChange={w.onReplyBody}
           label={forward ? t("reply.forwardText") : t("reply.text")}
           placeholder={placeholder}
           editable={!going && drafted?.drafting !== true}
@@ -229,6 +226,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
         />
       </Composer>
       {marks.card}
+      {emoji.menu}
     </>
   );
 }
@@ -324,29 +322,24 @@ function ReplyPeople({
         : {})}
       {...(reply.subject.editable
         ? { subject: { value: reply.subject.value, onChange: w.onReplySubject, onEscape: onSubjectEscape } }
-        : {})}
+        : audience === "forward"
+          ? { subject: { value: reply.subject.value } }
+          : {})}
     />
   );
 }
 
-/** The lines over the foot: a forward's note, why Send rests, the drafter's sentence, the files'. */
+/** The lines over the foot: why Send rests, the drafter’s sentence, and the files’ notes. */
 function ReplyNote(props: {
-  readonly forward: boolean;
   readonly tooLong: string | null;
   readonly saveRefused: boolean;
   readonly notice: string | null;
   readonly refusal: string | null;
   readonly files: string | null;
 }) {
-  const t = useText("write");
   const compose = useText("compose");
   return (
     <>
-      {props.forward ? (
-        <SendStatus place="start" sign="forward">
-          {t("reply.forwarding")}
-        </SendStatus>
-      ) : null}
       {props.tooLong !== null ? <SendStatus place="start">{props.tooLong}</SendStatus> : null}
       {props.saveRefused ? <SendStatus place="start">{compose("draftNotSaved")}</SendStatus> : null}
       {props.notice !== null ? (

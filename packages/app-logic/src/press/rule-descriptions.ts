@@ -40,36 +40,14 @@ export function useRuleDescriptions(
         : dest
           ? t(create ? "waitingCreate" : "waitingChange", { holder, place: placeLabel(dest), date })
           : t("waitingRemoval", { holder, date });
-    return w.slow ? `${said} ${t("waitingSlow", { holder })}` : said;
+    return w.slow
+      ? w.kind === "rule.delete"
+        ? t("waitingRemovalSlow", { holder, date })
+        : `${said} ${t("waitingSlow", { holder })}`
+      : said;
   };
-  /** A request about a rule this page does not list: removed here, or not yet made there. */
-  const apartLine = (w: WaitingOnOrganizerView): { what: string; line: string } => {
-    const r = (
-      w.target as {
-        rule?: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null };
-      }
-    ).rule;
-    const what = r
-      ? whatOf({
-          kind: r.kind,
-          match: r.match,
-          subjectContains: r.subjectContains,
-          bodyContains: r.bodyContains,
-        } as RuleDTO)
-      : t("theOrganizer");
-    // On the organizer's list a removal with no row is still waiting there, not done here.
-    if (w.state !== "refused" && w.kind === "rule.delete" && !published) {
-      return {
-        what,
-        line: t("waitingRemovedHere", {
-          holder: holderOf(w),
-          mailbox: (w.mailboxId ? mailboxLabel?.(w.mailboxId) : null) ?? t("theMailbox"),
-          date: ruleDate(w.decidedAt),
-        }),
-      };
-    }
-    return { what, line: waitingLine(w) ?? "" };
-  };
+  const apartLine = (w: WaitingOnOrganizerView) =>
+    describeApart(w, t, published, waitingLine(w), mailboxLabel);
   function factsOf(rule: RuleDTO) {
     const what = whatOf(rule);
     const origin = rule.byOhmail === true ? t("origin.byOhmail") : t(`origin.${rule.provenance}`);
@@ -107,7 +85,64 @@ export function useRuleDescriptions(
                 .join("; "),
             })
           : t("copies", { count: twins });
-    return { what, meta, waits, q, queuedLine, rank, inert, twinNote, twins };
+    return {
+      what,
+      meta: rule.kind === "domain" ? t("wholeDomainMeta", { meta }) : meta,
+      waits,
+      q,
+      queuedLine,
+      rank,
+      inert,
+      twinNote,
+      twins,
+    };
   }
   return { rules, apart, queuedOn, apartLine, factsOf };
+}
+
+/** A request about a rule absent from the list. */
+function describeApart(
+  w: WaitingOnOrganizerView,
+  t: RuleWords,
+  published: boolean,
+  line: string | null,
+  mailboxLabel?: (id: string) => string | null,
+) {
+  const r = (
+    w.target as {
+      rule?: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null };
+    }
+  ).rule;
+  const what = r
+    ? ruleSentence(
+        {
+          kind: r.kind,
+          match: r.match,
+          subjectContains: r.subjectContains,
+          bodyContains: r.bodyContains,
+        } as RuleDTO,
+        t,
+      )
+    : t("theOrganizer");
+  const target = w.target as { destination?: string; rule?: { destination?: string } };
+  const folder = target.rule?.destination ?? target.destination;
+  const holder = w.holder.name ?? t("theOrganizer");
+  const row = {
+    what,
+    holder,
+    who: r ? displayRuleMatch(r.match) : undefined,
+    place: folder ? placeLabel(folder) : undefined,
+  };
+  // On the organizer's list a removal with no row is still waiting there, not done here.
+  if (w.state !== "refused" && w.kind === "rule.delete" && !published) {
+    return {
+      ...row,
+      line: t("waitingRemovedHere", {
+        holder,
+        mailbox: (w.mailboxId ? mailboxLabel?.(w.mailboxId) : null) ?? t("theMailbox"),
+        date: ruleDate(w.decidedAt),
+      }),
+    };
+  }
+  return { ...row, line: line ?? "" };
 }

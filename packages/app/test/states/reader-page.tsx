@@ -34,6 +34,8 @@ import trashEn from "../../messages/trash.en.json" with { type: "json" };
 import trashDe from "../../messages/trash.de.json" with { type: "json" };
 import doorsEn from "../../messages/doors.en.json" with { type: "json" };
 import doorsDe from "../../messages/doors.de.json" with { type: "json" };
+import tagsEn from "../../messages/tags.en.json" with { type: "json" };
+import tagsDe from "../../messages/tags.de.json" with { type: "json" };
 
 /* The reference is drawn on Tuesday 10 November 2026: the page's clock starts there and runs on, so the read
    rule's dwell still passes. */
@@ -61,7 +63,8 @@ const state = q.get("state");
 const letters = Object.entries(LETTERS).map(([id, p]) => engineLetter(id, p));
 /* `read=1` (the read rule's own case, no reference draws it): a conversation of three unread letters, the first
    one long, so the two after it stand below the fold. */
-if (q.get("read") === "1") {
+const squareStates = q.get("read") === "squares";
+if (q.get("read") === "1" || squareStates) {
   const LONG = Array.from({ length: 80 }, (_, i) => `Line ${i + 1} of the plan for the open studio.`).join(
     "\n\n",
   );
@@ -77,7 +80,8 @@ if (q.get("read") === "1") {
         text: i === 0 ? LONG : "Agreed, see you there.",
       }),
       threadId: "t-plan",
-      unread: true,
+      ...(squareStates && i === 1 ? { folder: "Sent" } : {}),
+      unread: !squareStates || i !== 0,
     } as (typeof letters)[number]);
 }
 /* `all=1` (the panel's own case, no reference draws it): the opened letter went to two more people, so the panel
@@ -248,6 +252,7 @@ const words: Messages = fillOver(
     ...(screenerEn as Messages),
     ...(trashEn as Messages),
     ...(doorsEn as Messages),
+    ...(tagsEn as Messages),
     ...(readerEn as Messages),
   },
   lang === "de"
@@ -258,6 +263,7 @@ const words: Messages = fillOver(
         ...(screenerDe as Messages),
         ...(trashDe as Messages),
         ...(doorsDe as Messages),
+        ...(tagsDe as Messages),
         ...(readerDe as Messages),
       }
     : {},
@@ -411,7 +417,7 @@ const { host } = fakeHost({
       organizerRole: "organizer",
     },
   ],
-  window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: true }),
+  window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
   address: fakeAddress(open ? `#/ohbox/m/${open}` : "#/ohbox"),
   appearance: fakeAppearance(look),
 });

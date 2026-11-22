@@ -3,35 +3,13 @@
   display: block;
 }
 
-.st-pile-note {
-  display: grid;
-  gap: var(--s2);
-  justify-items: start;
+.st-pile-note,
+.st-search-tail {
   padding: var(--s2) var(--s3) var(--s3) var(--flush);
 }
 
-.st-filing-chip {
-  container: stream-filing / inline-size;
-  padding: var(--s2) var(--s3) var(--s2) var(--flush);
-}
-
-@container stream-filing (inline-size < 340px) {
-  .st-filing-chip [data-chip="ai"] {
-    box-sizing: border-box;
-    max-inline-size: 100%;
-    flex-wrap: wrap;
-    row-gap: var(--s1);
-    border-radius: var(--r-sheet);
-  }
-
-  .st-filing-chip [data-chip="ai"] > [aria-hidden="true"] {
-    display: none;
-  }
-
-  .st-filing-label {
-    flex: 1 0 100%;
-    min-inline-size: 0;
-  }
+.st-search-tail {
+  text-align: center;
 }
 
 /* Keep the card gap in its cached height when a card becomes part of a spacer. */
@@ -55,4 +33,12 @@
 .st-receipt-amount {
   float: inline-end;
   margin-inline-start: var(--s4);
+}
+
+.pl-list:has(> [data-stream-list-top]) {
+  position: relative;
+}
+
+.fr-frame[data-rail="dock"]:has(.fr-dockbox) .st-phone-list {
+  --oh-sheet-foot-offset: calc(var(--h-xl) + var(--s3));
 }

@@ -82,7 +82,7 @@ describe("the address view on a paired desktop whose account is out of reach", (
     const el = await mount(engine);
     await settle();
     expect(el.textContent).toContain(messages.search.addressOffline);
-    expect(el.textContent).not.toContain(messages.search.scopeUnanswered);
+    expect(el.textContent).not.toContain(messages.address.archive.unanswered);
     expect(tryAgain(el)).toHaveLength(0);
   });
 
@@ -91,7 +91,7 @@ describe("the address view on a paired desktop whose account is out of reach", (
     await engine.start();
     const el = await mount(engine);
     await settle();
-    expect(el.textContent).toContain(messages.search.scopeUnanswered);
+    expect(el.textContent).toContain(messages.address.archive.unanswered);
     expect(tryAgain(el)).toHaveLength(1);
   });
 

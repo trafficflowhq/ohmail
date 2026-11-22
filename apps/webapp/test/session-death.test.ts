@@ -138,7 +138,7 @@ async function mountShell(opts: { keepTruth?: boolean } = {}): Promise<HTMLEleme
   return container;
 }
 
-const prompt = (container: HTMLElement): Element | null => container.querySelector(".session-end");
+const prompt = (container: HTMLElement): Element | null => container.querySelector('[role="alertdialog"]');
 
 describe("the terminal 401 becomes a re-auth prompt", () => {
   it("a revoked session puts the prompt on screen within one probe, not one minute", async () => {
@@ -155,7 +155,7 @@ describe("the terminal 401 becomes a re-auth prompt", () => {
     const dialog = prompt(container);
     expect(dialog, "no re-auth prompt rendered over a session the server confirmed dead").not.toBeNull();
     expect(dialog!.getAttribute("role")).toBe("alertdialog");
-    expect(dialog!.textContent).toContain("You are signed out.");
+    expect(dialog!.getAttribute("aria-label")).toBe("You are signed out.");
     const signIn = dialog!.querySelector('a[href="/login"]');
     expect(signIn, "the prompt carries no sign-in path").not.toBeNull();
   });

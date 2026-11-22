@@ -2,10 +2,12 @@
  * The join's second factor and its recovery codes. A passkey first; an authenticator app where this device cannot make
  * one: its picture (the shell's), its key to read off or copy, and its first code. Then the ten codes, shown once.
  */
-import { useEffect, useRef, type ReactNode } from "react";
-import { Button, Field, Page, Switch } from "@ohmail/ui/base";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Button, Menu, MenuItem, Page, RadioLines, RefusalLine, Slot } from "@ohmail/ui/base";
+import { DoorSheet } from "../stage/DoorSheet.js";
 import { DoorFields, DoorForm } from "../stage/DoorForm.js";
-import { Said } from "../stage/Said.js";
+import { Said, SaidWith } from "../stage/Said.js";
+import { SentenceBlank } from "../stage/SentenceBlank.js";
 import type { JoinState } from "./door.js";
 import { refusalOf, SignOutAgain, type StepProps } from "./parts.js";
 
@@ -31,22 +33,72 @@ export function FactorStep(p: StepProps<"factor">): ReactNode {
     <Page
       aside={progress}
       refusal={refusalOf(pending, door.refusal)}
-      line={join("step_factor_lead")}
-      note={join("passkeyNote")}
+      columns={2}
+      material={
+        <DoorSheet kind="facts">
+          <div inert={busy}>
+            <RadioLines<"passkey" | "app">
+              label={join("factorLabel")}
+              value="passkey"
+              kind="sheet"
+              options={[
+                { value: "passkey", label: join("factorPasskey") },
+                { value: "app", label: join("factorApp"), tag: join("factorTag") },
+              ]}
+              onChange={(choice) => {
+                if (!busy && choice === "app") door.useAuthenticator();
+              }}
+            />
+          </div>
+        </DoorSheet>
+      }
       acts={
         <>
           <Button size="l" disabled={busy} onPress={door.addPasskey}>
             {busy ? join("working") : join("addPasskey")}
           </Button>
-          <Button kind="quiet" size="l" disabled={busy} onPress={door.useAuthenticator}>
-            {join("useTotp")}
-          </Button>
           <SignOutAgain pending={pending} busy={busy} />
         </>
       }
     >
-      <Said text={join("step_factor_title")} level={1} />
+      <FactorSentence {...p} />
     </Page>
+  );
+}
+
+function FactorSentence({ door, join, state }: StepProps<"factor">): ReactNode {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const app = state.authenticator !== null;
+  const label = join("factorLabel");
+  const choose = (useApp: boolean): void => {
+    setOpen(false);
+    if (app !== useApp && !door.busy) {
+      if (useApp) door.useAuthenticator();
+      else door.leaveAuthenticator();
+    }
+  };
+  return (
+    <>
+      <SaidWith
+        level={1}
+        parts={join.rich(app ? "lockWithApp" : "lockWith", {
+          how: () => (
+            <Slot ref={anchor} disabled={door.busy} expanded={open} onPress={() => setOpen(!open)}>
+              {join(app ? "factorAppWord" : "factorPasskeyWord")}
+            </Slot>
+          ),
+        })}
+      />
+      <Menu anchor={anchor} open={open} label={label} onClose={() => setOpen(false)}>
+        <MenuItem checked={!app} onPress={() => choose(false)}>
+          {join("factorPasskey")}
+        </MenuItem>
+        <MenuItem checked={app} onPress={() => choose(true)}>
+          {join("factorApp")}
+        </MenuItem>
+      </Menu>
+    </>
   );
 }
 
@@ -56,7 +108,7 @@ type Authenticator = NonNullable<Extract<JoinState, { at: "factor" }>["authentic
 function AuthenticatorStep(p: StepProps<"factor"> & { authenticator: Authenticator }): ReactNode {
   const { door, join, progress, authenticator } = p;
   const { pending, busy, fields } = door;
-  const code = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const code = useRef<HTMLInputElement>(null);
   /* The code is the step's one blank: it takes the focus on arrival, and again when its code is refused. */
   useEffect(() => {
     code.current?.focus();
@@ -86,33 +138,47 @@ function AuthenticatorStep(p: StepProps<"factor"> & { authenticator: Authenticat
                 {join("totpCopyFailed")}
               </p>
             ) : null}
-            {/* The card's id, and its number pad: an authenticator's code is six digits. */}
-            <Field
-              ref={code}
-              id="join-totp"
-              label={join("totpLabel")}
-              autoComplete="one-time-code"
-              inputMode="numeric"
-              refusal={door.refusal ?? undefined}
-              value={fields.otp}
-              onChange={(v) => door.type("otp", digitsOf(v))}
-            />
           </DoorFields>
         }
-        line={join("totpScan")}
         acts={
           <>
             <Button type="submit" size="l" keyHint="↵" disabled={busy || fields.otp.length !== CODE_LENGTH}>
               {busy ? join("working") : join("activate")}
             </Button>
-            <Button kind="quiet" size="l" onPress={door.leaveAuthenticator}>
-              {join("back")}
-            </Button>
             <SignOutAgain pending={pending} busy={busy} />
           </>
         }
       >
-        <Said text={join("step_factor_title")} level={1} />
+        <FactorSentence {...p} />
+        <SaidWith
+          parts={join.rich("codeIs", {
+            blank: () => (
+              <SentenceBlank
+                ref={code}
+                id="join-totp"
+                describedBy={door.refusal === null ? undefined : "join-totp-refusal"}
+                label={join("totpLabel")}
+                placeholder={join("totpBlank")}
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                refused={door.refusal !== null}
+                value={fields.otp}
+                onChange={(v) => door.type("otp", digitsOf(v))}
+              />
+            ),
+          })}
+        />
+        {door.refusal === null ? null : (
+          <RefusalLine
+            alert
+            start
+            ref={(line) => {
+              if (line) line.id = "join-totp-refusal";
+            }}
+          >
+            {door.refusal}
+          </RefusalLine>
+        )}
       </Page>
     </DoorForm>
   );
@@ -129,7 +195,6 @@ export function CodesStep({ door, state, join, progress }: StepProps<"codes">): 
     <Page
       aside={progress}
       refusal={refusalOf(pending, door.refusal)}
-      line={join("step_codes_lead")}
       material={material}
       acts={
         <>
@@ -184,10 +249,15 @@ export function CodesStep({ door, state, join, progress }: StepProps<"codes">): 
           {join("codesCopyFailed")}
         </p>
       ) : null}
-      <Switch label={join("codesConfirm")} labelled on={state.saved} onChange={door.save} />
     </DoorFields>,
-    <Button size="l" disabled={!state.saved} onPress={door.codesDone}>
-      {join("continue")}
+    <Button
+      size="l"
+      onPress={() => {
+        door.save(true);
+        door.codesDone();
+      }}
+    >
+      {join("codesSaved")}
     </Button>,
   );
 }

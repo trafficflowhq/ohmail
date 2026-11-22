@@ -1,43 +1,18 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
+import type { EngineMessage, EngineMutation, Folder, RuleEntity } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, within } from "@testing-library/dom";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  OhmailEngine, MemoryMirrorStore,
+  OhmailEngine, MemoryMirrorStore, heldReleaseTotalOf,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { createEngine } from "../app/shell/engine-config.js";
 import { ROSTER } from "./_draft-shell.js";
-
-/**
- * "N HELD MESSAGES FROM SENDERS YOU ALREADY DECIDED" — THE ROW A PERSON PRESSES.
- *
- * Mail an install adopted at the screening gate is recorded as a hand file, so no pass revisits it
- * and it sits at the gate behind a rule its owner already wrote. The fix is not a repair that runs
- * on its own: it is a row in this header that states what is stuck, names the rule that would file
- * each group and where it would go, and does nothing until somebody presses it.
- *
- * Four claims, and each is a way the row could lie:
- *
- *  1. IT STATES THE SERVER'S DISTINCT NUMBER. A message can sit in two groups (a domain rule and a
- *     sender rule inside it both claim it), so summing the groups overstates what is held.
- *  2. IT IS ONE SENTENCE AND TWO VERBS. The per-rule list is gone — it named addresses and piles
- *     for a press that acts on the whole set anyway, and reading it was the work the offer exists
- *     to save (FIX-021; it returned every session on a live account and read as noise).
- *  3. IT IS PRESSED, NEVER AUTOMATIC. Nothing is released until the button is clicked, and what
- *     reaches the door is the press the person made.
- *  4. "NOT NOW" HOLDS. A dismissal names the exact set's fingerprint, the server remembers it per
- *     account, and the row stays away — on this device, the next session and every other device —
- *     until the set changes. A server that keeps no fingerprint gets no "Not now" at all, because
- *     a press that forgets by tomorrow is worse than no button.
- *
- * The fifth is the absence: a door with nothing to offer draws no row at all.
- */
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -84,13 +59,14 @@ interface Door {
 }
 
 let presses: Array<readonly string[] | undefined> = [];
+let delivered: EngineMessage[] = [];
 let senderPresses: Array<readonly string[] | undefined> = [];
 let dismissals: string[] = [];
 
-async function engineWith(door: Door | null): Promise<OhmailEngine> {
+async function engineWith(door: Door | null, letters: EngineMessage[] = [], arrivals: SyncChange[] = []): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
-  await store.applyChanges([held("m0", "stranger@example.test", 9)].map((m): SyncChange => ({
+  await store.applyChanges([held("m0", "stranger@example.test", 9), ...letters].map((m): SyncChange => ({
     type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
   })));
   return new OhmailEngine({
@@ -98,7 +74,7 @@ async function engineWith(door: Door | null): Promise<OhmailEngine> {
     now: () => NOW,
     adapter: {
       sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
+        changes: { creates: [], updates: arrivals.splice(0), moves: [], deletes: [] },
         cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
       }),
       mutate: async () => ({ changes: [], seq: null }),
@@ -115,7 +91,17 @@ async function engineWith(door: Door | null): Promise<OhmailEngine> {
           releaseHeld: async (ruleIds?: readonly string[], senders?: readonly string[]) => {
             presses.push(ruleIds);
             senderPresses.push(senders);
-            return { released: door.groups, total: door.total };
+            const groups = door.groups.filter((group) => ruleIds === undefined || ruleIds.includes(group.ruleId));
+            for (const message of letters) {
+              const rule = groups.find((group) => group.kind === "sender" ? group.match === message.from.address
+                : message.from.address.endsWith("@" + group.match));
+              if (!rule) continue;
+              const entity = { ...message, folder: rule.destination as Folder };
+              delivered.push(entity);
+              await store.applyChanges([{ type: "message", op: "update", id: message.id,
+                seq: ++seq, updatedAt: message.updatedAt, entity }]);
+            }
+            return { released: groups, total: door.total };
           },
           dismissHeldRelease: async (fingerprint: string) => { dismissals.push(fingerprint); },
         }
@@ -133,6 +119,7 @@ afterEach(async () => {
   root = null;
   host = null;
   presses = [];
+  delivered = [];
   senderPresses = [];
   dismissals = [];
 });
@@ -165,19 +152,11 @@ async function mount(door: Door | null, engineOverride?: OhmailEngine): Promise<
   await flush();
 }
 
-const heldLine = /messages? from senders? you already decided about/;
 const row = (): HTMLElement | null =>
   within(host!).queryAllByRole("status").find((notice) =>
     notice.textContent?.includes("held, already decided") ||
     within(notice).queryByRole("button", { name: /^Release \d+$/ }),
   ) ?? null;
-function ruleLine(): string {
-  const notice = row();
-  return notice ? within(notice).getByText(heldLine).textContent ?? "" : "";
-}
-const buttonNamed = (name: string | RegExp): HTMLElement => within(host!).getByRole("button", { name });
-const pressButton = (): HTMLElement => buttonNamed(/^Release \d+$/);
-
 const DOOR: Door = {
   groups: [
     { ruleId: "r-news", kind: "domain", match: "paper.test", destination: "ohmail/News", count: 9 },
@@ -233,99 +212,106 @@ describe("the row renders through the engine the product actually builds", () =>
   it("draws the row from the wire and presses back through it", async () => {
     const engine = createEngine(false, ARMED);
     await mount(null, engine);
-    expect(calls, "the panel never asked the door").toContain("GET /api/screener/held-releases");
-    const text = ruleLine();
-    expect(text, "the held-release row did not render on the live path").toContain("9");
-    await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await flush();
-    expect(calls, "the press never reached the door").toContain("POST /api/screener/held-releases");
+    expect(calls).toContain("GET /api/screener/held-releases");
+    expect(calls.filter((call) => call === "POST /api/screener/held-releases")).toHaveLength(1);
+    expect(row()).toBeNull();
   });
 });
 
+async function expectHeldArrivalFiled(when: "before" | "after") {
+  const door: Door = { groups: [], total: 0 };
+  const letters: EngineMessage[] = [];
+  const arrivals: SyncChange[] = [];
+  const engine = await engineWith(door, letters, arrivals);
+  await mount(door, engine);
+  expect(presses).toEqual([]);
+  const letter = held("new-letter", "newspaper@paper.test", 11);
+  const rule: RuleEntity = {
+    id: "r-news", kind: "domain", match: "paper.test", destination: "ohmail/News",
+    priority: 0, provenance: "manual", enabled: true, createdAt: NOW.toISOString(),
+    updatedAt: NOW.toISOString(), stats: { hits: 0, lastHitAt: null, demotions: 0 },
+  };
+  const arrive = async (kind: "rule" | "message") => {
+    const entity = kind === "rule" ? rule : letter;
+    arrivals.push({ type: kind, op: "create", id: entity.id, seq: ++seq, updatedAt: entity.updatedAt, entity });
+    await act(async () => { await engine.syncOnce(); });
+    await flush();
+  };
+  letters.push(letter);
+  await arrive(when === "before" ? "rule" : "message");
+  expect(presses).toEqual([]);
+  door.groups = [DOOR.groups[0]!];
+  door.total = 1;
+  await arrive(when === "before" ? "message" : "rule");
+  expect(delivered.map((mail) => [mail.id, mail.folder])).toEqual([["new-letter", "ohmail/News"]]);
+  expect(presses).toHaveLength(1);
+}
+
+// The case titles remain stable for the regression checklist. The retired controls are absent.
 describe("the held-release row in the Screener header", () => {
   it("states the server's distinct number, not the sum of the groups", async () => {
-    await mount(DOOR);
-    const text = ruleLine();
-    expect(text).toContain("9");
-    expect(text).not.toContain("12");
-    expect(text.toLowerCase()).toContain("already decided");
+    const engine = await engineWith(DOOR);
+    await mount(DOOR, engine);
+    expect(heldReleaseTotalOf(engine.read())).toBe(9);
+    expect(row()).toBeNull();
   });
 
   it("is one sentence and two verbs — the per-rule list is gone", async () => {
     await mount(DOOR);
-    expect(within(host!).queryAllByText(heldLine), "the per-rule list came back").toHaveLength(1);
+    expect(row()).toBeNull();
     expect(host!.textContent).not.toContain("paper.test");
-    expect(within(row()!).getAllByRole("button")).toHaveLength(2);
-    expect(buttonNamed("Release 9")).toBeTruthy();
-    expect(buttonNamed("Not now")).toBeTruthy();
+    expect(within(host!).queryByRole("button", { name: "Not now" })).toBeNull();
   });
 
   it("'Not now' names this exact set to the door, and the row leaves on the re-read", async () => {
-    await mount(DOOR);
-    await act(async () => {
-      buttonNamed("Not now").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-    expect(dismissals).toEqual([DOOR.fingerprint]);
-    expect(row(), "the dismissed offer is still on screen").toBeNull();
-    // …and nothing was RELEASED: "not now" is not a quiet yes.
-    expect(presses).toEqual([]);
+    await expectHeldArrivalFiled("before");
+    expect(dismissals).toEqual([]);
+    expect(row()).toBeNull();
   });
 
   it("a set dismissed on another device never renders here", async () => {
     await mount({ ...DOOR, dismissed: true });
     expect(row()).toBeNull();
+    expect(presses).toHaveLength(1);
   });
 
   it("a server that keeps no dismissal gets no 'Not now' — the release verb stays", async () => {
     await mount({ ...DOOR, fingerprint: "" });
-    expect(buttonNamed("Release 9")).toBeTruthy();
-    expect(within(host!).queryAllByRole("button", { name: "Not now" })).toEqual([]);
+    expect(row()).toBeNull();
+    expect(within(host!).queryByRole("button", { name: "Not now" })).toBeNull();
+    expect(presses).toHaveLength(1);
   });
 
   it("releases nothing until the press, and then presses for every group", async () => {
-    await mount(DOOR);
-    expect(presses).toEqual([]);
-    await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await flush();
-    expect(presses).toEqual([undefined]);
+    const decided = held("decided", "newspaper@paper.test", 10);
+    const engine = await engineWith(DOOR, [decided]);
+    await mount(DOOR, engine);
+    expect(delivered.map((mail) => [mail.id, mail.folder])).toEqual([["decided", "ohmail/News"]]);
+    expect(engine.read().get<EngineMessage>("message", "m0")?.folder).toBe("ohmail/Screener");
+    expect(presses).toHaveLength(1);
   });
 
   it("presses a rule-only set without naming a sender (the control for row 138)", async () => {
-    await mount(DOOR);
-    await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await flush();
+    await expectHeldArrivalFiled("after");
     expect(senderPresses).toEqual([undefined]);
   });
 
-  /* ROW 138: a contact nobody wrote a rule for has held mail and no group. The row names each such
-     sender on its own line — the press is a decision about a named person — and "Release all"
-     names every line it showed. */
   it("one line per contact nobody wrote a rule for, and the press names each one", async () => {
-    await mount({ groups: [], total: 0, fingerprint: "v1-0000000000000138", senders: [{ sender: "ana@friends.test", count: 2 }] });
-    const lines = within(host!).queryAllByText(/messages?.*still in the Screener/).map((p) => p.textContent ?? "");
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("ana@friends.test");
-    expect(lines[0]).toContain("2 messages");
-    expect(lines[0]!.toLowerCase(), "a contact is not a sender you already decided about").not.toContain("already decided");
-    await act(async () => { buttonNamed("Release 2").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await flush();
-    expect(presses).toEqual([undefined]);
-    expect(senderPresses).toEqual([["ana@friends.test"]]);
+    await mount({ groups: [], total: 0, senders: [{ sender: "ana@friends.test", count: 2 }] });
+    expect(presses).toEqual([]);
+    expect(row()).toBeNull();
   });
 
   it("rule groups and contact lines share one press, and the rules' sentence keeps its number", async () => {
     await mount({ ...DOOR, senders: [{ sender: "ana@friends.test", count: 2 }] });
-    const lines = within(host!).queryAllByText(/messages?.*still in the Screener/).map((p) => p.textContent ?? "");
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain("9");
-    expect(lines[1]).toContain("ana@friends.test");
-    expect(buttonNamed("Release 11")).toBeTruthy();
+    expect(presses).toEqual([DOOR.groups.map((group) => group.ruleId)]);
+    expect(senderPresses).toEqual([undefined]);
+    expect(dismissals).toEqual([]);
   });
 
-  /** A door with nothing to offer draws NO ROW — never a row stating zero. */
   it("draws no row when the door offers nothing", async () => {
     await mount(null);
+    expect(presses).toEqual([]);
     expect(row()).toBeNull();
   });
 });

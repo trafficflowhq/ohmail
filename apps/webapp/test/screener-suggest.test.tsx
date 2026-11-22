@@ -278,9 +278,9 @@ async function mountView(
   if (opts.active !== false) await goTo("screener");
   await tick(0);
   if (opts.ownerCookie === false) document.cookie = "tf_owner=; Path=/; Max-Age=0";
-  const apply = () => within(host!).queryByRole("button", { name: /^Apply [0-9]+ — / });
+  const apply = () => within(host!).queryByRole("button", { name: /^Apply [0-9]+$/ });
   return {
-    suggestedCount: () => Number(apply()?.textContent?.trim().match(/^Apply ([0-9]+) — /)?.[1] ?? 0),
+    suggestedCount: () => Number(apply()?.textContent?.trim().match(/^Apply ([0-9]+)/)?.[1] ?? 0),
     applyAll: () => {
       const button = apply();
       if (!button) throw new Error("No Apply action on the Screener");
@@ -533,7 +533,12 @@ describe("the trigger — nothing is spent before the price is on screen", () =>
     };
     const engine = await engineWith(waiting, undefined, () => incoming.splice(0));
     await mountView(engine);
-    await press("Suggest again…");
+    const listLabel = messages.screener.place.listMenu;
+    const tools = within(host!).getByRole("group", { name: messages.screener.bulkAria });
+    await act(async () => { within(tools).getByRole("button", { name: listLabel }).click(); });
+    const listMenu = within(document.body).getByRole("menu", { name: listLabel });
+    await act(async () => { within(listMenu).getByRole("menuitem", { name: messages.screener.suggest.again }).click(); });
+    await flush();
     incoming = [
       { type: "message", op: "create", id: waiting[0]!.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: { ...waiting[0]!, folder: "INBOX" } },
       { type: "message", op: "create", id: replacement.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: replacement },
@@ -629,12 +634,12 @@ describe("the confirm hands back the price each chunk was quoted", () => {
 
 describe("the batch is bounded, and it is a PREFIX of the queue rather than a sample", () => {
   it("offers sizes clamped to the queue and the purchase ceiling", async () => {
-    // 12 waiting, under the purchase ceiling of 400 ⇒ 10, then "all 12". 25 and 50 are not
+    // 12 waiting, under the purchase ceiling of 400 ⇒ 10, then "All 12". 25 and 50 are not
     // offered: two buttons that both buy 12 would be two labels for one act.
     await mountView(await engineWith(MANY));
     await press("Suggest…");
     const sizes = suggestionSizes();
-    expect(sizes).toEqual(["10", "all 12"]);
+    expect(sizes).toEqual(["10", "All 12"]);
   });
 
   it("splits a purchase larger than the per-request cap into cap-sized requests — none posted over", async () => {
@@ -645,7 +650,7 @@ describe("the batch is bounded, and it is a PREFIX of the queue rather than a sa
     await mountView(await engineWith(MANY));
     await press("Suggest…");
     const sizes = suggestionSizes();
-    expect(sizes).toEqual(["10", "all 12"]);
+    expect(sizes).toEqual(["10", "All 12"]);
     await pressConfirm();
     // 12 senders, cap 5 ⇒ three requests of 5, 5 and 2 — never one of 12, never one over the cap.
     const bought = purchases();
@@ -687,8 +692,10 @@ describe("what a bought suggestion does to the surface", () => {
     const mounted = await mountView(await engineWith(MANY));
     await selectScreenerRow(host!, "m00");
     expect(mounted.suggestedCount()).toBe(0);
-    // Before: the preview says so rather than staying silent.
-    expect(text()).toContain("No suggestion yet for this sender");
+    // Before: the place slot is present with no suggestion.
+    const reading = within(within(host!).getByRole("region", { name: messages.frame.landmark.reading }));
+    expect(reading.getByText(messages.screener.place.nowhere, { exact: true })).toBeTruthy();
+    expect(reading.queryByText(/No suggestion yet for this sender/)).toBeNull();
 
     await press("Suggest…");
     await pressConfirm();
@@ -696,9 +703,9 @@ describe("what a bought suggestion does to the surface", () => {
     expect(mounted.suggestedCount()).toBe(12);
     // The DETAIL: the selected sender's suggestion, its confidence and its reason.
     expect(text()).toContain("s11@ex.example goes to Ohbox");
-    expect(text()).toContain("90% sure");
+    expect(text()).toContain("90%");
     expect(text()).toContain("because s11@ex.example");
-    expect(text()).not.toContain("No suggestion yet for this sender");
+    expect(reading.queryByText(messages.screener.place.nowhere, { exact: true })).toBeNull();
     // The LIST: the chip on the row carries the destination it would file to. `s00` was
     // answered `yes` and `s01` `no`, so both labels are on screen at once.
     const rows = within(host!).getByRole("listbox", { name: messages.screener.title });
@@ -709,10 +716,10 @@ describe("what a bought suggestion does to the surface", () => {
 
   it("brings back 'Apply all', which was hidden only because nothing had been bought", async () => {
     await mountView(await engineWith(MANY));
-    expect(text()).not.toContain("Apply 12 — Ohbox & Screened out");
+    expect(text()).not.toContain("Apply 12");
     await press("Suggest…");
     await pressConfirm();
-    expect(text()).toContain("Apply 12 — Ohbox & Screened out");
+    expect(text()).toContain("Apply 12");
   });
 
   it("a suggestion SURVIVES a reload — the stored answer is read back, not re-bought", async () => {
@@ -927,7 +934,7 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
       expect(screenerRowIds(host!)).toHaveLength(4);
       expect(mounted.suggestedCount(), "a spam verdict was not counted as appliable").toBe(4);
       // …and the button's own pile list names spam, or it would promise four and deliver three.
-      expect(within(host!).getByRole("button", { name: "Apply 4 — Ohbox, News, Screened out & Spam" }))
+      expect(within(host!).getByRole("button", { name: "Apply 4" }))
         .toBeTruthy();
 
       await act(async () => { mounted.applyAll(); });

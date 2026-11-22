@@ -128,7 +128,7 @@ async function accountStep(messages: Messages) {
   await ui.type("join-email", "pat@family.example");
   await ui.type("join-name", "Pat");
   await ui.type("join-pw", "a-long-signup-password");
-  await ui.press(messages.join.createAccount);
+  await ui.press(messages.join.continue);
   return ui;
 }
 
@@ -186,7 +186,7 @@ describe("the authenticator step's refusal, in the screen's words", () => {
       document.cookie = "tf_family=f1; Path=/";
       answers["/auth/2fa/totp/activate"] = refusal(422, "unprocessable", "invalid TOTP code");
       const ui = await render(messages, "join");
-      await ui.press(messages.join.useTotp);
+      await ui.press(messages.join.factorApp);
       await ui.type("join-totp", "123456");
       await ui.press(messages.join.activate);
       expect(ui.alertText()).toContain(messages.join.refusedTotpCode);
@@ -228,8 +228,8 @@ describe("the resend asks for the mail in the screen's language", () => {
 describe("two lines that were not true", () => {
   it("the password hint does not promise a passkey as the next step: on the open path the next step is the mail", () => {
     for (const m of [en, de]) {
-      expect(m.join.passwordHint).not.toMatch(/next step adds|nächsten Schritt kommt/);
-      expect(m.join.passwordHint).toMatch(/12/);
+      expect(m.join.minimum).not.toMatch(/next step adds|nächsten Schritt kommt/);
+      expect(m.join.minimum).toMatch(/12/);
     }
   });
 

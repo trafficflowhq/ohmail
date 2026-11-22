@@ -6,7 +6,15 @@ export interface HelpPaneState {
   readonly model: HelpModel;
 }
 
-const build = { version: "2.0.0", commit: "localbuild-two" } as const;
+const facts: HelpModel["facts"] = {
+  version: "2.0.0",
+  commit: "localbuild-two",
+  os: "linux",
+  osVersion: null,
+  surface: "web",
+  account: null,
+  mailboxes: [{ provider: "imap", lastSyncError: null }],
+};
 
 /**
  * The pane's states: the design's `sec=help` is a door with a mailbox that sends; the shipped pane's other two ways
@@ -15,13 +23,13 @@ const build = { version: "2.0.0", commit: "localbuild-two" } as const;
 export const HELP_STATES = {
   compose: {
     address: "screen=settings&sec=help",
-    model: { ...build, write: { kind: "compose", write: () => {} } },
+    model: { facts, write: { kind: "compose", write: () => {} } },
   },
-  mailto: { address: null, model: { ...build, write: { kind: "mailto", href: "mailto:?subject=Help" } } },
-  copy: { address: null, model: { ...build, write: { kind: "copy", copied: null, copy: () => {} } } },
-  copied: { address: null, model: { ...build, write: { kind: "copy", copied: "address", copy: () => {} } } },
+  mailto: { address: null, model: { facts, write: { kind: "mailto", href: "mailto:?subject=Help" } } },
+  copy: { address: null, model: { facts, write: { kind: "copy", copied: null, copy: () => {} } } },
+  copied: { address: null, model: { facts, write: { kind: "copy", copied: "address", copy: () => {} } } },
   noBuild: {
     address: null,
-    model: { version: null, commit: null, write: { kind: "compose", write: () => {} } },
+    model: { facts: { ...facts, version: null, commit: null }, write: { kind: "compose", write: () => {} } },
   },
 } as const satisfies Record<string, HelpPaneState>;

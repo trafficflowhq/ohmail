@@ -1,9 +1,9 @@
-import { useEffect, useSyncExternalStore } from "react";
-import { awayEffectivePiles, AWAY_PILE_VIEW, isAwayPile } from "@ohmail/app-logic/away";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { awayEffectivePiles } from "@ohmail/app-logic/away";
 import { useDemoMode } from "@ohmail/app-logic/engine";
 import { useFrame, type FrameNotice } from "../../frame/index.js";
 import { createFeed, NONE, type AwayWire } from "../../host/index.js";
-import { useLocale, useText } from "../../text/index.js";
+import { useText } from "../../text/index.js";
 
 type AwayReading = Awaited<ReturnType<AwayWire["state"]>>;
 
@@ -64,44 +64,29 @@ type AwayFeed = ReturnType<typeof awayFeedOver>;
 const noRow = () => null;
 const noFeed = () => () => {};
 
-const PILE_WORD = {
-  ohbox: "noticePileOhbox",
-  reads: "noticePileReads",
-  receipts: "noticePileReceipts",
-  screener: "noticePileScreener",
-} as const;
-
 /** The saved row says who is answered. Settings and this notice share the same wire. */
 export function useAwayNotice(feed: AwayFeed | null): readonly FrameNotice[] {
   const demo = useDemoMode();
   const { commands, host } = useFrame();
   const active = !demo && host.capabilities.awayRunsOn !== NONE;
-  const locale = useLocale();
   const t = useText("away");
   const row = useSyncExternalStore(feed?.subscribe ?? noFeed, feed?.read ?? noRow, noRow);
   useEffect(() => {
     if (active) feed?.start();
   }, [active, feed]);
 
-  if (!active || !row?.enabled) return [];
-  const piles = awayEffectivePiles(row.piles ?? [], row.audience)
-    .filter(isAwayPile)
-    .map((pile) => t(PILE_WORD[AWAY_PILE_VIEW[pile]]));
-  const title =
-    piles.length === 0
-      ? t("noticeNone")
-      : t("notice", {
-          audience: row.audience,
-          throttle: row.throttle,
-          piles: new Intl.ListFormat(locale === "en" ? "en-US" : locale, { type: "disjunction" }).format(
-            piles,
-          ),
-        });
+  const [dismissed, setDismissed] = useState<AwayReading | null>(null);
+  if (!active || !row?.enabled || row === dismissed) return [];
+  const replies = awayEffectivePiles(row.piles ?? [], row.audience).length > 0;
   return [
     {
       kind: "away",
-      title,
-      acts: [{ label: t("noticeSettings"), onPress: () => commands.go({ place: "settings", sub: "away" }) }],
+      title: t("noticeTitle"),
+      line: replies ? undefined : t("noticeNone"),
+      acts: [
+        { label: t("noticeSettings"), onPress: () => commands.go({ place: "settings", sub: "away" }) },
+        { label: t("noticeDismiss"), onPress: () => setDismissed(row) },
+      ],
     },
   ];
 }

@@ -37,7 +37,7 @@ function WebSettings({ mail, mailboxes, composer }: HelpHost) {
   const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
   const { host } = fakeHost({
     engine: mail.engine,
-    service: "self",
+    service: "managed",
     scope: ACCOUNT,
     account: ACCOUNT,
     places: { ...frame.places, write: composer ? frame.places.write : NONE },
@@ -110,12 +110,23 @@ function addressedMailto(link: HTMLElement): { target: string; subject: string |
 
 describe("the Help & contact pane", () => {
   it("is a Settings pane right after About, and opens", async () => {
-    mount({ pane: "general" });
+    const mail = mount({ pane: "general" });
     await screen.findByRole("navigation", { name: en.settings.navAria });
     expect(names(en).slice(-2)).toEqual(["About ohmail", "Help & contact"]);
     fireEvent.click(menu(en).getByRole("button", { name: "Help & contact" }));
     expect(await screen.findByRole("button", { name: "Write to us" })).toBeDefined();
     expect(window.location.hash).toBe("#/settings/help");
+    expect(await screen.findByRole("heading", { name: "Diagnostics" })).toBeDefined();
+    expect(screen.getByRole("group", { name: "Mailbox" }).textContent).toMatch(/gmail/i);
+    expect(screen.getByRole("group", { name: "Last sync error" }).textContent).toContain("Timed out");
+    expect(screen.getByRole("group", { name: "App" }).textContent).toContain("ohmail web");
+    expect(screen.getByRole("group", { name: "Account" }).textContent).toContain(ACCOUNT);
+    const actions = within(screen.getByRole("toolbar", { name: "Help & contact" }));
+    expect(actions.getByRole("button", { name: "Write to us" })).toBeDefined();
+    const reading = screen.getByRole("region", { name: "Help & contact" }).closest<HTMLElement>('[data-kind="reading"]')!;
+    expect(within(reading).queryByText(MAILBOX.address)).toBeNull();
+    expect(mail.mutations.filter((change) => change.kind === "mail_send")).toEqual([]);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("is named in German", async () => {
@@ -127,7 +138,7 @@ describe("the Help & contact pane", () => {
   it("renders Write to us and the version", async () => {
     mount();
     expect(await screen.findByRole("button", { name: "Write to us" })).toBeDefined();
-    expect(screen.getByText("0.30.3 · build 012345678")).toBeDefined();
+    expect(within(screen.getByRole("group", { name: "Version" })).getByText("0.30.3 · build 012345678")).toBeDefined();
   });
 
   it("Write to us opens the composer: To support, the subject, and the block in the body", async () => {

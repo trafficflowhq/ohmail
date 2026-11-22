@@ -4,7 +4,7 @@
  * loaded; the check did not finish). It asks nothing itself; every way on is the door's. No key hint stands on its
  * buttons: the page has no field, so Enter presses only the button that has the focus.
  */
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button, Page } from "@ohmail/ui/base";
 import { NONE, type None } from "../../host/contract.js";
 import { useText } from "../../text/index.js";
@@ -12,10 +12,21 @@ import { ColdMark } from "../stage/ColdMark.js";
 import { REASON_SAID } from "../stage/reasons.js";
 import { Said } from "../stage/Said.js";
 import type { SignedOutDoor } from "./door.js";
-export function SignedOutPage({ door }: { door: SignedOutDoor | None }): ReactNode {
+export function SignedOutPage({
+  door,
+  links,
+}: {
+  door: SignedOutDoor | None;
+  links?: { signIn: string; demo?: string };
+}): ReactNode {
   const resume = useText("resume");
   const session = useText("session");
   const gate = useText("gate");
+  const retry = useRef<HTMLButtonElement>(null);
+  const focusRetry = links !== undefined && door !== NONE && door.state.at === "unchecked";
+  useEffect(() => {
+    if (focusRetry) retry.current?.focus();
+  }, [focusRetry]);
   /* No server behind this build: there is no sign-in to renew, and nothing to press. */
   if (door === NONE)
     return (
@@ -24,11 +35,16 @@ export function SignedOutPage({ door }: { door: SignedOutDoor | None }): ReactNo
       </Page>
     );
   const { state } = door;
-  const signIn = (words: string) => (
-    <Button size="l" onPress={door.signIn}>
-      {words}
-    </Button>
-  );
+  const signIn = (words: string, kind?: "two") =>
+    links === undefined ? (
+      <Button size="l" kind={kind} onPress={door.signIn}>
+        {words}
+      </Button>
+    ) : (
+      <Button size="l" kind={kind} href={links.signIn}>
+        {words}
+      </Button>
+    );
   switch (state.at) {
     case "checking":
       /* Below the loading grace the page says nothing: a sentence that flashes is worse than a quiet page. */
@@ -67,14 +83,17 @@ export function SignedOutPage({ door }: { door: SignedOutDoor | None }): ReactNo
     case "out": {
       const demo = door.demo;
       const toDemo =
-        demo === NONE ? null : (
+        links?.demo !== undefined ? (
+          <Button kind="quiet" size="l" href={links.demo}>
+            {session("openDemo")}
+          </Button>
+        ) : demo === NONE ? null : (
           <Button kind="quiet" size="l" onPress={demo}>
             {session("openDemo")}
           </Button>
         );
       return (
         <Page
-          back={<ColdMark />}
           line={session("endedLine")}
           note={session("endedNote")}
           acts={
@@ -84,27 +103,24 @@ export function SignedOutPage({ door }: { door: SignedOutDoor | None }): ReactNo
             </>
           }
         >
-          <Said text={session("endedTitle")} />
+          <Said text={session("endedTitle")} level={1} />
         </Page>
       );
     }
     case "unchecked":
       return (
         <Page
-          back={<ColdMark />}
           line={session(state.warm ? "unconfirmedBodyWarm" : "unconfirmedLine")}
           acts={
             <>
-              <Button size="l" onPress={door.tryAgain}>
+              <Button ref={retry} size="l" onPress={door.tryAgain}>
                 {session("tryAgain")}
               </Button>
-              <Button kind="two" size="l" onPress={door.signIn}>
-                {session("signIn")}
-              </Button>
+              {signIn(session("signIn"), "two")}
             </>
           }
         >
-          <Said text={session("unconfirmedTitle")} />
+          <Said text={session("unconfirmedTitle")} level={1} />
         </Page>
       );
   }

@@ -1,5 +1,13 @@
 /* A short list that comes out of the thing you pressed. One at a time; it never leaves the window. */
 @layer oh {
+  .oh-menu,
+  .oh-popover-surface {
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--float);
+    transform-origin: var(--x-pop-origin);
+  }
+
   .oh-menu {
     --oh-menu-min: 232px;
     --oh-menu-max: 340px;
@@ -13,10 +21,6 @@
     max-height: calc(100% - 2 * var(--oh-menu-edge));
     padding: var(--oh-menu-pad);
     overflow: auto;
-    border-radius: var(--r-sheet);
-    background: var(--sheet);
-    box-shadow: var(--float);
-    transform-origin: var(--x-pop-origin);
     scrollbar-width: none;
   }
   .oh-menu:focus {
@@ -117,11 +121,15 @@
     font-weight: var(--w-mid);
     line-height: 1.2;
     white-space: nowrap;
+    transition: background-color var(--d-key-focus) var(--e-std);
   }
   .oh-menu-item:hover,
   .oh-menu-item:focus-visible {
     background: var(--hover);
     outline: none;
+  }
+  .oh-menu-item:focus-visible {
+    box-shadow: var(--key-focus-ring);
   }
   /* Words too long for the menu take a second line inside it; the note and the key beside them stay whole. An
      item of one line is as high as it ever was: its words keep, over and under them, what is left of that height,
@@ -143,6 +151,16 @@
   }
   .oh-menu-item[data-sub] > .oh-tagdot {
     --oh-tagdot-gap: 0 var(--s1) 0 0;
+  }
+  /* A tag in the picker is a top-level choice, with its own colour at the text edge. */
+  .oh-menu-item[data-sub][role="menuitemcheckbox"] {
+    --oh-menu-item-pad: 0 var(--s3);
+  }
+  .oh-menu-item[data-sub][role="menuitemcheckbox"]:not([aria-checked="true"]) {
+    font-weight: var(--w-mid);
+  }
+  .oh-menu-item[data-sub][role="menuitemcheckbox"] > .oh-tagdot {
+    --oh-tagdot-gap: 0 calc(var(--s1) / 2);
   }
   .oh-menu-item-note {
     margin-left: auto;

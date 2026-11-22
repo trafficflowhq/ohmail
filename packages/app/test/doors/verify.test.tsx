@@ -118,7 +118,7 @@ describe("the email confirmation", () => {
     expect(screen.queryByLabelText(V.tokenLabel)).toBeNull();
     expect(document.body.textContent).toContain("It is the password you chose when you signed up.");
     // Why a password is asked on a mailed link: an honest page says it, or it reads as a phishing page.
-    expect(document.body.textContent).toContain(V.passwordHint);
+    expect(document.body.textContent).not.toContain("the link on its own is not enough");
   });
 
   it("form: Confirm is live; a press with nothing typed sends nothing and says what is wanted; typed, it sends once", () => {

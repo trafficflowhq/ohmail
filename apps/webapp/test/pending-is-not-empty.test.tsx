@@ -1,5 +1,8 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as React from "react";
+import { screen, within } from "@testing-library/react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { OhmailEngine } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { OwnerOutcome } from "../app/shell/engine";
@@ -15,6 +18,10 @@ import {
   textOf,
   tick,
 } from "./fixtures/live-walk-shell";
+import {
+  act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  scriptSession, sessionFull, teardownConfirmEnv, tick as confirmTick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
 /**
  * ═══ "NO MESSAGES" IS NOT SOMETHING THE APP MAY SAY BEFORE IT HAS LOOKED ═══════════════════
@@ -263,5 +270,129 @@ describe("a signed-in user with mail on the server is never told there is none",
     // And the reason is on screen, from the one surface entitled to say it.
     expect(textOf(el), "no surface explained why the mirror is frozen")
       .toContain(messages.frame.connection.reconnecting.title /* the strip's retrying sentence, as the notice says the state */);
+  });
+});
+
+const desktopBuild = vi.hoisted(() => vi.fn(() => false));
+vi.mock("../app/shell/engine-config", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../app/shell/engine-config")>(),
+  syncsWhileHidden: desktopBuild,
+}));
+
+describe("opening an account", () => {
+  beforeAll(warmCloudShell, 90_000);
+  beforeEach(() => {
+    desktopBuild.mockReturnValue(false);
+    installConfirmEnv();
+    scriptRefresh(refresh204);
+  });
+  afterEach(teardownConfirmEnv);
+
+  const reload = () => screen.queryByRole("button", { name: messages.appError.reload });
+  const status = () => within(screen.getByRole("main")).getByRole("status");
+
+  function expectOpeningLine() {
+    expect(status().textContent).toBe(messages.session.opening);
+    expect(status().querySelector(".oh-dot")?.getAttribute("data-kind")).toBe("hot");
+  }
+
+  it("offers a way to reload if the local copy never opens", async () => {
+    const hydrate = vi.spyOn(OhmailEngine.prototype, "hydrate").mockImplementation(() => new Promise(() => {}));
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    try {
+      scriptSession(() => sessionFull());
+      rememberOwner();
+      window.location.hash = "#/ohbox";
+      await mountCloudShell((shell) => React.cloneElement(
+        shell as React.ReactElement<{ drawMail: "wait" }>,
+        { drawMail: "wait" },
+      ));
+      await confirmTick(2_000);
+      expect(hydrate).toHaveBeenCalled();
+      expect(screen.queryByRole("region", { name: messages.frame.landmark.list })).toBeNull();
+      expectOpeningLine();
+      expect(reload()).toBeNull();
+      online.mockReturnValue(false);
+      await act(async () => { window.dispatchEvent(new Event("offline")); });
+      expectOpeningLine();
+      expect(reload()).toBeNull();
+      await confirmTick(15_000);
+      expect(reload()).not.toBeNull();
+      expectOpeningLine();
+      expect(screen.queryByRole("region", { name: messages.frame.landmark.list })).toBeNull();
+    } finally {
+      hydrate.mockRestore();
+      online.mockRestore();
+    }
+  });
+
+  it("offers the studio recovery while a session check is waiting offline", async () => {
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      const { EngineProvider } = await import("../app/shell/engine");
+      await mountCloudShell(() => React.createElement(EngineProvider, {
+        demo: false,
+        resolveOwner: () => new Promise<OwnerOutcome>(() => {}),
+        children: null,
+      }));
+      expect(reload()).toBeNull();
+      await confirmTick(LOADING_GRACE_MS);
+      expectOpeningLine();
+      expect(reload()).not.toBeNull();
+      online.mockReturnValue(true);
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+      expectOpeningLine();
+      expect(reload()).toBeNull();
+    } finally {
+      online.mockRestore();
+    }
+  });
+
+  async function mountProvidedEngine() {
+    const read = vi.fn(async () => ({
+      changes: { creates: [], updates: [], moves: [], deletes: [] },
+      cursor: "1",
+      hasMore: false,
+      serverTime: new Date().toISOString(),
+    }));
+    const engine = new OhmailEngine({
+      adapter: {
+        sync: read,
+        mutate: async () => ({ changes: [], seq: null }),
+        withdrawSend: async () => ({ outcome: "unsupported" }),
+        fetchBody: async () => null,
+      },
+    });
+    const { EngineProvider } = await import("../app/shell/engine");
+    await mountCloudShell(() => React.createElement(EngineProvider, { demo: false, engine, children: null }));
+    return { engine, read };
+  }
+
+  it("reads mail from the desktop engine when the webview reports no network", async () => {
+    desktopBuild.mockReturnValue(true);
+    const offline = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      const { engine, read } = await mountProvidedEngine();
+      await confirmTick(250);
+      expect(engine.localCopyRead()).toBe(true);
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      offline.mockRestore();
+    }
+  });
+
+  it("holds a provided browser engine offline and drains it on reconnect", async () => {
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      const { engine, read } = await mountProvidedEngine();
+      await confirmTick(250);
+      expect(engine.localCopyRead()).toBe(true);
+      expect(read).not.toHaveBeenCalled();
+      online.mockReturnValue(true);
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      online.mockRestore();
+    }
   });
 });

@@ -312,7 +312,7 @@ describe("the recipient's domain picks the sender, when it can do so unambiguous
  * The rule above reads the To line as evidence of which of the account's identities a message
  * belongs to. Every address the account holds stands on one of the account's own domains, so a
  * message addressed TO YOURSELF matched it perfectly: a note to your own second mailbox moved the
- * From line onto that same mailbox and printed "Switched to match the recipient's domain" — a
+ * From line onto that same mailbox and printed "Matched" — a
  * switch made on the strength of the user's own address, announced as though a correspondent had
  * asked for it, on a message whose only recipient was the person sending it.
  *
@@ -582,7 +582,7 @@ describe("a reply From pick — honored when sendable, and never dressed as a su
  * `enrich` defaults a reply's `to` to `[parent.from]`, which is right until the parent is a
  * message the account itself sent: then `parent.from` is your own address and the default mails
  * you your own reply. `replyRecipients` is what corrects that, on the wire (`AppShell.sendReply`)
- * and in the head (`InlineReply`). It returns `null` for every ordinary reply so the default
+ * and in the head (the reply editor). It returns `null` for every ordinary reply so the default
  * keeps owning that path.
  */
 describe("replyRecipients — the correspondent, not yourself", () => {
@@ -627,7 +627,7 @@ describe("replyRecipients — the correspondent, not yourself", () => {
  * WHO A REPLY TO ALL IS ADDRESSED TO — and, by the same call, WHETHER the verb is offered.
  *
  * `null` is the visibility rule: the action bar renders Reply all exactly when this returns an
- * envelope (`MessagePane.ActionBar`), and `AppShell.sendReply` resolves the same call for the
+ * envelope (the reader's action bar), and `AppShell.sendReply` resolves the same call for the
  * wire. So these cases are simultaneously "the button appears/does not appear" and "who the
  * mail goes to" — one function, asserted once.
  */
@@ -892,7 +892,7 @@ const ADDRESS_ID = new Map<string, string>([
 const ID_ADDRESS = new Map([...ADDRESS_ID].map(([address, id]) => [id, address] as const));
 
 /** The sentence beside the address where Write says it switched or substituted (Write's own words). */
-const SAID = [/^Switched to match the recipient's domain$/, /is disconnected, so this message sends from the address above\.$/];
+const SAID = [/^Matched$/, /is disconnected, so this message sends from the address above\.$/];
 const isState = (el: Element): boolean => SAID.some((re) => re.test((el.textContent ?? "").trim()));
 
 /** The From line of the letter on screen: the element its "From" label stands in. */
@@ -1370,7 +1370,7 @@ const composeTo = (): HTMLInputElement => named<HTMLInputElement>("input", "To")
 /** The line that says the sender moved. Absent is the assertion in half the cases below. */
 const matchHint = (): HTMLElement | null => {
   const said = fromState();
-  return said && /^Switched/.test((said.textContent ?? "").trim()) ? said : null;
+  return said && said.textContent?.trim() === "Matched" ? said : null;
 };
 
 /** Type a recipient the way the field receives one — the input holds the wire text. */
@@ -1407,18 +1407,17 @@ describe("ACCEPTANCE: composing to a domain you own switches the From (R10-4)", 
     ).toBe(LICHTGRAT);
     const hint = matchHint();
     expect(hint, "the sender changed under the user with nothing on screen").not.toBeNull();
-    expect(hint!.textContent).toBe("Switched to match the recipient's domain");
+    expect(hint!.textContent).toBe("Matched");
   });
 
-  // The control describes the line about its sender.
   it("the switch's sentence describes the From control it is about", async () => {
     await mountShell(TWO_CONNECTED);
     await goCompose();
     await addressTo("piet@lichtgrat.example");
     const hint = matchHint();
     expect(hint, "the sender changed under the user with nothing on screen").not.toBeNull();
-    // The line is attached to the control it is about, so it is not visual-only.
-    expect(fromControl()!.getAttribute("aria-describedby")).toBe(hint!.id);
+    expect(hint!.parentElement).toBe(fromControl()!.parentElement);
+    expect(hint!.closest('[role="status"]')).toBeNull();
   });
 
   it("sends from the matched mailbox and stores NOTHING as the user's pick", async () => {

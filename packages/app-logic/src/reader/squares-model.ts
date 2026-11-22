@@ -1,6 +1,6 @@
 /** THE SQUARES OF A CONVERSATION: one a letter, oldest first. */
 import type { EngineMessage } from "@ohmail/wire";
-import { isOwnOutbound, isResurfaced } from "@ohmail/client-engine";
+import { isOwnOutbound, isResurfaced, threadMarkOf } from "@ohmail/client-engine";
 
 export type SquareKindOf = "seen" | "unseen" | "own";
 
@@ -10,7 +10,12 @@ export const mayMarkUnread = (m: EngineMessage): boolean => !m.unread && !isOwnO
 /** A letter that came back to the top: its read is its release, which its list's row offers as Done. */
 export const readIsItsRelease = (m: EngineMessage): boolean => isResurfaced(m);
 
-/** Your own letter is hollow whatever its flag; another's is unseen while unread. */
+const SQUARE: Record<ReturnType<typeof threadMarkOf>, SquareKindOf> = {
+  read: "seen",
+  unread: "unseen",
+  mine: "own",
+};
+
 export function squareKindsOf(messages: readonly EngineMessage[]): SquareKindOf[] {
-  return messages.map((m) => (isOwnOutbound(m) ? "own" : m.unread ? "unseen" : "seen"));
+  return messages.map((m) => SQUARE[threadMarkOf(m)]);
 }

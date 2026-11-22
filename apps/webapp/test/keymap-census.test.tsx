@@ -260,18 +260,11 @@ describe("the keymap census — the one table, surface by surface", () => {
     expectListed(["mod+Enter", "1", "2", "3", "4", "Escape"]);
     const rows = sheetRows();
     expect(rows).toContainEqual({ label: messages.write.keys.send, chords: [cap("mod+Enter")] });
-    // A rail digit in the same sheet cannot stand for a Send later preset.
-    const schedule = [
-      ["mod+Enter", messages.compose.keySchedule],
-      ["1", messages.compose.keyLaterTonight],
-      ["2", messages.compose.keyLaterTomorrow],
-      ["3", messages.compose.keyLaterMonday],
-      ["4", messages.compose.keyLaterPick],
-    ] as const;
-    const missing = schedule.filter(([chord, label]) =>
-      !rows.some((row) => row.label === label && row.chords.includes(cap(chord))),
-    );
-    expect(missing, "the sheet does not identify the Send later chords").toEqual([]);
+    // The four presets share one line in the sheet. Rail digits cannot stand in for it.
+  expect(rows.filter(({ label }) => label === messages.write.keys.later)).toEqual([
+    { label: messages.write.keys.later, chords: ["1", "2", "3", "4"].map(cap) },
+  ]);
+  expect(rows).toContainEqual({ label: messages.write.keys.leave, chords: [cap("Escape")] });
   });
 
   it("the collision policy holds — no Super, no Alt, no F-keys, anywhere on the sheet", async () => {

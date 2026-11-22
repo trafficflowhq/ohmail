@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider } from "@ohmail/ui";
+import { dayStamp } from "@ohmail/app-logic/text/format";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -166,7 +167,7 @@ describe("the strip on screen", () => {
     await mount("en");
     expect(text()).toContain("Your trial ended.");
     expect(text()).toContain("Sep");
-    expect(buttons().map((b) => b.textContent)).toEqual(["Subscribe", "Later"]);
+    expect(buttons().map((b) => b.textContent)).toEqual([en.accountLifecycle.subscribe, en.accountLifecycle.later]);
     // Never a modal, and never a dialog: it is a status strip, and it is announced as one.
     expect(host.querySelector("[role=status]")).not.toBeNull();
     expect(host.querySelectorAll("[role=dialog]")).toHaveLength(0);
@@ -186,7 +187,7 @@ describe("the strip on screen", () => {
     };
     await mount();
     expect(text()).toContain("Your last payment failed.");
-    expect(buttons().map((b) => b.textContent)).toEqual(["Fix payment", "Later"]);
+    expect(buttons().map((b) => b.textContent)).toEqual([en.accountLifecycle.fixPayment, en.accountLifecycle.later]);
   });
 
   it("goes away when it is put away, and the dismissal is remembered for the session", async () => {
@@ -196,7 +197,7 @@ describe("the strip on screen", () => {
     };
     await mount();
     expect(text()).toContain("Your trial ended.");
-    await press("Later");
+    await press(en.accountLifecycle.later);
     expect(text()).toBe("");
 
     // A second mount in the SAME session stays quiet…
@@ -233,7 +234,7 @@ describe("the strip on screen", () => {
       };
       await mount();
       expect(text()).toContain("Your trial ended.");
-      await press("Later");
+      await press(en.accountLifecycle.later);
       expect(text()).toBe("");
     } finally {
       if (real) Object.defineProperty(window, "sessionStorage", real);
@@ -282,12 +283,12 @@ describe("the catch-up after the wall lifts", () => {
     await mount();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     // The worker has not run when this is said, so a number here would be the free month's mail.
-    expect(text()).toContain("catching up on mail that arrived since");
+    expect(text()).toContain(en.accountLifecycle.caughtUp.replace("{date}", dayStamp(REOPENED.caughtUp.since)));
     expect(text()).not.toMatch(/\d+ messages?/);
     // Organizing resumes on its own, so the strip names no mailbox and links nowhere.
     expect(text()).not.toContain("a@example.test");
     expect(host.querySelectorAll("a")).toHaveLength(0);
-    expect(buttons().map((b) => b.textContent)).toEqual(["Got it"]);
+    expect(buttons().map((b) => b.textContent)).toEqual([en.accountLifecycle.dismiss]);
   });
 
   it("neither catalogue still says ohmail will not take the mailboxes again on its own", () => {
@@ -302,8 +303,8 @@ describe("the catch-up after the wall lifts", () => {
   it("is said ONCE: dismissed by `since`, so the same catch-up never returns this session", async () => {
     access = REOPENED;
     await mount();
-    expect(text()).toContain("catching up on mail");
-    await press("Got it");
+    expect(text()).toContain(en.accountLifecycle.caughtUp.replace("{date}", dayStamp(REOPENED.caughtUp.since)));
+    await press(en.accountLifecycle.dismiss);
     expect(text()).toBe("");
 
     await act(async () => { root.unmount(); });
@@ -319,13 +320,13 @@ describe("the catch-up after the wall lifts", () => {
     root = createRoot(host);
     forgetAccess();
     await mount();
-    expect(text()).toContain("catching up on mail");
+    expect(text()).toContain(en.accountLifecycle.caughtUp.replace("{date}", dayStamp("2026-09-19T09:00:00.000Z")));
   });
 
   it("an older API's count is not said: the sentence is the same, with no number", async () => {
     access = { ...REOPENED, caughtUp: { since: "2026-09-01T09:00:00.000Z", count: 478 } };
     await mount();
-    expect(text()).toContain("catching up on mail that arrived since");
+    expect(text()).toContain(en.accountLifecycle.caughtUp.replace("{date}", dayStamp(REOPENED.caughtUp.since)));
     expect(text()).not.toContain("478");
   });
 });
@@ -348,11 +349,11 @@ describe("the strip's press when the page cannot be opened", () => {
       access = TRIAL;
       mint = answer;
       await mount();
-      expect(text()).toContain("Your trial ends on");
+      expect(text()).toContain(en.accountLifecycle.trialEnds.replace("{date}", dayStamp(TRIAL.lifecycle.trialEndsAt)));
       await press("Subscribe");
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
       expect(alert()?.textContent, "a press that went nowhere said nothing").toBe(sentence);
-      expect(text(), "the strip went away with the refusal").toContain("Your trial ends on");
+      expect(text(), "the strip went away with the refusal").toContain(en.accountLifecycle.trialEnds.replace("{date}", dayStamp(TRIAL.lifecycle.trialEndsAt)));
       const again = buttons().find((b) => b.textContent === "Subscribe");
       expect(again?.disabled, "the press was left disabled").toBe(false);
     });

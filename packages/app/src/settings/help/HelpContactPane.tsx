@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { SupportSeed } from "@ohmail/app-logic/writing/composer-types";
 import { supportContact, type SupportHost } from "@ohmail/app-logic/writing/support";
+import type { PaneSheet } from "../contract.js";
 import { useText } from "../../text/index.js";
 import { HelpPane } from "./HelpPane.js";
 import type { HelpWrite } from "./model.js";
@@ -14,12 +15,13 @@ export interface HelpContactProps {
   readonly onWrite: ((seed: SupportSeed) => void) | null;
   readonly os: string | null;
   readonly copyText: (text: string) => Promise<boolean> | undefined;
+  readonly sheet?: PaneSheet;
 }
 
-export function HelpContactPane({ host, mailboxes, onWrite, os, copyText }: HelpContactProps) {
+export function HelpContactPane({ host, mailboxes, onWrite, os, copyText, sheet }: HelpContactProps) {
   const t = useText("help");
   const [copied, setCopied] = useState<"address" | "diag" | null>(null);
-  const { seed, canSend, href, version, commit } = supportContact(host, mailboxes, os, t("subject"), {
+  const { seed, canSend, href, facts } = supportContact(host, mailboxes, os, t("subject"), {
     title: t("diag"),
     app: t("dApp"),
     build: t("dBuild"),
@@ -45,5 +47,5 @@ export function HelpContactPane({ host, mailboxes, onWrite, os, copyText }: Help
       : host.mailtoLeaves !== false
         ? { kind: "mailto", href }
         : { kind: "copy", copied, copy };
-  return <HelpPane model={{ write, version, commit }} />;
+  return <HelpPane model={{ write, facts }} sheet={sheet} />;
 }
