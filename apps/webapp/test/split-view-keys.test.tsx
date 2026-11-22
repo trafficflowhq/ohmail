@@ -112,7 +112,12 @@ async function openLetter(view: (typeof VIEWS)[number]) {
 async function advertised(queries: Awaited<ReturnType<typeof openLetter>>, label: string, cap: string) {
   await key("?");
   const sheet = within(queries.getByRole("dialog", { name: en.shortcuts.title }));
-  expect(sheet.getByText(label).parentElement?.querySelector("kbd")?.textContent).toBe(cap);
+  const group = sheet.getByRole("heading", { name: en.shortcuts.group.message });
+  const rows: Element[] = [];
+  for (let row = group.nextElementSibling; row?.tagName === "P"; row = row.nextElementSibling) rows.push(row);
+  const matching = rows.filter((row) => within(row as HTMLElement).queryByText(label) !== null);
+  expect(matching).toHaveLength(1);
+  expect(matching[0]!.querySelector("kbd")?.textContent).toBe(cap);
   await key("Escape");
 }
 
@@ -132,7 +137,7 @@ describe("a printed keycap acts, in every split view", () => {
     describe(v.name, () => {
       it("prints the Move cap AND `m` opens the destination strip on the shown message", async () => {
         const queries = await openLetter(v);
-        await advertised(queries, en.shortcuts.move, "m");
+        await advertised(queries, en.reader.key.move, "m");
         expect(queries.queryByRole("menu", { name: "Move" })).toBeNull();
         await key("m");
         expect(queries.getByRole("menu", { name: "Move" })).toBeTruthy();
@@ -140,7 +145,7 @@ describe("a printed keycap acts, in every split view", () => {
 
       it("prints the Delete cap AND `d` opens the ask — never deleting on one press", async () => {
         const queries = await openLetter(v);
-        await advertised(queries, en.shortcuts.deleteAsk, "d");
+        await advertised(queries, en.reader.key.deleteAsk, "d");
         expect(queries.queryByRole("menu", { name: "More" })).toBeNull();
         const writesBefore = outgoingDeletes();
         await key("d");

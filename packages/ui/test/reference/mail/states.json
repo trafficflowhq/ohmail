@@ -1,6 +1,8 @@
 {
   "with": {
     "AddressText": "MessageHead",
+    "ContactCardHeader": "ContactCard",
+    "ContactDestinations": "ContactCard",
     "Rows": "Row",
     "ReadSquares": "Row",
     "Files": "FileTile",

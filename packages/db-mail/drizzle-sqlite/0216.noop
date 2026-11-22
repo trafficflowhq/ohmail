@@ -1,0 +1,1 @@
+The desktop SQLite store has no calendar tables, so calendar MOVE capability is only stored in Postgres.

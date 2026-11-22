@@ -30,6 +30,7 @@ export interface WorldState {
   readonly secondZone: boolean;
   /** The setup: our server refuses the sign-in. */
   readonly refused: boolean;
+  readonly extraAccounts?: number;
 }
 
 const connection = (
@@ -384,6 +385,10 @@ export function worldOf(at: WorldState): World {
     connection("icloud", "caldav", "mila.brunner@icloud.example", "p42-caldav.icloud.com"),
     connection("m365", "microsoft", "mila.brunner@vidralva.example", null),
   ];
+  for (let i = 1; i <= (at.extraAccounts ?? 0); i++) {
+    const id = `workshop-${i}`;
+    connections.push(connection(id, "caldav", `Workshop calendar ${i}`, null));
+  }
   const events = [...OWN, ...invitations(at.state), ...addedOf(at.state)].map(event);
   const kinds: Record<string, readonly { readonly id: string }[]> = {
     calendar_connection: connections,

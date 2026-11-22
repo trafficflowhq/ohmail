@@ -159,7 +159,7 @@ describe("CONTROLS: what the advance must not read", () => {
     await settle();
     expect(patches).toEqual([GLANCE]);
     await undo();
-    expect(toastText()).toContain("Not deleted.");
+    expect(toastText()).toBe("Not deleted");
     expect(selected()).toBe("old");
     expect(patches).toEqual([GLANCE]);
   }, 30_000);

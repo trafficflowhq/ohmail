@@ -27,6 +27,15 @@
     overflow-wrap: anywhere;
   }
 
+  .oh-settingline[data-dense] {
+    min-height: var(--h-s);
+    padding-block: 0;
+  }
+
+  .oh-settingline[data-dense] .oh-settingline-text {
+    white-space: normal;
+  }
+
   .oh-settingline-name > .oh-icon {
     color: var(--ink2);
   }
@@ -228,5 +237,32 @@
     .oh-settingline[data-press] {
       transition: none;
     }
+  }
+
+  /* Static facts share one column for their descriptions. */
+  .oh-settingtable {
+    display: grid;
+    grid-template-columns: fit-content(45%) minmax(0, 1fr);
+    column-gap: var(--s4);
+  }
+
+  .oh-settingtable > .oh-settingline {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: subgrid;
+    align-items: baseline;
+  }
+
+  .oh-settingtable .oh-settingline-value {
+    margin-inline-start: 0;
+  }
+
+  .oh-settingtable .oh-settingline-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .oh-settingtable + .oh-settingnote {
+    margin-block-start: var(--s3);
   }
 }

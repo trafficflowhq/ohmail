@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import messages from "../messages/en.json";
+import german from "../messages/de.json";
 import {
   ISO,
   answerSyncWith,
@@ -15,81 +16,18 @@ import {
 import { readingColumn, seatedList } from "./ohbox/_finders";
 
 /**
- * (the code half) — TWO SMALL THINGS THE WALK FOUND, WHICH ARE THE SAME THING TWICE.
- *
- * ── 1. THE SIGNUP ACCOUNT STEP SAID ONE SENTENCE TWICE, FOUR LINES APART ────────────────
- *
- * `JoinScreen`'s account step renders `step_account_lead`, then a label, then an input, then
- * `emailHintOpen`. On the open path those were:
- *
- *     This is your ohmail sign-in. It is not a new email address — your mail stays where it is.
- *     …
- *     Where we will reach you about your account. It is not a new email address.
- *
- * Saying it twice in the same eyeful does not reassure; it makes the reader wonder which one
- * they misread. The lead keeps it, because the lead is where the misconception lives and it is
- * the version that also says what DOES happen to their mail.
- *
- * ── 2. AN EMPTY OHBOX WAS TWO HEADINGS AND NOTHING ELSE ─────────────────────────────────
- *
- * The pane rendered "New" and "Earlier" unconditionally, and its empty-state component
- * (`SyncState`) returned `null` unless `screenerCandidate` — which requires mail to have landed
- * and the mirror to have settled, and is therefore FALSE for the whole of a first sync. On a
- * live account that is a first sync's many minutes, and what was on screen for it was the two words
- * "New" and "Earlier" over a blank column. A heading asserts that a section follows; two
- * headings over nothing read as a screen that failed to load.
- *
- * ── WHY THE TWO ARE IN ONE FILE ─────────────────────────────────────────────────────────
- *
- * They are one finding in the audit and one defect in kind: the product stating something that
- * is not so — once by repetition, once by a label with nothing under it. The guards are
- * separate and fail independently.
- *
- * ── WHAT IS DELIBERATELY NOT HERE ───────────────────────────────────────────────────────
- *
- * the other two items are owner decisions, not code: the Stripe checkout's public business
- * name, and whether the beta is invite-only (login says it is; `/join` accepted a signup with
- * no code). **Nothing in this file asserts either way about invite-only**, because writing a
- * test for it would be picking a side nobody has picked yet, and the copy would then have
- * a guard holding it in place.
+ * The signup account step uses the studio's sentence and field label in both languages.
+ * An empty Ohbox says that it is empty and draws group headings only once there is mail.
  */
 
-const JOIN = messages.join as unknown as Record<string, string>;
-
-/**
- * The strings the account step actually renders, in order — `JoinScreen.tsx:526-545`. Both
- * branches, because `emailHint` / `emailHintOpen` is a `needsInvite` ternary and a duplicate
- * on either path is the same defect.
- */
-const ACCOUNT_STEP = (invite: boolean): string[] => [
-  JOIN.step_account_title!,
-  JOIN.step_account_lead!,
-  JOIN.emailLabel!,
-  invite ? JOIN.emailHint! : JOIN.emailHintOpen!,
-  JOIN.nameLabel!,
-  JOIN.passwordLabel!,
-  JOIN.passwordHint!,
-];
-
-describe("the signup account step says it once", () => {
-  it("'not a new email address' appears exactly once on the step, on either path", () => {
-    /**
-     * Mutation: restore ". It is not a new email address" to `join.emailHintOpen`. The open
-     * branch then counts 2 and fails.
-     *
-     * Counted over the SENTENCE rather than the key, so moving the duplicate to a different
-     * string on the same step does not slip through, and so a rewording of the lead that keeps
-     * the phrase is still allowed exactly one home.
-     */
-    for (const invite of [true, false]) {
-      const hits = ACCOUNT_STEP(invite).filter((s) => /not a new email address/i.test(s));
-      expect(hits, `${invite ? "invite" : "open"} path repeats the sentence`).toHaveLength(1);
-    }
-    // And it is the LEAD that keeps it — the version that also says what happens to their mail.
-    expect(JOIN.step_account_lead).toMatch(/not a new email address/i);
-    expect(JOIN.emailHintOpen).not.toMatch(/not a new email address/i);
-    // The hint still has to say something true about the field it sits under.
-    expect(JOIN.emailHintOpen).toMatch(/account/i);
+describe("the signup account step", () => {
+  it("uses the account sentence and Email label in English and German", () => {
+    expect(messages.join.account).toBe("I’m <name>,</name> at <email>,</email> with a password of <password></password>.");
+    expect(german.join.account).toBe(
+      "Ich bin <name>,</name> meine Adresse ist <email>,</email> und mein Passwort ist <password></password>.",
+    );
+    expect(messages.join.emailLabel).toBe("Email");
+    expect(german.join.emailLabel).toBe("E-Mail");
   });
 });
 
@@ -98,10 +36,7 @@ describe("an empty Ohbox says it is empty", () => {
   afterEach(teardownShellEnv);
   /* The list's group headings by their names (the kit's heading draws its count beside the name), its rows as options,
      its groups as listboxes, and its empty sentence as the kit's Empty says it, the closing dot drawn by the kit.
-     RE-POINTED (share ohbox-2, the switch's older tests): the shell is the one there is (the shared fixture mounts
-     `_mail-shell.tsx`), the Ohbox's list is the frame's list section ("Messages") and a group's heading is its level-2
-     heading there, its name the heading's first part; the reading column is the frame's reading section. Expectations
-     as they stood. */
+     The Ohbox list and reading column are separate frame sections. The level-2 group's name comes first. */
   const list = (c: HTMLElement): HTMLElement => {
     const at = seatedList(c);
     expect(at, "the Ohbox's list is not drawn").not.toBeNull();

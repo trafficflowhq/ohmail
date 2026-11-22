@@ -8,7 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
-import { menuItem, moreButton, ohboxRows, openLetter, reportPress, reportSays } from "./ohbox/_finders.js";
+import { barVerb, menuItem, ohboxRows, openLetter, reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * MOVE, FILE AND JUNK CAN BE TAKEN BACK — driven through the whole shell, counted at the adapter.
@@ -119,15 +119,10 @@ const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 /** Anything that writes where a sender's mail goes from now on. */
 const routing = () => sent.filter((m) => m.kind.startsWith("rule_") || m.kind === "screener_decide");
 
-/**
- * Press Move on the focused row and pick a destination. The new Ohbox draws a walked-to row's letter in no column
- * until it is entered, and its reader keeps Move in More (FOR-S3-TO-S8 point 63 (d)): Enter opens the focused row,
- * then More, Move, and the place by its name (today's bar wrote "→ News").
- */
+/** Enter the focused row, open its Move menu, and pick a destination. */
 async function moveFocusedTo(place: string): Promise<void> {
   if (openLetter(document) === null) { await key("Enter"); await flush(); }
-  await click(moreButton(document) ?? undefined);
-  await click((menuItem("Move") as HTMLButtonElement | null) ?? undefined);
+  await click(barVerb(document, "Move") ?? undefined);
   await click((menuItem(place) as HTMLButtonElement | null) ?? undefined);
 }
 
@@ -191,7 +186,7 @@ describe("a routing press is two halves and one sentence", () => {
       "taking the press back would count against the route as a correction").toBe(true);
     expect(new Set(back.map((m) => m.folder)), "the mail went back to the place it was filed in")
       .not.toContain("ohmail/News");
-    expect(toastText()).toBe("The mail is back where it was, and no rule was made.");
+    expect(toastText()).toBe("The mail is back where it was, and no rule was made");
 
     /* AND THE WINDOW IS GONE WITH IT: letting the clock run past it sends nothing. */
     sent = [];
@@ -253,6 +248,6 @@ describe("a routing press is two halves and one sentence", () => {
     expect(kinds("move").length, "the late Undo dispatched no move, so nothing below reads")
       .toBeGreaterThan(0);
     expect(toastText(), "a late Undo claimed no rule was made over a rule that was")
-      .toBe("Undone.");
+      .toBe("Undone");
   });
 });

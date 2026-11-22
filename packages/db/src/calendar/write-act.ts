@@ -1,3 +1,4 @@
+import type { SeriesCancellation } from "./series-audience.js";
 /**
  * A PERSON'S ACT ON AN EVENT, AS THE WRITE QUEUE KEEPS IT: one parser for the route that records it
  * and for the drain that reads it back, so that a stored row holds nothing the door would not take
@@ -77,6 +78,16 @@ export interface CalendarWriteException {
  * it, where it comes from). An applied row keeps none of it: at most the day a series' end ended
  * it at ({@link appliedPayloadOf}).
  */
+export type CalendarTransferProgress =
+  | { readonly phase: "creating" }
+  | { readonly phase: "verifying" | "removing" | "rollback"; readonly id: string; readonly version: string };
+
+export interface CalendarTransfer {
+  readonly source: string;
+  readonly fields: CalendarEventFields;
+  readonly progress?: CalendarTransferProgress;
+}
+
 export interface CalendarWritePayload {
   readonly v: typeof CALENDAR_WRITE_PAYLOAD_VERSION;
   readonly act: CalendarEventAct;
@@ -85,6 +96,8 @@ export interface CalendarWritePayload {
   /** A cancellation may already have landed before its explicit retry reset the attempt counter. */
   readonly cancellationAttempted?: true;
   readonly exception?: CalendarWriteException;
+  readonly seriesCancellation?: SeriesCancellation;
+  readonly transfer?: CalendarTransfer;
 }
 
 type Obj = Record<string, unknown>;
@@ -256,9 +269,12 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
   if (!isObject(v) || typeof v.kind !== "string") return null;
   switch (v.kind) {
     case "calendar_event_create": {
-      if (!closed(v, ["kind", "eventId", "calendarId", "event"]) || !isWriteUuid(v.eventId) || !isWriteUuid(v.calendarId)) return null;
+      if (!closed(v, ["kind", "eventId", "calendarId", "event"], ["invitationMessageId"]) || !isWriteUuid(v.eventId) || !isWriteUuid(v.calendarId)) return null;
       const event = fieldsOf(v.event, true);
-      return event === null ? null : { kind: v.kind, eventId: v.eventId, calendarId: v.calendarId, event };
+      const invitation = v.invitationMessageId;
+      if (invitation !== undefined && (!isWriteUuid(invitation) || event?.invitees.length)) return null;
+      return event === null ? null : { kind: v.kind, eventId: v.eventId, calendarId: v.calendarId, event,
+        ...(typeof invitation === "string" && { invitationMessageId: invitation }) };
     }
     case "calendar_event_update": {
       const scope = changeScopeOf(v.scope);
@@ -277,19 +293,33 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
         : { kind: v.kind, ...b, scope, change, audience };
     }
     case "calendar_event_delete": {
-      const b = based(v, ["scope"], ["audience"]);
+      const b = based(v, ["scope"], ["audience", "localOnly", "cancellationMessage", "cancelledBy"]);
       const scope = removeScopeOf(v.scope);
       if (b === null || scope === null) return null;
+      const cancelledBy = v.cancelledBy;
+      if (cancelledBy !== undefined && (v.localOnly !== true || !isWriteUuid(cancelledBy))) return null;
+      if (Object.hasOwn(v, "localOnly")) return v.localOnly === true && scope.kind !== "following" && b.after === undefined && !Object.hasOwn(v, "audience") && !Object.hasOwn(v, "cancellationMessage")
+        ? { kind: v.kind, ...b, scope, localOnly: true, ...(typeof cancelledBy === "string" && { cancelledBy }) } : null;
+      const message = v.cancellationMessage;
+      if (Object.hasOwn(v, "cancellationMessage") &&
+        (scope.kind !== "record" || typeof message !== "string" || !message.trim() || message.length > CALENDAR_WRITE_LIMITS.titleChars ||
+          !Object.hasOwn(v, "audience"))) return null;
       if (!Object.hasOwn(v, "audience")) return { kind: v.kind, ...b, scope };
       const audience = audienceOf(v.audience);
-      return audience ? { kind: v.kind, ...b, scope, audience } : null;
+      return audience ? { kind: v.kind, ...b, scope, audience, ...(typeof message === "string" && { cancellationMessage: message }) } : null;
     }
     case "calendar_event_move": {
-      const b = based(v, ["toCalendarId"]);
-      return b === null || !isWriteUuid(v.toCalendarId) ? null : { kind: v.kind, ...b, toCalendarId: v.toCalendarId };
+      const b = based(v, ["toCalendarId"], ["audience", "copyThenRemove"]);
+      if (b === null || !isWriteUuid(v.toCalendarId) ||
+        (Object.hasOwn(v, "copyThenRemove") && (v.copyThenRemove !== true || b.after !== undefined))) return null;
+      const move = { kind: v.kind, ...b, toCalendarId: v.toCalendarId,
+        ...(v.copyThenRemove === true && { copyThenRemove: true as const }) } as const;
+      if (!Object.hasOwn(v, "audience")) return move;
+      const audience = audienceOf(v.audience);
+      return audience ? { ...move, audience } : null;
     }
     case "calendar_event_answer": {
-      const b = based(v, ["scope", "answer"]);
+      const b = based(v, ["scope", "answer"], [], !Object.hasOwn(v, "after") && changeScopeOf(v.scope)?.kind === "occurrence");
       const scope = changeScopeOf(v.scope);
       if (b === null || scope === null || scope.kind === "following") return null;
       if (v.answer !== "accepted" && v.answer !== "tentative" && v.answer !== "declined") return null;
@@ -523,8 +553,40 @@ function storedExceptionOf(v: unknown): CalendarWriteException | null {
 }
 
 /** A row's payload as this version reads it, or `null` for one it does not know: an applied row's, another version's, a damaged one. */
+function cancellationOf(value: unknown, act: CalendarEventAct): SeriesCancellation | null {
+  if (act.kind !== "calendar_event_delete" || act.scope.kind !== "record" || !act.audience || act.localOnly ||
+    !isObject(value) || !closed(value, ["message", "overrides"]) || typeof value.message !== "string" ||
+    value.message.length > CALENDAR_WRITE_LIMITS.titleChars || !Array.isArray(value.overrides) ||
+    value.overrides.length > CALENDAR_WRITE_LIMITS.invitees) return null;
+  const overrides: { id: string; version: string }[] = [];
+  const seen = new Set<string>();
+  for (const entry of value.overrides) {
+    if (!isObject(entry) || !closed(entry, ["id", "version"]) ||
+      typeof entry.id !== "string" || !entry.id || entry.id.length > 2048 || seen.has(entry.id) ||
+      typeof entry.version !== "string" || !entry.version || entry.version.length > 2048) return null;
+    seen.add(entry.id);
+    overrides.push({ id: entry.id, version: entry.version });
+  }
+  return { overrides, message: value.message };
+}
+
+function transferOf(value: unknown, act: CalendarEventAct): CalendarTransfer | null {
+  if (act.kind !== "calendar_event_move" || act.after || (act.audience && act.audience.guests.length) ||
+    !isObject(value) || !closed(value, ["source", "fields"], ["progress"]) || typeof value.source !== "string" || !value.source || value.source.length > 2048) return null;
+  const fields = fieldsOf(value.fields, true);
+  if (!fields || fields.invitees.length) return null;
+  if (!Object.hasOwn(value, "progress")) return { fields, source: value.source };
+  const p = value.progress;
+  if (!isObject(p)) return null;
+  if (p.phase === "creating" && closed(p, ["phase"])) return { fields, source: value.source, progress: { phase: p.phase } };
+  if ((p.phase !== "verifying" && p.phase !== "removing" && p.phase !== "rollback") ||
+    !closed(p, ["phase", "id", "version"]) || typeof p.id !== "string" || !p.id || p.id.length > 2048 ||
+    typeof p.version !== "string" || !p.version || p.version.length > 2048) return null;
+  return { fields, source: value.source, progress: { phase: p.phase, id: p.id, version: p.version } };
+}
+
 export function parseWritePayload(v: unknown): CalendarWritePayload | null {
-  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"], ["cancellationAttempted", "exception"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
+  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"], ["cancellationAttempted", "exception", "seriesCancellation", "transfer"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
   const act = parseCalendarAct(v.act);
   if (act === null) return null;
   if (Object.hasOwn(v, "cancellationAttempted") && (v.cancellationAttempted !== true || act.kind !== "calendar_event_delete")) return null;
@@ -540,9 +602,16 @@ export function parseWritePayload(v: unknown): CalendarWritePayload | null {
     }
   }
   const exception = Object.hasOwn(v, "exception") ? storedExceptionOf(v.exception) : undefined;
-  if (exception === null || (exception && (act.kind !== "calendar_event_update" || !act.audience ||
-    exception.id !== act.eventId || (act.scope.kind !== "record" && (act.scope.at !== exception.occurrence ||
-      exception.masterReceipt !== undefined))))) return null;
+  if (exception === null) return null;
+  const seriesCancellation = Object.hasOwn(v, "seriesCancellation") ? cancellationOf(v.seriesCancellation, act) : undefined;
+  if (seriesCancellation === null) return null;
+  const transfer = Object.hasOwn(v, "transfer") ? transferOf(v.transfer, act) : undefined;
+  if (transfer === null || (transfer && (part || v.after))) return null;
+  if (exception && (
+    exception.id !== act.eventId ||
+    !(act.kind === "calendar_event_update" && act.audience || act.kind === "calendar_event_answer" && exceptionBaseOf(act.base)) ||
+    (act.scope.kind !== "record" && (act.scope.at !== exception.occurrence || exception.masterReceipt !== undefined))
+  )) return null;
   return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after: v.after, part, ...(exception && { exception }),
-    ...(v.cancellationAttempted === true && { cancellationAttempted: true }) };
+    ...(v.cancellationAttempted === true && { cancellationAttempted: true }), ...(seriesCancellation && { seriesCancellation }), ...(transfer && { transfer }) };
 }

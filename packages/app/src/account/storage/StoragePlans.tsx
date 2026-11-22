@@ -8,6 +8,7 @@ type Plans = NonNullable<StorageFigures["plans"]>;
 export interface StoragePlansProps {
   readonly model: StorageModel;
   readonly plans: Plans;
+  readonly linksOut: boolean;
 }
 
 /**
@@ -16,7 +17,7 @@ export interface StoragePlansProps {
  * figure. Change plan and Add storage stand only where the build links out and the program offered a change; both
  * open the same page, and both are off while the change is on its way or waits for the factor.
  */
-export function StoragePlans({ model, plans }: StoragePlansProps) {
+export function StoragePlans({ model, plans, linksOut }: StoragePlansProps) {
   const t = useText("settings");
   const own = useText("accountStorage");
   const devices = useText("devices");
@@ -31,7 +32,7 @@ export function StoragePlans({ model, plans }: StoragePlansProps) {
     >
       {refused !== null && nothingRan !== null ? <SettingNote warn>{nothingRan}</SettingNote> : null}
       {plans.lines.map((plan) => (
-        <PlanLines key={plan.plan} t={t} plan={plan} />
+        <PlanLines key={plan.plan} t={t} plan={plan} linksOut={linksOut} />
       ))}
       {plans.addon === null ? null : (
         <SettingLine
@@ -39,6 +40,7 @@ export function StoragePlans({ model, plans }: StoragePlansProps) {
           tag={t("storageTagAddon")}
           value={t("storageAddonFacts", { count: plans.addon.letters })}
           figure={plans.addon.unit}
+          description={linksOut ? (plans.addon.price ?? undefined) : undefined}
         />
       )}
     </SettingsSheet>
@@ -64,7 +66,7 @@ export function StoragePlanActions({ model, add }: { readonly model: StorageMode
           ? [
               {
                 id: "add-storage",
-                rank: 0,
+                rank: 1,
                 icon: "plus",
                 label: t("storageAddStorage"),
                 kind: "soft",
@@ -78,7 +80,15 @@ export function StoragePlanActions({ model, add }: { readonly model: StorageMode
   );
 }
 
-function PlanLines({ t, plan }: { readonly t: Text; readonly plan: StoragePlan }) {
+function PlanLines({
+  t,
+  plan,
+  linksOut,
+}: {
+  readonly t: Text;
+  readonly plan: StoragePlan;
+  readonly linksOut: boolean;
+}) {
   const tag =
     plan.tag === "yours" ? t("storageTagYours") : plan.tag === "keepsAll" ? t("storageTagFits") : undefined;
   return (
@@ -87,6 +97,7 @@ function PlanLines({ t, plan }: { readonly t: Text; readonly plan: StoragePlan }
       tag={tag}
       value={t("storagePlanFacts", { count: plan.letters, mailboxes: plan.mailboxes })}
       figure={plan.room}
+      description={linksOut ? (plan.price ?? undefined) : undefined}
     />
   );
 }

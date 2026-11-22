@@ -114,5 +114,6 @@
     "analytics",
     "siteMeta",
     "siteScreener"
-  ]
+  ],
+  "reader-invitation": ["readerInvitation"]
 }

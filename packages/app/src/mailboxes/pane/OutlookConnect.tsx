@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button, Menu, MenuItem, RefusalLine } from "@ohmail/ui/base";
-import { ActionPanel, SettingActs, type PanelVerb } from "@ohmail/ui/mail";
+import { ActionPanel, SettingActs, SettingNote, type PanelVerb } from "@ohmail/ui/mail";
 import type { CodeCeremony } from "@ohmail/app-logic/mailboxes/connect/types";
 import { deviceSignInFailureKey } from "@ohmail/app-logic/mailboxes/connect/sign-in";
 import { useWays } from "@ohmail/app-logic/mailboxes/connect/use-sign-in";
@@ -94,6 +94,8 @@ export function OutlookConnect({
       {result?.kind === "ended" && !offer ? <DeviceSignIn result={result} stop={() => code?.stop()} /> : null}
       {offer && armed ? (
         <>
+          <SettingNote>{words(microsoft.redirect ? "microsoftOauthNote" : "deviceOauthNote")}</SettingNote>
+          {microsoft.redirect ? <SettingNote>{words("oauthOfferWhich")}</SettingNote> : null}
           {error === null ? null : <RefusalLine alert>{error}</RefusalLine>}
           <SettingActs>
             <Button disabled={busy} onPress={() => void start()}>

@@ -109,6 +109,22 @@ describe("Account in the desktop's Settings", () => {
 });
 
 describe("The desktop's native Settings panes", () => {
+  it("shows the hosted connection read, engine summary and signed-in account", async () => {
+    const address = ["signed-in", "example.test"].join("@");
+    mount("D-m", "#/settings/desktop", { respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/auth/session") return Response.json({ user: { accountId: "fixture-account", email: address } });
+      if (path === "/health") return Response.json({ signedIn: true, session: {
+        state: "live", code: null, since: "2026-11-22T09:00:00Z",
+      } });
+    } });
+    const pane = within(await screen.findByRole("region", { name: en.desktopDoor.paneLabel }));
+    expect(pane.getByRole("group", { name: en.desktopDoor.connLabel }).textContent).toMatch(/Reachable · \d{1,2}:\d{2}/);
+    const signOut = await pane.findByRole("group", { name: address });
+    expect(within(signOut).getByRole("button", { name: en.desktopDoor.signOut })).toBeTruthy();
+    expect(screen.getByText("ohmail Cloud · Running")).toBeTruthy();
+  });
+
   it("opens the install switch and keeps the install when sign-out is cancelled", async () => {
     mount("D-m", "#/settings/desktop");
     const pane = within(await screen.findByRole("region", { name: en.desktopDoor.paneLabel }));

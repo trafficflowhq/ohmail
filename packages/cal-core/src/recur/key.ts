@@ -3,7 +3,7 @@
  * what a provider that hands over expanded days names as the original start, and what a store keeps
  * an occurrence under. One form for all of them, so that the same occurrence met twice is one.
  */
-import { dayNumber, MS_PER_SECOND, resolveWall } from "../time/arith.js";
+import { civilFromDays, dayNumber, MS_PER_DAY, MS_PER_SECOND, resolveWall } from "../time/arith.js";
 import type { EventTime, PlainDate, Wall, ZoneSource } from "../time/types.js";
 
 const SECONDS_PER_DAY = 86_400;
@@ -44,4 +44,33 @@ export function recurrenceKeyString(key: RecurrenceKey): string {
   if (key.kind === "date") return String(dayNumber(key.date) * SECONDS_PER_DAY * MS_PER_SECOND);
   const w = key.wall;
   return `${key.tzid}|${pad(w.year, 4)}${pad(w.month)}${pad(w.day)}T${pad(w.hour)}${pad(w.minute)}${w.second === 0 ? "" : pad(w.second)}|false`;
+}
+
+const DIGITS = /^-?\d+$/;
+const WALL_KEY = /^([^|]*)\|(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?\|false$/;
+
+/**
+ * The time a stored key string names, in the kind the series starts in: the core writes a moment's milliseconds
+ * (a day's UTC midnight for a series of whole days), or `zone|clock|false` where no moment could be said.
+ */
+export function keyTimeOf(key: string, seriesStart: EventTime | null): EventTime | null {
+  if (DIGITS.test(key)) {
+    const ms = Number(key);
+    if (seriesStart?.kind === "date") {
+      if (ms % MS_PER_DAY !== 0) return null;
+      return { kind: "date", ...civilFromDays(ms / MS_PER_DAY) };
+    }
+    return { kind: "instant", epochMs: ms };
+  }
+  const m = WALL_KEY.exec(key);
+  if (!m) return null;
+  const wall = {
+    year: Number(m[2]),
+    month: Number(m[3]),
+    day: Number(m[4]),
+    hour: Number(m[5]),
+    minute: Number(m[6]),
+    second: m[7] === undefined ? 0 : Number(m[7]),
+  };
+  return m[1] === "" ? { kind: "floating", wall } : { kind: "zoned", wall, tzid: m[1]! };
 }

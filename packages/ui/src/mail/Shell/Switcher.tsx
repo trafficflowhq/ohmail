@@ -120,14 +120,16 @@ export function Switcher({
     const waiting = side.wants ? <i className="oh-switcher-wants" data-product={to} aria-hidden /> : null;
     if (kind === "entry")
       return (
-        <div className="oh-switcher-entry" style={COLOURS}>
+        <div className="oh-switcher-entry" data-product={to} style={COLOURS}>
           <RailEntry
             kind="place"
             icon={SIGN[to]}
+            wordmark
+            label={side.label}
             status={waiting ? { mark: waiting, description: side.description } : undefined}
             onPress={onSwitch && (() => onSwitch(to))}
           >
-            {side.label}
+            {side.word}
           </RailEntry>
         </div>
       );

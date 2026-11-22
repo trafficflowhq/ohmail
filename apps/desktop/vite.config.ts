@@ -91,7 +91,7 @@ const BASE_MESSAGE_NAMESPACES = [
   // surface ever sees `loading`/`failed`), and it is listed for the reason `sync` is: the
   // guard compares this array against what the sources READ, not against what they display.
   // Omitting it would put `body.loading` in the binary where a sentence belongs.
-  "about", "body", "compose", "ohbox", "palette", "rail", "reads", "receipts",
+  "about", "body", "compose", "ohbox", "palette", "rail", "receipts",
   // `frame` is the frame's own sentences (`@ohmail/app/frame`, read through `@ohmail/app/text`): the rail's and the
   // dock's names, the notice slot's "N more", the connection's sentences. The window draws the frame.
   "frame",
@@ -176,6 +176,7 @@ const BASE_MESSAGE_NAMESPACES = [
   // warns about. The overlay renders on every message opened under 900px, so without this the
   // binary shows `reader.back` on the one control that leaves it.
   "reader",
+  "readerInvitation",
   // `profileImport` is the "we found your ohmail settings on this mailbox" card
   // (`app/shell/ProfileImportCard.tsx`), read through an ordinary `useTranslations`. GENUINELY
   // REACHABLE in the engine-bearing binary since the desktop door wired its transport
@@ -399,6 +400,7 @@ export const SHELL_MESSAGE_NAMESPACES = [
  * first thing standalone onboarding shows. Without it the screen reads `join.mailboxConnected`.
  */
 export const SHELL_MESSAGE_KEYS: Record<string, readonly string[]> = {
+  appError: ["reload"],
   join: ["mailboxConnected"],
 };
 
@@ -931,6 +933,9 @@ export default defineConfig({
       { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
       { find: "@ohmail/app/mailboxes/connect", replacement: r("../../packages/app/src/mailboxes/connect/index.ts") },
       { find: /^@ohmail\/app\/mailboxes$/, replacement: r("../../packages/app/src/mailboxes/index.ts") },
+      { find: /^@ohmail\/app\/mailboxes\/connect$/, replacement: r("../../packages/app/src/mailboxes/connect/index.ts") },
+      { find: /^@ohmail\/app\/doors\/signed-out$/, replacement: r("../../packages/app/src/doors/signed-out/index.ts") },
+      { find: /^@ohmail\/app\/doors\/stage$/, replacement: r("../../packages/app/src/doors/stage/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
       { find: "@ohmail/app/profile-import", replacement: r("../../packages/app/src/profile-import/index.ts") },
       // The reader the seated Ohbox mounts, its letter's body above its door: the web shell's reader parts read both.

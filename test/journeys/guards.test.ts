@@ -152,7 +152,7 @@ describe("the journeys' own rules", () => {
 
   it("every key of the vocabulary is in both catalogues", () => {
     const keys = [
-      ...Object.values(ALL_CONTROLS).flatMap((c) => (c.key === null ? [] : [c.key])),
+      ...Object.values(ALL_CONTROLS).flatMap((c) => [c.key, c.nameSuffix].filter((key) => key != null)),
       ...Object.values(PLACES).map((p) => p.landmark.key),
     ];
     const missing = LANGUAGES.flatMap((lang) => keys.filter((k) => raw(k, lang) === null).map((k) => `${lang}: ${k}`));
@@ -413,6 +413,28 @@ describe("the bench holds its promises", () => {
     await person.until(async () => person.problems().length > 1, "both errors to be reported");
     expect(person.problems().sort()).toEqual(["console: it broke", "page error: Error: boom"]);
     await person.context.close();
+  });
+
+  it("reports HTTP failures and console locations with the pathname only", async () => {
+    const origin = "http://localhost";
+    const person = await fenced(browser, { origin, base: "/", lang: "en" });
+    try {
+      await person.page.route(`${origin}/settings?fixture=private`, (route) => route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<script>console.error('read failed'); fetch('/api/settings?fixture=private');</script>",
+      }));
+      await person.page.route("**/api/settings?fixture=private", (route) => route.fulfill({ status: 401 }));
+      await person.page.goto(`${origin}/settings?fixture=private`);
+      await person.until(
+        async () => person.problems().includes("http response with a status of 401: GET (/api/settings)"),
+        "the response diagnostic",
+      );
+      expect(person.problems()).toContain("console: read failed (/settings)");
+      expect(person.problems().join("\n")).not.toMatch(/localhost|fixture=private/);
+    } finally {
+      await person.context.close();
+    }
   });
 
   it("a keyboard act presses the key the control announces, and refuses a control that announces none", async () => {

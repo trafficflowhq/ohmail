@@ -18,3 +18,43 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+.mbx-manual-title {
+  margin: 0;
+  outline: none;
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+.mbx-manual-ports > .mbx-manual-disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  width: fit-content;
+  list-style: none;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--r-pill);
+  background: var(--sheet);
+  font-size: var(--t-meta);
+  font-weight: var(--w-bold);
+  cursor: pointer;
+}
+
+.mbx-manual-ports > .mbx-manual-disclosure::-webkit-details-marker {
+  display: none;
+}
+
+.mbx-manual-ports[open] > .mbx-manual-disclosure > .mbx-manual-arrow {
+  transform: rotate(180deg);
+}
+
+.mbx-manual-ports[open] > .mbx-manual-disclosure {
+  margin-block-end: var(--s3);
+}
+
+:root[data-device="phone"] .mbx-connect-part[data-page-filling-form],
+:root[data-device="phone"] .mbx-connect-part[data-page-filling-form] > .mbx-connect-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}

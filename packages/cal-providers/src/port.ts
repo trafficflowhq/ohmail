@@ -57,6 +57,8 @@ export interface CalendarInfo {
   readonly name: string | null;
   readonly color: string | null;
   readonly writable: boolean;
+  readonly owned?: true;
+  readonly nativeMove?: true;
   /** Whether changes can be asked by token. Where not, `readChanges` answers the whole set each time. */
   readonly byToken: boolean;
   /** The zone the calendar is meant to be read in, where the provider names one. */
@@ -87,7 +89,7 @@ export type ChangeItem =
    * and a subscription; `null` for Google and Microsoft, which store no calendar text.
    * `audienceIncomplete` marks a reading with omitted or unrepresentable participants.
    */
-  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true }
+  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true }
   /** The stored object of this id is no longer there. */
   | { readonly kind: "gone"; readonly id: string }
   /** One day of a series was cancelled, and the provider says so by a record of its own. */
@@ -230,6 +232,7 @@ export interface MasterEditReceipt {
 
 /** The stored object a write is made on, as a reading handed it out. */
 export interface WriteTarget {
+  readonly retryMove?: true;
   /** The separately stored occurrence the person selected, in the series' original clock. */
   readonly exception?: { readonly id: string; readonly version: string; readonly occurrence: EventTime };
   /** The exact version returned when the master part of this same edit was accepted. */
@@ -241,6 +244,7 @@ export interface WriteTarget {
   readonly writeKey?: WriteKey;
   /** A cancellation may be checked against the provider after an unanswered attempt. Never send it again on this version. */
   readonly caldavReadOnly?: true;
+  readonly seriesCancellation?: { readonly overrides: readonly { id: string; version: string }[]; readonly message: string };
   /** These scopes were chosen for a series with no guests. */
   readonly personalSeries?: true;
   /** The confirmed audience of a single-event change or cancellation. */
@@ -304,11 +308,13 @@ export interface SeriesContinuation {
  */
 export interface CalendarWriter {
   readonly provider: ProviderWord;
-  create(c: Connection, cal: CalendarRef, req: { readonly key: WriteKey; readonly event: EventDraft }, signal: AbortSignal): Promise<WriteAnswer>;
+  findMoveCopy?(c: Connection, cal: CalendarRef, key: WriteKey, signal: AbortSignal): Promise<WriteAnswer>;
+  readForMove?(c: Connection, cal: CalendarRef, id: string, signal: AbortSignal): Promise<WriteAnswer>;
+  create(c: Connection, cal: CalendarRef, req: { readonly key: WriteKey; readonly event: EventDraft; readonly recover?: boolean }, signal: AbortSignal): Promise<WriteAnswer>;
   change(c: Connection, cal: CalendarRef, target: WriteTarget, change: EventChange, signal: AbortSignal): Promise<WriteAnswer>;
   remove(c: Connection, cal: CalendarRef, target: WriteTarget, signal: AbortSignal): Promise<WriteAnswer>;
   /** The account's own answer as an invitee (`as`: its address on the event). */
-  answer(c: Connection, cal: CalendarRef, target: WriteTarget, req: { readonly as: string; readonly reply: WriteReply }, signal: AbortSignal): Promise<WriteAnswer>;
+  answer(c: Connection, cal: CalendarRef, target: WriteTarget, req: { readonly as: string; readonly reply: WriteReply; readonly retry?: true }, signal: AbortSignal): Promise<WriteAnswer>;
   /**
    * The series `target.id` names ends before its day `target.occurrence` (that day and the days after
    * it go to a series of their own, or are let go): its repeat ends there, and the changed days it

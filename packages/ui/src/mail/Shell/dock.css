@@ -169,6 +169,16 @@
     overflow: visible;
   }
 
+  .oh-dock-entry:disabled {
+    color: var(--on-off);
+  }
+
+  .oh-dock-foot {
+    display: grid;
+    justify-items: center;
+    margin-block-start: auto;
+  }
+
   :root[data-device="fold"] .oh-dock-end {
     display: contents;
   }

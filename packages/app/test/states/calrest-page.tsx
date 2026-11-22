@@ -12,7 +12,7 @@ import { calendarAccountsPane, calendarViewPane } from "../../src/calsettings/in
 import { SetupPortProvider } from "../../src/calsetup/index.js";
 import { Frame } from "../../src/frame/Frame.js";
 import type { CalendarEntry, PaneProps, PlaceEntry } from "../../src/frame/contract.js";
-import { PaneColumn, type SettingsPane } from "../../src/settings/index.js";
+import { PaneColumn, settingsPlace, type SettingsPane } from "../../src/settings/index.js";
 import { fillOver, TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeAppearance, fakeWindow, ROOMS } from "../support/fake-window.js";
@@ -108,6 +108,7 @@ function setupAddress(): string {
 
 function addressOf(): string {
   if (screen === "frommail") return open ? `#/cal/from-mail/e/${open}` : "#/cal/from-mail";
+  if (screen === "mail-settings") return "#/settings/calaccounts";
   if (screen === "calsettings") return "#/cal/calendars";
   if (screen === "calsetup") return setupAddress();
   if (screen === "day" || screen === "week") return `#/cal/${screen}/2026-11-10`;
@@ -144,6 +145,7 @@ const world = worldOf({
   signedOut: state === "signin",
   secondZone: q.get("zone2") === "1",
   refused: state === "error",
+  extraAccounts: screen === "mail-settings" ? 20 : 0,
 });
 const entry: CalendarEntry = { ...calendar, places: { ...calendar.places, calsettings: paneAlone() } };
 const look = {
@@ -158,6 +160,10 @@ const made = fakeHost({
   service: "managed",
   scope: "mila",
   calendar: entry,
+  places:
+    screen === "mail-settings"
+      ? { settings: settingsPlace(null, () => ({ go: () => undefined, startAt: "calaccounts" })) }
+      : undefined,
   products: "both",
   wires: { calendar: world.port },
   window: fakeWindow({ ...room, posture: "flat", reducedMotion: q.get("motion") !== "full" }),

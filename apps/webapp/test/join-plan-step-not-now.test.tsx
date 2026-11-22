@@ -105,7 +105,7 @@ describe("the wait after a return from the account page", () => {
   it("is still waiting at a minute, says 'not yet' only at about two, in 8 to 16 reads, and keeps the button", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const ui = await atThePlanStep(en, RETURN, true);
-    expect(ui.title()).toBe(en.join.step_plan_title);
+    expect(ui.title()).toBe("Start your 14-day trial");
     expect(ui.host.textContent).toContain(en.join.planStarting);
     await ui.advance(60_000);
     expect(ui.host.textContent, "gave up before two minutes").not.toContain(en.join.planPending);
@@ -129,9 +129,9 @@ describe("the wait after a return from the account page", () => {
     openAfter = 90_000;
     const ui = await atThePlanStep(en, RETURN, true);
     await ui.advance(85_000);
-    expect(ui.title()).toBe(en.join.step_plan_title);
+    expect(ui.title()).toBe("Start your 14-day trial");
     await ui.advance(15_000);
-    expect(ui.title()).toBe(en.join.step_mailbox_title);
+    expect(ui.title()?.trim()).toBe(en.onboarding.providerFirst);
   });
 
   it("reads nothing once the step is gone", async () => {

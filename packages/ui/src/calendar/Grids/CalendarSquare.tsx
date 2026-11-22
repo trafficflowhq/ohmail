@@ -4,8 +4,8 @@ import "./calendar-square.css";
 export interface CalendarSquareProps {
   /** Whose it is. Left out, the square wears the colour of the calendar part it stands in. */
   tone?: CalendarTone;
-  /** 8 in a chip, a line and a rail row; 12 in the agenda's gutter; 6 in the phone's month. */
-  size?: 6 | 8 | 12;
+  /** 8 in a chip or rail row, 10 in the folded rail, 12 in the agenda gutter, 6 in the phone month. */
+  size?: 6 | 8 | 10 | 12;
   /** A calendar that is hidden: the square is hollow. */
   hollow?: boolean;
 }

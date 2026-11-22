@@ -137,17 +137,25 @@ const JOIN = { file: "../../app/(product)/join/JoinRoute.js", name: "JoinRoute" 
 describe("every address a door's page draws is the web's own", () => {
   it("the sign-in: the ways to the join, in each posture, and to the demo where no server stands", async () => {
     const drawn: string[] = [];
+    const back: string[] = [];
+    const collect = () => {
+      for (const link of document.querySelectorAll("a[href]")) {
+        const href = link.getAttribute("href")!;
+        (link.getAttribute("aria-label") === en.login.back ? back : drawn).push(href);
+      }
+    };
     for (const [publicSignup, next] of [
       [true, null],
       [false, "/join"],
       [true, "/account/manage"],
     ] as const) {
       await mounted(SIGN_IN, "/login", { publicSignup, next });
-      drawn.push(...addresses());
+      collect();
     }
     await mounted(SIGN_IN, "/login", { publicSignup: false, next: null }, false);
-    drawn.push(...addresses());
-    expect(drawn.filter((href) => !allowed(href, null))).toEqual([]);
+    collect();
+    expect([...drawn, ...back].filter((href) => !allowed(href, null))).toEqual([]);
+    expect([...new Set(back)]).toEqual(["/"]);
     /* Not a census of nothing: the three links the card drew stand here, as the route wrote them. */
     expect([...new Set(drawn)].sort()).toEqual(["/?demo=1", "/join"]);
   }, 30000);

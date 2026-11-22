@@ -19,6 +19,9 @@
  * them" on the `unsaved` notice opens the list of the changes that were not saved (`UnsavedList`), with each one's
  * reason, Try again and Discard.
  */
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
+import { settingsSection } from "../../settings/menu.js";
 import { useEffect, useSyncExternalStore } from "react";
 import { useAbandoned } from "@ohmail/app-logic/engine";
 import { footLineSeen } from "@ohmail/app-logic/layout/narrow";
@@ -120,6 +123,9 @@ function rowNotice(t: T, row: LineRow, open: (row: readonly SendLineItem[]) => v
 /** A delivered letter whose Sent copy has a note: it stands on the line until its own Dismiss. */
 const noted = (item: SendLineItem): boolean => item.state === "sent" && item.copy !== undefined;
 
+const fullMailbox = (item: SendLineItem): boolean =>
+  item.copy?.state === "pending" && item.copy.reason === "full";
+
 /**
  * THE SEND LINE AS THE SLOT's NOTICES. Each letter whose Sent copy has a note is its own notice, the oldest first, as
  * the foot line stood them (`lineRows`): to whom and what it was, why its copy is not in Sent (`sentCopySay`, hot
@@ -134,27 +140,74 @@ export function sendNotices(
   open: (row: readonly SendLineItem[]) => void,
   dismiss: (id: string) => void,
   draftsAvailable = true,
+  quota?: {
+    address?: (id: string) => string | null;
+    open?: (id?: string) => void;
+  },
 ): FrameNotice[] {
-  const notes = items
+  const addressFor = (item: SendLineItem) =>
+    item.mailboxId ? (quota?.address?.(item.mailboxId) ?? undefined) : undefined;
+  const byMailbox = new Map<string | undefined, SendLineItem[]>();
+  const distinct = items
     .filter(noted)
     .reverse()
-    .map((one): FrameNotice => {
-      const why = sentCopySay(one.copy!, COMPOSER_WORDS.scheduleLabel);
-      const title =
-        one.to === null
-          ? t("sendingLine.sent")
-          : one.subject !== null
-            ? t("sendingLine.sentToAbout", { name: one.to, subject: one.subject })
-            : t("sendingLine.sentTo", { name: one.to });
+    .filter((item) => {
+      if (!fullMailbox(item)) return true;
+      const address = addressFor(item);
+      const group = byMailbox.get(address);
+      if (group) {
+        group.push(item);
+        return false;
+      }
+      byMailbox.set(address, [item]);
+      return true;
+    });
+  const notes = distinct.map((one): FrameNotice => {
+    if (one.copy?.state === "pending" && one.copy.reason === "full") {
+      const address = addressFor(one);
+      const later = {
+        label: t("sentCopy.notNow"),
+        onPress: () => byMailbox.get(address)?.forEach((item) => dismiss(item.id)),
+      };
+      const mailboxes = quota?.open;
       return {
         kind: "sentCopy",
         id: one.id,
-        hot: one.copy!.state === "missing",
-        title,
-        line: t(why.key, why.values),
-        acts: [{ label: t("sendingLine.dismiss"), onPress: () => dismiss(one.id) }],
+        hot: true,
+        title: address
+          ? t("sentCopy.quotaMailbox", { address: displayAddress(address) })
+          : t("sentCopy.quotaUnknown"),
+        line:
+          one.copy.until === undefined
+            ? t("sentCopy.quotaWaiting")
+            : t("sentCopy.waitingFullUntil", sentCopySay(one.copy, COMPOSER_WORDS.scheduleLabel).values),
+        acts: mailboxes
+          ? [
+              {
+                label: t("sentCopy.openMailboxes"),
+                onPress: () => mailboxes(address ? one.mailboxId : undefined),
+              },
+              later,
+            ]
+          : [later],
       };
-    });
+    }
+    const why = sentCopySay(one.copy!, COMPOSER_WORDS.scheduleLabel);
+    const title =
+      one.to === null
+        ? t("sendingLine.sent")
+        : one.subject !== null
+          ? t("sendingLine.sentToAbout", { name: one.to, subject: one.subject })
+          : t("sendingLine.sentTo", { name: one.to });
+    return {
+      kind: "sentCopy",
+      id: one.id,
+      hot: one.copy!.state === "missing",
+      title,
+      line: t(why.key, why.values),
+      acts: [{ label: t("sendingLine.dismiss"), onPress: () => dismiss(one.id) }],
+    };
+  });
   const rows = lineRows(items.filter((item) => !noted(item))).flatMap((row): LineRow[] =>
     row.kind === "ended" && !draftsAvailable
       ? row.items.map((item) => ({ kind: "ended", items: [item] }))
@@ -174,6 +227,7 @@ type SendLine = Pick<MailSendApi, "line" | "subscribeLine" | "lineVersion" | "mo
 export function useSendingNotices(): readonly FrameNotice[] {
   const t = useWords();
   const { commands, host } = useFrame();
+  const mailboxes = useMailboxFacts();
   const draftsAvailable = host.features.places.drafts !== NONE;
   const { mailSend, openNotSent } = useComposer();
   const line: SendLine = mailSend;
@@ -193,7 +247,15 @@ export function useSendingNotices(): readonly FrameNotice[] {
     if (openNotSent(one.key, one.left, one.m, one.state !== "ended") && one.state === "ended")
       line.dismissLine(one.id);
   };
-  return sendNotices(t, line.line(), open, line.dismissLine, draftsAvailable);
+  return sendNotices(t, line.line(), open, line.dismissLine, draftsAvailable, {
+    address: (id) => mailboxes?.find((mailbox) => mailbox.id === id)?.address ?? null,
+    ...(settingsSection(host, "mailboxes") === "mailboxes"
+      ? {
+          open: (id?: string) =>
+            commands.go({ place: "settings", sub: "mailboxes", ...(id ? { words: { mailbox: id } } : {}) }),
+        }
+      : {}),
+  });
 }
 
 /** The changes not saved or not sent yet, with "Show them", which opens their list (`UnsavedList`, mounted above). */

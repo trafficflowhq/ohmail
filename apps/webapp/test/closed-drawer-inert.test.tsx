@@ -39,7 +39,6 @@ function offCanvasSelectors(css: string): string[] {
 /** Each parked surface, and the fact the case below proves about it. */
 const PARKED: Record<string, string> = {
   ".deck > .rail": "the navigation drawer (RailNav's inert)",
-  ".tm-tip": "the thread squares' chip (aria-hidden, pointer-events none, nothing focusable)",
 };
 
 /** The declarations of `selector`'s own rule in `css`. */
@@ -148,9 +147,6 @@ describe("the census: a surface parked off canvas says what makes it inert", () 
     expect([...new Set(found)].sort()).toEqual(Object.keys(PARKED).sort());
   });
 
-  // The thread squares' chip case (today's `ThreadMarks` ThreadTip, drawn by no part of the new shell) left with it: the
-  // kit's squares draw no chip (`packages/ui/test/mail/lists.test.tsx`, "ReadSquares"). `.tm-tip` stays in PARKED while
-  // its rule stands in app.css.
 });
 
 /*

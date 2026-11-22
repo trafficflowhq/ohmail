@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import type { AddressBookEntry } from "@ohmail/client-engine";
 import {
   peopleFor,
+  shortCivilDateStamp,
   type SearchDates,
   type SearchListModel,
   type SearchPerson,
@@ -88,14 +89,8 @@ export function SearchRefine({ model, today }: { model: SearchListModel; today: 
   const t = useText("search");
   const locale = useLocale();
   const window = windowOf(model.date, today);
-  const format = (day: string) => {
-    const date = new Date(day);
-    const month = new Intl.DateTimeFormat(locale, { month: "short", timeZone: "UTC" }).format(date);
-    const dayNumber = date.getUTCDate();
-    return locale.startsWith("de") ? `${dayNumber}. ${month}` : `${dayNumber} ${month}`;
-  };
-  const from = model.date?.from ? format(model.date.from) : null;
-  const to = model.date?.to ? format(model.date.to) : null;
+  const from = model.date?.from ? shortCivilDateStamp(model.date.from, locale) : null;
+  const to = model.date?.to ? shortCivilDateStamp(model.date.to, locale) : null;
   const span =
     from && to
       ? t("dateRange", { from, to })

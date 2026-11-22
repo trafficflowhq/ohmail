@@ -14,7 +14,7 @@ export interface AnswerSwitchProps {
     /** Each answer, with the key that gives it where the app has one: the kit draws the hint, the app listens. */
     options: readonly { value: string; label: string; keyHint?: string }[];
     value: string | null;
-    onChange?: (value: string) => void;
+    onChange?: (value: string, anchor: HTMLButtonElement) => void;
     /**
      * The person may only view the event: the answer is read, not given. Every part is off, and the given one
      * still says that it is the answer. Never an answer that can be pressed and does nothing.
@@ -60,7 +60,7 @@ export function AnswerSwitch({ label, answers, acts, propose, on = "soft", fit }
               className="oh-control oh-seg-item"
               aria-pressed={option.value === answers.value}
               disabled={answers.readOnly}
-              onClick={() => answers.onChange?.(option.value)}
+              onClick={(event) => answers.onChange?.(option.value, event.currentTarget)}
             >
               {option.label}
               {/* The key is a hint beside the word, drawn by the stylesheet: no part of the answer's name or its text. */}

@@ -31,13 +31,11 @@ describe("the bridge between an open event and its card", () => {
   it("stands on the stretch the two edges have in common, 32 px tall at most, clear of both corners", () => {
     const shape = bridgeShape(beside);
     expect(shape).not.toBeNull();
-    /* The card's corner is the rounder one: the bridge attaches from 55° of it on. */
-    expect(shape!.top).toBeCloseTo(208.5, 0);
-    expect(shape!.bottom - shape!.top).toBeCloseTo(32, 5);
-    expect(shape!.middle.y).toBeCloseTo(224.5, 0);
-    /* The card grows from its own edge there, a little in from the corner's round. */
-    expect(shape!.middle.x).toBeGreaterThan(309);
-    expect(shape!.middle.x).toBeLessThan(314);
+    /* The card's corner is the rounder one: its straight edge starts 20 px down. */
+    expect(shape!.top).toBe(220);
+    expect(shape!.bottom - shape!.top).toBe(28);
+    expect(shape!.middle.y).toBe(234);
+    expect(shape!.middle.x).toBe(309.25);
   });
 
   it("draws the shape the design draws for the same two boxes and a mark in the gap", () => {
@@ -57,19 +55,14 @@ describe("the bridge between an open event and its card", () => {
       ],
     })!;
     expect(shape.liquid.fill).toBe(
-      "M505.81 205 C505.81 217.8 512.48 216.81 517.42 205 A20.75 20.75 0 0 0 515.81 213 L515.81 237C515.81 224.2 505.81 224.2 505.81 237 L505.81 205 Z",
+      "M504 213 H505.8125 L505.8125 213 C505.8125 225.8 515.8125 225.8 515.8125 213 V213 H518 V245 H515.8125 V245 C515.8125 232.2 505.8125 232.2 505.8125 245 V245 H504 Z",
     );
     expect(shape.liquid.sides).toEqual([
-      "M505.81 205 C505.81 217.8 512.48 216.81 517.42 205",
-      "M515.81 237 C515.81 224.2 505.81 224.2 505.81 237",
+      "M505.8125 210 L505.8125 213 C505.8125 225.8 515.8125 225.8 515.8125 213 A20.75 20.75 0 0 1 516.0305 210",
+      "M515.8125 248 L515.8125 245 C515.8125 232.2 505.8125 232.2 505.8125 245 L505.8125 248",
     ]);
-    expect(shape.ends).toEqual([
-      "M505.81 205 L505.81 237",
-      "M517.42 205 A20.75 20.75 0 0 0 515.81 213 L515.81 237",
-    ]);
-    expect(shape.endWidth).toBe(3.5);
-    expect([shape.from, shape.to]).toEqual([505.81, 517.42]);
-    expect(shape.root.y).toBe(221);
+    expect([shape.from, shape.to]).toEqual([505.8125, 515.8125]);
+    expect(shape.root.y).toBe(229);
     expect(shape.meets).toBe("head");
   });
 
@@ -84,10 +77,11 @@ describe("the bridge between an open event and its card", () => {
     const shape = bridgeShape(beside)!;
     /* A side that dips has its two control points off the line between its ends; a straight one has them on it. */
     const points = (d: string) => (d.match(/-?\d+(\.\d+)?/g) ?? []).map(Number);
-    const [, y0, , c1y, , c2y] = points(shape.liquid.sides[0]);
+    const y0 = shape.top;
+    const [, c1y, , c2y] = points(shape.liquid.sides[0].split(" C")[1]!);
     expect(c1y!).toBeGreaterThan(y0! + 5);
     expect(c2y!).toBeGreaterThan(y0! + 5);
-    const [, s0, , s1, , s2] = points(shape.straight.sides[0]);
+    const [, s1, , s2, , s0] = points(shape.straight.sides[0].split(" C")[1]!);
     expect(s1).toBe(s0);
     expect(s2).toBe(s0);
   });
@@ -113,8 +107,8 @@ describe("the bridge between an open event and its card", () => {
     const half = cut(236)!;
     expect(half.bottom - half.top).toBeLessThan(32);
     expect(half.bottom - half.top).toBeGreaterThanOrEqual(10);
-    /* The cut end is no corner: the bridge may stand right at it. */
-    expect(half.top).toBeCloseTo(236, 5);
+    /* Keep enough room for the outline to continue without drawing across a cut. */
+    expect(half.top).toBe(240);
     expect(cut(252)).toBeNull();
   });
 
@@ -154,4 +148,35 @@ describe("the bridge between an open event and its card", () => {
     expect(shape.middle.x).toBeLessThan(EVENT.right);
     expect(draw(under)).not.toBeNull();
   });
+});
+
+it.each(["r", "l"] as const)("paints inside both outlines at the mouth of a bridge on the %s", (side) => {
+  const input =
+    side === "r"
+      ? beside
+      : {
+          ...beside,
+          side,
+          event: { ...beside.event, box: { left: 410.5, top: 200, right: 600.5, bottom: 260 } },
+          card: { ...beside.card, box: { left: 56.5, top: 200, right: 400.5, bottom: 500 } },
+        };
+  const shape = bridgeShape(input)!;
+  const firstX = (path: string) => Number(path.match(/^M(-?[\d.]+) /)?.[1]);
+  const rightX = (path: string) => Math.max(...[...path.matchAll(/ H(-?[\d.]+)/g)].map((m) => Number(m[1])));
+  for (const { fill, sides } of [shape.liquid, shape.straight]) {
+    expect(firstX(fill)).toBeLessThan(side === "r" ? 298 : 400);
+    expect(rightX(fill)).toBeGreaterThan(side === "r" ? 310 : 412);
+    expect(Number(sides[0].match(/^M[^ ]+ ([\d.]+)/)?.[1])).toBeCloseTo(shape.top - 3, 2);
+    expect(
+      Array.from(draw(input)!.querySelectorAll("path")).some((path) => path.getAttribute("d") === fill),
+    ).toBe(true);
+  }
+});
+
+it("joins straight edges when they have room for a full bridge", () => {
+  const taller = { ...beside, event: { ...beside.event, box: { ...EVENT, bottom: 280 } } };
+  const shape = bridgeShape(taller)!;
+  expect(shape.top).toBe(220);
+  expect(shape.bottom).toBe(252);
+  expect(shape.liquid.sides[0]).toContain("L299.25 220");
 });

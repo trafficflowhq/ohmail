@@ -43,7 +43,7 @@ async function unmount() {
 }
 afterEach(unmount);
 
-async function mount(folders: boolean) {
+async function mount(folders: boolean, providerItems = junkLetters) {
   installConfirmEnv();
   mounted = true;
   window.localStorage.clear();
@@ -81,8 +81,14 @@ async function mount(folders: boolean) {
     }
     if (method === "GET" && path === junkPath) {
       return Response.json({
-        items: junkLetters, nextCursor: null,
+        items: providerItems, nextCursor: null,
         mailboxes: [{ id: "mb_1", address: mailbox, window: "ok" }],
+      });
+    }
+    if (method === "GET" && path === `${junkPath}/sweep` && providerItems.length === 0) {
+      return Response.json({
+        items: [], mailboxes: [], movable: 0, pending: false,
+        held: { ids: mail.map(({ id }) => id), truncated: false },
       });
     }
     if (method === "GET" && path === `${junkPath}/body`) {
@@ -134,6 +140,20 @@ describe("the Quarantine shelf under the Junk window", () => {
     );
     expect(s.screen.getAllByRole("option")).toHaveLength(2);
     expect(s.host.textContent).not.toContain(copy.quarantineShelf);
+
+    await unmount();
+    const emptyProvider = await mount(true, []);
+    expect(emptyProvider.screen.getByRole("button", { name: "Spam 2", pressed: true })).toBeTruthy();
+    expect(emptyProvider.screen.getByRole("listbox", { name: "Spam" })).toBeTruthy();
+    expect(emptyProvider.screen.queryByRole("searchbox", { name: copy.junkSearchLabel })).toBeNull();
+    expect(emptyProvider.host.textContent).not.toContain("Junk is empty");
+    await emptyProvider.click(emptyProvider.screen.getByRole("button", { name: copy.place.listMenu }));
+    await emptyProvider.click(within(document.body).getByRole("menuitem", { name: copy.junkSearchLabel }));
+    expect(emptyProvider.screen.getByRole("searchbox", { name: copy.junkSearchLabel })).toBeTruthy();
+    await emptyProvider.click(emptyProvider.screen.getByRole("button", { name: copy.place.listMenu }));
+    await emptyProvider.click(within(document.body).getByRole("menuitem", { name: copy.hideSpamSearch }));
+    expect(emptyProvider.screen.queryByRole("searchbox", { name: copy.junkSearchLabel })).toBeNull();
+    expect(emptyProvider.writes).toEqual([]);
   });
 
   // Junk lists individual provider letters. With folders off the Spam row belongs to the sender.

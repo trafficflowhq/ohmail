@@ -32,6 +32,9 @@ export interface PlaceListInput {
   readonly rows: readonly EngineMessage[];
   /** The letter open in the place (the route's), or none. */
   readonly openId: string | null;
+  /** A directly addressed message whose conversation row represents it. */
+  readonly openMessage?: EngineMessage;
+  readonly openRowId?: string;
   /** Opens a letter in the place, or closes it: the frame's command. */
   readonly open: (id: string | null) => void;
   /** The seat's mark, through its one press seam. */
@@ -63,7 +66,7 @@ export interface PlaceList {
 
 export function usePlaceList(input: PlaceListInput): PlaceList {
   const { rows, openId, open, markSeen, act } = input;
-  const shown = openId === null ? null : (rows.find((m) => m.id === openId) ?? null);
+  const shown = openId === null ? null : (input.openMessage ?? rows.find((m) => m.id === openId) ?? null);
   const { wiring, enter, land, keyScroll } = useReaderVisit({ shown, markSeen });
   /* A hit a person chose elsewhere and opened here: its row is entered once the list shows it, as a press enters. */
   useTakeEntered(input.entered, (id) => shown !== null && shown.id === id, enter);
@@ -86,7 +89,7 @@ export function usePlaceList(input: PlaceListInput): PlaceList {
   const walk = useListWalk({
     ...input.walk,
     order,
-    openId,
+    openId: input.openRowId ?? openId,
     open,
     arrival: input.arrival,
     enter: enterShown,

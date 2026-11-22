@@ -1,5 +1,5 @@
 import { dayOfIso } from "./grid/days.js";
-import { addDays, weekStartOf } from "./spans/days.js";
+import { addDays, weekdayOfDay, weekStartOf } from "./spans/days.js";
 
 type Word = { text: string; key: string; from: number; to: number };
 type Part<T> = { size: number; value: T; keep?: boolean };
@@ -127,7 +127,7 @@ function weekdayPart(words: Word[], at: number, today: string): Part<DatePart> |
   return found(prefixed ? 2 : 1, { day }, EVERY.has(word));
 }
 
-function dateAt(words: Word[], at: number, today: string): Part<DatePart> | undefined {
+function dateAt(words: Word[], at: number, today: string, absoluteBase = today): Part<DatePart> | undefined {
   const word = keyAt(words, at);
   const relative = RELATIVE.get(word);
   if (relative !== undefined) return found(1, { day: addDays(today, relative) });
@@ -143,9 +143,9 @@ function dateAt(words: Word[], at: number, today: string): Part<DatePart> | unde
   const i = at + Number(prefixed);
   const range = namedRange(words, i, today);
   if (range) return found(range.size + Number(prefixed), range.value);
-  const named = namedDate(words, i, today);
+  const named = namedDate(words, i, absoluteBase);
   if (named) return found(named.size + Number(prefixed), { day: named.value });
-  const exact = numericDate(keyAt(words, i), today);
+  const exact = numericDate(keyAt(words, i), absoluteBase);
   if (exact) return found(1 + Number(prefixed), { day: exact });
   const weekday = weekdayPart(words, i, today);
   return weekday ? found(weekday.size + Number(prefixed), weekday.value, weekday.keep) : undefined;
@@ -207,17 +207,44 @@ function minutesAt(words: Word[], at: number): Part<number> | undefined {
   return minutes !== undefined && minutes <= 7 * DAY ? found(3, minutes) : undefined;
 }
 
-/** Reads dates, times and a few explicit fields. A proposed guest is a word until the form accepts it. */
-export function readQuickEntry(
-  line: string,
-  { today, zoneOf }: { today: string; zoneOf?: (city: string) => string | undefined },
-): Reading | null {
-  const words = [...line.matchAll(/\S+/gu)].map(({ 0: text, index }) => ({
+function entryWords(line: string): Word[] {
+  return [...line.matchAll(/\S+/gu)].map(({ 0: text, index }) => ({
     text,
     key: text.toLowerCase(),
     from: index,
     to: index + text.length,
   }));
+}
+
+/** A bare weekday includes today and doubles as a text search. */
+export function weekdayDateQuery(line: string, today: string): string | null {
+  const name = line.trim().toLowerCase().replace(/\.$/, "");
+  const day = name.length < 3 ? -1 : WEEKDAYS.findIndex((names) => names.includes(name));
+  return day < 0 ? null : addDays(today, (day - weekdayOfDay(today) + 7) % 7);
+}
+
+/** A complete date query, using this calendar year's dates when no year is typed. */
+export function readDateQuery(line: string, today: string): string | null {
+  const text = line.trim().toLowerCase();
+  if (text === "now") return today;
+  const weekday = weekdayDateQuery(text, today);
+  if (weekday) return weekday;
+  const startOfYear = today.slice(0, 4) + "-01-01";
+  const numeric = /^(\d{1,2})\.(\d{1,2})$/.test(text) ? text + "." : text;
+  const ordinal = numeric.replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/g, "$1");
+  const words = entryWords(ordinal);
+  const reading = dateAt(words, 0, today, startOfYear);
+  return reading && reading.size === words.length && !reading.keep && !reading.value.endDay
+    ? reading.value.day
+    : null;
+}
+
+/** Reads dates, times and a few explicit fields. A proposed guest is a word until the form accepts it. */
+export function readQuickEntry(
+  line: string,
+  { today, zoneOf }: { today: string; zoneOf?: (city: string) => string | undefined },
+): Reading | null {
+  const words = entryWords(line);
   const used = new Set<number>();
   const marks: [number, number][] = [];
   const claim = (at: number, size: number) => {

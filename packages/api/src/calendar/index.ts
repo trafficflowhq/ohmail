@@ -7,12 +7,13 @@
  */
 import { isWriteKey } from "@trafficflow/db/calendar";
 import {
-  calendarSettings, dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite, setCalendarSettings, setCalendarSuggestionDismissed,
+  calendarSettings, dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite, sendInvitationProposal, setCalendarSettings, setCalendarSuggestionDismissed,
 } from "@trafficflow/services/calendar";
 import { ServiceError } from "@trafficflow/services";
 import { serviceContext } from "../context.js";
 import { answer } from "../responses.js";
 import type { Route } from "../router.js";
+import { sendDepsOf, sendKeyOf } from "../send-deps.js";
 import { readBody } from "../routes/shared.js";
 import { placesOff, readPlaceQuestion } from "./places.js";
 import { calendarConnectRoutes } from "./connect.js";
@@ -74,6 +75,20 @@ export const calendarRoutes: Route[] = [
         serviceContext(deps, req), params.id!, await readBody<unknown>(req),
       );
       return answer<"PATCH /calendar/suggestions/:id">()({ dismissed }, { seq });
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/calendar/proposals",
+    wire: true,
+    relay: true,
+    cost: "connection",
+    replay: "guarded",
+    handler: async (req, deps) => {
+      const { status, seq } = await sendInvitationProposal(
+        serviceContext(deps, req), await readBody<unknown>(req), sendKeyOf(req), { send: sendDepsOf(deps) },
+      );
+      return answer<"POST /calendar/proposals">()({ status }, { seq: seq ?? undefined });
     },
   },
   {

@@ -34,7 +34,9 @@ export function StoragePane({ model, body, factor, sheet }: StoragePaneProps) {
     <>
       <Figures t={t} figures={figures} />
       <StorageExplanation plan={figures.plan} t={t} />
-      {figures.plans === null ? null : <StoragePlans model={model} plans={figures.plans} />}
+      {figures.plans === null ? null : (
+        <StoragePlans model={model} plans={figures.plans} linksOut={body === "pane"} />
+      )}
       {body === "facts" ? (
         <SettingsSheet>
           <SettingNote>{t("storageManageAtSite")}</SettingNote>

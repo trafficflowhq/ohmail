@@ -130,8 +130,8 @@ describe("what the shell says of a letter's invitation", () => {
       const note = within(at).getByText(`the invitation of ${id}`);
       const text = at.querySelector("[data-read-body]")!;
       expect(text.contains(note), "the note stands outside the letter's text").toBe(false);
-      const after = note.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING;
-      expect(after, "the text follows the note").toBeTruthy();
+      const after = text.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING;
+      expect(after, "the note follows the text").toBeTruthy();
     }
   });
 

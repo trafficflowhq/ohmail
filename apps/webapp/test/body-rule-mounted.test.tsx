@@ -91,7 +91,7 @@ describe("the rules surface tells a body rule apart", () => {
     expect(both.textContent).toContain("Alert");
     expect(both.textContent).toContain(TOKEN);
     await act(async () => within(narrowRow).getByRole("button", { name: rules.revoke }).click());
-    const confirm = screen.getByRole("dialog", { name: rules.revokeConfirm });
+    const confirm = screen.getByRole("dialog", { name: "Revoke 1 rule" });
     expect(confirm.textContent).toContain(TOKEN);
   });
 });

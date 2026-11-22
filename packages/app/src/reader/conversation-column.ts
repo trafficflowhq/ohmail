@@ -30,7 +30,7 @@ import { fragmentOf } from "../frame/route.js";
 import { useMailboxWord, useOwnAddresses, usePress, useRoomHolds } from "../frame/room.js";
 import { useVerbs } from "./actions/use-verbs.js";
 import { useOpenCard } from "./contact/Contact.js";
-import { useParts, useReplyVerbs } from "./parts.js";
+import { useParts, useReplyTarget, useReplyVerbs } from "./parts.js";
 import { READER_DOM, scrollerOf } from "./read-dom.js";
 import { useSentInView } from "./sent-in-view.js";
 import { readThreadOrder } from "./thread-order.js";
@@ -70,6 +70,7 @@ export function useConversationColumn(
   );
   const { reply } = useParts();
   const replyVerbs = useReplyVerbs();
+  const replyTarget = useReplyTarget(reply);
   const run = useReplyRunState();
   const step = run?.at === openId ? run : null;
   const sentJoined = useSentInView({ openId, messages, replying: replyVerbs !== null, column: columnEl });
@@ -82,7 +83,7 @@ export function useConversationColumn(
     onEnter: column.enter,
     names: READER_DOM,
     anchor: !resumed,
-    standsDown: sentJoined,
+    standsDown: () => ordered.some((message) => message.id === replyTarget) || sentJoined(),
   });
   const verbs = useVerbs(opened, visit, column.owner === "column" ? column.wiring : null, messages.at(-1));
   useReaderKeys(keysHere && opened !== null, { verbs, visit });

@@ -63,6 +63,7 @@ export function InvitationItem(p: InvitationItemProps) {
       {p.open ? (
         <EventCard
           frame="inline"
+          neutralHead
           title={row.title}
           tone={p.calendar.tone}
           when={whenOf(row.when, row.day, p.today, locale, t, true)}

@@ -90,6 +90,34 @@ describe("a name of the managed service beside OHMAIL_ORIGIN refuses the start",
   });
 });
 
+describe("a self-hosted server can opt in to calendar place suggestions", () => {
+  const publicPhoton = "https://photon.komoot.io";
+
+  it("keeps map suggestions off with neither geocoder setting", () => {
+    expect(loadSettings(env(PLAIN_ENV), PROCESS_DOOR).places).toBeNull();
+  });
+
+  it("accepts the public geocoder without a bearer", () => {
+    const settings = loadSettings(env(PLAIN_ENV, { PLACES_SUGGEST_URL: publicPhoton }), PROCESS_DOOR);
+    expect(settings.managed).toBe(false);
+    expect(settings.places).toEqual({
+      address: { origin: publicPhoton, hostname: "photon.komoot.io", transport: "https" },
+      token: null,
+    });
+  });
+
+  it("accepts a bearer with the operator's geocoder", () => {
+    const origin = "https://places.example.com";
+    const token = fixture("places", "bearer");
+    const settings = loadSettings(env(PLAIN_ENV, { PLACES_SUGGEST_URL: origin, PLACES_SUGGEST_TOKEN: token }), PROCESS_DOOR);
+    expect(settings.managed).toBe(false);
+    expect(settings.places).toEqual({
+      address: { origin, hostname: "places.example.com", transport: "https" },
+      token,
+    });
+  });
+});
+
 describe("the entitlements pair is one marker", () => {
   const unmetered = env(MANAGED_ENV, { ENTITLEMENTS_URL: undefined, BILLING_PLANE_SECRET: undefined });
 

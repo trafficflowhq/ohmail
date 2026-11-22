@@ -17,7 +17,9 @@ import { act, consentTransport, engineOver, msg, NOW, S, setup, storeWith, teard
 const A = "acc-A1";
 const B = "acc-B2";
 const WHO = { kind: "local", name: "omarchy", stopped: false, mailboxId: "mbx-1", since: "2026-09-01T00:00:00.000Z" };
-const SAYING = (messages.sync as Record<string, string>).filingElsewhereLocalHow!.replace("{name}", "omarchy");
+const SAYING = (messages.sync as Record<string, string>).filingElsewhereLocalHow!
+  .replace("{name}", "omarchy")
+  .replace(/\.$/, "");
 
 /** The mailbox's filing is held by another install: the state the strip words as the holder's sentence. */
 const HELD_ELSEWHERE = {

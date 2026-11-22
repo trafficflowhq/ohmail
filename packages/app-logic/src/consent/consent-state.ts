@@ -107,6 +107,7 @@ export interface ConsentTransport {
    * collapsed to null; see the api-client note.
    */
   setThemeFace?: (themeFace: string | null) => Promise<{ themeFace: string | null }>;
+  setDraftReplies?: (draftReplies: boolean) => Promise<{ draftReplies: boolean }>;
   /**
    * The account's resurface time (mail 0110) — OPTIONAL for `setThemeFace`'s reason: a door
    * built before it must keep compiling, and one that cannot store a time simply never persists
@@ -349,6 +350,7 @@ export interface ConsentState {
    * fallback is the pre-feature behaviour rather than a guess about what the account holds.
    */
   resurfaceTime: string | null;
+  draftReplies: boolean | null;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
@@ -466,6 +468,7 @@ const RESTING: ConsentState = {
   // NEVER CHOSEN, at rest — and unlike `themeFace` this resting null is a usable position, not
   // the absence of one: every reader resolves it to the product's 09:00.
   resurfaceTime: null,
+  draftReplies: null,
   known: false,
   standalone: false,
   foldersStorable: false,
@@ -606,6 +609,7 @@ export function useConsentState(
    * control that cannot control. Rethrows on refusal, like every sibling.
    */
   setThemeFace: ((themeFace: "paper" | "ohmarchy" | null) => Promise<"paper" | "ohmarchy" | null>) | null;
+  setDraftReplies: ((next: boolean) => Promise<void>) | null;
   /**
    * REMEMBER THIS TIME FOR NEXT TIME — the account's resurface default (mail 0110). NULL when
    * the transport cannot store one, so a caller withholds the write rather than pretending. It
@@ -887,6 +891,7 @@ export function useConsentState(
           // route closes the shape and `consentSettings` filters the column, so a value that is
           // not `'HH:MM'` cannot come from a current server; anything else collapses to "never
           // chosen", which is the 09:00 every reader already draws.
+          draftReplies: typeof wire.draftReplies === "boolean" ? wire.draftReplies : null,
           resurfaceTime: typeof wire.resurfaceTime === "string"
             && /^([01]\d|2[0-3]):[0-5]\d$/.test(wire.resurfaceTime)
             ? wire.resurfaceTime
@@ -1139,6 +1144,18 @@ export function useConsentState(
   const setResurfaceTime =
     transport !== "none" && typeof transport.setResurfaceTime === "function" ? writeResurfaceTime : null;
 
+  const writeDraftReplies = useCallback(async (next: boolean): Promise<void> => {
+    const write = wireOf(link).setDraftReplies;
+    if (!write) return;
+    writeEpoch.current += 1;
+    const at = era.current;
+    const answer = await write(next);
+    if (typeof answer.draftReplies !== "boolean") throw new Error("Missing draft reply choice");
+    applyEcho(at, (prev) => ({ ...prev, draftReplies: answer.draftReplies }));
+  }, [applyEcho]);
+  const setDraftReplies =
+    transport !== "none" && typeof transport.setDraftReplies === "function" ? writeDraftReplies : null;
+
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
     const wire = wireOf(link);
     if (!canChangeSuggestions()) throw new Error("Suggestion consent is unreadable");
@@ -1369,6 +1386,7 @@ export function useConsentState(
     foldersStorable: link.current !== "none" && link.current.foldersStorable && presented.foldersStorable,
     setThemeFace,
     setResurfaceTime,
+    setDraftReplies,
     setAutoSuggest,
     canChangeSuggestions,
     suggestionGrant: suggestionRead.current.grant,

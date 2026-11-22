@@ -6,6 +6,7 @@
  * the ways out the host hands (`DoorWay`): on the web, literals of the route, and the account page the ceremony holds.
  */
 import type { ReactNode } from "react";
+import type { ConnectFormProps } from "../../mailboxes/connect/contract.js";
 import type { None } from "../../host/contract.js";
 import type { PendingSignOutDoor } from "../sign-in/door.js";
 import type { SignupPosture } from "../sign-in/invite-posture.js";
@@ -126,5 +127,8 @@ export interface JoinDoor {
   readonly demo: DoorWay | None;
   /** What the shell draws inside the page, called in render: the mailbox step's connect form, and the QR picture of
    *  the authenticator's enrolment (no part of the kit draws one yet). */
-  readonly slots: { mailbox(): ReactNode; authenticatorQr(): ReactNode };
+  readonly slots: {
+    mailbox(page: NonNullable<ConnectFormProps["page"]>): ReactNode;
+    authenticatorQr(): ReactNode;
+  };
 }

@@ -179,22 +179,18 @@ describe("the dark toggle stands in the host's header when the host offers a slo
     expect(toggleIn(host!.querySelector(".mb-bar"))).toBeTruthy();
   });
 
-  it("the mailbox row's verbs are ONE item of its state column", async () => {
-    /* The geometry file measures the shape over this markup; this holds that the component renders it. */
-    /* Re-pointed by path (the older tests' sorting): Settings' Mailboxes pane is the new pane's
-       (`packages/app/src/mailboxes/pane/RowLines.tsx`); today's `MailboxSection.tsx` leaves with the pane's finish.
-       The row's verbs are one item of its lines there: the acts' box that holds Sync now holds Remove. */
+  it("Sync now stands on the Synced line and Edit and Remove share the row foot", async () => {
+    /* Sync now stays with the sync value; Edit and Remove share the actions at the foot of the same row. */
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("packages/app/src/mailboxes/pane/RowLines.tsx", "utf8");
-    /* Each box from its opening line to its own closing line, at the opening's indentation. */
-    const boxes = [...src.matchAll(/\n( *)<div className="mbx-pane-acts">/g)].map((m) => {
-      const from = m.index! + m[0].length;
-      return src.slice(from, src.indexOf(`\n${m[1]}</div>`, from));
-    });
-    const verbs = boxes.find((b) => b.includes('say({ key: "syncNow" })')) ?? "";
-    expect(verbs, "the verbs are not one box of the row's lines").not.toBe("");
-    expect(verbs).toContain('say({ key: "syncNow" })');
-    expect(verbs).toContain('say({ key: "remove" })');
+    const row = src.slice(src.indexOf('<div className="mbx-row-lines">'), src.indexOf("\n    </div>"));
+    const synced = row.match(/<SettingLine\s+label=\{say\(\{ key: "lineSynced" \}\)\}[\s\S]*?<\/SettingLine>/)?.[0];
+    expect(synced).toContain('say({ key: "syncNow" })');
+    const acts = [...row.matchAll(/<div className="mbx-pane-acts">([\s\S]*?)<\/div>/g)]
+      .map(([, content]) => content)
+      .find((content) => content?.includes('say({ key: "remove" })'));
+    expect(acts).toContain('say({ key: "edit" })');
+    expect(row.indexOf(synced!)).toBeLessThan(row.indexOf(acts!));
   });
 
   it("the held Screener card passes its header slot", async () => {

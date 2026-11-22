@@ -133,10 +133,10 @@ describe("a refused sign-in", () => {
       setupPort(async () => ["caldav"]),
     );
     await act(async () => undefined);
-    expect(screen.getByText("Reading your calendars")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Reading your calendars" })).toBeTruthy();
     expect(screen.queryByText(/Nothing was connected/)).toBeNull();
     act(() => world.put("calendar", "cal-1", calendarRecord()));
-    expect(screen.getByText("My calendars")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "My calendars" })).toBeTruthy();
     expect(screen.getByText("Studio")).toBeTruthy();
   });
 });

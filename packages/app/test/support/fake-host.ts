@@ -119,6 +119,7 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       mirrorAccount: null,
       account: input.account ?? null,
       accountAddress: null,
+      accountDisplayName: null,
       signOut: NONE,
       recover: input.recover ?? NONE,
       today: NONE,

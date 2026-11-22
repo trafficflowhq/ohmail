@@ -113,7 +113,7 @@ describe("the web shell's answers on the managed service", () => {
   });
 
   it("is the account's own page: a live session under the account's scope, and a browser's device", () => {
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, accountDisplayName: null, recover: has.frame.recover, today: NONE });
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
     expect(host.engine).toBe(engine);
@@ -176,7 +176,7 @@ describe("the web shell's answers on a self-hosted server", () => {
     expect(host.features).toEqual(entries(...THE_ACCOUNT, "devices", "invites"));
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, accountDisplayName: null, recover: has.frame.recover, today: NONE });
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
   });
 
@@ -198,6 +198,9 @@ describe("the web shell's account and pictures, in every setting", () => {
     expect(webHost(engine, facts, has).session.accountAddress).toBe(facts.accountAddress);
     expect(webHost(engine, { ...facts, account: "another-account" }, has).session.accountAddress).toBeNull();
     expect(webHost(engine, { ...facts, account: null }, has).session.accountAddress).toBeNull();
+    const profile = { ...facts, accountDisplayName: "Fixture Person" };
+    expect(webHost(engine, profile, has).session.accountDisplayName).toBe("Fixture Person");
+    expect(webHost(engine, { ...profile, account: "another-account" }, has).session.accountDisplayName).toBeNull();
   });
 
   it.each(SETTINGS)("%s: the session names the account the server confirmed, and nothing else", (_, facts) => {

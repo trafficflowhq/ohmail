@@ -22,7 +22,7 @@ import {
 import type { Logger } from "@trafficflow/core";
 import { calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, someoneElses, writeRowOf, type CalendarWritePayload,
+  appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, someoneElses, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection } from "./connection.js";
@@ -32,6 +32,7 @@ import { calendarEnabledAt } from "./state.js";
 import type { CalendarWriteDrain, CalendarWriteDrainInput, CalendarWriteWait } from "./types.js";
 import { TURN_MS, WORD_PLAN, type CalendarSyncFault } from "./words.js";
 import { pressShaped, secondPartHolds, secondPartIsThePress, writeCallOf, type StoredEvent, type WriteWord } from "./write-request.js";
+import { moveRefusal, retryTransfer, transferPersonalEvent } from "./personal-transfer.js";
 import { refuseInTx, settleApplied, settleGivenBack, settleLater, settleRefused, type ClaimedWrite, type SettleContext } from "./write-settle.js";
 
 /** A claim's lease: a write claimed and never settled (a crash) is owed again after this. */
@@ -69,7 +70,7 @@ export function writeWait(attempts: number, retryAfterMs: number | null): number
 }
 
 /** What a write's call came to: the writer's answer, or the queue's own refusal of an act no call can be made of. */
-type Outcome = WriteAnswer | { readonly ok: false; readonly reason: "content_refused"; readonly retryAfterMs: null };
+type Outcome = WriteAnswer | ReturnType<typeof moveRefusal> | typeof retryTransfer | { readonly ok: false; readonly reason: "content_refused"; readonly retryAfterMs: null };
 
 /** The second part of a press, as the first part's claim reads it: its row, and what it asks. */
 interface Second {
@@ -96,6 +97,7 @@ type Claim =
       readonly mayBeDone: boolean;
       /** A series' end claimed before and too old to send: looked at at the provider, never sent. */
       readonly late: boolean;
+      readonly finalMove: boolean;
       /** The write's own key; for a press's second part the key of the row it waits for, and the day that row, done, ended the series at. */
       readonly key: string;
       readonly firstKey: string | null;
@@ -203,7 +205,7 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         : [];
       const write: ClaimedWrite = {
         id: head.id, attempts: head.attempts, op: head.op, calendarId: head.calendarId, calendarProviderId: head.calendarProviderId,
-        eventId: head.eventId, baseVersionTag: head.baseVersionTag, provisional: false,
+        eventId: head.eventId, baseVersionTag: head.baseVersionTag, provisional: false, copied: payload?.transfer !== undefined,
         toCalendarId: payload?.act.kind === "calendar_event_move" ? payload.act.toCalendarId : null, kept: appliedPayloadOf(payload?.act ?? null),
       };
       // A press's second part whose first is done is the repair of a press half carried out (the series ends at the provider, and
@@ -218,7 +220,8 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
       const endDay = payload !== null && "scope" in payload.act && payload.act.scope.kind === "following" ? payload.act.scope.at : null;
       const late = !head.spent && head.aged && endDay !== null && head.attempts > 0 && head.eventId !== null;
       const expired = head.spent || (head.aged && !halfDone && !late);
-      if (expired || payload === null || (first !== undefined && first.state !== "applied")) {
+      const finalMove = expired && !!payload?.transfer?.progress;
+      if ((expired && !finalMove) || payload === null || (first !== undefined && first.state !== "applied")) {
         const changes: CalendarChange[] = [];
         const word = payload === null ? "content_refused" : expired ? "expired" : "earlier_refused";
         await refuseInTx(tx, key.accountId, write, word, changes);
@@ -229,9 +232,9 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
       }
       const provider = input.provider.reader.provider;
       const readDeleteGuests = payload.act.kind === "calendar_event_update" ||
-        (payload.act.kind === "calendar_event_delete" && (provider === "google" || provider === "microsoft"));
+        ((payload.act.kind === "calendar_event_delete" || payload.act.kind === "calendar_event_move") && (provider === "google" || provider === "microsoft"));
       const event = head.eventId === null ? undefined : await storedEventOf(tx, key.accountId, head.calendarId, head.eventId, readDeleteGuests);
-      if (event === undefined && head.op !== "create") {
+      if (event === undefined && head.op !== "create" && !payload.transfer?.progress) {
         // Its event is gone from the store: a removal is done; anything else has nothing left to change. And so has a removal of
         // days that a press of the queue gave a series of their own since it was recorded (the days from a day on; one day, where a
         // press ended the series at or before it): they stand in that series, and the removal is not shown done.
@@ -325,7 +328,7 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         write: { ...write, attempts: claimedRow.attempts, calendarAccess: head.calendarAccess, createdAt: head.createdAt,
           provisional: event !== undefined && event.providerId === `pending:${head.id}`,
           series: event !== undefined && writeRowOf(event) === "series" },
-        payload, to, organizer, own, owners, second, source, exception, mayBeDone, late, key: head.key, firstKey: first?.key ?? null,
+        payload, to, organizer, own, owners, second, source, exception, mayBeDone, late, finalMove, key: head.key, firstKey: first?.key ?? null,
         firstEnded: first !== undefined && first.state === "applied" ? endedDayOf(first.payload) : null,
         place: proofPlaceOf(input.provider.reader.provider, held.serverUrl),
         event: event === undefined ? null : { ...event, ownInvitee },
@@ -401,7 +404,7 @@ async function storedEventOf(
   tx: Tx, accountId: string, calendarId: string, eventId: string, readDeleteGuests = false,
 ): Promise<StoredEvent | undefined> {
   const query = tx.select({
-    providerId: calEvents.providerId, original: calEvents.original, partial: calEvents.partial, uid: calEvents.uid, versionTag: calEvents.versionTag,
+    providerId: calEvents.providerId, original: calEvents.original, portableCopy: calEvents.portableCopy, partial: calEvents.partial, uid: calEvents.uid, versionTag: calEvents.versionTag,
     updatedAt: calEvents.updatedAt, status: calEvents.status, thisAndFuture: calEvents.thisAndFuture,
     organizer: calEvents.organizer, myAnswer: calEvents.myAnswer,
     repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates, excludedDates: calEvents.excludedDates,
@@ -428,7 +431,7 @@ async function reviewedExceptionOf(
   master: StoredEvent | undefined, owners: ReadonlySet<string>, first: boolean,
 ): Promise<NonNullable<WriteTarget["exception"]> | "stale"> {
   const { act, exception } = payload;
-  if (!exception || !master || act.kind !== "calendar_event_update" || writeRowOf(master) !== "series") return "stale";
+  if (!exception || !master || (act.kind !== "calendar_event_update" && act.kind !== "calendar_event_answer") || writeRowOf(master) !== "series") return "stale";
   const occurrence = timeOfKey(exception.occurrence);
   if (!occurrence) return "stale";
   const paired = exceptionBaseOf(act.base);
@@ -437,7 +440,10 @@ async function reviewedExceptionOf(
   if (!selected && first) return "stale";
   if (selected && (selected.uid !== master.uid || selected.recurrenceId !== exception.occurrence ||
     selected.providerId !== exception.providerId || selected.partial || selected.thisAndFuture ||
-    selected.status === "cancelled" || someoneElses(selected, owners))) return "stale";
+    selected.status === "cancelled" ||
+    (act.kind === "calendar_event_answer"
+      ? !someoneElses(selected, owners) || selected.organizer !== master.organizer || selected.myAnswer === null
+      : someoneElses(selected, owners)))) return "stale";
   if (first && (selected?.updatedAt?.getTime() !== Date.parse(paired?.[0] ?? act.base) ||
     selected?.versionTag !== exception.version ||
     (paired && master.updatedAt?.getTime() !== Date.parse(paired[1])))) return "stale";
@@ -450,9 +456,10 @@ async function carryOut(
 ): Promise<Outcome> {
   const refused = (reason: WriteWord): Outcome => ({ ok: false, reason, retryAfterMs: null } as Outcome);
   const writer = input.provider.writer;
-  if (writer === null) return refused("unsupported");
-  if (claim.write.calendarAccess !== "owner" && claim.write.calendarAccess !== "writer")
-    return refused("read_only");
+  const writable = claim.write.calendarAccess === "owner" || claim.write.calendarAccess === "writer";
+  const progress = claim.payload.transfer?.progress;
+  if (writer === null) return claim.finalMove ? moveRefusal("move_unresolved") : progress ? retryTransfer : refused("unsupported");
+  if (!writable && !progress) return refused("read_only");
   const part = claim.payload.part;
   // A press's parts go only as the door records them: no part of a press is sent out of its press (a change of a day and the days
   // after it without its second part, their removal with one, a second part after another than its own first).
@@ -461,6 +468,13 @@ async function carryOut(
   // A press's second part comes from its series: one that does not say where from would be made of the act's fields alone, and is not sent.
   if (part?.n === 2 && claim.payload.act.kind === "calendar_event_create" && (part.from === undefined || claim.source === undefined)) return refused("content_refused");
   const second = claim.second;
+  if (claim.payload.transfer) {
+    try {
+      return await carryTransfer(deps, input, claim, writable);
+    } catch {
+      return claim.finalMove ? moveRefusal("move_unresolved") : retryTransfer;
+    }
+  }
   if (claim.exception === "stale") return refused("version_stale");
   const submitted = claim.payload.act;
   const paired = submitted.kind === "calendar_event_create" ? null : exceptionBaseOf(submitted.base);
@@ -476,6 +490,7 @@ async function carryOut(
     firstAttempt: claim.write.attempts === 1 && !claim.payload.exception?.masterReceipt,
     confirmedFollowing: second?.payload.part?.from?.confirmed,
     exception: claim.exception,
+    seriesCancellation: claim.payload.seriesCancellation,
     ...(part?.from === undefined || claim.source === undefined ? {} : { continuation: { from: part.from, source: claim.source } }),
   });
   if (call.kind === "refuse") return refused(call.reason);
@@ -545,8 +560,8 @@ async function carryOut(
           ...(exceptionEdit && { masterReceipt: claim.payload.exception?.masterReceipt, rememberMasterReceipt: saveMasterReceipt }),
         } : call.target, call.change, input.signal);
       case "remove": return await writer.remove(input.connection, cal, call.target, input.signal);
-      case "answer": return await writer.answer(input.connection, cal, call.target, { as: call.as, reply: call.reply }, input.signal);
-      case "move": return writer.moveEvent === null ? refused("unsupported") : await writer.moveEvent(input.connection, cal, { id: call.to }, call.target, input.signal);
+      case "answer": return await writer.answer(input.connection, cal, call.target, { as: call.as, reply: call.reply, ...(claim.write.attempts > 1 && { retry: true }) }, input.signal);
+      case "move": return writer.moveEvent === null ? refused("unsupported") : await writer.moveEvent(input.connection, cal, { id: call.to }, { ...call.target, ...(claim.write.attempts > 1 && { retryMove: true }) }, input.signal);
       case "end": return await writer.endSeries(input.connection, cal, call.target, { then, mayBeDone: claim.mayBeDone, late: claim.late }, input.signal);
       case "continue": return await writer.continueSeries(input.connection, cal, {
         key: { hex: claim.write.id.replaceAll("-", "") }, from: call.from, start: call.start, end: call.end, rule: call.rule,
@@ -562,6 +577,36 @@ async function carryOut(
   }
 }
 
+async function carryTransfer(
+  deps: WriteDrainDeps, input: CalendarWriteDrainInput, claim: Extract<Claim, { kind: "claimed" }>, sourceWritable: boolean,
+): Promise<Outcome> {
+  const { write, payload } = claim;
+  const transfer = payload.transfer!;
+  if (!write.toCalendarId || !write.baseVersionTag || !input.provider.writer) return moveRefusal("move_unresolved");
+  if (!transfer.progress && (!claim.event || payload.act.kind !== "calendar_event_move" || payload.act.eventId !== write.eventId ||
+      claim.event.versionTag !== write.baseVersionTag ||
+      claim.event.partial || claim.event.providerId !== transfer.source || someoneElses(claim.event, claim.owners))) {
+    return { ok: false, reason: "version_stale", retryAfterMs: null };
+  }
+  const destination = await input.moveDestination?.(write.toCalendarId) ?? null;
+  const remember = async (progress: CalendarTransferProgress) => {
+    const saved = await inConnection(input.db, input.key, async ({ tx }) => {
+      const [row] = await tx.update(calWrites).set({
+        payload: { ...payload, transfer: { ...transfer, progress } },
+      }).where(and(eq(calWrites.accountId, input.key.accountId), eq(calWrites.id, write.id),
+        eq(calWrites.attempts, write.attempts), eq(calWrites.state, "pending"))).returning({ id: calWrites.id });
+      return row !== undefined;
+    });
+    return saved === true;
+  };
+  return transferPersonalEvent({
+    source: { writer: input.provider.writer, connection: input.connection, cal: { id: write.calendarProviderId } },
+    destination, transfer, originalVersion: write.baseVersionTag,
+    sourceWritable: sourceWritable && (input.provider.writer.provider !== "microsoft" || claim.event?.portableCopy === true), final: claim.finalMove,
+    key: { hex: write.id.replaceAll("-", "") }, zones: deps.zones, signal: input.signal, remember,
+  });
+}
+
 /**
  * The write's end, as its answer has it. `"next"`: the drain goes on; `"stop"`: it ends for the
  * turn; a number: it ends, and the connection is owed its next turn then.
@@ -570,6 +615,16 @@ async function settle(
   ctx: SettleContext, claim: Extract<Claim, { kind: "claimed" }>, answer: Outcome, tally: Tally, aborted: boolean,
 ): Promise<"next" | "stop" | number> {
   const w = claim.write;
+  if ("moveRefusal" in answer || (claim.finalMove && ("pending" in answer || !answer.ok))) {
+    const word = "moveRefusal" in answer ? answer.moveRefusal : "expired";
+    tally.refused += 1;
+    tally.reason = word;
+    return (await settleRefused(ctx, w, word)) === "gone" ? "stop" : "next";
+  }
+  if ("pending" in answer) {
+    const due = await settleLater(ctx, w, writeWait(w.attempts, null));
+    return due === "gone" ? "stop" : due.getTime();
+  }
   if (answer.ok) {
     const done = await settleApplied(ctx, w, answer.items, claim.event?.providerId ?? null, answer.written === true);
     if (done === "gone") return "stop";

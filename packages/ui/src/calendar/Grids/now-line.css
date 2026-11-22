@@ -7,14 +7,18 @@
     --oh-now-z: 3;
     --oh-now-pull: calc(var(--oh-now-w) / -2);
     position: absolute;
-    right: 2px;
+    right: calc(var(--s2) - var(--oh-now-w));
     left: -5px;
     z-index: var(--oh-now-z);
     height: var(--oh-now-w);
     margin-top: var(--oh-now-pull);
+    pointer-events: none;
+  }
+  .oh-now-stroke {
+    position: absolute;
+    height: 100%;
     border-radius: var(--oh-now-r);
     background: var(--hot);
-    pointer-events: none;
   }
   .oh-now::before {
     content: "";

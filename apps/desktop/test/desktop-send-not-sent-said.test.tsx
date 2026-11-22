@@ -45,8 +45,9 @@ const replyLines = (): string[] =>
 const frameNotices = (): HTMLElement[] =>
   [...document.querySelectorAll<HTMLElement>('.fr-report [role="status"], .fr-railnotice [role="status"], .fr-noticebar [role="status"]')];
 /** The notice that says the ending beside the editor (today's held toast), or null. */
+const unreachableReport = en.reply.statusUnreachable.replace(/\.$/, "");
 const held = (): HTMLElement | null =>
-  frameNotices().find((n) => (n.textContent ?? "").includes(en.reply.statusUnreachable)) ?? null;
+  frameNotices().find((n) => (n.textContent ?? "").includes(unreachableReport)) ?? null;
 const row = (el: HTMLElement, id: string): HTMLElement | null =>
   el.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
 const online = async (): Promise<void> => { await act(async () => { window.dispatchEvent(new Event("online")); }); };
@@ -85,7 +86,7 @@ describe("desktop: a send that ends Not sent off screen", () => {
     await online();
     await waitFor(() => sends(s).length === 3, "the third try");
 
-    await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
+    await waitFor(() => held() !== null, "the Not sent toast");
     const open = [...held()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").trim() === en.reply.notSentOpen);
     expect(open?.textContent, "the toast offers no way back").toBe(en.reply.notSentOpen);
 

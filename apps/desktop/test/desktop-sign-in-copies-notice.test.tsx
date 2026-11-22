@@ -1,21 +1,21 @@
 /** @vitest-environment jsdom */
 /**
- * THE SIGN-INS OHMAIL SIGNED OUT BECAUSE AN OLDER COPY USED THEM, ON THE DESKTOP's WINDOW (the switch's point 66: a
- * security notice): the window's account strip says the notice the web says, in the frame's one slot:
- * the sentence, the advice as its line, OK, and Details, behind which each swept sign-in stands by its client and its
- * date (the frame opens the list: `packages/app/test/frame/notice-more.test.tsx`). A window signed in to the Cloud.
+ * When ohmail ends sign-ins used by an older copy, a Cloud desktop window shows the same notice
+ * as the web. The account strip offers OK and Details, which shows advice and lists the affected
+ * sign-ins by client and date.
  */
 import { createElement as h } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import settings from "../../../packages/app/messages/settings.en.json";
 
 interface Said {
   readonly kind: string;
   readonly title: string;
   readonly line?: string;
   readonly acts?: readonly { readonly label: string; readonly onPress: () => void }[];
-  readonly more?: { readonly label: string; readonly rows: readonly string[] };
+  readonly more?: { readonly label: string; readonly line?: string; readonly rows: readonly string[] };
 }
 interface Handed {
   readonly features: Record<string, { readonly notice?: () => readonly Said[] } | "none">;
@@ -84,12 +84,10 @@ describe("the desktop's sign-ins signed out, as the frame's notice", () => {
     expect(said).toHaveLength(1);
     const [n] = said;
     expect(n!.kind).toBe("signInCopies");
-    /* The advice is its line, apart from its sentence; one act (OK), and Details its more: each sign-in a row of its
-       own, with its date. The words are the catalogue's (the web's case reads them by key). */
-    expect(n!.line ?? "").not.toBe("");
-    expect(n!.line).not.toBe(n!.title);
+    expect(n!.more?.line).toBe(settings.settings.reuseSweepsBody);
+    expect(n!.more?.line).not.toBe(n!.title);
     expect(n!.acts).toHaveLength(1);
-    expect(n!.more?.label ?? "").not.toBe("");
+    expect(n!.more?.label).toBe(settings.settings.reuseSweepsDetails);
     expect(n!.more?.rows).toHaveLength(2);
     expect(n!.more?.rows[0]).toContain("2026");
     expect(n!.more?.rows[1]).toContain("2026");

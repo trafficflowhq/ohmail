@@ -1,6 +1,7 @@
 import { clockTime, dayShort, daySpanOf, eventTimeOf, type ZoneSource } from "@ohmail/app-logic/calendar";
 import type { CalendarTime } from "@ohmail/wire";
 import type { Text } from "../text/index.js";
+import type { CalendarEventFace } from "./faces.js";
 import type { EventDraft } from "./event-draft.js";
 
 export function guestNames(names: readonly string[], locale: string, t: Text, shorten = true): string {
@@ -33,4 +34,30 @@ export function eventWhen(
   const from = clockTime(span.startMinute, locale);
   if (!length || span.endMinute === null) return `${date}, ${from}`;
   return `${from}–${clockTime(span.endMinute, locale)}`;
+}
+
+export function calendarInterval(
+  event: Pick<CalendarEventFace, "start" | "end" | "ref">,
+  zone: string,
+  zones: ZoneSource,
+  today: string,
+  locale: string,
+  t: Text,
+) {
+  const span = daySpanOf(event, zone, zones);
+  const end = daySpanOf({ start: event.end, end: event.end }, zone, zones);
+  const date = (day: string) => dayShort(day, locale, today.slice(0, 4));
+  const dated = (day: string, minute: number | null) =>
+    minute === null ? date(day) : t("atTime", { day: date(day), time: clockTime(minute, locale) });
+  let when = date(event.ref.day);
+  if (span !== null) {
+    when = dated(span.first, span.startMinute);
+    const last = span.allDay ? span.last : end?.first;
+    if (last !== undefined && last !== span.first) {
+      when = t("interval", { first: when, last: dated(last, span.endMinute) });
+    } else if (span.endMinute !== null && span.endMinute !== span.startMinute) {
+      when += `–${clockTime(span.endMinute, locale)}`;
+    }
+  }
+  return when;
 }

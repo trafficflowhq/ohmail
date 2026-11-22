@@ -311,7 +311,7 @@ describe("Compose after the letter went from another device", () => {
   }, 60_000);
 
   const movedSaid = (): Promise<boolean> =>
-    waitFor(() => toasts().includes(compose.sentElsewhereMovedToDrafts!), "the toast").then(() => true, () => false);
+    waitFor(() => toasts().includes(compose.sentElsewhereMovedToDrafts.replace(/\.$/u, "")), "the toast").then(() => true, () => false);
   /** Compose on A after the close: blank, no note, the typed words in Drafts once, and said. */
   async function composeAfterClose(toast: boolean): Promise<unknown> {
     await drain();
@@ -366,11 +366,11 @@ describe("Compose after the letter went from another device", () => {
     await waitFor(() => composer() === null, "handed off");
     await pause(400);
     const { readComposeRow } = await import("@ohmail/app-logic/writing/compose");
-    const whileSending = { toast: toasts().includes(compose.sentElsewhereMovedToDrafts!), bound: readComposeRow(storageOwner()) === kept };
+    const whileSending = { toast: toasts().includes(compose.sentElsewhereMovedToDrafts.replace(/\.$/u, "")), bound: readComposeRow(storageOwner()) === kept };
     shell.sendGate.wait = null;
     await act(async () => { release(); });
     await pause(1500);
-    expect({ whileSending, toast: toasts().includes(compose.sentElsewhereMovedToDrafts!), rows: [...server.rows.values()].map((d) => d.status) })
+    expect({ whileSending, toast: toasts().includes(compose.sentElsewhereMovedToDrafts.replace(/\.$/u, "")), rows: [...server.rows.values()].map((d) => d.status) })
       .toEqual({ whileSending: { toast: false, bound: true }, toast: false, rows: ["sent", "sent"] });
   }, 60_000);
 
@@ -386,7 +386,7 @@ describe("Compose after the letter went from another device", () => {
     const seen: string[][] = [];
     let recoveredNotice = false;
     const observeRecovery = () => {
-      recoveredNotice ||= toasts().includes(compose.sentElsewhereMovedToDrafts!);
+      recoveredNotice ||= toasts().includes(compose.sentElsewhereMovedToDrafts.replace(/\.$/u, ""));
     };
     const statusObserver = new MutationObserver(observeRecovery);
     statusObserver.observe(shell.el, { subtree: true, childList: true, characterData: true });
@@ -464,7 +464,7 @@ describe("Compose after the letter went from another device", () => {
     await sentOnB(row);
     await drain();
     await replyAgain();
-    expect({ reply: reply(), said: toasts().includes(messages.reply.sentElsewhereKept ?? "\u0000") })
+    expect({ reply: reply(), said: toasts().includes(messages.reply.sentElsewhereKept.replace(/\.$/u, "")) })
       .toEqual({ reply: "Thursday works for me, at ten", said: true });
   }, 60_000);
 });

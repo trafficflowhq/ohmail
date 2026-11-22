@@ -61,10 +61,10 @@ let releaseOwner = () => {};
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 (globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-// THE MANAGED BUILD: no flavor inlined (the `OHMAIL_FLAVOR` arm only exists on the self-host
-// compose). Deleted defensively in case a runner env carries one.
-delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
+vi.hoisted(() => {
+  process.env.NEXT_PUBLIC_API_BASE = "/api";
+  delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
+});
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -342,7 +342,7 @@ describe("mint → one link: the QR, the typed-entry line, the clipboard — all
     });
 
     const c = await mountSection();
-    await type(within(c).queryByRole<HTMLInputElement>("textbox", { name: messages.devices.addFor })!, "Mila's phone");
+    await type(within(c).queryByRole<HTMLInputElement>("textbox", { name: messages.devices.whoseDevice })!, "Mila's phone");
     await click(buttonByText(c, "Add a device"));
 
     const mint = calls.find((r) => r.method === "POST" && r.url.includes("/api/pair") && !r.url.includes("redeem"));
@@ -485,10 +485,12 @@ describe("the open codes — live device-pair rows only, revocable by their own 
     const c = await mountSection();
     await click(buttonByText(c, "Add a device"));
     expect(c.querySelector(".account-device-link"), "the minted display is up").toBeTruthy();
-    expect(c.textContent).toContain("Codes not yet used");
+    expect(within(c).queryByText(messages.devices.codesTitle)).toBeNull();
+    const shownRevoke = within(c).getByRole("button", { name: messages.devices.revokePairingLink });
+    expect(shownRevoke.closest(".oh-sheet")?.querySelector(".account-device-link")).toBeTruthy();
 
     answers["GET /api/pair"] = { status: 200, body: { items: [] } };
-    await click(buttonByText(c, "Revoke"));
+    await click(shownRevoke);
     expect(calls.some((r) => r.method === "DELETE" && r.url.includes("/api/pair/pt-1"))).toBe(true);
     // The row is gone AND the credential display above it is gone with it.
     expect(c.querySelector(".account-device-link"), "the dead credential stayed on screen").toBeNull();
@@ -525,7 +527,9 @@ describe("the signed-in list — the current row keeps its verb, every other row
     expect(signOuts).toHaveLength(1);
 
     await click(signOuts[0]!);
-    expect(c.textContent).toContain("Sign out Mila's phone?");
+    expect(dialog(c).getAttribute("aria-labelledby")).toBeTruthy();
+    expect(within(dialog(c)).getByRole("heading", { name: "Sign out Mila's phone" })).toBeTruthy();
+    expect(dialog(c).querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
 
     answers["GET /api/devices"] = { status: 200, body: { items: [THIS_BROWSER] } };
     await click(buttonByText(dialog(c), "Sign out"));
@@ -558,17 +562,20 @@ describe("the signed-in list — the current row keeps its verb, every other row
       },
     };
     const c = await mountSection();
-    const meta = c.textContent ?? "";
-    expect(meta).toContain("Linux");
-    expect(meta).toContain("Windows");
-    expect(meta).toContain("Android");
-    expect(meta).toContain("iOS"); // the OS name — an iPad build declares mobile-ios too, so never "iPhone"
-    expect(meta).toContain("Device"); // the future kind's honest fallback
-    // …and none of the named rows above was misfiled as a browser. The one real browser row is
-    // the CURRENT session, which renders its own "This browser" sentence rather than the kind
-    // word — so the word "Browser" must not appear at all.
-    expect(meta).toContain("This browser");
-    expect(meta).not.toContain("Browser");
+    const rows = [
+      ["work laptop", "Linux"],
+      ["gaming rig", "Windows"],
+      ["studio mac", "Mac"],
+      ["pixel", "Android"],
+      ["phone", "iOS"],
+      ["mystery", "Device"],
+    ];
+    for (const [name, kind] of rows) {
+      const row = within(c).getByRole("group", { name });
+      expect(within(row).getByText(kind!, { exact: true })).toBeTruthy();
+      expect(within(row).queryByText("Browser", { exact: true })).toBeNull();
+    }
+    expect(c.textContent).toContain("This browser");
   });
 
   it("a step-up-expired revoke opens the inline prompt, the row survives, and cancel drops the verb", async () => {
@@ -630,7 +637,8 @@ describe("the collapsed web-session group — hosted flavor, server-discriminate
     answers["POST /api/devices/revoke-web-sessions"] = { status: 200, body: { revoked: 2 } };
     const c = await mountSection();
     await click(buttonByText(c, "Sign out all"));
-    expect(c.textContent).toContain("Sign out 2 web sessions?");
+    expect(within(dialog(c)).getByRole("heading", { name: "Sign out 2 web sessions" })).toBeTruthy();
+    expect(dialog(c).querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     // The refreshed list: the plain rows are gone.
     answers["GET /api/devices"] = { status: 200, body: { items: [CURRENT, NAMED_PHONE] } };
     await click(buttonByText(dialog(c), "Sign out all"));

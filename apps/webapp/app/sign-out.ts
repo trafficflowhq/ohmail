@@ -1,3 +1,4 @@
+import { forgetNewNoticeChoices } from "@ohmail/app-logic/notices/browser-channels";
 import { clearAllMirrors, mirrorDbName } from "@ohmail/client-engine";
 import { auth } from "./api-client";
 import { signOutTrouble } from "./sign-out-trouble";
@@ -6,6 +7,7 @@ import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
   LEGACY_COMPOSE_DRAFT_KEY,
 } from "@ohmail/app-logic/writing/compose";
+import { FACE_SCOPE_KEY } from "@ohmail/ui/theme";
 import { FACE_ACCOUNT_KEY, FACE_ACCOUNT_OWNER_KEY } from "./shell/face-mirror";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
@@ -173,7 +175,8 @@ export async function forgetThisBrowser(
   const boot = may("account")
     ? clearBootCaches(only ? owner : undefined, () => may("account"))
     : { survivors: [], enumerated: true };
-  const survivors = [...boot.survivors];
+  const notices = may("account") ? forgetNewNoticeChoices(owner) : { survivors: [], enumerated: true };
+  const survivors = [...boot.survivors, ...notices.survivors];
   // The durable-decision stores, which are mail and are NOT in the mirror:
   // the send lanes, the Screener's intent journal, and the compose scratch
   // buffer — all `localStorage`, all owner-keyed, none under the boot-cache
@@ -223,10 +226,12 @@ export async function forgetThisBrowser(
     // sweep cares about: left behind, it re-skins the NEXT account's first paint from the
     // departed account's preference; the account it names goes with it (`face-mirror.ts`).
     // `ohmail.faceOffer` is the Option B offer's dismissal, answered in the context of the
-    // signed-in account; the next account on this device gets its own offer. The device's own
+    // signed-in account; the next account on this device gets its own offer.
+    // The explicit scope override goes with the signed-in session. The device's
     // pins (`ohmail.face`, `ohmail.layout`) SURVIVE beside `ohmail.theme` — a browser's look,
     // not account data (the census names them).
     FACE_ACCOUNT_KEY,
+    FACE_SCOPE_KEY,
     "ohmail.faceOffer",
     // The push row's id, the endpoint and the account it was minted for, all
     // session-bound. Swept UNCONDITIONALLY, even when the revoke could not
@@ -296,7 +301,7 @@ export async function forgetThisBrowser(
     remaining: [...survivors, ...wipe.remaining, ...(named?.survivors ?? [])].sort(),
     // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
     // names no survivors and proves nothing by it — see `dropLocalStorageKeys`'s catch.
-    inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated
+    inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated && notices.enumerated
       && deviceCeremonySwept && (named?.enumerated ?? true),
   };
 }

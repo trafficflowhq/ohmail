@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
-import type { InvitationAnswer, InvitationMethod, MessageInvitationDTO } from "@ohmail/wire";
+import type { InvitationAnswer, InvitationMethod, InvitationProposal, InvitationProposalTimes, MessageInvitationDTO } from "@ohmail/wire";
 import { mailboxes, messageInvitations, messages } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
@@ -25,7 +26,7 @@ export const INVITATION_RECURRENCE_ID_MAX_BYTES = 320;
 /** RFC 5321's 254, as a stored address is bounded. */
 export const INVITATION_ADDRESS_MAX_CHARS = 254;
 const SEQUENCE_MAX = 2 ** 31 - 1;
-const METHODS: ReadonlySet<string> = new Set<InvitationMethod>(["REQUEST", "REPLY", "CANCEL", "COUNTER"]);
+const METHODS: ReadonlySet<string> = new Set<InvitationMethod>(["REQUEST", "REPLY", "CANCEL", "COUNTER", "DECLINECOUNTER"]);
 const ANSWERS: ReadonlySet<string> = new Set<InvitationAnswer>(["accepted", "tentative", "declined"]);
 const START_SHAPE = /^\d{8}(?:T\d{6}Z?)?$/;
 
@@ -44,6 +45,7 @@ export interface InvitationWrite {
   /** DTSTAMP: orders one revision's letters. */
   stampedAt: Date | null;
   reply: { answer: InvitationAnswer; at: Date | null } | null;
+  proposal?: InvitationProposalTimes;
   /** The letter was read out of this mailbox's own Sent folder: the person wrote it. */
   own: boolean;
 }
@@ -58,6 +60,7 @@ interface RowValues {
   startsAt: Date | null;
   organizer: string | null;
   invitedAddress: string | null;
+  proposal?: InvitationProposal | null;
   answer: string | null;
   answeredAt: Date | null;
   stampedAt: Date | null;
@@ -76,6 +79,20 @@ const addressInDomain = (a: string | null): boolean =>
   a === null || (a.length > 0 && a.length <= INVITATION_ADDRESS_MAX_CHARS && a.includes("@") && !holdsControl(a));
 const instantInDomain = (d: Date | null): boolean => d === null || (d instanceof Date && Number.isFinite(d.getTime()));
 
+function proposalInDomain(p: InvitationProposal): boolean {
+  const shape = (value: unknown) => {
+    if (value === null || typeof value !== "object") return false;
+    const time = value as InvitationProposalTimes["start"];
+    return typeof time.value === "string" && (
+      (time.kind === "date" && /^\d{8}$/.test(time.value)) ||
+      (time.kind === "instant" && /^\d{8}T\d{6}Z$/.test(time.value)) ||
+      (time.kind === "floating" && /^\d{8}T\d{6}$/.test(time.value))
+    );
+  };
+  return typeof p.attendee === "string" && addressInDomain(p.attendee) && shape(p.start) && shape(p.end)
+    && p.start.kind === p.end.kind && p.start.value < p.end.value;
+}
+
 /** Every column of a row in its domain, or no row. */
 function inDomain(row: RowValues): boolean {
   if (row.uid.length === 0 || holdsControl(row.uid)) return false;
@@ -86,6 +103,7 @@ function inDomain(row: RowValues): boolean {
   if (!Number.isInteger(row.sequence) || row.sequence < 0 || row.sequence > SEQUENCE_MAX) return false;
   if (row.startRaw !== null && !START_SHAPE.test(row.startRaw)) return false;
   if (row.answer !== null && !ANSWERS.has(row.answer)) return false;
+  if (row.proposal && !proposalInDomain(row.proposal)) return false;
   return addressInDomain(row.organizer) && addressInDomain(row.invitedAddress)
     && instantInDomain(row.startsAt) && instantInDomain(row.answeredAt) && instantInDomain(row.stampedAt);
 }
@@ -132,13 +150,19 @@ function invitedAddressOf(w: InvitationWrite, mailboxAddress: string | null): st
 export async function writeInvitation(tx: Tx, w: InvitationWrite): Promise<{ written: boolean; touched: string[] }> {
   const none = { written: false, touched: [] };
   const [letter] = await tx.select({
-    mailboxId: messages.mailboxId, date: messages.date, createdAt: messages.createdAt, address: mailboxes.address,
+    mailboxId: messages.mailboxId, date: messages.date, createdAt: messages.createdAt, address: mailboxes.address, from: messages.fromAddress,
   }).from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .where(and(eq(messages.id, w.messageId), eq(messages.accountId, w.accountId)))
     .limit(1);
   if (letter === undefined) return none;
-  const invitedAddress = invitedAddressOf(w, letter.address);
+  // A proposal's named sender has to be an attendee. A refusal has to come from the organizer.
+  const attendee = w.method === "COUNTER"
+    ? w.attendees.find((a) => sameAddress(a, letter.from))
+    : w.method === "DECLINECOUNTER" && sameAddress(letter.from, w.organizer)
+      ? w.attendees[0]
+      : undefined;
+  const invitedAddress = w.method === "DECLINECOUNTER" ? attendee ?? null : invitedAddressOf(w, letter.address);
   let answer: InvitationAnswer | null = null;
   let answeredAt: Date | null = null;
   if (w.method === "REPLY" && w.reply !== null) {
@@ -149,6 +173,7 @@ export async function writeInvitation(tx: Tx, w: InvitationWrite): Promise<{ wri
   const row: RowValues = {
     method: w.method, uid: w.uid, recurrenceId: w.recurrenceId, sequence: w.sequence, startRaw: w.startRaw,
     startsAt: w.startsAt, organizer: w.organizer, invitedAddress, answer, answeredAt, stampedAt: w.stampedAt ?? null,
+    ...(w.proposal && attendee ? { proposal: { ...w.proposal, attendee } } : {}),
   };
   if (!inDomain(row)) return none;
   if (w.method === "REQUEST" && row.organizer !== null) {
@@ -305,7 +330,7 @@ export async function putInvitationCopy(tx: Tx, of: InvitationCopyOf, field: Mes
     method: field.method, uid: field.uid, recurrenceId: field.recurrenceId ?? "", sequence: field.sequence,
     startRaw: field.start ?? null, startsAt: instant(field.startsAt), organizer: field.organizer ?? null,
     invitedAddress: field.invitedAddress ?? null, answer: field.answer ?? null, answeredAt: instant(field.answeredAt),
-    stampedAt: null,
+    stampedAt: null, proposal: field.proposal ?? null,
   };
   if (row === null || typeof row.uid !== "string" || typeof row.recurrenceId !== "string" || !inDomain(row)) {
     await tx.delete(messageInvitations).where(mine);
@@ -316,10 +341,21 @@ export async function putInvitationCopy(tx: Tx, of: InvitationCopyOf, field: Mes
 }
 
 /** The wire's field from a stored row: the row's own values, the instants as ISO text. */
+/** One personal calendar copy across revisions from the same organizer to the same mailbox. */
+export function invitationCalendarId(row: Pick<typeof messageInvitations.$inferSelect,
+  "accountId" | "mailboxId" | "uid" | "recurrenceId" | "organizer">): string {
+  const hex = createHash("sha256").update(JSON.stringify([
+    row.accountId, row.mailboxId, row.uid, row.recurrenceId, row.organizer?.toLowerCase(),
+  ])).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export function invitationFieldOf(row: typeof messageInvitations.$inferSelect): MessageInvitationDTO | undefined {
   if (!METHODS.has(row.method)) return undefined;
   return {
     method: row.method as InvitationMethod,
+    ...((row.method === "REQUEST" || row.method === "CANCEL") && { calendarEventId: invitationCalendarId(row) }),
+    ...(row.proposal ? { proposal: row.proposal } : {}),
     uid: row.uid,
     recurrenceId: row.recurrenceId,
     sequence: row.sequence,

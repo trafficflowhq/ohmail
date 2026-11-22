@@ -106,7 +106,7 @@ describe("the rules surface can tell two rules for one address apart", () => {
 
     const narrowRow = pane.getByRole("group", { name: whats.find((what) => what.includes(TOKEN)) });
     await act(async () => within(narrowRow).getByRole("button", { name: rules.revoke }).click());
-    const confirm = screen.getByRole("dialog", { name: rules.revokeConfirm });
+    const confirm = screen.getByRole("dialog", { name: "Revoke 1 rule" });
     expect(confirm, "revoking did not open the confirm").toBeTruthy();
     expect(confirm.textContent).toContain(TOKEN);
   });

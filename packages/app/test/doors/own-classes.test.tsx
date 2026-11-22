@@ -447,7 +447,7 @@ describe("the classes the doors draw", () => {
     expect(drawn).toEqual(
       expect.arrayContaining([
         "way-stage",
-        "way-join-progress",
+        "way-steps",
         "way-door-fields",
         "way-setup-cmd",
         "way-setup-code",

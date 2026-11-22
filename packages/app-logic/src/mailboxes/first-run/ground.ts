@@ -5,6 +5,7 @@
  */
 import type { OnboardingAccount, OnboardingAi, OnboardingMailbox } from "../../doors/onboarding.js";
 import type { MailboxId } from "../connect/types.js";
+import type { WindowChoice } from "./rules.js";
 
 /** One mailbox as the run reads it: the account's own id and address beside its onboarding facts. */
 export interface FirstRunRow extends OnboardingMailbox {
@@ -52,6 +53,8 @@ export interface FirstRunAbout {
   /** How many senders wait in this mailbox's queue: zero skips the guided decision. */
   readonly queuedSenders: number;
   readonly pull: FirstRunPull;
+  /** A preview of the chosen window, only when the store holds the mailbox's complete copy. */
+  historyCount?(window: WindowChoice): Promise<number | null>;
   readonly sender: FirstRunSender | null;
   /** The import is over and the store is asked again about the Screener's queue. */
   readonly queueSettling: boolean;

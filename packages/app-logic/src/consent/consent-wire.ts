@@ -25,6 +25,7 @@ export interface ConsentStateWire {
   dormancyChange?: TravelledChangeWire;
   locale?: string | null;
   themeFace?: string | null;
+  draftReplies?: boolean;
   resurfaceTime?: string | null;
   onboardingCompletedAt?: string | null;
   screeningScope?: "window" | "all_time";
@@ -170,6 +171,7 @@ export function consentVia(
      * cannot overwrite a window set moments ago in a browser tab. `null` clears back to the
      * product's 09:00; the echo is what the shell applies.
      */
+    setDraftReplies: (draftReplies) => patch<{ draftReplies: boolean }>({ draftReplies }),
     setResurfaceTime: (resurfaceTime) => patch<{ resurfaceTime: string | null }>({ resurfaceTime }),
   };
 }

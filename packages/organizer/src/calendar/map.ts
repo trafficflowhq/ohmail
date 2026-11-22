@@ -9,6 +9,7 @@
  * calendar is the default, whether a device's copy was cut: those belong to others and are kept on
  * an update.
  */
+import { portableCalendarText } from "@ohmail/cal-providers";
 import { createHash } from "node:crypto";
 import {
   derivedRange, formatDuration, recurrenceKeyOf, recurrenceKeyString, storedTimeOf,
@@ -66,6 +67,7 @@ export interface EventRowValues {
   readonly partial: boolean;
   /** The object's whole text where the provider keeps one (CalDAV, a subscription), on one row of it. */
   readonly original: string | null;
+  readonly portableCopy: boolean;
 }
 
 export interface InviteeValues {
@@ -273,6 +275,7 @@ function rowOf(item: Upsert, ctx: MapContext, original: string | null): MappedRo
       partial: item.audienceIncomplete === true ||
         e.attendees.some((a) => a.email === null || !fitsCalendarBytes(a.email, CALENDAR_ADDRESS_MAX_BYTES)),
       original,
+      portableCopy: item.portableCopy === true || (original !== null && portableCalendarText(original)),
     },
     invitees,
     alarms: alarmsOf(e),

@@ -108,7 +108,7 @@ for (const shape of ["a record left standing, the server holding its key", "no r
     await press(); await settleAll();
     expect({ said, settled: settled.includes("compose"), deliveries: deliveries.length }).toEqual(
       shape === "no record: a first delivery"
-        ? { said: ["Message sent."], settled: true, deliveries: 1 }
+        ? { said: ["Sent"], settled: true, deliveries: 1 }
         : { said: ["This message had already been sent. It went once."], settled: true, deliveries: 0 },
     );
   });
@@ -163,5 +163,5 @@ it("this press's own answer lost: its retry is answered from its own reservation
   await act(async () => { window.dispatchEvent(new Event("online")); });
   await settleAll();
   expect({ said, settled: settled.includes("compose"), deliveries: deliveries.length, asked: pressed.length, keys: new Set(pressed).size })
-    .toEqual({ said: ["Message sent."], settled: true, deliveries: 1, asked: 2, keys: 1 });
+    .toEqual({ said: ["Sent"], settled: true, deliveries: 1, asked: 2, keys: 1 });
 });

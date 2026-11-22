@@ -20,3 +20,5 @@ export type {
 } from "./ports.js";
 export type { PictureSeam } from "@ohmail/app-logic/reader";
 export { ContactDetails, useOpenCard, type ContactScreeningProps } from "./contact/Contact.js";
+
+export { InvitationLetterCard, type InvitationLetterProps } from "./InvitationLetterCard.js";

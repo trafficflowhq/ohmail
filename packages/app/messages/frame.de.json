@@ -297,6 +297,8 @@
     "copied": "Kopiert"
   },
   "frame": {
+    "awayNoticeTitle": "Abwesenheitsantwort ist an",
+    "awayNoticeDismiss": "Nicht jetzt",
     "products": {
       "label": "Mail oder Kalender",
       "mail": "Mail",
@@ -329,6 +331,11 @@
       "moreClose": "Schließen"
     },
     "systemNotice": {
+      "summaryTitle": "Heute im Kalender",
+      "summaryAllDay": "Ganztägig",
+      "summaryLine": "{at} · {name}",
+      "summaryMore": "+{count} weitere",
+      "summaryEmpty": "Heute keine Termine",
       "ohboxTitle": "Neue Mail",
       "ohboxBody": "{count, plural, one {Eine neue Nachricht für dich.} other {# neue Nachrichten für dich.}}",
       "screenerTitle": "Screener",

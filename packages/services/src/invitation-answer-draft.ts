@@ -15,6 +15,7 @@ import { ServiceError } from "./errors.js";
 
 /** The mark an answer's draft carries in `drafts.workflow_dedup_key`. */
 export const INVITATION_ANSWER_MARK = "invitation-answer:";
+const INVITATION_PROPOSAL_MARK = "invitation-proposal:";
 
 /**
  * THE ANSWER'S DRAFT KEY: one draft per account, letter, answer and the answer on record before
@@ -26,8 +27,13 @@ export function invitationAnswerKey(accountId: string, messageId: string, answer
   return INVITATION_ANSWER_MARK + createHash("sha256").update(named, "utf8").digest("hex");
 }
 
+export function invitationProposalKey(accountId: string, key: string, content: readonly (string | null)[]): string {
+  return INVITATION_PROPOSAL_MARK + createHash("sha256").update(JSON.stringify([accountId, key, ...content])).digest("hex");
+}
+
 export function isInvitationAnswerDraft(d: { workflowDedupKey: string | null }): boolean {
-  return d.workflowDedupKey !== null && d.workflowDedupKey.startsWith(INVITATION_ANSWER_MARK);
+  return d.workflowDedupKey !== null && (d.workflowDedupKey.startsWith(INVITATION_ANSWER_MARK)
+    || d.workflowDedupKey.startsWith(INVITATION_PROPOSAL_MARK));
 }
 
 /**
@@ -36,7 +42,7 @@ export function isInvitationAnswerDraft(d: { workflowDedupKey: string | null }):
  */
 export interface AnswerCalendar extends OutboundCalendar {
   /** The letter the draft answers. */
-  messageId: string;
+  messageId: string | null;
   /** The mailbox the invitation was read in, which sends the answer. */
   mailboxId: string;
   /** The organizer's address: the draft's one recipient. */

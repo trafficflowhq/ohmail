@@ -434,9 +434,7 @@ describe("what a visit leaves behind", () => {
     expect(within(earlier).queryByRole("toolbar", { name: "Actions" })).toBeNull();
     await open("r1");
     const latest = expectBarOn("r1");
-    await act(async () => { fireEvent.click(latest.getByRole("button", { name: "More" })); });
-    const more = within(screen.getByRole("menu", { name: "More" }));
-    await act(async () => { fireEvent.click(more.getByRole("menuitem", { name: "Move" })); });
+    await act(async () => { fireEvent.click(latest.getByRole("button", { name: "Move" })); });
     const move = within(screen.getByRole("menu", { name: "Move" }));
     await act(async () => { fireEvent.click(move.getByRole("menuitem", { name: "Ohbox" })); });
     expect(frame.mail.mutations.filter((mutation) => mutation.kind === "triage_set" || mutation.kind === "move"))

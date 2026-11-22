@@ -213,12 +213,35 @@ describe("the password step", () => {
     expect(acts.begin).not.toHaveBeenCalled();
   });
 
-  it("leaves the reason and continuation sentences off the sign-in form", () => {
-    const { door } = doorOf(password(), { why: "expired", continues: "manage" });
+  it("shows no notice on an account-page continuation without a sign-out reason", () => {
+    const { door } = doorOf(password(), { continues: "manage" });
     draw(door);
     expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(document.body.textContent).not.toContain(en.resume.expiredBody);
     expect(screen.getByRole("button", { name: L.continue })).toBeTruthy();
+  });
+
+  describe.each([
+    { locale: "en", words: en },
+    { locale: "de", words: de },
+  ] as const)("the previous sign-in in $locale", ({ locale, words }) => {
+    it.each(["revoked", "expired", "absent", "pending"] as const)("says why it ended (%s)", (why) => {
+      const { door } = doorOf(password(), { why, continues: "manage" });
+      draw(door, words, locale);
+      expect(screen.getByText(words.resume[`${why}Body`])).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getByRole("button", { name: words.login.continue })).toBeTruthy();
+    });
+
+    it("says once what happened when a sign-in was reused, beside a refused press", () => {
+      const { door } = doorOf(password(false, { word: "bad_credentials" }), { why: "reused" });
+      draw(door, words, locale);
+      expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual([
+        words.resume.reusedBody,
+        words.login.badCredentials,
+      ]);
+    });
   });
 
   it("a sign-out that ended unconfirmed is said, with Sign out to ask again, and holds Continue", () => {

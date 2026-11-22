@@ -858,7 +858,7 @@ describe("the compression runs BEFORE the cap check", () => {
   it("says what it did, quietly and in both catalogues", async () => {
     await mount(ONE_MB);
     await pickFiles([photo()]);
-    expect(text(".oh-attachroom-weight")).toBe("Pictures compressed: 2.5 MB → 645 KB");
+    expect(text(".oh-attachroom-weight")).toBe("2.5 MB → 645 KB");
     // Not the refusal's live region — nothing went wrong.
     expect(host!.querySelector(".oh-attachroom-weight")!.getAttribute("role")).toBeNull();
 
@@ -871,7 +871,7 @@ describe("the compression runs BEFORE the cap check", () => {
     // said so in its own comment: the sizes went through `toFixed`, which knows no locale, and a
     // decimal point in German is a thousands separator. The shared formatter takes the locale, so
     // the guard that was written to fail on the day somebody made that change now pins the change.
-    expect(text(".oh-attachroom-weight")).toBe("Bilder komprimiert: 2,5 MB → 645 KB");
+    expect(text(".oh-attachroom-weight")).toBe("2,5 MB → 645 KB");
   });
 
   it("no note when nothing was compressed", async () => {
@@ -917,6 +917,6 @@ describe("the compression runs BEFORE the cap check", () => {
     await pickFiles([photo(), second]);
     expect(handed).toHaveLength(2);
     expect(text('[role="status"]')).toBe("");
-    expect(text(".oh-attachroom-weight")).toBe("Pictures compressed: 5 MB → 1.3 MB");
+    expect(text(".oh-attachroom-weight")).toBe("5 MB → 1.3 MB");
   });
 });

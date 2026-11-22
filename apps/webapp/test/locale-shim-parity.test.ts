@@ -33,8 +33,8 @@ import { COPY as MAIL_BODY_COPY } from "../../../packages/letter-body/src/Messag
  * cases below that read the strip's and the preview's German stand over those words in
  * `locale-shim-parity-reader.test.tsx`. What stays here is the register itself: where a case used the strip's table
  * as the register's client with an interpolated sentence, the client is the attachments namespace read through
- * `liveCopy` as the strip read it (`ATTACHMENT_COPY` below, its English and its argument names as the strip declared
- * them). The two table censuses and the away namespace's three cases (the away pane is not mounted yet) moved, as they
+ * `liveCopy` with the current summary's count and size. The two table censuses and the away namespace's three cases
+ * (the away pane is not mounted yet) moved, as they
  * stood, to `locale-shim-parity-tables.test.ts`.
  *
  * So this file asserts, for each of them:
@@ -55,15 +55,10 @@ const DE = read("de");
 const GERMAN = fillFrom(EN as never, DE as never) as Record<string, Record<string, string>>;
 
 /**
- * The attachments namespace as a non-hook table over the register, as today's strip declared it
- * (`AttachmentStrip.tsx`: `liveCopy("attachments", EN, { count: ["count"], idle: ["size"], … })`): the register's
- * client with an ICU plural and an argument.
+ * Use the attachment summary to exercise an ICU plural and a second argument through the register.
  */
-const ATTACHMENT_COPY = liveCopy(
-  "attachments",
-  { count: (n: number) => `${n} attachments`, idle: (size: string) => `${size} · in your mailbox` },
-  { count: ["count"], idle: ["size"] },
-);
+const attachmentSummary = { count: (count: number, size: string) => `${count} attachments · ${size}` };
+const ATTACHMENT_COPY = liveCopy("attachments", attachmentSummary, { count: ["count", "size"] });
 
 afterEach(() => {
   // Every case that sets a catalogue must put the register back, or the next test file in the same
@@ -84,15 +79,15 @@ describe("the non-hook copy tables and the catalogue say the same thing", () => 
      * The correctly-parameterised table is what a reader actually gets, and it is German.
      */
     setActiveCatalog("de", GERMAN as never);
-    expect(ATTACHMENT_COPY.count(3)).toBe("3 Anhänge");
+    expect(ATTACHMENT_COPY.count(3, "2 MB")).toBe("3 Anhänge · 2 MB");
 
     const forgotten = liveCopy(
       "attachments",
-      { count: (n: number) => `${n} attachments` },
+      attachmentSummary,
       {}, // ← the omission
     );
-    expect(forgotten.count(3)).toBe("3 attachments");
-    expect(forgotten.count(3)).not.toContain("#");
+    expect(forgotten.count(3, "2 MB")).toBe("3 attachments · 2 MB");
+    expect(forgotten.count(3, "2 MB")).not.toContain("#");
   });
 });
 
@@ -149,7 +144,7 @@ describe("the register's resting state", () => {
     // `receipts` rather than `reads`, which is "News" in BOTH catalogues and so cannot tell a
     // resting register from a German one.
     expect(PLACE_LABEL.receipts).toBe("Receipts");
-    expect(ATTACHMENT_COPY.count(2)).toBe("2 attachments");
+    expect(ATTACHMENT_COPY.count(2, "2 MB")).toBe("2 attachments · 2 MB");
   });
 
   it("a namespace the catalogue does not carry falls back rather than rendering a key", () => {

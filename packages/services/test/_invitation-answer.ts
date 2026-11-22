@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { mailboxes, messages, threads, writeInvitation, type Tx } from "@trafficflow/db";
 import { SendNotSubmitted, type OpenSendAdapter, type OutboundMessage } from "@trafficflow/core";
-import type { InvitationMethod } from "@ohmail/wire";
+import type { InvitationMethod, InvitationProposalTimes } from "@ohmail/wire";
 
 /** The mailbox invited, and the organizer who invites it. */
 export const ME = "mila@lichtgrat.example";
@@ -17,6 +17,8 @@ const asTx = (db: AnyDb): Tx => db as Tx;
 
 export interface Invitation {
   method?: InvitationMethod;
+  from?: string;
+  proposal?: InvitationProposalTimes;
   uid?: string;
   recurrenceId?: string;
   sequence?: number;
@@ -48,7 +50,7 @@ export async function conversation(db: AnyDb, accountId: string): Promise<string
 export async function invitationLetter(db: AnyDb, accountId: string, mailboxId: string, i: Invitation = {}): Promise<string> {
   const [letter] = await asTx(db).insert(messages).values({
     accountId, mailboxId, messageIdHeader: i.header ?? `invite-${randomUUID()}@studio.example`, bodyHash: randomUUID(),
-    dedupKey: `mid:${randomUUID()}`, subject: i.subject ?? "Invitation: Kickoff", fromAddress: ORGANIZER,
+    dedupKey: `mid:${randomUUID()}`, subject: i.subject ?? "Invitation: Kickoff", fromAddress: i.from ?? ORGANIZER,
     date: new Date("2026-11-10T08:00:00Z"), nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 1e6)}` },
     snippet: "", unread: true, threadId: i.threadId ?? null,
   }).returning();
@@ -60,7 +62,7 @@ export async function invitationLetter(db: AnyDb, accountId: string, mailboxId: 
     startsAt: i.startsAt === undefined ? new Date("2026-12-01T10:00:00Z") : i.startsAt,
     organizer: i.organizer === undefined ? ORGANIZER : i.organizer, attendees: i.attendees ?? [ME, ORGANIZER],
     stampedAt: i.stampedAt === undefined ? new Date("2026-11-10T08:00:00Z") : i.stampedAt,
-    reply: null, own: false,
+    reply: null, own: false, ...(i.proposal ? { proposal: i.proposal } : {}),
   });
   if (!w.written) throw new Error("the door wrote no row for this invitation");
   return messageId;

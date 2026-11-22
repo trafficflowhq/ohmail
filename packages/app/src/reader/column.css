@@ -19,6 +19,11 @@
   margin-top: var(--s4);
 }
 
+/* The reply lands clear of the action panel, including its last row of tools. */
+.rd-column [data-reading-scroll]:has(.rd-reply [data-reply]) {
+  scroll-padding-block-end: var(--oh-sheet-foot-room);
+}
+
 /* The reply's writing surface draws no box of its own: the reply's sheet stands where the kit lays the column's
    sheets. */
 .rd-reply {
@@ -80,4 +85,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--s4);
+}
+
+.rd-invitation:not(:empty) {
+  margin-block-start: var(--s4);
 }

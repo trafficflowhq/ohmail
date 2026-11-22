@@ -57,8 +57,8 @@ export function FolderRailSeat() {
     const verdict = await press.dispatchPress(act);
     if (verdict.kind === "refused") report(rail("folderVerbFailed"));
   });
-  if (live === null || (live.ready && live.folders.length === 0 && !(writable && available.length > 0)))
-    return null;
+  if (live === null) return null;
+  if (live.ready && live.folders.length === 0 && !(writable && available.length > 0)) return null;
   const visitId = route.place === "folder" ? route.sub : null;
   const opened = visitId === null ? undefined : live.folders.find((f) => f.id === visitId);
   const go = (folder: FolderEntity): void => {

@@ -79,6 +79,7 @@ export function Elsewhere({ run, say, service }: StepProps): ReactNode {
                 label: say(
                   stopped ? "onboarding.elsewhereChoiceHereStopped" : "onboarding.elsewhereChoiceHere",
                 ),
+                note: stopped ? undefined : say("onboarding.elsewhereChoiceHereWhy", { name }),
               },
               { value: "read", label: say("onboarding.elsewhereChoiceRead") },
             ]}

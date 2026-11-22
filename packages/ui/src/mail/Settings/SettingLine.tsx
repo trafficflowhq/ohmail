@@ -37,6 +37,8 @@ export interface SettingLineProps {
   off?: boolean;
   /** It hangs on the line above it: set in. */
   sub?: boolean;
+  /** Compact rows in a static list of facts. */
+  dense?: boolean;
   /**
    * Under a finger, where the line is narrow. `under`: the control goes under the name. `detail`: the
    * name and the word that acts keep one line, the value goes under the name.
@@ -71,6 +73,7 @@ export function SettingLine(props: SettingLineProps) {
     activateLabel,
     off,
     sub,
+    dense,
     narrow,
     children,
   } = props;
@@ -98,6 +101,7 @@ export function SettingLine(props: SettingLineProps) {
       data-switch={toggle ? "" : undefined}
       data-off={off ? "" : undefined}
       data-sub={sub ? "" : undefined}
+      data-dense={dense ? "" : undefined}
       data-narrow={narrow}
       onClick={press}
     >
@@ -150,4 +154,9 @@ export function SettingLine(props: SettingLineProps) {
   ) : (
     row
   );
+}
+
+/** Read-only SettingLine rows with labels and values on two shared tracks. */
+export function SettingTable({ children }: { children: ReactNode }) {
+  return <div className="oh-settingtable">{children}</div>;
 }

@@ -1,28 +1,11 @@
-/**
- * THE ONE CALLER OF A SURFACE'S EMITTER. Mounted once, where the shell holds the copy the rail
- * reads. At each settle of the copy it takes a sample, asks the gate what may be drawn, and hands
- * the emitter each answer. Nothing else calls an emitter's `post`: the gate decides, the emitter
- * draws, and this joins the two.
- *
- * Keyed by the account's scope. A new scope starts from no sample again, so the first sample of
- * the next account draws nothing, and whatever the surface drew for the account left is taken
- * back before anything of the next one is drawn.
- *
- * The account's devices are the one thing not compared with the sample before: they are compared
- * with the numbers this device has told (`told-devices.ts`), which outlive the app, so a device
- * paired while no app was open is told at the next start.
- * THE CALENDAR'S ALERTS go the same way. At each settle the calendar is asked which alerts it
- * wants for this account, and the answer is handed on whole: to the surface where it rings by
- * itself, else to this caller's own book (`AlertBook`), which is asked again at each alert's
- * minute. An alert that rings by the page becomes a notice only here, through the same refusals as
- * every other notice, read at that minute. Another account, or the shell going away, leaves nothing
- * set: the book is cleared before anything of the next account is read.
- */
+/** One caller per surface. A scope transition clears the previous sample and scheduled notices. */
+import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useRef } from "react";
 import {
   AlertBook,
   aheadSet,
   decideNotices,
+  cleanNoticeText,
   dueNotice,
   mayDrawKind,
   mayPost,
@@ -35,6 +18,7 @@ import {
   type NoticeAhead,
   type NoticeTaken,
 } from "@ohmail/client-engine";
+import { CalendarSummary } from "./calendar-summary.js";
 import { mayDeliver, singleArrival } from "./notice-delivery.js";
 import type { HostNoticeEmitter, NoticeReads, NoticesMount } from "./notice-reads.js";
 import type { ToldDevices } from "./told-devices.js";
@@ -70,11 +54,14 @@ export class NoticeCaller {
   private readonly book = new AlertBook();
   private nativeAlertsSet = false;
   private calendarTurn = 0;
+  private readonly summary: CalendarSummary;
 
   constructor(
     private readonly emitter: HostNoticeEmitter,
     private readonly reads: NoticeReads,
-  ) {}
+  ) {
+    this.summary = new CalendarSummary(emitter, reads);
+  }
 
   /** One settle of the copy `reader` shows for the account `scope`, at `nowMs`. */
   settle(scope: string, reader: EntityReader, nowMs: number = Date.now()): void {
@@ -107,10 +94,11 @@ export class NoticeCaller {
         seen === null || told === null ? null : { made: told.made, revoked: told.revoked, live: seen.live },
     };
     this.before = after;
+    const choices = this.reads.choices();
     const answer = decideNotices(
       before,
       after,
-      this.reads.choices(),
+      choices,
       this.reads.permission(),
       this.emitter.carries,
       changes?.look,
@@ -120,7 +108,22 @@ export class NoticeCaller {
         notice.kind === "ohbox" && notice.count === 1
           ? singleArrival(previous.unreadIds, after.unreadIds)
           : undefined;
-      const taken = this.emitter.post(notice, this.deliveryGuard(notice, scope, before), letter);
+      const message =
+        letter !== undefined && choices.showMailDetails === true
+          ? reader.get<EngineMessage>("message", letter)
+          : undefined;
+      const sender = message?.from ? cleanNoticeText(message.from.name || message.from.address) : null;
+      const subject = message ? cleanNoticeText(message.subject) : null;
+      const current = this.deliveryGuard(notice, scope, before);
+      const taken =
+        sender && subject
+          ? this.emitter.post(
+              notice,
+              () => current() && this.reads.choices().showMailDetails === true,
+              letter,
+              { sender, subject },
+            )
+          : this.emitter.post(notice, current, letter);
       if (notice.kind !== "pairing" || seen === null) continue;
       this.keepOnceTaken(
         scope,
@@ -135,22 +138,32 @@ export class NoticeCaller {
       this.keep(scope, seen);
     }
     this.setAhead(scope, nowMs);
+    this.scheduleSummary(scope, nowMs);
     this.postDue(nowMs);
   }
 
   /** The minute this caller must be woken at for its next alert; `null` while none waits. */
   nextAtMs(): number | null {
-    return this.book.nextAtMs();
+    const alert = this.book.nextAtMs();
+    if (alert === null) return this.summary.nextAtMs;
+    return this.summary.nextAtMs === null ? alert : Math.min(alert, this.summary.nextAtMs);
   }
 
-  /**
-   * A wake: ring what the book says is due under this caller's account. The choices and the
-   * platform's answer are read now, so a switch pressed since the alerts were set counts.
-   */
   ring(nowMs: number = Date.now()): void {
-    if (this.scope === null || this.book.nextAtMs() === null) return;
+    if (this.scope === null || this.nextAtMs() === null) return;
     this.setAhead(this.scope, nowMs);
+    this.scheduleSummary(this.scope, nowMs);
     this.postDue(nowMs);
+  }
+
+  private scheduleSummary(scope: string, nowMs: number): void {
+    const turn = this.calendarTurn;
+    this.summary.settle(
+      scope,
+      nowMs,
+      () => this.scope === scope && this.calendarTurn === turn,
+      (notice, guard, details) => this.emitter.post(notice, guard, undefined, undefined, details),
+    );
   }
 
   private postDue(nowMs: number): void {
@@ -199,6 +212,7 @@ export class NoticeCaller {
   /** A catch-up can change the calendar under a scheduled alert. Seed again when it settles. */
   suspendCalendar(nowMs = Date.now()): void {
     this.calendarTurn++;
+    this.summary.nextAtMs = null;
     if (this.before !== null) this.before = { ...this.before, calendar: null };
     const empty = this.scope === null ? null : aheadSet(this.scope, [], nowMs);
     if (empty === null) this.book.clear();
@@ -225,13 +239,6 @@ export class NoticeCaller {
     return this.keep(scope, seen);
   }
 
-  /**
-   * THE ONE WRITER OF THE KEPT NUMBERS, called for three things only: a first sign-in learns what
-   * the record says; the platform took a notice; the person stands at the Devices list that shows it. A notice
-   * that was not drawn (this surface was the one being looked at, the platform refused, the answer
-   * never came) keeps nothing, and the same rise is told at the next settle at which it may be
-   * drawn. Never lowered: the numbers only rise.
-   */
   private keep(scope: string, risen: Partial<ToldDevices>): ToldDevices {
     const kept = this.reads.told.read(scope) ?? this.told;
     const next: ToldDevices = {
@@ -260,11 +267,6 @@ export class NoticeCaller {
     );
   }
 
-  /**
-   * The calendar's alerts for `scope`, handed on whole. Only this account's set is taken, and only
-   * while this device rings alerts at all: otherwise the set handed on is the account's empty one,
-   * which takes back whatever was set. A surface holds no choice of its own.
-   */
   private setAhead(scope: string, nowMs: number): void {
     const calendar = this.reads.calendar;
     if (calendar === "none") {
@@ -315,6 +317,7 @@ export class NoticeCaller {
 
   private takeBack(): void {
     this.calendarTurn++;
+    this.summary.reset();
     this.nativeAlertsSet = false;
     this.book.clear();
     try {

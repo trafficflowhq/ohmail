@@ -182,6 +182,17 @@ export function ScreenerList(pane: PaneProps) {
   const { t, segment, go, phoneWindow, listScroller, setShelfPicked, view, junk, junkView, quarantine } =
     useScreenerList(pane);
   const junkOn = junk !== null;
+  const [providerOpen, setProviderOpen] = useState(false);
+  const providerReady =
+    junk?.phase === "ready" &&
+    junk.nextCursor === null &&
+    junk.mailboxes.length > 0 &&
+    junk.mailboxes.every((mailbox) => mailbox.window === "ok");
+  const shelfFirst = providerReady && junk.items.length === 0 && view.rows.length > 0;
+  const spamCount = providerReady && !junk.search.query ? junk.items.length + view.rows.length : undefined;
+  useEffect(() => {
+    if (segment !== "spam") setProviderOpen(false);
+  }, [segment]);
   const model = useScreener();
   const selection = useRowSelection(view.rows.map(viewSender), segment);
   const contact = useRowContact();
@@ -218,7 +229,7 @@ export function ScreenerList(pane: PaneProps) {
     );
   return (
     <div className="sc-list">
-      <Head view={view} go={go} />
+      <Head view={view} go={go} spamCount={spamCount} />
       <Notices view={view} />
       {junkOn && junk.sweep ? <QuarantineMove sweep={junk.sweep} /> : null}
       <div className="sc-scroll" ref={listScroller}>
@@ -226,27 +237,38 @@ export function ScreenerList(pane: PaneProps) {
           <>
             <Tools
               view={view}
-              junkCount={
-                junk.phase === "ready" && junk.nextCursor === null && !junk.search.query
-                  ? junk.visible.length
-                  : null
+              junkCount={spamCount ?? null}
+              extra={
+                shelfFirst
+                  ? {
+                      label: t(providerOpen ? "hideSpamSearch" : "junkSearchLabel"),
+                      onPress: () => {
+                        if (providerOpen) junk.search.setQuery("");
+                        setProviderOpen(!providerOpen);
+                      },
+                    }
+                  : undefined
               }
             />
-            <Junk
-              junk={junk}
-              view={{
-                ...junkView,
-                select: (key) => {
-                  setShelfPicked(false);
-                  junkView.select(key);
-                },
-              }}
-            />
+            {!shelfFirst || providerOpen ? (
+              <Junk
+                junk={junk}
+                view={{
+                  ...junkView,
+                  select: (key) => {
+                    setShelfPicked(false);
+                    junkView.select(key);
+                  },
+                }}
+              />
+            ) : null}
             {view.rows.length > 0 ? (
               <>
-                <GroupHeading count={String(view.rows.length)}>{t("quarantineShelf")}</GroupHeading>
+                {!shelfFirst ? (
+                  <GroupHeading count={String(view.rows.length)}>{t("quarantineShelf")}</GroupHeading>
+                ) : null}
                 <Rows
-                  label={t("quarantineShelf")}
+                  label={t(shelfFirst ? "segSpam" : "quarantineShelf")}
                   contact={contact}
                   selection={selection}
                   view={{

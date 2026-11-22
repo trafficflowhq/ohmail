@@ -74,18 +74,18 @@ const CLOUD = /\bCloud\b/;
 
 describe("the rail names a server holder by the host it runs on", () => {
   it("CONTROL — a managed host still says ohmail Cloud files the mailbox, and that it claimed it", async () => {
-    expect(await railTitle(heldByServer("ohmail Cloud"), "en")).toBe(CATS.en.sync.filingElsewhereCloudHow);
-    expect(await railTitle(blockedByServer, "en", true)).toBe(CATS.en.sync.blocked_organized_elsewhere_cloud);
+    expect(await railTitle(heldByServer("ohmail Cloud"), "en")).toBe(CATS.en.sync.filingElsewhereCloudHow.replace(/\.$/, ""));
+    expect(await railTitle(blockedByServer, "en", true)).toBe(CATS.en.sync.blocked_organized_elsewhere_cloud.replace(/\.$/, ""));
   });
 
   it.each(["en", "de"] as const)("%s: an unmanaged host names another ohmail server, never Cloud", async (locale) => {
     for (const name of [null, "ohmail Cloud", "mail.example.com"]) {
       const said = await railTitle(heldByServer(name), locale, false);
-      expect(said).toBe(CATS[locale].sync.filingElsewhereServerHow);
+      expect(said).toBe(CATS[locale].sync.filingElsewhereServerHow.replace(/\.$/, ""));
       expect(said).not.toMatch(CLOUD);
     }
     const blocked = await railTitle(blockedByServer, locale, false);
-    expect(blocked).toBe(CATS[locale].sync.blockedClaimedByServer);
+    expect(blocked).toBe(CATS[locale].sync.blockedClaimedByServer.replace(/\.$/, ""));
     expect(blocked).not.toMatch(CLOUD);
   });
 });

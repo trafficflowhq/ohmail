@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
@@ -226,7 +227,10 @@ describe("where the person reads it", () => {
     await mount("en", "#/settings/mailboxes");
     await until("first native roster", () => buttons("Remove").length === 1);
     await press("Remove");
-    await press("Remove mailbox");
+    const confirm = within(el!).getByRole("alertdialog", {
+      name: en.mailboxes.removeTitle.replace("{address}", sourceRow.address),
+    });
+    await act(async () => within(confirm).getByRole("button", { name: "Remove mailbox" }).click());
     expect(requestedAt).toBe(first);
     if (hold === "logout") await until("original door submitted its logout", () => logoutTargets.length === 1);
     if (keyKind === "unchanged") {

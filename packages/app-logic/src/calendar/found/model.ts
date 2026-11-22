@@ -85,6 +85,14 @@ export function foundOf(input: FoundInput): FoundRow[] {
 export const foundCountOf = (rows: readonly FoundRow[]): number =>
   rows.filter((r) => r.alreadyOn === null).length;
 
+/** Calendars that can take an offer and show it after Add. */
+export function foundCalendarsOf(
+  calendars: readonly CalendarRecord[],
+  connections: ReadonlyMap<string, CalendarConnectionRecord>,
+): CalendarRecord[] {
+  return calendars.filter((c) => c.shown && !viewOnlyOf(c, connections.get(c.connectionId)));
+}
+
 /**
  * The calendar Add writes into, among the calendars that are shown and can be written, so what Add makes is read back
  * as on the calendar: the one the settings name for new events where it is one of them, else the first of them in the
@@ -95,6 +103,6 @@ export function targetCalendarOf(
   connections: ReadonlyMap<string, CalendarConnectionRecord>,
   preferred: string | null,
 ): CalendarRecord | null {
-  const open = calendars.filter((c) => c.shown && !viewOnlyOf(c, connections.get(c.connectionId)));
+  const open = foundCalendarsOf(calendars, connections);
   return open.find((c) => c.id === preferred) ?? open[0] ?? null;
 }

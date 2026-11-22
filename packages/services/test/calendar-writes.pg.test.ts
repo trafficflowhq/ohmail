@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { dbFor } from "../src/context.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
-import { accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, mailboxes } from "@trafficflow/db";
+import { accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, invitationCalendarId, mailboxes, messageInvitations } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { CALENDAR_WRITE_LIMITS } from "@trafficflow/db/calendar";
@@ -12,6 +12,8 @@ import { BENCH_CALDAV_PLACE, PROVEN_REPEATS, proofPlaceOf } from "@ohmail/cal-pr
 import {
   CALENDAR_BUILDERS, checkedAct, cutToFit, dismissCalendarWrite, recordCalendarWrite as record, retryCalendarWrite,
 } from "@trafficflow/services/calendar";
+import { materializeMessage } from "../src/dto/materialize.js";
+import { invitationLetter, mailboxAt, ME, ORGANIZER } from "./_invitation-answer.js";
 import { ServiceError, type ServiceContext } from "../src/index.js";
 
 /** A CalDAV account's server in these cases, taken as the one the bench's repeat proof was run at: its row is the bench's. */
@@ -65,7 +67,7 @@ async function world(o: { provider?: string; access?: string; status?: string; o
     accountId, calendarId: cal!.id, providerId: "evt-1", versionTag: '"v1"', uid: "uid-1", title: "Kiln check",
     startKind: "instant", startLocal: "20261118T090000Z", endKind: "instant", endLocal: "20261118T100000Z",
     startsAt: new Date("2026-11-18T09:00:00Z"), endsAt: new Date("2026-11-18T10:00:00Z"),
-    organizer: o.organizer ?? null, myAnswer: o.myAnswer ?? null,
+    portableCopy: true, organizer: o.organizer ?? null, myAnswer: o.myAnswer ?? null,
   }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt });
   return { accountId, connectionId: conn!.id, calendarId: cal!.id, eventId: ev!.id, updatedAt: ev!.updatedAt.toISOString() };
 }
@@ -355,6 +357,31 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     return { series, child };
   }
 
+  it.each(["google", "microsoft"])("confirms all guests and holds the exact changed-event versions before cancelling a %s series", async (provider) => {
+    const w = await world({ provider });
+    const [host, first, second] = ["owner", "first", "second"].map((name) => [name, "example.test"].join("@"));
+    await db.update(calConnections).set({ principal: host! }).where(eq(calConnections.id, w.connectionId));
+    const { series, child } = await weeklyWithException(w, provider, { organizer: host! });
+    await db.insert(calAttendees).values([
+      { accountId: w.accountId, eventId: series.id, address: first!, name: "Series guest", role: "required", answer: "accepted" },
+      { accountId: w.accountId, eventId: child.id, address: second!, name: "Occurrence guest", role: "required", answer: "accepted" },
+    ]);
+    const c = ctx(w.accountId);
+    const shown = (await CALENDAR_BUILDERS.calendar_event(c.db, w.accountId, [series.id])).get(series.id);
+    expect(shown).toMatchObject({ deleteScopes: ["record"], deleteMembers: [
+      { at: null, guests: [{ address: first }] }, { at: Number(DEC_14), guests: [{ address: second }] },
+    ] });
+    const act = { kind: "calendar_event_delete", eventId: series.id, base: series.updatedAt.toISOString(),
+      scope: { kind: "record" }, cancellationMessage: "The event was cancelled" };
+    const incomplete = await record(c, "incomplete-cancellation", { ...act, audience: { organizer: host, guests: [first] } });
+    expect(incomplete.answer.write).toMatchObject({ state: "refused", reason: "version_stale" });
+    const reviewed = await record(c, "combined-cancellation", { ...act, audience: { organizer: host, guests: [first, second] } });
+    expect(reviewed.answer.write).toMatchObject({ state: "pending", reason: null });
+    expect((await rowsOf(w.accountId)).find((row) => row.key === "combined-cancellation")).toMatchObject({
+      base: '"w1"', payload: { seriesCancellation: { overrides: [{ id: "exception", version: '"changed-1"' }], message: act.cancellationMessage } },
+    });
+  });
+
   it.each(["caldav", "google", "microsoft"])("binds each edit of a changed occurrence to its reviewed version on %s", async (provider) => {
     const w = await world({ provider });
     const c = ctx(w.accountId);
@@ -563,6 +590,121 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     await dismissCalendarWrite(ctx(w.accountId), head.id);
     expect((await rowsOf(w.accountId)).map((r) => r.key)).toEqual(["half"]);
     expect(await db.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.id, other))).toEqual([]);
+  });
+
+  it("projects the former invitation time from the same mailbox and organizer", async () => {
+    const w = await world();
+    const mailbox = await mailboxAt(db, w.accountId);
+    const other = await mailboxAt(db, w.accountId, "other" + "@example.test");
+    const uid = "planned-meeting";
+    const original = await invitationLetter(db, w.accountId, mailbox, { uid });
+    await invitationLetter(db, w.accountId, other, { uid, sequence: 1, startRaw: "20261201T120000Z" });
+    const current = await invitationLetter(db, w.accountId, mailbox, {
+      uid, sequence: 2, startRaw: "20261201T130000Z", startsAt: new Date("2026-12-01T13:00:00Z"),
+    });
+    const first = (await materializeMessage(db, w.accountId, original))?.invitation;
+    const update = (await materializeMessage(db, w.accountId, current))?.invitation;
+    expect(update).toMatchObject({
+      sequence: 2, calendarEventId: first?.calendarEventId,
+      previous: { start: "20261201T100000Z", startsAt: "2026-12-01T10:00:00.000Z" },
+    });
+  });
+
+  it("adds an answered invitation to the chosen calendar once and without inviting anyone", async () => {
+    const w = await world({ provider: "caldav" });
+    const mailbox = await mailboxAt(db, w.accountId);
+    const messageId = await invitationLetter(db, w.accountId, mailbox);
+    const [invitation] = await db.select().from(messageInvitations).where(eq(messageInvitations.messageId, messageId));
+    const eventId = invitationCalendarId(invitation!);
+    const body = { kind: "calendar_event_create", eventId, calendarId: w.calendarId, invitationMessageId: messageId,
+      event: { ...FIELDS, start: { kind: "instant", value: "20261201T100000Z" },
+        end: { kind: "instant", value: "20261201T110000Z" }, alarms: [] } };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), "unanswered", body))).toBe("409 calendar_read_only");
+    await db.update(messageInvitations).set({ answer: "tentative" }).where(eq(messageInvitations.messageId, messageId));
+    const first = await recordCalendarWrite(ctx(w.accountId), "save-invitation", body);
+    const again = await recordCalendarWrite(ctx(w.accountId), "save-invitation", body);
+    expect(again.answer.write).toEqual(first.answer.write);
+    expect(first.answer.write?.state).toBe("pending");
+    expect(await rowsOf(w.accountId)).toMatchObject([{ op: "create", eventId, payload: { act: { event: { invitees: [] } } } }]);
+    expect(await db.select().from(calAttendees).where(eq(calAttendees.eventId, eventId))).toEqual([]);
+    const wrongStart = { ...body, event: { ...body.event, start: { kind: "instant", value: "20261201T103000Z" } } };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), "different-time", wrongStart))).toBe("409 calendar_read_only");
+  });
+
+  it("removes an existing invitation only for a current cancellation from its organizer", async () => {
+    const w = await world({ organizer: ORGANIZER, myAnswer: "accepted" });
+    const mailbox = await mailboxAt(db, w.accountId);
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, answer: "accepted" });
+    const letter = { method: "CANCEL", uid: "uid-1", sequence: 1 } as const;
+    const forged = await invitationLetter(db, w.accountId, mailbox, { ...letter, from: "unrelated" + "@example.test" });
+    const cancelled = await invitationLetter(db, w.accountId, mailbox, letter);
+    const act = { kind: "calendar_event_delete", eventId: w.eventId, base: w.updatedAt, scope: { kind: "record" },
+      localOnly: true, cancelledBy: cancelled };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), "forged-cancel", { ...act, cancelledBy: forged }))).toBe("409 calendar_read_only");
+    const before = await pollOf(w);
+    expect((await recordCalendarWrite(ctx(w.accountId), "remove-cancelled", act)).answer.write?.state).toBe("applied");
+    expect(await pollOf(w)).toEqual(before);
+    const [event] = await db.select().from(calEvents).where(eq(calEvents.id, w.eventId));
+    expect(event).toMatchObject({ removedOccurrences: [""], versionTag: '"v1"' });
+    await invitationLetter(db, w.accountId, mailbox, { uid: letter.uid, sequence: 2 });
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), "old-cancel", act))).toBe("409 calendar_read_only");
+  });
+
+  it("records a guest-free move to an owned calendar on another connection", async () => {
+    const w = await world();
+    const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
+    const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
+      providerId: "destination", name: "Personal", access: "owner" }).returning();
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
+    expect(await rowsOf(w.accountId)).toMatchObject([{ op: "move", state: "pending" }]);
+  });
+  it("keeps a record without proof its fields can be copied in its original calendar", async () => {
+    const w = await world();
+    await db.update(calEvents).set({ portableCopy: false }).where(eq(calEvents.id, w.eventId));
+    const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
+    const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
+      providerId: "destination", name: "Personal", access: "owner" }).returning();
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+    expect(await eventRows(w.accountId)).toMatchObject([{ id: w.eventId, versionTag: '"v1"' }]);
+  });
+
+  it("refuses new edits while a portable move is pending", async () => {
+    const w = await world();
+    const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
+    const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
+      providerId: "destination", name: "Personal", access: "owner" }).returning();
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), update(w, { title: "New title" })))).toBe("409 calendar_write_left");
+    expect(await rowsOf(w.accountId)).toMatchObject([{ op: "move", state: "pending" }]);
+  });
+
+  it("leaves invited guests in their original account when a provider cannot move their event", async () => {
+    const w = await world();
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId,
+      address: ["guest", "example.test"].join("@"), name: "Guest", role: "required", answer: "accepted" });
+    const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
+    const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
+      providerId: "destination", name: "Personal", access: "owner" }).returning();
+    const answer = await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(),
+      { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id }));
+    expect(answer).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
+  it("removes a declined invitation locally and leaves the provider's copy alone", async () => {
+    const w = await world({ organizer: "organizer" + String.fromCharCode(64) + "example.test", myAnswer: "declined" });
+    const act = { kind: "calendar_event_delete", eventId: w.eventId, base: w.updatedAt, scope: { kind: "record" }, localOnly: true };
+    const before = await pollOf(w);
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), { ...act, base: "2020-01-01T00:00:00.000Z" })).answer.write?.reason).toBe("version_stale");
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("applied");
+    expect(await pollOf(w)).toEqual(before);
+    expect(await eventRows(w.accountId)).toMatchObject([{ id: w.eventId, versionTag: '"v1"' }]);
+    const built = (await CALENDAR_BUILDERS.calendar_event(ctx(w.accountId).db, w.accountId, [w.eventId])).get(w.eventId);
+    expect(built).toMatchObject({ myAnswer: "declined", removedOccurrences: [""] });
   });
 
   it("answers an invitation, and the calendar off refuses everything", async () => {

@@ -362,6 +362,7 @@ const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 /** What the press answered: the frame's report at a seated place (today's shell said it in its toast). */
 const toastText = (): string => reportSays();
+const endWords = (line: string): string => line.replace(/\.$/u, "");
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
 describe("an install that organizes the mailbox", () => {
@@ -373,7 +374,7 @@ describe("an install that organizes the mailbox", () => {
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(id), "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
     expect(toastText()).toContain(messages.screener.toastUndo);
     /* THE WHOLE POINT OF THE WINDOW. The press is reversible because nothing has been sent —
        `message_delete` has no inverse, so an Undo over a request already gone would be a button
@@ -393,7 +394,7 @@ describe("an install that organizes the mailbox", () => {
     await act(async () => { undo!.click(); });
 
     await waitFor(() => rowIds(container).includes(id), "the row to come back");
-    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(endWords(messages.ohbox.deleteUndone));
     expect(deletes()).toEqual([]);
   });
 
@@ -439,7 +440,7 @@ describe("an install that organizes the mailbox", () => {
     await key("Backspace");
     await settle();
     expect(rowIds(container)).toEqual(before);
-    expect(toastText()).not.toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
     expect(deletes()).toEqual([]);
   });
 
@@ -447,19 +448,19 @@ describe("an install that organizes the mailbox", () => {
     await shell(ORGANIZER_ROSTER);
     await key("?");
     const resting = await screen.findByRole("dialog", { name: messages.shortcuts.title });
-    const unavailable = within(resting).getByText(messages.shortcuts.deleteKey, { exact: true }).closest("p");
+    const unavailable = within(resting).getByText(messages.reader.key.deleteKey, { exact: true }).closest("p");
     expect(unavailable?.getAttribute("aria-disabled")).toBe("true");
     expect(unavailable?.getAttribute("title")).toBe(messages.shortcuts.needsCursor);
-    expect([...unavailable!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["⌫", "⌦"]);
+    expect([...unavailable!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["d", "⌫", "⌦"]);
     await key("Escape");
     await key("j");
     await key("?");
     const help = await screen.findByRole("dialog", { name: messages.shortcuts.title });
-    const rows = within(help).getAllByText(messages.shortcuts.deleteKey, { exact: true });
+    const rows = within(help).getAllByText(messages.reader.key.deleteKey, { exact: true });
     expect(rows, "the sheet documents one delete row").toHaveLength(1);
     const row = rows[0]!.closest("p");
     expect(row).toBeTruthy();
-    expect([...row!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["⌫", "⌦"]);
+    expect([...row!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["d", "⌫", "⌦"]);
   });
 });
 
@@ -492,7 +493,7 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(id), "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
     expect(toastText()).toContain(messages.screener.toastUndo);
     expect(deletes()).toEqual([]);
   });
@@ -527,8 +528,8 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
     await key("?");
     const help = await screen.findByRole("dialog", { name: messages.shortcuts.title });
     // The registered sheet lists a shortcut only while its action is available.
-    expect(within(help).getByText(messages.shortcuts.deleteKey, { exact: true })).toBeTruthy();
-    expect(within(help).getByText(messages.shortcuts.deleteAsk, { exact: true })).toBeTruthy();
+    expect(within(help).getByText(messages.reader.key.deleteKey, { exact: true })).toBeTruthy();
+    expect(within(help).getByText(messages.reader.key.deleteAsk, { exact: true })).toBeTruthy();
     await key("Escape");
 
     const kept = rowIds(container);
@@ -555,9 +556,9 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
     // The catalogue's sentence, chosen by the shipped derivation from the roster — the same
     // assertion the folders-ON reader case makes, so the two differ in the flag and nothing else.
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
-    expect(toastText()).not.toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
     expect(deletes()).toEqual([]);
   });
 });
@@ -572,13 +573,13 @@ describe("an install that only READS the mailbox", () => {
 
     // The sentence is the catalogue's, chosen by the shipped derivation from the roster above.
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
     // Nothing moved, nothing was hidden, and nothing reached the wire — the three halves that
     // came apart in the released Screener, where a press said "filed" over an untouched server.
     expect(rowIds(container)).toEqual(before);
     expect(deletes()).toEqual([]);
-    expect(toastText()).not.toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
   });
 
   it("…and no window opens behind the refusal — the delete never arrives late", async () => {
@@ -607,7 +608,7 @@ describe("the roster decides, one mailbox at a time", () => {
     await key("Backspace");
     await settle();
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
     expect(rowIds(container)).toEqual(before);
     expect(deletes()).toEqual([]);
@@ -623,8 +624,8 @@ describe("the roster decides, one mailbox at a time", () => {
     await key("j");
     await key("Backspace");
     await waitFor(() => rowIds(container).length < before.length, "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted);
-    expect(toastText()).not.toContain(messages.screener.readerMoveRefusedUnknown);
+    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).not.toContain(endWords(messages.screener.readerMoveRefusedUnknown));
     await waitFor(() => deletes().length > 0, "the delete to reach the wire", UNDO_MS + 8000);
     expect(deletes()).toHaveLength(1);
   }, UNDO_MS + 20000);
@@ -635,7 +636,7 @@ describe("the roster decides, one mailbox at a time", () => {
     await key("j");
     await key("Backspace");
     await settle();
-    expect(toastText()).toContain(messages.screener.readerMoveRefusedUnknown);
+    expect(toastText()).toContain(endWords(messages.screener.readerMoveRefusedUnknown));
     expect(rowIds(container)).toEqual(before);
     expect(deletes()).toEqual([]);
   });
@@ -737,7 +738,7 @@ describe("a refused press changes nothing on screen", () => {
     await settle();
     expect(openLetter(document), "the sheet must still be there").not.toBeNull();
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
     expect(deletes()).toEqual([]);
   });

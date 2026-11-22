@@ -12,7 +12,7 @@ import { makeDispatch } from "../src/handler.js";
 import { makeHttpServer } from "../src/http.js";
 import { buildProgram, type Program } from "../src/program.js";
 import { loadSettings } from "../src/settings.js";
-import { PLAIN_ENV, PROCESS_DOOR, env, fixture, processInput } from "./_envs.js";
+import { MANAGED_ENV, PROCESS_DOOR, env, fixture, processInput } from "./_envs.js";
 import { collection, feature, placeBox, refusal, type PlaceBox } from "../../../packages/api/test/_place-box.js";
 
 /**
@@ -45,7 +45,13 @@ async function rig(opts: { url?: string } = {}) {
   const lines: string[] = [];
   const logger = createLogger({ service: "server", level: "debug", sink: (l) => { lines.push(l); } });
   const program = buildProgram(
-    loadSettings(env(PLAIN_ENV, { OHMAIL_CALENDAR: "1", PLACES_SUGGEST_URL: opts.url ?? box.url, PLACES_SUGGEST_TOKEN: secret }), PROCESS_DOOR),
+    loadSettings(env(MANAGED_ENV, {
+      ENTITLEMENTS_URL: undefined,
+      BILLING_PLANE_SECRET: undefined,
+      OHMAIL_CALENDAR: "1",
+      PLACES_SUGGEST_URL: opts.url ?? box.url,
+      PLACES_SUGGEST_TOKEN: secret,
+    }), PROCESS_DOOR),
     processInput(logger),
   );
   programs.push(program);

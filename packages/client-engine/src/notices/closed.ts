@@ -12,7 +12,7 @@ import { cleanNoticeText } from "./label.js";
 import { aheadIdOf, idOf, instant, scopeOf, whole } from "./shapes.js";
 import {
   CALENDAR_SNAPSHOT_VERSION, SNAPSHOT_DAYS, SNAPSHOT_DAY_EVENTS_MAX,
-  type CalendarSnapshot, type SnapshotDay, type SnapshotEvent, type SnapshotMonth, type SnapshotSummary,
+  type CalendarSnapshot, type SnapshotDay, type SnapshotEvent, type SnapshotMonth, type SnapshotSummary, type SummaryEvent,
 } from "./snapshot.js";
 
 /** The longest title text a reader looks at before cleaning it: far past what the label ever writes. */
@@ -150,12 +150,22 @@ function readMonth(raw: unknown): SnapshotMonth | null {
   return { year: m.year, month: m.month, marked };
 }
 
+function readSummaryEvent(raw: unknown): SummaryEvent | null {
+  const m = exactly<SummaryEvent>(raw, ["label", "startMs", "allDay"]);
+  if (m === null || !instant(m.startMs) || typeof m.allDay !== "boolean") return null;
+  const label = readLabel(m.label);
+  return label === null ? null : { label, startMs: m.startMs, allDay: m.allDay };
+}
+
 function readSummary(raw: unknown): SnapshotSummary | null {
-  const m = exactly<SnapshotSummary>(raw, ["atMs", "events", "first", "toAnswer"]);
+  const fields = ["atMs", "events", "first", "toAnswer"] as const;
+  const m = exactly<SnapshotSummary>(raw, fields) ?? exactly<SnapshotSummary>(raw, [...fields, "agenda"]);
   if (m === null || !instant(m.atMs) || !whole(m.events, 0, NOTICE_COUNT_MAX) || !whole(m.toAnswer, 0, NOTICE_COUNT_MAX)) return null;
   const first = m.first === null ? null : readClock(m.first);
   if (m.first !== null && first === null) return null;
-  return { atMs: m.atMs, events: m.events, first, toAnswer: m.toAnswer };
+  const agenda = m.agenda === undefined ? undefined : listOf(m.agenda, SNAPSHOT_DAY_EVENTS_MAX, readSummaryEvent);
+  if (agenda === null || (agenda && agenda.length > m.events)) return null;
+  return { atMs: m.atMs, events: m.events, first, toAnswer: m.toAnswer, ...(agenda ? { agenda } : {}) };
 }
 
 /** A zone by its name as the zone database writes names: no space, nothing that is not a name. */

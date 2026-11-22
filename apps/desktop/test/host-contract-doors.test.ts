@@ -123,7 +123,7 @@ describe("the desktop on its own", () => {
     expect(host.wires.connect).toBe(has.wires.connect);
     expect(host.wires.consent).toBe(has.wires.consent.standalone);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: NONE });
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-mailbox", mirrorAccount: null, account: null, accountAddress: null, signOut: has.signOut, recover: FRAME.recover, today: NONE });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-mailbox", mirrorAccount: null, account: null, accountAddress: null, accountDisplayName: null, signOut: has.signOut, recover: FRAME.recover, today: NONE });
     expect(host.signals).toEqual({ ...NO_SIGNAL, linkIn: has.linkIn });
   });
 
@@ -170,7 +170,7 @@ describe("the desktop signed in to the managed service", () => {
     expect(withheld(host)).toEqual(["calendar", "connect", "firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview"]);
     expect(host.wires.consent).toBe(has.wires.consent.account);
     expect(host.reads).toEqual(has.reads);
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", mirrorAccount: null, account: null, accountAddress: null, signOut: has.signOut, recover: FRAME.recover, today: NONE });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", mirrorAccount: null, account: null, accountAddress: null, accountDisplayName: null, signOut: has.signOut, recover: FRAME.recover, today: NONE });
     expect(host.signals).toEqual({ ...NO_SIGNAL, hostConnection: has.hostConnection, linkIn: has.linkIn });
     expect(host.device).toEqual(DESKTOP_DEVICE);
   });
@@ -303,7 +303,7 @@ describe("the page a desktop serves to a phone's browser", () => {
       "away", "calendar", "connect", "firstRun", "folderSummary", "images", "liveBody", "mailboxes", "organizerNotice", "ownModelAutoSuggest",
       "screening", "seedReview", "suggest",
     ]);
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-pairing", mirrorAccount: "a-mirror", account: null, accountAddress: null, signOut: supplies.signOut, recover: FRAME.recover, today: NONE });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-pairing", mirrorAccount: "a-mirror", account: null, accountAddress: null, accountDisplayName: null, signOut: supplies.signOut, recover: FRAME.recover, today: NONE });
     expect(host.reads).toEqual({ mailboxes: supplies.mailboxes, copyAge: NONE, access: NONE });
   });
 

@@ -47,7 +47,7 @@ import {
 } from "../request/index.js";
 import { personalSeriesOf, seriesDeleteMembers, spelledAs } from "../series.js";
 import { alreadyHolds, sameAudience } from "../write-compare.js";
-import { addressOf, isUnder, leave, propfindOf, scopeOf, type Session } from "./ask.js";
+import { addressOf, allowsMove, isUnder, leave, propfindOf, scopeOf, type Session } from "./ask.js";
 import {
   answerHolds,
   answeredObjectText,
@@ -510,6 +510,24 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
   return {
     provider: "caldav",
 
+    async findMoveCopy(c, cal, key, signal) {
+      const uid = uuidOf(key);
+      const collection = addressOf(cal.id);
+      if (uid === null || collection === null) return refused("not_found");
+      const member = addressOf(`${uid}.ics`, `${collection.replace(/\/+$/, "")}/`);
+      return member === null ? refused("not_found") : this.readForMove!(c, cal, member, signal);
+    },
+
+    async readForMove(c, cal, id, signal) {
+      const opened = caldavSession(deps, c, signal);
+      if (!opened.ok) return opened;
+      const place = placeOf(cal, id);
+      if (!place) return refused("address_not_allowed");
+      const found = await readMember(opened.session, place.collection, place.member);
+      if (failedRead(found)) return found;
+      return found === "gone" ? answered([{ kind: "gone", id }]) : answered(itemsOf(place.member, found));
+    },
+
     async create(
       c: Connection,
       cal: CalendarRef,
@@ -885,7 +903,51 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       return "ok" in result ? result : result.answer;
     },
 
-    // CalDAV has no move this program uses (MOVE is never sent): a move is a new member and a removal.
-    moveEvent: null,
+    async moveEvent(c, from, to, target, signal) {
+      if (target.occurrence !== null) return refused("repeat_unsupported");
+      const opened = caldavSession(deps, c, signal);
+      if (!opened.ok) return opened;
+      const session = opened.session;
+      const place = placeOf(from, target.id);
+      const collection = addressOf(to.id);
+      if (!place || !collection || new URL(place.collection).origin !== new URL(collection).origin)
+        return refused("address_not_allowed");
+      const pathname = new URL(place.member).pathname;
+      const name = pathname.slice(pathname.lastIndexOf("/") + 1);
+      const destination = addressOf(name, `${collection.replace(/\/+$/, "")}/`);
+      if (!name || !destination || destination === place.member || !isUnder(scopeOf(collection), destination))
+        return refused("address_not_allowed");
+      const held = await standing(session, place.collection, place.member, { ...target, text: null });
+      if ("ok" in held) {
+        if (held.reason !== "event_gone" || !target.retryMove || target.text === null) return held;
+        const reviewed = readCalendar(target.text, DEFAULT_LIMITS);
+        if (!reviewed.ok || reviewed.dropped.length) return held;
+        const uid = reviewed.calendar.events.find(({ recurrenceId }) => recurrenceId === null)?.uid;
+        if (!uid) return held;
+        const copy = await readMember(session, collection, destination);
+        if (failedRead(copy)) return copy;
+        return copy !== "gone" &&
+          itemsOf(destination, copy).some(
+            (item) => item.kind === "upsert" && item.event.recurrenceId === null && item.event.uid === uid,
+          )
+          ? answered([])
+          : held;
+      }
+      if (!(await allowsMove(session, place.member))) return refused("unsupported");
+      const members = seriesDeleteMembers(held.text, deps.zones, target.recurringSeries === true);
+      const audience = members && deleteAudienceOf(members, { kind: "record" })?.audience;
+      if (!audience || !target.audience || !sameDeleteAudience(audience, target.audience))
+        return refused("version_stale");
+      const answer = await leave(session, place.member, {
+        method: "MOVE",
+        body: null,
+        headers: { destination, overwrite: "F" },
+        precondition: { kind: "unchanged", tag: held.tag },
+      });
+      if (!answer.arrived) return refused(answer.reason);
+      if (answer.status === 201 || answer.status === 204) return wrote([]);
+      if (answer.status === 412) return refused("version_stale");
+      return refusalOf(answer, "event_gone");
+    },
   };
 }

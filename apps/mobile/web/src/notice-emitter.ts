@@ -17,7 +17,7 @@
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import { BRIDGE_NOTICE_KINDS, type BridgeNotice, type BridgeNoticeKind } from "../../src/shell/bridge-kinds";
 import type { Bridge } from "./bridge";
-import type { Notice, NoticeTaken } from "./engine-package";
+import type { MailNoticeDetails, Notice, NoticeTaken } from "./engine-package";
 
 /**
  * The notice as it crosses: exactly its own members, copied by name. Whatever else an object handed in carried
@@ -46,15 +46,17 @@ export function phoneNoticeEmitter(
   if (carries.length === 0) return "none";
   return {
     carries,
+    showsMailDetails: true,
     acts: [],
     ahead: "none",
-    post(notice: Notice): NoticeTaken {
+    post(notice: Notice, current?: () => boolean, letter?: string, details?: MailNoticeDetails): NoticeTaken {
       try {
         const handed = crossing(notice);
-        if (handed === null || !carries.includes(handed.kind)) return false;
+        if (handed === null || !carries.includes(handed.kind) || current?.() === false) return false;
         /* Taken only where native says it posted: not in front, not denied, not on a phone that draws none.
            Native refused it, or the page is going away: not a reason to fail. */
-        return bridge.request("act", { act: "notices.post", notice: handed })
+        const preview = handed.kind === "ohbox" && handed.count === 1 && letter && details ? { details } : {};
+        return bridge.request("act", { act: "notices.post", notice: handed, ...preview })
           .then((answer) => answer.notice === "posted", () => false);
       } catch {
         /* A notice that could not be handed over takes nothing down. */

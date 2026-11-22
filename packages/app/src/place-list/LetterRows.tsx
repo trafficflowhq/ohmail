@@ -21,7 +21,7 @@ export interface LetterRowsProps {
     readonly top: number;
     readonly bottom: number;
     readonly rowHeight: number;
-    readonly slots: readonly (EngineMessage | "gone" | null)[];
+    readonly slots: readonly (EngineMessage | "gone" | "folded" | null)[];
   };
   /** The cursor's row: the letter open beside the list, or where one column stands the row the keys are on. */
   readonly cursor: string | null;
@@ -38,6 +38,7 @@ export interface LetterRowsProps {
   readonly where?: (m: EngineMessage) => string | undefined;
   /** One tag, whole. */
   readonly tag?: (m: EngineMessage) => ReactNode;
+  readonly squares?: (m: EngineMessage) => ReactNode;
   /** The paper-clip's name, on a letter that carries a file. */
   readonly file?: string;
   /** The words a screen reader hears after the name: unread or read. */
@@ -60,6 +61,7 @@ export function LetterRows({
   fitAddress,
   where,
   tag,
+  squares,
   file,
   spoken,
   onMenu,
@@ -73,6 +75,8 @@ export function LetterRows({
         const place = windowed
           ? { at: windowed.start + offset + 1, of: windowed.total }
           : slice && { at: slice.first + offset + 1, of: slice.total };
+        if (m === "folded")
+          return <div key={`folded-${index}`} data-index={index} data-folded-row="" aria-hidden />;
         if (m === "gone") return <div key={`gone-${index}`} aria-hidden />;
         if (m === null)
           return (
@@ -100,6 +104,7 @@ export function LetterRows({
             when={m.date === null ? undefined : stamp(m.date)}
             where={where?.(m)}
             tag={tag?.(m)}
+            squares={squares?.(m)}
             file={m.hasAttachments ? file : undefined}
             unread={m.unread}
             open={open}

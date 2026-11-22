@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { within } from "@testing-library/react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/list-window";
+import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
 import { idOf, storeFixture, storeMessage, storeRows } from "./_store-fixture";
 import {
   ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
@@ -69,6 +69,56 @@ describe("History is the store's timeline, rendered as a window", () => {
     const spacers = [...m.host.querySelectorAll('[role="listbox"] > div[aria-hidden]:not([data-window-top])')] as HTMLElement[];
     expect.soft(spacers.length).toBe(1);
     expect(spacers[0]?.style.height).toBe(`${(N - ROWS_AT_TOP) * ESTIMATED_ROW_PX}px`);
+  });
+
+  it("shows one row for a conversation the reader holds, keeping the older letter reachable", async () => {
+    const [first, second, third] = storeRows(3);
+    const newest = { ...first!, threadId: idOf(9), folder: "ohmail/News" as const, subject: "Latest subject" };
+    const oldest = { ...third!, threadId: idOf(9), folder: "ohmail/News" as const, subject: "Earlier subject" };
+    const rows = [newest, second!, oldest];
+    const { engine } = await storeFixture(rows, { mirror: rows });
+    const m = await mountHistory(engine);
+    await settle();
+    expect(within(m.host).getAllByRole("option", { name: /Latest subject/ })).toHaveLength(1);
+    expect(within(m.host).queryByRole("option", { name: /Earlier subject/ })).toBeNull();
+    const reader = within(readingColumn(m.host)!);
+    expect(reader.queryByRole("group", { name: /2 messages/ })).toBeTruthy();
+    expect(metaOf(m)).toBe("3 messages");
+  });
+
+  it("keeps the oldest visible message in the window when the trailing messages fold away", async () => {
+    const folded = 12;
+    const count = MEASURED_FULL_RANGE_MAX_ROWS + folded + 8;
+    const tail = count - folded;
+    const rows = storeRows(count).map((row, slot) => {
+      const member = slot >= tail ? slot - tail : slot;
+      return member < folded
+        ? { ...row, folder: "ohmail/News" as const, threadId: idOf(count + member) }
+        : row;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute("role") === "option") return ESTIMATED_ROW_PX;
+      return Number.parseFloat(this.style.height) || 0;
+    });
+    const { engine } = await storeFixture(rows, { mirror: rows });
+    const m = await mountHistory(engine);
+    const list = within(m.host).getByRole("listbox", { name: "History" });
+    Object.defineProperties(m.scroller, {
+      clientHeight: { value: 5 * ESTIMATED_ROW_PX },
+      scrollHeight: {
+        get: () => [...list.children].reduce((sum, row) => {
+          const option = row.matches('[role="option"]') ? row : row.querySelector('[role="option"]');
+          return sum + ((option ?? row) as HTMLElement).offsetHeight;
+        }, 0),
+      },
+    });
+    await scrollTo(m, 0);
+    // The thumb can reach the estimated end before the oldest page is fetched and its rows are measured.
+    await scrollTo(m, m.scroller.scrollHeight - m.scroller.clientHeight);
+    await settle(12);
+    const options = within(list).queryAllByRole("option");
+    expect.soft(options.length).toBeGreaterThan(0);
+    expect(options).toContain(within(list).queryByRole("option", { name: new RegExp(`subject of ${tail - 1}$`) }));
   });
 
   it("scrolling fetches the pages under the thumb, and the mounted count stays a window", async () => {

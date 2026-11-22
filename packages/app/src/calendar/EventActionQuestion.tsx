@@ -162,3 +162,34 @@ export function EventActionQuestion({ actions }: { readonly actions: EventAction
     />
   );
 }
+
+export function CalendarRecordScope({
+  anchor,
+  question,
+  occurrence,
+  onChoose,
+  onClose,
+}: {
+  anchor: HTMLElement;
+  question: string;
+  occurrence: boolean;
+  onChoose: (scope: "record" | "occurrence") => void;
+  onClose: () => void;
+}) {
+  const t = useText("calendar");
+  return (
+    <QuestionBeforeAct
+      open
+      anchor={anchor}
+      question={question}
+      cancel={t("edit.cancel")}
+      onClose={onClose}
+      scopes={[
+        ...(occurrence
+          ? [{ id: "occurrence", label: t("edit.thisEvent"), onPress: () => onChoose("occurrence") }]
+          : []),
+        { id: "record", label: t("edit.allEvents"), onPress: () => onChoose("record") },
+      ]}
+    />
+  );
+}

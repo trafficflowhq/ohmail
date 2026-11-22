@@ -9,6 +9,7 @@ import {
   type NoticeDevices,
   type NoticeEmitter,
   type NoticePermission,
+  type SnapshotSummary,
 } from "@ohmail/client-engine";
 import { devicesListedOf } from "./devices-listed.js";
 import { toldDevicesIn, type ToldDevices, type ToldDevicesStore } from "./told-devices.js";
@@ -20,6 +21,8 @@ import { toldDevicesIn, type ToldDevices, type ToldDevicesStore } from "./told-d
  * so where it is built.
  */
 export interface HostNoticeEmitter extends NoticeEmitter {
+  readonly showsMailDetails?: true;
+  lockSummary?(key: string, run: () => Promise<void>): Promise<void>;
   takeBack(): void;
 }
 
@@ -54,6 +57,11 @@ export interface CalendarReads {
   ahead(scope: string, nowMs: number): AheadSet | null;
   /** An occurrence's start on the reader's clock, as a notice drawn at `nowMs` says it; `null` where it cannot be said. */
   clock(startMs: number, nowMs: number): Clock | null;
+  summary?(
+    scope: string,
+    nowMs: number,
+    time: number,
+  ): { readonly summary: SnapshotSummary; readonly zone: string } | null;
 }
 
 /** What the caller reads at each settle. Read then, never held: a switch pressed a moment ago counts. */

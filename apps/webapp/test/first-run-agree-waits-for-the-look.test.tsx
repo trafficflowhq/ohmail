@@ -123,8 +123,7 @@ async function mount(
 
 /** Consent, then Continue to How far back. */
 async function toWindow(s: Awaited<ReturnType<typeof mount>>) {
-  expect(s.heading()).toBe(t.mapTitle);
-  await s.press(t.continue);
+  expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 }
 
@@ -175,7 +174,6 @@ describe("setup waits for the first look before it asks for consent", () => {
     expect(s.heading(), "the claim question did not come").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.pick("here");
     await s.press(t.continue);
-    await s.press(t.continue);
     expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.organizedWith.map((b) => b.intent)).toEqual(["takeover"]);
@@ -197,7 +195,6 @@ describe("setup waits for the first look before it asks for consent", () => {
     waiting(s);
     await s.read(STOPPED);
     expect(s.heading()).toBe(t.elsewhereSayStopped.replace("{name}", "W-live").replace(/\.$/, ""));
-    await s.press(t.continue);
     await s.press(t.continue);
     await s.press(t.agree);
     expect(s.organizedWith.map((b) => b.intent)).toEqual(["takeover"]);
@@ -240,7 +237,7 @@ describe("setup waits for the first look before it asks for consent", () => {
     waiting(s, t.holderCheckSlow);
     expect(s.organizedWith).toEqual([]);
     await s.read(NOBODY);
-    expect(s.heading(), "the answer after the bound did not open consent").toBe(t.mapTitle);
+    expect(s.heading(), "the answer after the bound did not open consent").toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 });
 

@@ -73,7 +73,7 @@ const RUN: FormWords = {
   user: word("onboarding", "user"),
   userPlaceholder: null,
   password: word("onboarding", "password"),
-  passwordHint: null,
+  passwordHint: word("onboarding", "passwordHint"),
   imapHost: word("onboarding", "imapHost"),
   smtpHost: word("onboarding", "smtpHost"),
   submit: word("onboarding", "connect"),

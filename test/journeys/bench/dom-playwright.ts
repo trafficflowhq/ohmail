@@ -1,9 +1,9 @@
 import type { Browser, BrowserContext, Locator, Page } from "@playwright/test";
 import { ACTS, type ActId } from "../vocabulary/acts.js";
-import { say, type Language } from "../vocabulary/catalogue.js";
+import { say, wordsWithDot, type Language } from "../vocabulary/catalogue.js";
 import type { ControlId } from "../vocabulary/controls.js";
 import { control } from "../vocabulary/index.js";
-import { PLACES, type AriaRole, type PlaceId } from "../vocabulary/places.js";
+import { PLACES, type AriaRole, type Place, type PlaceId } from "../vocabulary/places.js";
 import { LOOPBACK, type Found, type NativeActId, type Person, type Size, type Spoken } from "./seam.js";
 
 /**
@@ -32,7 +32,7 @@ export function shown(url: string): string {
 }
 
 export class PlaywrightPerson implements Person {
-  private readonly errors: string[] = [];
+  private readonly errors: { message: string; path?: string }[] = [];
   private readonly outside: string[] = [];
   private readonly asked: string[] = [];
   private readonly tabs: PlaywrightPerson[] = [];
@@ -40,8 +40,23 @@ export class PlaywrightPerson implements Person {
   lang: Language;
   constructor(readonly page: Page, readonly context: BrowserContext, private readonly origin: string, private readonly base: string, lang: Language) {
     this.lang = lang;
-    page.on("pageerror", (e) => { this.errors.push(`page error: ${String(e)}`); });
-    page.on("console", (m) => { if (m.type() === "error") this.errors.push(`console: ${m.text()}`); });
+    page.on("pageerror", (e) => { this.errors.push({ message: `page error: ${String(e)}` }); });
+    page.on("console", (m) => {
+      if (m.type() !== "error") return;
+      const url = URL.parse(m.location().url);
+      this.errors.push({
+        message: `console: ${m.text()}`,
+        path: url?.protocol === "http:" || url?.protocol === "https:" ? url.pathname : undefined,
+      });
+    });
+    page.on("response", (response) => {
+      const status = response.status();
+      if (status < 400) return;
+      this.errors.push({
+        message: `http response with a status of ${status}: ${response.request().method()}`,
+        path: new URL(response.url()).pathname,
+      });
+    });
   }
 
   /** Choose the app's language as a person does: Settings, General, the language's own button. */
@@ -106,7 +121,10 @@ export class PlaywrightPerson implements Person {
   /** What breaks the bench's promises: page errors, console errors, requests that tried to leave. */
   problems(tolerated: RegExp[] = []): string[] {
     return [
-      ...this.errors.filter((e) => !tolerated.some((t) => t.test(e))), ...this.outside,
+      ...this.errors
+        .filter(({ message }) => !tolerated.some((t) => t.test(message)))
+        .map(({ message, path }) => path ? `${message} (${path})` : message),
+      ...this.outside,
       ...this.tabs.flatMap((t) => t.problems(tolerated)),
     ];
   }
@@ -121,6 +139,7 @@ export class PlaywrightPerson implements Person {
       if (!found.sender) throw new Error("a search result needs its sender and subject");
       return new RegExp(`(?:^|\\s)${escapeRe(found.sender)}\\s+.*?${escapeRe(text)}(?=\\s|$)`);
     }
+    if (c.nameSuffix) return `${text} ${say(c.nameSuffix, {}, this.lang)}`;
     return c.counted ? new RegExp(`^${escapeRe(text)}(?: [0-9][0-9.,'’]*\\+?)?$`) : text;
   }
 
@@ -130,6 +149,7 @@ export class PlaywrightPerson implements Person {
     const scope = c.within === undefined ? this.page
       : c.within in PLACES ? this.page.getByRole("main") : this.find(c.within);
     const name = this.name(id, found);
+    if (c.byLabel && name !== null) return scope.getByLabel(name, { exact: true });
     const all = name === null ? scope.getByRole(c.role) : scope.getByRole(c.role, { name, exact: true });
     return c.outer || c.either ? all.first() : all;
   }
@@ -247,24 +267,42 @@ export class PlaywrightPerson implements Person {
 
   /** Wait for a place's landmark without going anywhere. */
   async here(place: PlaceId, ms = 60_000): Promise<void> {
-    const p = PLACES[place];
-    const name = say(p.landmark.key, {}, this.lang);
+    const { landmark }: Place = PLACES[place];
+    if (place === "gate") {
+      const heading = this.page.getByRole("heading", { level: 1 })
+        .filter({ has: this.find("login-email") })
+        .filter({ has: this.find("login-password") });
+      await heading.waitFor({ state: "visible", timeout: ms }).catch(() => {
+        throw new Error("the sign-in heading never held both credential fields");
+      });
+      await this.see("login-continue", {}, ms);
+      return;
+    }
+    const name = say(landmark.key, landmark.args?.(this.lang), this.lang);
     if (place.startsWith("settings-")) {
       const entry = this.find(`menu-${place}`);
       await entry.waitFor({ state: "visible", timeout: ms }).catch(() => { throw new Error(`the Settings menu never listed ${name}`); });
       await this.until(async () => (await entry.getAttribute("aria-current")) === "page", `${name} to be the current section`);
       return;
     }
-    const mark = p.landmark.role === "heading"
+    const mark = landmark.role === "heading"
       ? this.page.getByRole("heading", { name, exact: true, level: 1 })
-      : this.page.getByRole(p.landmark.role, { name, exact: true });
-    await mark.waitFor({ state: "visible", timeout: ms }).catch(() => { throw new Error(`never arrived at ${place}: no ${p.landmark.role} named ${JSON.stringify(name)}`); });
+      : this.page.getByRole(landmark.role, { name, exact: true });
+    await mark.waitFor({ state: "visible", timeout: ms }).catch(() => { throw new Error(`never arrived at ${place}: no ${landmark.role} named ${JSON.stringify(name)}`); });
   }
 
   /** Wait for the catalogue sentence, or the title and sentence drawn together. */
   async reads(key: string | readonly string[], args: Record<string, string | number> = {}, ms = 20_000): Promise<void> {
     const keys = typeof key === "string" ? [key] : key;
     const sentence = keys.map((part) => say(part, args, this.lang)).join(" ");
+    await this.readSentence(String(key), sentence, ms);
+  }
+
+  async readsWithDot(key: string, ms = 20_000): Promise<void> {
+    await this.readSentence(key, wordsWithDot(key, this.lang), ms);
+  }
+
+  private async readSentence(key: string, sentence: string, ms: number): Promise<void> {
     await this.page.getByText(sentence, { exact: true }).first().waitFor({ state: "visible", timeout: ms }).catch(() => {
       throw new Error(`the page never said ${key}: ${JSON.stringify(sentence)}`);
     });

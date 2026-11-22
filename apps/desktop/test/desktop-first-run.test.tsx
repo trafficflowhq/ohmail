@@ -486,10 +486,10 @@ describe("the AI posture this door can report", () => {
  *
  * So the real component is mounted, with the real catalogue, on the facts this door produces the
  * moment its door chooser has connected a mailbox: consented to by nobody, importing, no model.
- * The assertion is the CONSENT screen's own heading, which is the screen the derivation names for
- * that state and the first thing a standalone install sees.
+ * The consent step shows the folder map alongside the import window.
  */
 describe("the shared stage, mounted on the local host", () => {
+  const consentHeading = O.organizeLast.replace("<window></window>", O.windowYear).replace(/\.$/, "");
   const stage = (made: FirstRunHost, completed: string | null) => mountStage({
     rows: [stageRow()],
     account: { onboardingCompletedAt: completed },
@@ -499,10 +499,12 @@ describe("the shared stage, mounted on the local host", () => {
 
   it("opens on the consent screen for a freshly connected standalone mailbox", async () => {
     const made = (await makeHost())!;
-    const { el } = await stage(made, null);
+    const { el, heading } = await stage(made, null);
     const text = el.querySelector(".mbx-run")?.textContent ?? "";
-    // The consent statement's heading — `onboarding.consentTitle`, the screen row 4 names.
-    expect(text).toContain("What ohmail will do to this mailbox");
+    expect(heading()).toBe(consentHeading);
+    expect(text).toContain(O.mapInbox);
+    expect(text).toContain(O.mapNewFolders);
+    expect(within(el).getByRole("button", { name: O.windowYear })).toBeTruthy();
     // And the flow is genuinely on THIS door: the provider step exists here and nowhere else,
     // so the rail carries a step the hosted stage does not have.
     expect(text.length).toBeGreaterThan(80);
@@ -521,7 +523,7 @@ describe("the shared stage, mounted on the local host", () => {
   it("leaves without failing when the flow closes under an open stage", async () => {
     const made = (await makeHost())!;
     const current = await stage(made, null);
-    expect(current.heading()).toBe(O.consentTitle);
+    expect(current.heading()).toBe(consentHeading);
     await current.moveAccount({ onboardingCompletedAt: "2026-10-30T10:00:00.000Z" });
     expect(current.el.querySelector(".mbx-run")).toBeNull();
     expect(current.writes()).toEqual([{ next: "#/ohbox", how: "push" }]);
@@ -785,7 +787,7 @@ describe("adding a further mailbox to a standalone install", () => {
       verbs: host,
       connect: connectWireOver(host),
     });
-    await stage.press(P.otherLabel);
+    await stage.press(P.otherShort);
     return { ...stage, modes, addresses };
   }
 
@@ -811,11 +813,12 @@ describe("adding a further mailbox to a standalone install", () => {
   });
 
   it("walks 1-2-3-4-7-8-9: no welcome, no AI question, no provider form, no pairing", () => {
+    /* The folder map and history window now share the consent step. */
     /* The install's answers, not the mailbox's. The model is a property of the install
        (`ai-provider.ts`) and so is the paired phone; asking again per mailbox would imply a
        per-mailbox answer that nothing stores. */
     const walk = onboardingPath(ADD_FACTS, true);
-    expect(walk).toEqual(["mailbox", "consent", "window", "pull", "summary"]);
+    expect(walk).toEqual(["mailbox", "consent", "pull", "summary"]);
     // The claim question joins it when the peek finds a holder — step 2 of the plan.
     expect(onboardingPath(
       {
@@ -823,7 +826,7 @@ describe("adding a further mailbox to a standalone install", () => {
         mailbox: { organizedBy: { kind: "cloud", name: "ohmail Cloud", since: null } },
       },
       true,
-    )).toEqual(["mailbox", "elsewhere", "consent", "window", "pull", "summary"]);
+    )).toEqual(["mailbox", "elsewhere", "consent", "pull", "summary"]);
     // And a FIRST run is untouched — the four screens are dropped for the add intent alone.
     expect(onboardingPath(ADD_FACTS)).toContain("welcome");
     expect(onboardingPath(ADD_FACTS)).toContain("ai");
@@ -859,19 +862,20 @@ describe("adding a further mailbox to a standalone install", () => {
        defect took away. Walk onto the form through whichever verb it wears. */
     const step = async (labels: string[]) => {
       const all = [...el.querySelectorAll("button")];
-      const b = all.find((x) => labels.some((l) => (x.textContent ?? "").trim().startsWith(l)));
+      const b = all.find((x) => labels.some((l) => (x.getAttribute("aria-label") ?? x.textContent ?? "").trim().startsWith(l)));
       expect(b, `no ${labels.join("/")} — buttons: ${
         all.map((x) => (x.textContent ?? "").trim()).join(" | ")}`).toBeDefined();
       await act(async () => { b!.click(); await Promise.resolve(); });
     };
     /* The welcome screen — the first of the three the defect took away. Recognised by its own
        primary rather than by a greeting: `welcomeTitle` is a sentence about what ohmail does. */
-    await step(["Set up a mailbox"]);
-    await current.press(P.otherLabel);
+    await step(["Connect a mailbox"]);
+    await current.press(P.otherShort);
+    await act(async () => { within(el).getByText(en.join.manualPorts).click(); });
     await fillConnection(el, "me@example.org", "imap.example.org");
     await step(["Test connection"]);
     await act(async () => { await Promise.resolve(); });
-    await step(["Connect and continue"]);
+    await step([en.join.manualConnect]);
     await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
 
     expect(modes).toEqual(["seed"]);
@@ -895,10 +899,10 @@ describe("adding a further mailbox to a standalone install", () => {
      * an empty Screener queue, and its dot sat there unlit for ever. Same fix, same line.
      */
     const { el } = await driveAdd();
-    const rail = within(el).getByRole("img", { name: "Step 1 of 5, Mailbox" });
-    expect(rail.children).toHaveLength(5);
+    const rail = within(el).getByRole("img", { name: "Step 1 of 2, Mailbox, 2 of 3" });
+    expect(rail.children).toHaveLength(2);
     expect(railFor(onboardingPath(ADD_FACTS, true)).map(({ id }) => id)).toEqual([
-      "mailbox", "organize", "history", "pull", "done",
+      "mailbox", "organize", "pull", "done",
     ]);
   });
 
@@ -951,7 +955,7 @@ describe("a mail server on this computer — the wait's own line and the server'
       verbs: host,
       connect: connectWireOver(host),
     });
-    await stage.press(P.otherLabel);
+    await stage.press(P.otherShort);
     await fillConnection(stage.el, "me@gateway.test", imapHost);
     await stage.press(O.test);
     return stage;

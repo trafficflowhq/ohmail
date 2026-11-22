@@ -333,6 +333,8 @@ const settle = async (): Promise<void> => {
 const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 /* A verb's answer at the seated Ohbox is said in the frame's report, with its Undo (declared). */
+// The report’s end dot is drawn separately from its text.
+const reportCopy = (sentence: string): string => sentence.replace(/\.$/, "");
 const toastText = (): string => reportSays();
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
@@ -393,7 +395,7 @@ describe("a held Delete, undone", () => {
     expect(where(c, "w8")).toBe(`${NEW}#0`);
     expect(selectedRow(c)).toBe("w8");
     expect(seen()).toBe(0);
-    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndone));
     expect(deletes()).toEqual([]);
   }, 30000);
 
@@ -402,7 +404,7 @@ describe("a held Delete, undone", () => {
     expect(where(c, "w8")).toBe(`${NEW}#0`);
     expect(selectedRow(c)).toBe("w8");
     expect(seen()).toBe(1);
-    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndone));
     expect(deletes()).toEqual([]);
   }, 30000);
   for (const ms of [300, 1500, 3000]) {
@@ -411,7 +413,7 @@ describe("a held Delete, undone", () => {
       expect(where(c, "w8"), "Undo filed the row under Earlier").toBe(`${NEW}#0`);
       expect(selectedRow(c), "Undo left the cursor where the delete moved it").toBe("w8");
       expect(seen(), "the open's read").toBe(1);
-      expect(toastText()).toContain(messages.ohbox.deleteUndone);
+      expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndone));
       expect(deletes()).toEqual([]);
     }, 30000);
   }
@@ -445,7 +447,7 @@ describe("the verbs beside it: Park and Answer later, undone after an open", () 
       const c = await pressAndUndo(2300, k);
       expect(where(c, "w8"), "Undo filed the row under Earlier").toBe(`${NEW}#0`);
       expect(selectedRow(c)).toBe("w8");
-      expect(toastText()).toContain(messages.ohbox.toastUndone);
+      expect(toastText()).toContain(reportCopy(messages.ohbox.toastUndone));
       expect(deletes()).toEqual([]);
     }, 30000);
     it(`${verb} advances to the next row, and Undo still puts the row back in New, selected`, async () => {
@@ -521,8 +523,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("a URL opens another message inside the window, then Undo", async () => {
@@ -535,8 +537,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("Back from a message opened by URL to the one before it, then Undo", async () => {
@@ -551,8 +553,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("Back out of every message (the bare URL) inside the window, then Undo", async () => {
@@ -565,8 +567,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("NOT STUCK IN NEW: Park after an open, j twice, Undo, then j on read rows", async () => {

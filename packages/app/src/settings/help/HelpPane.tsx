@@ -19,6 +19,7 @@ export function HelpPane({ model, sheet }: { readonly model: HelpModel; readonly
   const t = useText("help");
   const settings = useText("settings");
   const { write, facts } = model;
+  const clipboard = write.kind === "copy" ? write : model.clipboard;
   const { os, osVersion, mailboxes, commit } = facts;
   const version = `${facts.version ?? t("dNone")}${commit === null ? "" : ` · ${t("dBuild")} ${commit.slice(0, COMMIT_SHOWN)}`}`;
   const content = (
@@ -29,9 +30,15 @@ export function HelpPane({ model, sheet }: { readonly model: HelpModel; readonly
       <SettingsSheet
         title={t("diag")}
         aside={
-          write.kind === "copy" ? (
-            <Button kind="quiet" size="s" icon="copy" onPress={() => write.copy("diag")}>
-              {write.copied === "diag" ? t("copied") : t("copyDiag")}
+          clipboard ? (
+            <Button
+              kind="quiet"
+              size="s"
+              icon="copy"
+              label={clipboard.copied === "diag" ? t("copied") : t("copyDiag")}
+              onPress={() => clipboard.copy("diag")}
+            >
+              {clipboard.copied === "diag" ? t("copied") : t("copyShort")}
             </Button>
           ) : undefined
         }
@@ -56,6 +63,16 @@ export function HelpPane({ model, sheet }: { readonly model: HelpModel; readonly
       {write.kind === "copy" ? <SettingNote>{t("writeWhyCopy")}</SettingNote> : null}
     </>
   );
+  const copyAddress = clipboard
+    ? ({
+        id: "copy-address",
+        label: clipboard.copied === "address" ? t("copied") : t("copyAddress"),
+        icon: "copy",
+        kind: write.kind === "copy" ? "ink" : "soft",
+        rank: write.kind === "copy" ? 0 : 1,
+        onPress: () => clipboard.copy("address"),
+      } as const)
+    : null;
   const foot =
     write.kind === "mailto" ? (
       <div className="oh-actionpanel">
@@ -63,29 +80,30 @@ export function HelpPane({ model, sheet }: { readonly model: HelpModel; readonly
           <Button kind="ink" size="s" icon="write" href={write.href}>
             {t("write")}
           </Button>
+          {copyAddress ? (
+            <Button kind="two" size="s" icon={copyAddress.icon} onPress={copyAddress.onPress}>
+              {copyAddress.label}
+            </Button>
+          ) : null}
         </div>
       </div>
     ) : (
       <ActionPanel
         label={settings("help")}
         items={[
-          write.kind === "compose"
-            ? {
-                id: "write",
-                label: t("write"),
-                icon: "write",
-                kind: "ink",
-                rank: 0,
-                onPress: write.write,
-              }
-            : {
-                id: "copy-address",
-                label: write.copied === "address" ? t("copied") : t("copyAddress"),
-                icon: "copy",
-                kind: "ink",
-                rank: 0,
-                onPress: () => write.copy("address"),
-              },
+          ...(write.kind === "compose"
+            ? [
+                {
+                  id: "write",
+                  label: t("write"),
+                  icon: "write" as const,
+                  kind: "ink" as const,
+                  rank: 0,
+                  onPress: write.write,
+                },
+              ]
+            : []),
+          ...(copyAddress ? [copyAddress] : []),
         ]}
       />
     );

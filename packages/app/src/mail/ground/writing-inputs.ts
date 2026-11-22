@@ -219,6 +219,8 @@ export function useWritingInputs(): WritingInputs {
   const reader = engine.read();
   const press = usePress();
   const consent = useConsent();
+  const draftReplies =
+    consent.draftReplies ?? reader.list<{ draftReplies?: boolean }>("settings")[0]?.draftReplies;
   const { ownAddresses } = usePartition();
   const { state, mailboxes: facts } = useMailState();
   const presented = usePresented();
@@ -252,7 +254,8 @@ export function useWritingInputs(): WritingInputs {
     toast: press.undoToast,
     /* As the host says it, `none` included. The one cast: the contract names the wire's answers opaquely, and their
        one declaration is the drafter's own. */
-    draftReplyWire: host.wires.draftReply as unknown as DraftReplyWire | typeof NONE,
+    draftReplyWire:
+      draftReplies === false ? NONE : (host.wires.draftReply as unknown as DraftReplyWire | typeof NONE),
     route: view,
     isComposeVisible: () => routeOf(host.device.address.read()).place === "write",
     go,

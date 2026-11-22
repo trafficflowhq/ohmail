@@ -557,7 +557,7 @@ describe("a tab that dies without pagehide", () => {
     await waitFor(() => letterOpen(), "the compose view");
     expect(subjectShown(), "the dead tab's message was not offered back").toBe("lost in a crash");
     expect(document.body.textContent ?? "", "the message came back without a word")
-      .toContain(messages.compose.recoveredFromClosedTab);
+      .toContain(messages.compose.recoveredFromClosedTab.replace(/\.$/, ""));
     expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.${deadId}`), "the dead tab's unit outlived the adoption")
       .toBeNull();
     await waitFor(() => drafts().length > 0, "the recovered message reaching the account", AUTOSAVE_DELAY_MS + 2000);

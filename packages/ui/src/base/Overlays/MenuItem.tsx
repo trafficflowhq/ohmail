@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { Dot } from "../Primitives/Dot.js";
 import { KeyHint } from "../Primitives/KeyHint.js";
@@ -22,11 +22,14 @@ export interface MenuItemProps {
   checkmark?: boolean;
   /** With `checked`: one of several that may all be taken (a tag), not one of a few. */
   many?: boolean;
+  /** Switches in place; the leading mark alone shows the state. */
+  stay?: boolean;
   disabled?: boolean;
   /** A tag of the person's own under a place: indented, with the tag's dot in this hue. */
   hue?: number;
   /** Led by the dot: hot when it wants you. Its words may then take two lines. */
   dot?: "hot" | "ink";
+  ref?: Ref<HTMLButtonElement>;
   onPress?: () => void;
 }
 
@@ -41,13 +44,16 @@ export function MenuItem({
   checked,
   checkmark,
   many,
+  stay,
   disabled,
   hue,
   dot,
+  ref,
   onPress,
 }: MenuItemProps) {
   return (
     <button
+      ref={ref}
       type="button"
       className="oh-control oh-menu-item"
       role={checked === undefined ? "menuitem" : many ? "menuitemcheckbox" : "menuitemradio"}
@@ -57,6 +63,7 @@ export function MenuItem({
       data-sub={hue === undefined ? undefined : ""}
       data-dot={dot ? "" : undefined}
       data-checkmark={checkmark ? "" : undefined}
+      data-stay={stay ? "" : undefined}
       onClick={onPress}
     >
       {checkmark ? <Icon name="check" size={20} /> : null}

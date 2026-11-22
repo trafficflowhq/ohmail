@@ -67,6 +67,8 @@ export interface CalendarWriteDrainInput {
   readonly provider: CalendarProvider;
   /** The port's connection for this turn: its sign-in is the turn's, and is gone when the turn is. */
   readonly connection: Connection;
+  /** Opens the owned destination using the same account binding as a normal provider turn. */
+  readonly moveDestination?: (calendarId: string) => Promise<import("./personal-transfer.js").TransferCalendar | null>;
   readonly signal: AbortSignal;
 }
 /** A provider's own wish to be left alone, as it answered a write: its word, and how long. */

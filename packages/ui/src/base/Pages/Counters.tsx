@@ -8,8 +8,8 @@ export interface Counter {
   figure: string;
   /** What it counts, in words: "screened", "in History". */
   words: string;
-  /** The dot its words end in: hot until the count settles, then ink. Left out: ink. */
-  end?: "hot" | "ink";
+  /** The dot its words end in. Left out: ink. */
+  end?: "hot" | "ink" | "none";
 }
 
 export interface CountersProps {
@@ -33,7 +33,7 @@ export function Counters({ size, rows }: CountersProps) {
             {row.figure}
           </dt>
           <dd className="oh-counters-words">
-            <EndDot kind={row.end ?? "ink"}>{row.words}</EndDot>
+            {row.end === "none" ? row.words : <EndDot kind={row.end ?? "ink"}>{row.words}</EndDot>}
           </dd>
         </div>
       ))}

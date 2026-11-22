@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -156,12 +157,12 @@ const DOORS: { file: string; fn: string; asks: RegExp; literals?: true }[] = [
 
 /**
  * A SITE renders holder sentences (`keys`, a catalogue key as quoted or a copy member as read) in
- * `file`, inside `fn` when named; each of `calls` must appear as a call in its own file and
+ * `file`, inside each function named by `fn`; each of `calls` must appear as a call in its own file and
  * function — for a prop-driven sentence, the file that hands it its holder.
  */
 interface Site {
   file: string;
-  fn?: string;
+  fn?: string | readonly string[];
   keys: string[];
   calls: { file: string; fn?: string; call: RegExp }[];
 }
@@ -200,11 +201,15 @@ const SITES: Site[] = [
   { file: PHONE_FORM, fn: "readingAtConnectLine", keys: ["Copy.readingAtConnect", "Copy.readingAtConnectKept", "Copy.readingAtConnectJoinWaits"],
     calls: [{ file: "apps/mobile/app/(tabs)/index.tsx", call: /readingAtConnectNow\([^;]*\bclaim\)/ },
       { file: "apps/mobile/src/ui/OrganizerStrip.tsx", fn: "useStandaloneClaim", call: /\bclaimHere\(/ }] },
-  { file: MAILBOX_STEP, keys: ['"onboarding.doorReaderWhy"', '"onboarding.doorReaderWhyLegacy"'],
+  { file: MAILBOX_STEP, fn: ["Connect", "MailboxStep"], keys: ['"onboarding.readerTag"'],
     calls: [
       { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /const organizer = useMemo\(\(\) => accountOrganizer\(facts\)/ },
       { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /accountOrganizer: organizer/ },
-      { file: MAILBOX_STEP, call: /const holder = run\.accountOrganizer/ },
+      { file: MAILBOX_STEP, fn: "Connect", call: /run\.accountOrganizer \? <Tag>\{say\("onboarding\.readerTag"\)\}/ },
+      // Each mailbox row shows the role supplied by the server.
+      { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /facts\.flatMap\(\(m\) => rowOf\(m,/ },
+      { file: FIRST_RUN_LIVE, fn: "rowOf", call: /\borganizerRole: m\.organizerRole\b/ },
+      { file: MAILBOX_STEP, fn: "MailboxStep", call: /row\.organizerRole === "reader"\s*\? say\("onboarding\.readerTag"\)/ },
     ] },
   { file: "apps/desktop/src/install-role.ts",
     keys: ["DOOR_COPY.mailboxWhyReadsNamed", "DOOR_COPY.mailboxWhyReads", "DOOR_COPY.mailboxWhyReadsNobody"],
@@ -230,10 +235,12 @@ const SITES: Site[] = [
       { file: MAIL_STATE, fn: "organizerNotices", call: /\bnoticeKind\(m\)/ },
       { file: MAIL_STATE, fn: "noticeKind", call: /\borganizerSituation\(/ },
     ] },
-  { file: ELSEWHERE_STEP, keys: ['"onboarding.elsewhereChoiceReadWhy"'],
+  { file: ELSEWHERE_STEP, keys: ['"onboarding.elsewhereSay"', '"onboarding.elsewhereSayStopped"'],
     calls: [
       { file: FIRST_RUN_AGREE, fn: "useAgree", call: /const stopped = holderStopped\(facts\.mailbox\)/ },
       { file: ELSEWHERE_STEP, call: /const stopped = run\.agree\.stopped/ },
+      { file: ELSEWHERE_STEP, fn: "holderLines", call: /\bholderSentence\(/ },
+      { file: ELSEWHERE_STEP, call: /const title = say\(stopped \? "onboarding\.elsewhereSayStopped" : "onboarding\.elsewhereSay", \{ name \}\)/ },
     ] },
   { file: PHONE_FORM, fn: "scheduledNotHereSentence", keys: ["Copy.scheduledReaderHere"],
     calls: [{ file: PHONE_FORM, fn: "scheduledNotHereSentence", call: /\bholder\.stopped\b/ },
@@ -325,16 +332,34 @@ function holderSentenceViolations(files: SourceFile[], sites: Site[], declared: 
   const out: string[] = [];
   const byFile = new Map(files.map((f) => [f.file, f.raw]));
   const commented = new Map(files.map((f) => [f.file, withoutComments(f.raw)]));
+  const scopeOf = (file: string, raw: string, fn: string | undefined) => {
+    if (fn === undefined) return { start: 0, end: raw.length };
+    if (!file.endsWith(".tsx")) return bodySpan(withoutCommentsAndLiterals(raw), fn);
+    // JSX closing tags are not understood by the scanner's bracket walk.
+    const source = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest);
+    const declaration = source.statements.find(
+      (node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === fn,
+    );
+    return declaration?.body ? { start: declaration.body.getStart(source), end: declaration.body.end } : null;
+  };
   const inFn = (file: string, fn: string | undefined, at: number) => {
-    if (fn === undefined) return true;
-    const s = bodySpan(withoutCommentsAndLiterals(byFile.get(file) ?? ""), fn);
+    const s = scopeOf(file, byFile.get(file) ?? "", fn);
     return s !== null && at >= s.start && at < s.end;
   };
   for (const site of sites) {
     for (const key of site.keys) {
       const seen = keyUses(commented.get(site.file) ?? "", key);
-      if (seen.length === 0) out.push(`${site.file}: ${key} is not rendered where it is registered`);
-      for (const at of seen) if (!inFn(site.file, site.fn, at)) out.push(`${site.file}: ${key} outside ${site.fn}`);
+      const functions = typeof site.fn === "string" ? [site.fn] : site.fn ?? [undefined];
+      for (const fn of functions) {
+        if (!seen.some((at) => inFn(site.file, fn, at))) {
+          out.push(`${site.file}: ${key} is not rendered where it is registered${fn ? ` in ${fn}` : ""}`);
+        }
+      }
+      for (const at of seen) {
+        if (!functions.some((fn) => inFn(site.file, fn, at))) {
+          out.push(`${site.file}: ${key} outside ${functions.join(", ")}`);
+        }
+      }
       for (const [file, text] of commented) {
         if (file !== site.file && !(file in declared) && text.includes(key.startsWith('"') ? key.slice(1, -1) : key)
           && keyUses(text, key).length > 0) out.push(`${file}: ${key} rendered outside its site`);
@@ -343,8 +368,7 @@ function holderSentenceViolations(files: SourceFile[], sites: Site[], declared: 
     for (const c of site.calls) {
       const raw = byFile.get(c.file);
       if (raw === undefined) { out.push(`${c.file}: missing`); continue; }
-      const blank = withoutCommentsAndLiterals(raw);
-      const s = c.fn === undefined ? { start: 0, end: blank.length } : bodySpan(blank, c.fn);
+      const s = scopeOf(c.file, raw, c.fn);
       if (s === null) { out.push(`${c.file}: no function ${c.fn}`); continue; }
       if (!c.call.test(withoutComments(raw).slice(s.start, s.end))) {
         out.push(`${c.file}${c.fn ? ` ${c.fn}` : ""}: ${site.keys[0]} is chosen without ${c.call.source}`);
@@ -374,7 +398,8 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       for (const [k, v] of Object.entries(o)) {
         const path = at ? `${at}.${k}` : k;
         if (v && typeof v === "object") walk(v as Record<string, unknown>, path);
-        else if (typeof v === "string" && /\{name\}(?:,[^.—]*?)? (?:organizes|is organizing|keeps organizing)\b/.test(v)) found.push(path);
+        else if (typeof v === "string" && /\{name\}(?:,[^.—]*?)? (?:organizes|is organizing|keeps organizing)\b/.test(v))
+          found.push(path);
       }
     };
     walk(en, "");
@@ -384,7 +409,10 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       if (/Organized by \$\{name\}|\$\{name\} (?:organizes|is organizing|keeps organizing)\b/.test(m[2]!)) found.push(`Copy.${m[1]}`);
     }
     // The reach first: a scan that found nothing classifies nothing.
-    expect(found.length).toBe(26);
+    // The setup mailbox sentence left with its view. The Reader badge is traced separately in SITES.
+    expect(found).not.toContain("onboarding.doorReaderWhy");
+    expect(found).toContain("onboarding.elsewhereSay");
+    expect(found.length).toBe(25);
     const registered = new Set(SITES.flatMap((s) => s.keys));
     const unclassified = found.filter((path) => {
       const leaf = path.slice(path.lastIndexOf(".") + 1);

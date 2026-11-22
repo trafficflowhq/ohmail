@@ -17,6 +17,9 @@ export interface Control {
   /** The control this one is inside; a place means "inside that place's content". */
   within?: PlaceId | string;
   nameFrom?: "key" | "visible" | "none";
+  /** Password inputs have a label but no implicit ARIA role. */
+  byLabel?: true;
+  nameSuffix?: CatalogueKey;
   /** The composite name of a search result starts with its sender and includes its subject. */
   searchResult?: true;
   /** The app may follow the name with a count ("Ohbox 3"). */
@@ -161,7 +164,7 @@ const entries: Array<[string, Control]> = [
 
   // The doors.
   c("login-email", "textbox", "login.emailLabel"),
-  c("login-password", "textbox", "login.passwordLabel"),
+  c("login-password", "textbox", "login.passwordLabel", { byLabel: true }),
   c("login-continue", "button", "login.continue"),
 ];
 

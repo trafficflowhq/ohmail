@@ -13,7 +13,7 @@ import { NOTICE_KIND_FACTS, type CalendarNoticeKind, type MailNoticeKind, type N
 export interface NoticeWhere { readonly ohcalPhone: boolean }
 
 /** Mail's stored record as the gate reads it: the master and its four kinds. A member a record holds beside these is not read. */
-export type MailNoticeChoices = { readonly master: boolean } & Readonly<Record<MailNoticeKind, boolean>>;
+export type MailNoticeChoices = { readonly master: boolean; readonly showMailDetails?: boolean } & Readonly<Record<MailNoticeKind, boolean>>;
 
 /** When the daily summary rings while the person has set no time: 07:00, in minutes of the day. */
 export const SUMMARY_AT_START = 420;
@@ -32,6 +32,8 @@ export type CalendarNoticeChoices = Readonly<Record<CalendarNoticeKind, boolean>
 export type NoticeChoices = Readonly<Record<NoticeKind, boolean>> & {
   readonly master: boolean;
   readonly showTitles: boolean;
+  readonly showMailDetails?: boolean;
+  readonly summaryAt?: number;
 };
 
 /** Where `kind`'s switch stands before the person touches it. */
@@ -56,7 +58,7 @@ function switchOf(stored: unknown, start: boolean): boolean {
 export function mailChoicesOf(raw: unknown, where: NoticeWhere): MailNoticeChoices {
   const stored = membersOf(raw);
   const of = (kind: MailNoticeKind): boolean => switchOf(stored(kind), noticeStartsOn(kind, where));
-  return { master: switchOf(stored("master"), true), ohbox: of("ohbox"), screener: of("screener"), scheduled: of("scheduled"), pairing: of("pairing") };
+  return { ...(stored("showMailDetails") === true ? { showMailDetails: true } : {}), master: switchOf(stored("master"), true), ohbox: of("ohbox"), screener: of("screener"), scheduled: of("scheduled"), pairing: of("pairing") };
 }
 
 /** The calendar's choices from its stored record, read the same way. */
@@ -79,8 +81,10 @@ export function noticeChoicesOf(mail: unknown, calendar: unknown, where: NoticeW
   const c = calendarChoicesOf(calendar, where);
   return {
     master: m.master, showTitles: c.showTitles,
+    ...(m.showMailDetails === true ? { showMailDetails: true } : {}),
     ohbox: m.ohbox, screener: m.screener, scheduled: m.scheduled, pairing: m.pairing,
     cal_alert: c.cal_alert, cal_invitation: c.cal_invitation, cal_change: c.cal_change,
     cal_answer: c.cal_answer, cal_found: c.cal_found, cal_summary: c.cal_summary,
+    ...(c.cal_summary ? { summaryAt: c.summaryAt } : {}),
   };
 }

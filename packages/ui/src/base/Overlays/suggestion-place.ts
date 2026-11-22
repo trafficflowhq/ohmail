@@ -46,6 +46,10 @@ export interface FieldPlace {
   boundary?: RefObject<Element | null> | Element;
   /** `text`: a row's words start where the field's words start, and it is as much wider on the other side. */
   align?: "text";
+  /** The field’s form supplies the width of its suggestion popover. */
+  span?: string;
+  /** A footer the popover should leave exposed when they overlap. */
+  avoid?: string;
 }
 
 const elementOf = (from: RefObject<Element | null> | Element | undefined): Element | null =>
@@ -62,7 +66,11 @@ const leadOf = (el: Element): number => {
 };
 
 /** Puts `card` at its field, inside what holds it and above a keyboard, in the layer it stands in. */
-function place(card: HTMLElement, layer: Element, { anchor, boundary, align }: FieldPlace): void {
+function place(
+  card: HTMLElement,
+  layer: Element,
+  { anchor, boundary, align, span, avoid }: FieldPlace,
+): void {
   const at = elementOf(anchor);
   if (!at) return;
   const [field, stage, view] = [edgesOf(at), edgesOf(layer), cssViewport()];
@@ -74,14 +82,27 @@ function place(card: HTMLElement, layer: Element, { anchor, boundary, align }: F
   const room = { ...inside, top: Math.max(inside.top, 0), bottom: Math.min(inside.bottom, floor) };
   const words = align === "text" ? card.querySelector("[data-words]") : null;
   const out = words ? edgesOf(words).left - edgesOf(card).left - leadOf(at) : 0;
-  card.style.width = `${field.right - field.left + 2 * out}px`;
+  const left = field.left - out;
+  const form = span && at.closest(span);
+  const width = form
+    ? edgesOf(form).right + edgesOf(form).left - 2 * left
+    : field.right - field.left + 2 * out;
+  const available = room.right - room.left - 2 * EDGE;
+  if (span) card.style.minWidth = "0";
+  card.style.width = `${span ? Math.min(available, between(280, 440, width)) : width}px`;
   /* As tall as it would be uncut: its box, and what its rows hold beyond what they show. */
   const rows = card.querySelector('[role="listbox"]');
   const size = {
     width: card.offsetWidth,
     height: card.offsetHeight + (rows ? rows.scrollHeight - rows.clientHeight : 0),
   };
-  const to = placeSuggestions({ ...field, left: field.left - out }, size, room);
+  const footer = avoid ? at.ownerDocument.querySelector(avoid) : null;
+  if (footer) {
+    const box = edgesOf(footer);
+    if (box.bottom > box.top && box.left < left + size.width && box.right > left)
+      room.bottom = Math.min(room.bottom, box.top);
+  }
+  const to = placeSuggestions({ ...field, left }, size, room);
   card.style.left = `${to.left - stage.left}px`;
   card.style.top = `${to.top - stage.top}px`;
   card.style.maxHeight = `${to.maxHeight}px`;

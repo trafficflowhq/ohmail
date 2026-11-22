@@ -3,5 +3,5 @@ export type { FoundRow } from "./contract.js";
 export type { CalendarSuggestionRecord } from "@ohmail/wire";
 export { OFFERED_EVIDENCE, mayOffer } from "./gate.js";
 export { fieldsOf, timesOf } from "./fields.js";
-export { foundCountOf, foundOf, targetCalendarOf, type FoundInput } from "./model.js";
+export { foundCalendarsOf, foundCountOf, foundOf, targetCalendarOf, type FoundInput } from "./model.js";
 export { addFound } from "./press.js";

@@ -68,6 +68,7 @@ export interface NoticesNative {
    * Draw one mail notice for `instance`, in the phone's language, from the module's own string resources. Native
    * draws it only while `instance` is the kept pairing, and answers whether it handed the system a notice.
    */
+  postDetails?(instance: string, sender: string, subject: string): Promise<boolean>;
   post(
     instance: string, kind: string, count: number, change: string | null, device: string | null,
   ): Promise<boolean>;

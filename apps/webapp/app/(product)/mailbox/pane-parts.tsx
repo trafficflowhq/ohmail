@@ -22,7 +22,8 @@ import { BrowserSettingsAbove } from "./browser-settings-panes";
 import { WebRulesPane } from "./WebRulesPane";
 import { useText } from "@ohmail/app/text";
 import { standingOf } from "./subscription-door";
-import { accessFeedFor, onAccessFeed } from "../../api-client";
+import { accessAiCredits, accessFeedFor, onAccessFeed } from "../../api-client";
+import { useConsent } from "@ohmail/app-logic/consent";
 import { useFrame } from "@ohmail/app/frame";
 import { useWriting } from "@ohmail/app/write";
 import { HelpContactPane } from "./HelpContactPane";
@@ -113,13 +114,30 @@ function WebAboutPane() {
   return <AboutSection owner={useSettingsOwner()} />;
 }
 
-function WebSubscriptionPane() {
+function WebSubscriptionPane({ sheet }: Pick<PaneBodyProps, "sheet">) {
   const { subscription } = useFrame().host.features;
-  return subscription === NONE ? null : subscription.render();
+  return subscription === NONE ? sheet?.(null) ?? null : subscription.render(sheet);
+}
+
+function useWebAiSummary() {
+  const credits = accessAiCredits(useWebAccess());
+  const t = useText("settingsAi");
+  return credits ? {
+    detail: t(credits.total === undefined ? "creditsBalance" : "creditsDetail", credits),
+    hot: credits.remaining === 0,
+  } : null;
 }
 
 function WebAiPane() {
-  return <AiSection owner={useSettingsOwner()} />;
+  const { commands, host } = useFrame();
+  const credits = accessAiCredits(useWebAccess());
+  const owner = useSettingsOwner();
+  const { draftReplies, setDraftReplies } = useConsent();
+  return <AiSection owner={owner} key={owner} credits={credits}
+    toPlans={host.features.subscription === NONE ? undefined : () => commands.go({ place: "settings", sub: "billing" })}
+    draftReplies={
+    draftReplies !== null && setDraftReplies ? { enabled: draftReplies, set: setDraftReplies } : undefined
+  } />;
 }
 
 export function WebSettingsAbove({ children }: { readonly children: ReactNode }) {
@@ -159,7 +177,9 @@ export const WEB_PANE_PARTS: MailPaneParts = {
   general: () => <WebGeneralPane captureOwner={captureFaceOwner} />,
   about: WebAboutPane,
   ai: WebAiPane,
+  useAiSummary: useWebAiSummary,
   billing: WebSubscriptionPane,
+  billingHasFoot: true,
   useBillingSummary: useWebBillingSummary,
   help: WebHelpPane,
   rules: WebRulesPane,

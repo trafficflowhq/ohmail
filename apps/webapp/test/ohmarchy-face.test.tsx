@@ -73,13 +73,8 @@ const click = async (el: Element): Promise<void> => {
   await tick(0);
 };
 
-const buttonByText = (container: HTMLElement, text: string): HTMLElement => {
-  const hit = [...container.querySelectorAll("button")].find(
-    (b) => (b.textContent ?? "").trim() === text,
-  );
-  if (!hit) throw new Error(`no button reading "${text}"`);
-  return hit;
-};
+const scopeButton = (container: HTMLElement, name: "All devices" | "This device"): HTMLElement =>
+  within(container).getByRole("button", { name });
 
 beforeEach(() => {
   installShellEnv();
@@ -262,7 +257,7 @@ describe("Settings → General → Look", () => {
       await goTo("settings/general");
       await tick(10);
       expect(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
-      expect(page.textContent).toContain("Applies on all your devices.");
+      expect(scopeButton(page, "All devices").getAttribute("aria-pressed")).toBe("true");
       await click(tile(/^ohmarchy\b/));
       expect(writes).toEqual([{ themeFace: "ohmarchy" }]);
       expect(window.localStorage.getItem(ownerKey)).toBe(account);
@@ -314,7 +309,7 @@ describe("Settings → General → Look", () => {
       await tick(10);
       const tile = (name: RegExp) => within(page).getByRole("button", { name });
       expect(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
-      expect(page.textContent).toContain("Applies on all your devices.");
+      expect(scopeButton(page, "All devices").getAttribute("aria-pressed")).toBe("true");
 
       // The browser's other account took the jar and saved its look since this pane last drew.
       document.cookie = `tf_owner=${newAccount}; Path=/`;
@@ -354,7 +349,7 @@ describe("Settings → General → Look", () => {
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
     expect(window.localStorage.getItem("ohmail.face")).toBeNull();
     expect(window.localStorage.getItem("ohmail.face.account")).toBe("ohmarchy");
-    expect(container.textContent).toContain("Applies on all your devices.");
+    expect(scopeButton(container, "All devices").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("a refused account write puts the look back and says so", async () => {
@@ -417,7 +412,7 @@ describe("Settings → General → Look", () => {
     expect(document.documentElement.dataset.face, "the newest choice was undone").toBe("ohmarchy");
     expect(window.localStorage.getItem("ohmail.face.account")).toBe("ohmarchy");
     expect(window.localStorage.getItem("ohmail.face")).toBeNull();
-    expect(container.textContent).toContain("Applies on all your devices.");
+    expect(scopeButton(container, "All devices").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("a look chosen before the account answers stays on the device when its write is refused", async () => {
@@ -439,7 +434,7 @@ describe("Settings → General → Look", () => {
     expect(window.localStorage.getItem("ohmail.face")).toBe("ohmarchy");
     expect(window.localStorage.getItem("ohmail.face.account")).toBe("paper");
     expect(container.textContent).toContain("Couldn't save that");
-    expect(container.textContent).toContain("Applies on this device only.");
+    expect(scopeButton(container, "This device").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("a Linux device's own default is said plainly, and 'Apply on all devices' sends it", async () => {
@@ -449,10 +444,10 @@ describe("Settings → General → Look", () => {
     await goTo("settings/general");
     await tick(10);
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
-    expect(container.textContent).toContain("This device's default until you choose a look.");
-    await click(buttonByText(container, "Apply on all devices"));
+    expect(scopeButton(container, "This device").getAttribute("aria-pressed")).toBe("true");
+    await click(scopeButton(container, "All devices"));
     expect(record.bodies).toEqual([{ themeFace: "ohmarchy" }]);
-    expect(container.textContent).toContain("Applies on all your devices.");
+    expect(scopeButton(container, "All devices").getAttribute("aria-pressed")).toBe("true");
   });
 });
 
@@ -513,7 +508,7 @@ describe("two devices of one account (the web and a paired desktop)", () => {
     await goTo("settings/general");
     await tick(10);
     expect(document.documentElement.dataset.face, "the desktop kept its own look").toBe("ohmarchy");
-    expect(desktop.textContent).toContain("Applies on all your devices.");
+    expect(scopeButton(desktop, "All devices").getAttribute("aria-pressed")).toBe("true");
 
     // The desktop picks paper; the web follows at its next start.
     await click(within(desktop).getByRole("button", { name: new RegExp(`^${messages.settings.facePaper}\\b`) }));

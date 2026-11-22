@@ -435,13 +435,28 @@
   inline-size: 100%;
 }
 
+:root[data-device="phone"]
+  [data-stream-window][data-receipts]
+  .oh-messagehead[data-preview]
+  .oh-address-domain {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 @container stream-card (inline-size < 400px) {
-  [data-stream-window][data-receipts] .oh-messagehead[data-preview] > .oh-messagehead-sender {
+  :root:not([data-device="phone"])
+    [data-stream-window][data-receipts]
+    .oh-messagehead[data-preview]
+    > .oh-messagehead-sender {
     grid-column: 1 / -1;
     grid-row: 1;
   }
 
-  [data-stream-window][data-receipts] .oh-messagehead[data-preview] > .oh-messagehead-tools {
+  :root:not([data-device="phone"])
+    [data-stream-window][data-receipts]
+    .oh-messagehead[data-preview]
+    > .oh-messagehead-tools {
     grid-row: 2;
   }
 }

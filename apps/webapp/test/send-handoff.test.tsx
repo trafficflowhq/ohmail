@@ -168,7 +168,9 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await composerWith(s);
     Object.assign(s.sentCopy, { sentCopy: "pending", sentCopyReason: "full" });
     await press(composeSend(s.el)!, "Send");
-    await waitFor(() => footLine().includes(en.sentCopy.waitingFull), "the foot says the mailbox is full");
+    await waitFor(() => footLine().includes(en.sentCopy.quotaWaiting), "the foot says the mailbox is full");
+    expect(footLine()).toContain("is full");
+    expect(footAct(en.sentCopy.notNow)).toBeTruthy();
   }, 40_000);
 
   it("1f — a copy kept without its files says until when ohmail tries again", async () => {
@@ -185,34 +187,35 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await sendLetter(s, "d-letter", "Plans for Friday", { sentCopy: "missing", sentCopyReason: "too_big" });
     await waitFor(() => footLine().includes(en.sentCopy.missingTooBig), "the first letter's note");
     await sendLetter(s, "d-jon", "Budget review", { sentCopy: "pending", sentCopyReason: "full" });
-    await waitFor(() => readFootLine().includes("Sent to Jon"), "the second letter's note");
+    await waitFor(() => readFootLine().includes("is full"), "the second letter's note");
     const order = noticeRows();
     expect(order.findIndex(r => r.includes("Mila")), "the older note above the newer")
-      .toBeLessThan(order.findIndex(r => r.includes("Jon")));
-    expect(await readNote("Jon")).toContain(en.sentCopy.waitingFull);
+      .toBeLessThan(order.findIndex(r => r.includes("is full")));
+    expect(await readNote("is full")).toContain(en.sentCopy.quotaWaiting);
     expect(await readNote("Mila"), "the second letter replaced the first one's note").toContain(en.sentCopy.missingTooBig);
     await sendLetter(s, "d-ada", "Train times", { sentCopy: "filed" });
     await waitFor(() => readFootLine().includes("Sent to Ada"), "the third letter's Sent");
     await act(async () => { await new Promise((r) => setTimeout(r, SENT_LINE_MS + 300)); });
     expect(readFootLine(), "the third letter's Sent settles away").not.toContain("Ada");
     expect(await readNote("Mila"), "a later delivery took a note with it").toContain(en.sentCopy.missingTooBig);
-    expect(await readNote("Jon")).toContain(en.sentCopy.waitingFull);
-    expect(toasts(), "a note said twice").not.toContain(en.sentCopy.waitingFull);
+    expect(await readNote("is full")).toContain(en.sentCopy.quotaWaiting);
+    expect(toasts(), "a note said twice").not.toContain(en.sentCopy.quotaWaiting);
   }, 60_000);
 
   it("1h — a fourth note drops the oldest", async () => {
     const s = await mountShell("#/drafts", [message("m1")], letters, { handOff: true });
     const full = { sentCopy: "pending", sentCopyReason: "full" } as const;
-    await sendLetter(s, "d-letter", "Plans for Friday", full);
-    await waitFor(() => readFootLine().includes("Mila"), "the first note");
-    await sendLetter(s, "d-jon", "Budget review", full);
-    await waitFor(() => readFootLine().includes("Jon"), "the second note");
-    await sendLetter(s, "d-ada", "Train times", full);
-    await waitFor(() => readFootLine().includes("Ada"), "the third note");
-    await sendLetter(s, "d-lin", "Garden party", full);
-    await waitFor(() => readFootLine().includes("Lin"), "the fourth note");
-    expect(noticeRows().map((r) => ["Lin", "Ada", "Jon", "Mila"].find((n) => r.includes(n))), "the oldest on top, the newest last, three of them")
-      .toEqual(["Jon", "Ada", "Lin"]);
+    for (const [id, subject, name] of [
+      ["d-letter", "Plans for Friday", "Mila"], ["d-jon", "Budget review", "Jon"],
+      ["d-ada", "Train times", "Ada"], ["d-lin", "Garden party", "Lin"],
+    ] as const) {
+      await sendLetter(s, id, subject, full);
+      await waitFor(() => keptNotes().includes(name), `the stored note for ${name}`);
+    }
+    const { notes } = JSON.parse(keptNotes()) as { notes: { to: string; note: unknown }[] };
+    expect(notes.map((note) => note.to)).toEqual(["Lin", "Ada", "Jon"]);
+    expect(notes.map((note) => note.note)).toEqual(Array(3).fill({ state: "pending", reason: "full" }));
+    expect(noticeRows().filter((row) => row.includes("is full"))).toHaveLength(1);
     expect(keptNotes()).not.toContain("Mila");
   }, 60_000);
 
@@ -220,20 +223,20 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     const before = await mountShell("#/drafts", [message("m1")], letters, { handOff: true });
     await sendLetter(before, "d-letter", "Plans for Friday", { sentCopy: "missing", sentCopyReason: "too_big" });
     await sendLetter(before, "d-jon", "Budget review", { sentCopy: "pending", sentCopyReason: "full" });
-    expect(await readNote("Jon")).toContain(en.sentCopy.waitingFull);
+    expect(await readNote("is full")).toContain(en.sentCopy.quotaWaiting);
     await unmountAll();
     stubDom();
     await mountShell("#/history", [message("m1")], [], { handOff: true, store: before.store });
-    expect(await readNote("Jon")).toContain(en.sentCopy.waitingFull);
+    expect(await readNote("is full")).toContain(en.sentCopy.quotaWaiting);
     expect(await readNote("Mila")).toContain(en.sentCopy.missingTooBig);
     expect(footLine()).toContain("Sent to Mila");
     const dismissMila = dismissFor("Mila")!;
     await act(async () => { dismissMila.click(); });
     await waitFor(() => !footLine().includes("Mila"), "Dismiss ends Mila's note");
-    expect(footLine(), "Dismiss took the other note too").toContain("Sent to Jon");
+    expect(footLine(), "Dismiss took the other note too").toContain("is full");
     expect(keptNotes(), "the dismissed note is still kept in this browser").not.toContain("Mila");
     expect(keptNotes()).toContain("Jon");
-    const dismissJon = dismissFor("Jon")!;
+    const dismissJon = footAct(en.sentCopy.notNow)!;
     await act(async () => { dismissJon.click(); });
     await waitFor(() => footLine() === "", "Dismiss ends the last note");
     expect(keptNotes()).toBe("");
@@ -292,11 +295,11 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     Object.assign(s.sentCopy, { sentCopy: "pending", sentCopyReason: "full" });
     await replyOpen(s, "See you on Thursday");
     await act(async () => { replySend(s.el)!.click(); });
-    await waitFor(() => footLine().includes(en.sentCopy.waitingFull), "the reply's note");
+    await waitFor(() => footLine().includes(en.sentCopy.quotaWaiting), "the reply's note");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the dock open on the message again");
     for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
-    expect(footLine(), "the open dock hid the note").toContain(en.sentCopy.waitingFull);
+    expect(footLine(), "the open dock hid the note").toContain(en.sentCopy.quotaWaiting);
   }, 40_000);
 
   it("3 — a refusal after the hand-off stands in the foot with Open, no toast, and Open brings the words back", async () => {
@@ -529,13 +532,14 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
 });
 
 describe("CONTROLS: an unhealthy send keeps its editor and says why", () => {
-  it("5a — the outbox held: the dock stays, its line says it, and the foot says nothing", async () => {
+  it("5a — a held outbox keeps the editor open, marks Send busy, and leaves the status line and foot empty", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
     await replyOpen(s, "Held words");
     const release = gate(s);
     await act(async () => { replySend(s.el)!.click(); });
-    await waitFor(() => lineUnder() != null, "the line under the editor");
+    await waitFor(() => replySend(s.el)?.getAttribute("aria-busy") === "true", "the busy Send action");
     expect(replySurface(s.el), "the dock closed with the outbox held").not.toBeNull();
+    expect(lineUnder()).toBeNull();
     expect(footLine()).toBe("");
     await act(async () => { release(); });
     await waitFor(() => toasts().includes(en.reply.toastSent), "today's sent toast");

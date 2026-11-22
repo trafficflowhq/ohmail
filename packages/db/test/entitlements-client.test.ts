@@ -119,10 +119,32 @@ describe("access — the program's own body, and what the open side derives from
         lifecycleEpoch: "2026-09-22T00:00:00.000Z",
       },
       prices: { classify_ingest: 1, screener: 1, draft: 15, propose: 20, workflow: 15 },
+      aiCredits: { remaining: 1832 },
     });
     expect(c.paths).toEqual(["/v1/access"]);
     expect(JSON.parse(c.bodies[0]!)).toEqual({ accountId: ACC });
     expect(c.faults).toEqual([]);
+  });
+
+  it("carries the main balance and the billing program's allowance together", async () => {
+    const active = wire("access-200-active") as Record<string, unknown>;
+    const c = client([
+      { status: 200, body: { ...active, balance: 1350, creditAllowance: 1000 } },
+    ]);
+    await expect(c.port.access(ACC)).resolves.toMatchObject({ aiCredits: { remaining: 1350, total: 1000 } });
+  });
+
+  it.each([0, -1])("carries the balance alone when the allowance is %s", async (creditAllowance) => {
+    const active = wire("access-200-active") as Record<string, unknown>;
+    const c = client([{ status: 200, body: { ...active, balance: 40, creditAllowance } }]);
+    expect((await c.port.access(ACC)).aiCredits).toEqual({ remaining: 40 });
+  });
+
+  it("carries an older billing response's balance without guessing an allowance", async () => {
+    const active = wire("access-200-active") as { balance: number };
+    const c = client([{ status: 200, body: active }]);
+    await expect(c.port.access(ACC)).resolves.toMatchObject({ aiCredits: { remaining: active.balance } });
+    expect(await c.port.access(ACC)).not.toHaveProperty("aiCredits.total");
   });
 
   it("THE REFUSAL IS `syncEnabled === false`, which is the contract's own derivation", async () => {

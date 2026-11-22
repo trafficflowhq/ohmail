@@ -109,7 +109,7 @@ describe("the claim question tells the lease's state", () => {
     const s = await mount(LIVE);
     expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     expect(s.lead()).toBe("");
-    expect(s.text()).not.toContain(with_("{name} stops organizing on its next pass — within a minute — and becomes a reader: it keeps its copy of your mail and moves nothing. Your rules and the away responder travel with the mailbox."));
+    expect(s.text()).toContain(with_("{name} stops organizing on its next pass — within a minute — and becomes a reader: it keeps its copy of your mail and moves nothing. Your rules and the away responder travel with the mailbox."));
     expect(s.text()).not.toContain(with_("This install reads, searches and sends. {name} keeps organizing. You can take over later from Settings → Mailboxes."));
     expect(s.text()).not.toContain("The install that organized this mailbox has stopped checking in, so nothing organizes it now.");
     expect(s.text()).not.toContain(with_("This install takes the mailbox over and starts screening new mail. There is no hand-over to wait for: {name} stopped checking in."));
@@ -135,8 +135,7 @@ describe("the claim question tells the lease's state", () => {
   it("STALE holder, the default taken: the run goes on to take the lease", async () => {
     const s = await mount(STALE);
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.mapTitle);
-    await s.press(t.continue);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.organizedWith.length, "the default press did not ask for the mailbox").toBe(1);
@@ -162,7 +161,7 @@ describe("the claim question tells the lease's state", () => {
 
   it("NO holder: the question is not asked at all", async () => {
     const s = await mount(NOBODY);
-    expect(s.heading()).toBe(t.mapTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).not.toContain("This mailbox already has an organizer. Two installs never organize one mailbox at once.");
     expect(s.text()).not.toContain("The install that organized this mailbox has stopped checking in, so nothing organizes it now.");
   });

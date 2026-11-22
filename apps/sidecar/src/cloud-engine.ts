@@ -940,6 +940,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const windowOutbox = createWindowOutbox({
       dataDir: config.dataDir, authorized: async () => true, log: log ?? (() => undefined), scope: () => served,
       owner: { address: config.address ?? null, base: cloudBase },
+      calendar: config.address !== null,
     });
     /* The window's writes the account answered 2xx, for this engine's life: their rows wait only for
        their echo, so the count leaves them out. The count is null when the file cannot be read, and

@@ -198,7 +198,9 @@ describe("every windowed list stamps its slots", () => {
 
   it("reads the lists it is about", () => {
     const folder = readFileSync("packages/app/src/folder/FolderList.tsx", "utf8");
-    expect(folder).toMatch(/<LetterRows[\s\S]*?slice=\{\{ index: index \+ first, first, total: list\.length \}\}/);
+    expect(folder).toMatch(/useCursorWindow\(rows\.length,/);
+    expect(folder).toContain("rows.slice(window.start, window.end)");
+    expect(folder).toMatch(/<LetterRows[\s\S]*?rows=\{visible\}[\s\S]*?slice=\{\{ index: window\.start, first: window\.start, total: rows\.length \}\}/);
     const letterRows = readFileSync("packages/app/src/place-list/LetterRows.tsx", "utf8");
     expect(letterRows).toMatch(/index = windowed \? windowed\.start \+ offset/);
     expect(letterRows).toMatch(/at: windowed\.start \+ offset \+ 1, of: windowed\.total/);

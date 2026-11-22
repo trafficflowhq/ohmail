@@ -64,6 +64,7 @@ const described = (el: HTMLElement): string | null => {
 function fillJoin(imap = A, smtp = B): void {
   type(J.mailboxAddress, ADDRESS);
   press(P.otherLabel);
+  fireEvent.click(screen.getByText(J.manualPorts));
   type(J.imapHost, imap);
   type(J.smtpHost, smtp);
   type(J.appPasswordLabel, MARKER);
@@ -72,20 +73,42 @@ const body = (imap: object, smtp: object) => ({ provider: "imap", address: ADDRE
 const leg = (host: string, more: object = {}) => ({ host, user: ADDRESS, pass: MARKER, ...more });
 
 describe("each purpose sends what its shipped form sent", () => {
+  it("opens a separate manual sign-in with server settings behind a disclosure", () => {
+    const { door, of } = fakeDoor();
+    draw(door, { purpose: { kind: "join" } });
+    type(J.mailboxAddress, ADDRESS);
+    press(P.otherLabel);
+    expect(screen.queryByRole("button", { name: P.otherLabel })).toBeNull();
+    expect(screen.getByLabelText(J.mailboxAddress)).toHaveProperty("value", ADDRESS);
+    expect(screen.getByLabelText(J.appPasswordLabel)).toBeTruthy();
+    expect(screen.getByText("2/3")).toBeTruthy();
+    press(O.setupMenu);
+    expect(screen.getByRole("menuitem", { name: J.manualBack })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    const ports = screen.getByText("Host and ports");
+    expect((ports.closest("details") as HTMLDetailsElement).open).toBe(false);
+    fireEvent.click(ports);
+    expect((ports.closest("details") as HTMLDetailsElement).open).toBe(true);
+    expect(screen.getByRole("textbox", { name: J.imapHost })).toBeTruthy();
+    press("Back");
+    expect(screen.getByRole("button", { name: P.otherLabel })).toBeTruthy();
+    expect(of("connect")).toEqual([]);
+  });
+
   it("the hosted join needs an outgoing server for a manual mailbox", () => {
     const { door } = fakeDoor();
     draw(door, { purpose: { kind: "join" } });
     fillJoin(A, "");
-    expect(screen.getByRole("button", { name: J.connectMailbox })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: J.manualConnect })).toHaveProperty("disabled", true);
     type(J.smtpHost, B);
-    expect(screen.getByRole("button", { name: J.connectMailbox })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: J.manualConnect })).toHaveProperty("disabled", false);
   });
 
   it("the join connects a first mailbox: the body as typed, the mode `seed`, and the wire's id in the answer", async () => {
     const { door, of } = fakeDoor({ connect: [CONNECTED] });
     const view = draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect").map((call) => call.sent)).toEqual([{ input: body(leg(A), leg(B)), mode: "seed" }]);
     expect(of("probe")).toEqual([]);
@@ -103,10 +126,11 @@ describe("each purpose sends what its shipped form sent", () => {
       draw(door, { purpose: { kind } });
       type(O.address, ADDRESS);
       press(P.otherLabel);
+      if (kind === "firstRun") fireEvent.click(screen.getByText(J.manualPorts));
       type(O.imapHost, A);
       type(O.smtpHost, B);
       type(O.password, MARKER);
-      press(O.connect);
+      press(kind === "firstRun" ? J.manualConnect : O.connect);
       await settle();
       expect(of("connect").map((call) => call.sent)).toEqual([{ input: body(leg(A), leg(B)), mode }]);
       cleanup();
@@ -222,7 +246,7 @@ describe("a refusal stands at the press", () => {
     const { door } = fakeDoor({ connect: [REFUSED_PASSWORD] });
     const view = draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(screen.getByText(M.probe_auth)).toBeTruthy();
     expect((screen.getByLabelText(J.mailboxAddress) as HTMLInputElement).value).toBe(ADDRESS);
@@ -246,7 +270,7 @@ describe("a refusal stands at the press", () => {
     });
     draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(
       screen.getByText(
@@ -260,7 +284,7 @@ describe("a refusal stands at the press", () => {
     const { door, calls } = fakeDoor({ connect: [answer.promise] });
     const view = draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     const sent = calls.length;
     view.unmount();
@@ -277,7 +301,7 @@ describe("whose browser this is, before every press that carries a credential", 
     const { door, calls } = fakeDoor({ connect: [CONNECTED] });
     const view = draw(door, { purpose: { kind: "join" }, guard });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(guard.before).toHaveBeenCalledTimes(1);
     expect(calls.filter((call) => call.verb === "connect")).toEqual([]);
@@ -291,7 +315,7 @@ describe("whose browser this is, before every press that carries a credential", 
     const { door, of } = fakeDoor({ connect: [WINDOW_CLOSED, CONNECTED] });
     draw(door, { purpose: { kind: "join" }, guard: { before, said: null, clear: () => undefined } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     press("verify");
     await settle();
@@ -306,14 +330,14 @@ describe("a consent is a press, for one server", () => {
     draw(door, { purpose: { kind: "join" } });
     fillJoin();
     expect(screen.queryByRole("switch")).toBeNull();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     const line = screen.getByRole("switch", { name: M.insecureConsentLabel });
     expect(line.getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText(M.insecureConsentWarning)).toBeTruthy();
     expect(of("connect")[0]!.sealed).not.toContain("allowInsecure");
     fireEvent.click(line);
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect")[1]!.sent).toEqual({
       input: body(leg(A, { allowInsecure: true }), leg(B)),
@@ -325,14 +349,14 @@ describe("a consent is a press, for one server", () => {
     const { door, of } = fakeDoor({ connect: [noEncryption("imap"), CONNECTED] });
     draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     fireEvent.click(screen.getByRole("switch", { name: M.insecureConsentLabel }));
     type(J.imapHost, B);
     expect(screen.queryByRole("switch")).toBeNull();
     type(J.imapHost, A);
     expect(screen.queryByRole("switch")).toBeNull();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect")[1]!.sealed).not.toContain("allowInsecure");
   });
@@ -341,9 +365,10 @@ describe("a consent is a press, for one server", () => {
     const { door } = fakeDoor({ connect: [noEncryption("smtp")] });
     draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(screen.getByRole("switch", { name: M.insecureConsentLabelSmtp })).toBeTruthy();
+    press(J.manualBack);
     press("Gmail");
     press(P.otherLabel);
     expect(screen.queryByRole("switch")).toBeNull();
@@ -353,10 +378,10 @@ describe("a consent is a press, for one server", () => {
     const { door, of } = fakeDoor({ connect: [noEncryption("imap"), CONNECTED] });
     draw(door, { purpose: { kind: "join" } });
     fillJoin(A, A);
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     fireEvent.click(screen.getByRole("switch", { name: M.insecureConsentLabelBoth }));
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect")[1]!.sent).toEqual({
       input: body(leg(A, { allowInsecure: true }), leg(A, { allowInsecure: true })),
@@ -417,7 +442,7 @@ describe("the second factor, asked in place and once", () => {
     const view = draw(door, { purpose: { kind: "join" } });
     fillJoin();
     expect(screen.queryByRole("dialog")).toBeNull();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(view.asks.at(-1)!.line).toBe(M.factorBody);
@@ -449,7 +474,7 @@ describe("the second factor, asked in place and once", () => {
     const { door, of } = fakeDoor({ connect: [WINDOW_CLOSED] });
     const view = draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     const late = view.asks.at(-1)!;
     press("cancel");
@@ -466,7 +491,7 @@ describe("the second factor, asked in place and once", () => {
     const { door, of } = fakeDoor({ connect: [WINDOW_CLOSED] });
     const view = draw(door, { purpose: { kind: "join" } });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     const late = view.asks.at(-1)!;
     type(J.appPasswordLabel, `${MARKER}x`);
@@ -481,11 +506,11 @@ describe("the second factor, asked in place and once", () => {
     const { door, of } = fakeDoor({ connect: [noEncryption("imap"), second.promise] });
     draw(door, { purpose: { kind: "join" } });
     fillJoin(A, A);
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     const line = (): HTMLElement => screen.getByRole("switch", { name: M.insecureConsentLabelBoth });
     fireEvent.click(line());
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect")).toHaveLength(2);
     expect(of("connect")[1]!.sealed).toContain("allowInsecure");
@@ -510,7 +535,7 @@ describe("the second factor, asked in place and once", () => {
     });
     // Nothing ran, said as the join says it; the next press tries the form as it stands.
     expect(screen.getByText(D.stepUpCancelledNothingRan)).toBeTruthy();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect")).toHaveLength(3);
     expect(of("connect")[2]!.sealed).not.toContain("allowInsecure");
@@ -521,7 +546,7 @@ describe("the second factor, asked in place and once", () => {
     const { door, of } = fakeDoor({ connect: [first.promise] });
     draw(door, { purpose: { kind: "join" } });
     fillJoin(A, B);
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect")).toHaveLength(1);
     // The person corrects the incoming server while the press is still on its way.
@@ -542,7 +567,7 @@ describe("the second factor, asked in place and once", () => {
     expect(screen.getByText(D.stepUpCancelledNothingRan)).toBeTruthy();
     // What was typed stands, the password too; the next press dials the corrected host.
     expect((screen.getByLabelText(J.appPasswordLabel) as HTMLInputElement).value).toBe(MARKER);
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(of("connect").map(dialled)).toEqual([A, C]);
   });
@@ -570,7 +595,7 @@ describe("the second factor, asked in place and once", () => {
     const { door, of } = fakeDoor({ connect: [WINDOW_CLOSED] });
     draw(door, { purpose: { kind: "join" } }, { factor: NONE });
     fillJoin();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(screen.getByText(J.stepUpExpired)).toBeTruthy();
     expect(of("connect")).toHaveLength(1);
@@ -727,6 +752,7 @@ describe("what was typed survives a trip to another step, the password apart", (
     expect(held).toMatchObject({ address: ADDRESS, provider: "imap", imapHost: A, smtpHost: B });
     expect(JSON.stringify(held)).not.toContain("MARKER");
     draw(door, { purpose: { kind: "join" }, kept });
+    fireEvent.click(screen.getByText(J.manualPorts));
     expect((screen.getByLabelText(J.mailboxAddress) as HTMLInputElement).value).toBe(ADDRESS);
     expect((screen.getByLabelText(J.imapHost) as HTMLInputElement).value).toBe(A);
     expect((screen.getByLabelText(J.appPasswordLabel) as HTMLInputElement).value).toBe("");

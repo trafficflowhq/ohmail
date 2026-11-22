@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
+import { useNoticesVersion, writeChannels } from "@ohmail/app-logic/notices/browser-channels";
 import { useEngine } from "@ohmail/app-logic/engine";
 import type { WakePaneState } from "@ohmail/app-logic/phone/wake";
 import { NewMailPane } from "@ohmail/app/phone-settings/new-mail";
 import { YourNameSheet } from "@ohmail/app/phone-settings/your-name";
 import { useText } from "@ohmail/app/text";
 import { Button } from "@ohmail/ui/base";
-import { SettingActs, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { SettingLine, SettingActs, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import type { PhoneNameRow } from "../../src/shell/bridge-kinds";
 import type { Bridge } from "./bridge";
+import { storedNoticeChoices } from "./notices";
 
 export function phoneYourNamePane(bridge: Bridge, scope: string) {
   return function PhoneYourNamePane() {
@@ -80,8 +82,11 @@ export function phoneYourNamePane(bridge: Bridge, scope: string) {
   };
 }
 
-export function phoneNewMailPane(bridge: Bridge) {
+export function phoneNewMailPane(bridge: Bridge, scope: string, showsDetails: boolean) {
   return function PhoneNewMailPane() {
+    const t = useText("settingsNotifications");
+    useNoticesVersion(0);
+    const channels = storedNoticeChoices(localStorage, false, scope);
     const [wake, setWake] = useState<WakePaneState | null>(null);
 
     useEffect(() => {
@@ -106,6 +111,7 @@ export function phoneNewMailPane(bridge: Bridge) {
 
     if (wake === null) return null;
     return (
+      <>
       <NewMailPane
         model={{
           ...wake,
@@ -113,6 +119,13 @@ export function phoneNewMailPane(bridge: Bridge) {
           turnOff: () => void bridge.request("phone.wake", { do: "off" }).catch(() => {}),
         }}
       />
+      {showsDetails ? <SettingsSheet>
+        <SettingLine label={t("showMailDetails")} toggle={{
+          on: channels.showMailDetails === true,
+          onChange: (on) => writeChannels({ ...channels, showMailDetails: on }, scope),
+        }} />
+      </SettingsSheet> : null}
+      </>
     );
   };
 }

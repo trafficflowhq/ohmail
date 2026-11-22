@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import { act, cleanup } from "@testing-library/react";
+import { act, cleanup, within } from "@testing-library/react";
 import type { OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
 import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
@@ -96,9 +96,15 @@ describe("↵ on setup's last step does what its badge says", () => {
 
   it("control: Start over focused by the person still asks to start over on ↵", async () => {
     const s = await toSummary();
-    await act(async () => { button(s.el, t.restart).focus(); });
+    const page = within(document.body);
+    await act(async () => { page.getByRole("button", { name: t.setupMenu }).focus(); });
+    await enter();
+    const menu = page.getByRole("menu", { name: t.setupMenu });
+    await act(async () => { within(menu).getByRole("menuitem", { name: t.restart }).focus(); });
     await enter();
     expect(s.completed(), "↵ on a Start over the person chose opened ohmail").toBe(0);
+    expect(page.getByRole("dialog", { name: t.restart }).textContent)
+      .toContain(t.restartWhat.replace(/\.$/, ""));
     expect(heading(s.el), "the restart question replaced nothing").toBe(t.doneReaderTitle);
   });
 });

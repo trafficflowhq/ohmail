@@ -57,6 +57,8 @@ describe("Signatures", () => {
     const model = { ...signaturesState(), write: vi.fn(() => write.promise) };
     mount(model);
     const save = () => within(sheetOf("mila@brunner.example")).getByRole("button", { name: G.save });
+    expect(within(sheetOf("mila@brunner.example")).queryByRole("button", { name: G.save })).toBeNull();
+    fireEvent.focus(editorOf("mila@brunner.example"));
     expect(save().hasAttribute("disabled")).toBe(true);
     type("mila@brunner.example", "Mila");
     fireEvent.click(save());
@@ -175,6 +177,10 @@ describe("Signatures", () => {
 
   it("reads in German", () => {
     mount(signaturesState(), "de");
-    expect(screen.getByText(settingsDe.settings.signatures.intro)).toBeTruthy();
+    expect(
+      screen.getByRole("textbox", {
+        name: `${settingsDe.settings.signatures.title}: mila@brunner.example`,
+      }),
+    ).toBeTruthy();
   });
 });

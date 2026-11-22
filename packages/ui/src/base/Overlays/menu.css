@@ -222,6 +222,12 @@
     border-radius: var(--dot-r);
     background: var(--ink);
   }
+  .oh-menu-item[data-stay][aria-checked="true"] {
+    font-weight: inherit;
+  }
+  .oh-menu-item[data-stay][aria-checked="true"] > .oh-menu-word::after {
+    display: none;
+  }
 
   /* On the phone every menu comes up from the foot. */
   :root[data-device="phone"] .oh-menu:not([data-anchored]),

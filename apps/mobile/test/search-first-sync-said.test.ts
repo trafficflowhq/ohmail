@@ -77,13 +77,14 @@ describe("the phone's count line during a first sync", () => {
     expect(read("../src/state/store-views.ts")).toContain("importing: info?.importing === true");
   });
 
-  it("the sentences are the browser's, word for word", () => {
-    const s = web.search as Record<"syncing" | "similarHintSynced" | "scopeSynced" | "scopeSyncedAtLeast" | "scopeSyncedAbout", string>;
-    expect(Copy.searchSyncing).toBe(s.syncing);
-    expect(Copy.searchSimilarHintSynced).toBe(s.similarHintSynced);
-    expect(Copy.searchSyncedAtLeast(7)).toBe(s.scopeSyncedAtLeast.replace("{total, number}", "7"));
-    expect(Copy.searchSyncedAbout(7)).toBe(s.scopeSyncedAbout.replace("{total, number}", "7"));
-    expect(Copy.searchSynced(7)).toBe(s.scopeSynced.replace(/\{total, plural.*\}\}$/, "7 matched"));
-    expect(Copy.searchSynced(0)).toBe(s.scopeSynced.replace(/\{total, plural.*\}\}$/, "nothing matched"));
+  it("names the same search boundary as the browser and keeps the phone count wording", () => {
+    const search = web.search;
+    expect(search.saidSynced).toBe(`Only the mail synced so far was searched. ${Copy.searchSyncing}`);
+    expect(search.similarHead).toBe("Similar");
+    expect(Copy.searchSimilarHintSynced).toBe("Nothing synced so far matched exactly, so these are the closest words.");
+    expect(Copy.searchSyncedAtLeast(7)).toBe("Searched the mail synced so far — at least 7 matched");
+    expect(Copy.searchSyncedAbout(7)).toBe("Searched the mail synced so far — about 7 matched");
+    expect(Copy.searchSynced(7)).toBe("Searched the mail synced so far — 7 matched");
+    expect(Copy.searchSynced(0)).toBe("Searched the mail synced so far — nothing matched");
   });
 });

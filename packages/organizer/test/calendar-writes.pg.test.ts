@@ -14,6 +14,7 @@ import {
 import { calCalendars, calConnections, calEvents, calSettings, calWrites } from "@trafficflow/db";
 import { calendarPool, passDb, type ConnectionKey } from "../src/calendar/index.js";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
+import type { CalendarWriteDrainInput } from "../src/calendar/types.js";
 import { calendarWriteDrain, WRITE_MAX_ATTEMPTS, WRITE_PRUNE_PER_TURN } from "../src/calendar/write-drain.js";
 import {
   AVAILABLE, Secret, ZONES, capturedLog, connectionOf, depsFor, openWorld, providersOf, recordWrite, scriptedReader, scriptedWriter, seedConnection, single,
@@ -69,12 +70,12 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   const provider = (writer: CalendarProvider["writer"], word: "google" | "microsoft" | "caldav" = "google"): CalendarProvider =>
     ({ reader: scriptedReader(word, { readings: new Map() }), writer, notices: null, http: { request: async () => ({ arrived: false, reason: "unknown" }) } });
 
-  const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal; word?: "google" | "microsoft" | "caldav"; proven?: ProvenRepeats } = {}) =>
+  const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal; word?: "google" | "microsoft" | "caldav"; proven?: ProvenRepeats; moveDestination?: CalendarWriteDrainInput["moveDestination"] } = {}) =>
     calendarWriteDrain({
       clock: { now: o.clock ?? (() => Date.now()) }, zones: ZONES, log: capturedLog().log, ...(o.turnMs === undefined ? {} : { turnMs: o.turnMs }),
       ...(o.proven === undefined ? {} : { proven: o.proven }),
     })({
-      db: passDb(calendarPool(w.db), a.accountId), key: a.key, provider: provider(writer, o.word), connection: connection(o.tag ?? a.accountId, o.word), signal: o.signal ?? never,
+      db: passDb(calendarPool(w.db), a.accountId), key: a.key, provider: provider(writer, o.word), connection: connection(o.tag ?? a.accountId, o.word), signal: o.signal ?? never, moveDestination: o.moveDestination,
     });
 
   const rows = (a: Account) => w.db.select({
@@ -106,6 +107,105 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   }
   const retitle = (e: { id: string; updatedAt: Date }, title: string) =>
     ({ kind: "calendar_event_update", eventId: e.id, base: e.updatedAt.toISOString(), scope: { kind: "record" }, change: { title } });
+
+  it("settles a personal move after a lost original-removal response without making a second copy", async () => {
+    const a = await account();
+    const [calendar] = await w.db.insert(calCalendars).values({
+      accountId: a.accountId, connectionId: a.connectionId, providerId: "other-calendar", name: "Personal", access: "owner",
+    }).returning({ id: calCalendars.id, providerId: calCalendars.providerId });
+    const { id } = await press(a.accountId, "move", {
+      kind: "calendar_event_move", eventId: a.eventId, base: a.base, toCalendarId: calendar!.id, copyThenRemove: true,
+    });
+    const payload = (await rows(a))[0]!.payload as object;
+    const fields = { ...create(a, "Kiln check").event,
+      start: { kind: "instant", value: "20261118T090000Z" }, end: { kind: "instant", value: "20261118T100000Z" } };
+    await w.db.update(calWrites).set({ payload: { ...payload, transfer: { source: "evt-1", fields } } }).where(eq(calWrites.id, id));
+    const original = { ...upsert("evt-1", '"v1"', single("uid-1", 18, "Kiln check")), portableCopy: true as const };
+    const copy = { ...upsert("copy", '"copy"', single("copy-uid", 18, "Kiln check")), portableCopy: true as const };
+    let originalGone = false;
+    let copies = 0;
+    let removedCopies = 0;
+    let wakes = 0;
+    const source = {
+      ...scriptedWriter("google"),
+      readForMove: async (): Promise<WriteAnswer> => ({ ok: true, items: originalGone ? [{ kind: "gone", id: "evt-1" }] : [original] }),
+      remove: async (_c: Connection, _cal: unknown, target: { version: string }): Promise<WriteAnswer> => {
+        expect(target.version).toBe('"v1"');
+        originalGone = true;
+        return { ok: false, reason: "timeout", retryAfterMs: null };
+      },
+    };
+    const dest = {
+      ...scriptedWriter("microsoft"),
+      readForMove: async (): Promise<WriteAnswer> => ({ ok: true, items: [copy] }),
+      create: async (): Promise<WriteAnswer> => { copies++; return { ok: true, items: [copy] }; },
+      remove: async (): Promise<WriteAnswer> => { removedCopies++; return { ok: true, items: [] }; },
+    };
+    const moveDestination = async () => ({ writer: dest, connection: connection("destination", "microsoft"), cal: { id: calendar!.providerId }, markDue: async () => { wakes++; } });
+    await run(a, source, { moveDestination });
+    expect((await rows(a))[0]).toMatchObject({ state: "pending", payload: { transfer: { progress: { phase: "removing", id: "copy", version: '"copy"' } } } });
+    expect(wakes).toBe(1);
+    await dueNow(a);
+    await run(a, source, { moveDestination });
+    expect((await rows(a))[0]).toMatchObject({ state: "applied", payload: {} });
+    expect(await events(a)).toEqual([]);
+    expect({ copies, removedCopies }).toEqual({ copies: 1, removedCopies: 0 });
+  });
+
+  it.each(["unavailable", "expired"] as const)("settles a %s move and drains a later write on the same connection", async (state) => {
+    const a = await account();
+    const [calendar] = await w.db.insert(calCalendars).values({
+      accountId: a.accountId, connectionId: a.connectionId, providerId: "other-calendar", name: "Personal", access: "owner",
+    }).returning({ id: calCalendars.id, providerId: calCalendars.providerId });
+    const { id } = await press(a.accountId, "move", {
+      kind: "calendar_event_move", eventId: a.eventId, base: a.base, toCalendarId: calendar!.id, copyThenRemove: true,
+    });
+    const payload = (await rows(a))[0]!.payload as object;
+    const fields = { ...create(a, "Kiln check").event,
+      start: { kind: "instant", value: "20261118T090000Z" }, end: { kind: "instant", value: "20261118T100000Z" } };
+    const original = { ...upsert("evt-1", '"v1"', single("uid-1", 18, "Kiln check")), portableCopy: true as const };
+    const copy = { ...upsert("copy", '"copy"', single("copy-uid", 18, "Kiln check")), portableCopy: true as const };
+    let removedOriginal = false;
+    let woke = 0;
+    let copies = 0;
+    let removedCopies = 0;
+    const source = {
+      ...scriptedWriter("google"),
+      readForMove: async (): Promise<WriteAnswer> => ({ ok: true, items: [original] }),
+      remove: async (_c: Connection, _cal: unknown, target: { version: string }): Promise<WriteAnswer> => {
+        expect(target.version).toBe('"v1"');
+        removedOriginal = true;
+        return { ok: false, reason: "timeout", retryAfterMs: null };
+      },
+    };
+    const dest = {
+      ...scriptedWriter("microsoft"),
+      readForMove: async (): Promise<WriteAnswer> => ({ ok: true, items: [copy] }),
+      create: async (): Promise<WriteAnswer> => { copies++; return { ok: true, items: [copy] }; },
+      remove: async (): Promise<WriteAnswer> => { removedCopies++; return { ok: false, reason: "read_only", retryAfterMs: null }; },
+    };
+    const moveDestination = async () => {
+      const [to] = await w.db.select({ access: calCalendars.access }).from(calCalendars).where(eq(calCalendars.id, calendar!.id));
+      return to?.access === "owner" ? { writer: dest, connection: connection("destination", "microsoft"),
+        cal: { id: calendar!.providerId }, markDue: async () => { woke++; } } : null;
+    };
+    await w.db.update(calWrites).set({ payload: { ...payload, transfer: { source: "evt-1", fields, progress: { phase: "verifying", id: "copy", version: '"copy"' } } } }).where(eq(calWrites.id, id));
+    await press(a.accountId, "later", create(a));
+    if (state === "unavailable") {
+      await w.db.update(calCalendars).set({ access: "reader" }).where(eq(calCalendars.id, calendar!.id));
+    } else {
+      await w.db.update(calWrites).set({ attempts: WRITE_MAX_ATTEMPTS }).where(eq(calWrites.id, id));
+    }
+    await run(a, source, { moveDestination });
+    expect((await rows(a)).map(({ key, state, refusal }) => [key, state, refusal])).toEqual([
+      ["move", "refused", state === "expired" ? "move_copy_left" : "move_destination_unavailable"], ["later", "applied", null],
+    ]);
+    expect((await rows(a))[0]!.payload).toMatchObject({ transfer: { progress: { id: "copy" } } });
+    expect(removedOriginal).toBe(false);
+    expect(copies).toBe(0);
+    expect(removedCopies).toBe(state === "expired" ? 1 : 0);
+    expect(woke).toBe(state === "expired" ? 1 : 0);
+  });
 
   it.each(["google", "microsoft"] as const)("passes the saved creation version through both rows of a %s split", async (word) => {
     const a = await account(word);

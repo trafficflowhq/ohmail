@@ -150,7 +150,7 @@ const h1 = async (page: Page): Promise<string> => (await page.locator("h1").firs
  * the second factor is the step-up dialog with its code field and Verify. English here; the German case names its own.
  */
 const PROVIDERS = "Provider";
-const OTHER_IMAP = "Any other IMAP mailbox";
+const OTHER_IMAP = en.providerPicker.otherShort;
 const MAILBOX_ADDRESS = "Mailbox address";
 const IMAP_HOST = "IMAP server (incoming)";
 const SMTP_HOST = "SMTP server (outgoing)";
@@ -158,6 +158,10 @@ const APP_PASSWORD = "App password";
 const tile = (page: Page, name: string | RegExp, group = PROVIDERS) =>
   page.getByRole("group", { name: group }).getByRole("button", { name });
 const field = (page: Page, label: string) => page.getByLabel(label, { exact: true });
+const manualHeading = (page: Page) =>
+  page.getByRole("heading", { name: en.join.manualTitle, exact: true });
+const showManualHosts = (page: Page) =>
+  page.getByText(en.join.manualPorts, { exact: true }).click();
 const printed = (sentence: string) => sentence.replace(/\.$/, "");
 const sentHeading = (page: Page, copy: typeof en.join) =>
   page.getByRole("heading", { level: 1 }).filter({ hasText: copy.openLink.split("<a>")[0]!.trim() });
@@ -290,21 +294,22 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
   it("the account, the mailed link, an authenticator and the codes bring a stranger to the mailbox step", async () => {
     await signUp(page, person);
     // This host operates no entitlements program, so the plan step answers "entitled" and moves on.
-    await page.getByRole("heading", { name: "Connect a mailbox" }).waitFor({ timeout: 30_000 });
+    await page.getByRole("heading", { name: en.onboarding.providerFirst, exact: true }).waitFor({ timeout: 30_000 });
   }, 120_000);
 
   it("a mail server on the person's own network is refused ON the mailbox step, with everything typed kept", async () => {
     expect(await tile(page, OTHER_IMAP).evaluate((e) => getComputedStyle(e).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
     await tile(page, OTHER_IMAP).click();
+    await showManualHosts(page);
     await field(page, MAILBOX_ADDRESS).fill(person.email);
     await field(page, IMAP_HOST).fill(OWN_NETWORK_HOST);
     await field(page, SMTP_HOST).fill(PUBLIC_SMTP);
     await field(page, APP_PASSWORD).fill("app-password-fixture");
-    await page.getByRole("button", { name: "Connect mailbox" }).click();
+    await page.getByRole("button", { name: en.join.manualConnect, exact: true }).click();
     // The form's refusal: an alert that says something (the router's own announcer is an empty one).
     const refusal = page.getByRole("alert").filter({ hasText: /\S/ }).first();
     await refusal.waitFor({ timeout: 30_000 });
-    expect(await h1(page), `the refusal left the mailbox step: ${await said(page)}`).toBe("Connect a mailbox");
+    expect(await manualHeading(page).isVisible(), `the refusal left the mailbox step: ${await said(page)}`).toBe(true);
     // The host guard's own sentence for a name that resolves to a private address.
     expect(await refusal.textContent()).toMatch(/points inside a private network/);
     expect(await field(page, IMAP_HOST).inputValue()).toBe(OWN_NETWORK_HOST);
@@ -319,15 +324,16 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await field(page, MAILBOX_ADDRESS).fill(person.email);
       await field(page, APP_PASSWORD).fill("app-password-fixture");
     }
+    if (!await field(page, IMAP_HOST).isVisible()) await showManualHosts(page);
     await field(page, IMAP_HOST).fill(PUBLIC_IMAP);
     await field(page, SMTP_HOST).fill(PUBLIC_SMTP);
     world.clock.advance(6 * 60_000);
     heard = [];
-    await page.getByRole("button", { name: "Connect mailbox" }).click();
+    await page.getByRole("button", { name: en.join.manualConnect, exact: true }).click();
     const stepUp = page.getByRole("dialog");
     await stepUp.waitFor({ timeout: 30_000 }).catch(() => {});
     expect(await stepUp.count(), `no step-up prompt: ${await said(page)}`).toBe(1);
-    expect(await h1(page)).toBe("Connect a mailbox");
+    expect(await manualHeading(page).isVisible()).toBe(true);
 
     await stepUp.getByLabel("Six-digit code from your authenticator app").fill(totpAt(person.totpSecret, world.clock.now()));
     await stepUp.getByRole("button", { name: "Verify code" }).click();
@@ -346,7 +352,7 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       const p = await fresh.newPage();
       const who = { email: "noor@family.example", password: "another-long-signup-password", totpSecret: "" };
       await signUp(p, who);
-      await p.getByRole("heading", { name: printed(en.join.startTrialTitle) }).waitFor({ timeout: 30_000 });
+      await p.getByRole("heading", { name: "Start your 14-day trial" }).waitFor({ timeout: 30_000 });
       // The plan step has one way on (the account page). A person who leaves it lands on the front door by its address.
       await p.goto(`http://localhost:${webPort}/`);
       await p.getByRole("button", { name: "Start your trial" }).waitFor({ timeout: 30_000 }).catch(() => {});
@@ -371,11 +377,11 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       const who = { email: "ines@family.example", password: "a-third-long-signup-password", totpSecret: "" };
       // The site's Pro button with the yearly toggle; the verification link comes back without the query.
       await signUp(p, who, "/join?plan=pro&interval=year");
-      const trial = p.getByRole("heading", { name: en.join.startOn.replace("<plan></plan>.", "Pro") });
+      const trial = p.getByRole("heading", { name: "Start 14 days on Pro" });
       await trial.waitFor({ timeout: 30_000 });
       expect(await trial.count(), `no trial heading: ${await said(p)}`).toBe(1);
       expect(await p.getByText(en.join.planYearly, { exact: true }).count()).toBe(1);
-      expect(await p.getByText(en.join.planNoCard, { exact: true }).count()).toBe(1);
+      expect(await p.getByText("No card", { exact: true }).count()).toBe(1);
       await p.locator('a[href^="https://plane.example/"]').waitFor({ timeout: 30_000 });
       expect(plane.mints, "the plan step's mint carries the language and the site's choice")
         .toContainEqual({ lang: "en", hint: { plan: "pro", interval: "year" } });
@@ -424,9 +430,10 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.getByRole("button", { name: de.join.activate }).click();
       await p.locator("ul li").first().waitFor({ timeout: 30_000 });
       await p.getByRole("button", { name: de.join.codesSaved }).click();
-      await p.getByRole("heading", { name: de.join.step_mailbox_title.replace(/\.$/, "") }).waitFor({ timeout: 30_000 });
+      await p.getByRole("heading", { name: de.onboarding.providerFirst, exact: true }).waitFor({ timeout: 30_000 });
 
       await tile(p, /GMX/, de.providerPicker.label).click();
+      await p.getByRole("heading", { name: printed(de.join.step_mailbox_title), exact: true }).waitFor({ timeout: 30_000 });
       const note = p.getByText(de.providerPicker.note_gmx, { exact: true }).first();
       await note.waitFor({ timeout: 30_000 }).catch(() => {});
       expect(await note.textContent().catch(() => null), `no GMX note: ${await said(p)}`).toBe(de.providerPicker.note_gmx);

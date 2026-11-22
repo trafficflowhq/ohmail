@@ -7,11 +7,10 @@
  * Pure: the records in, the series and the way back to each record out.
  */
 import {
-  civilFromDays,
   eventTimeOf,
   occurrenceOf,
   recurrenceKeyString,
-  MS_PER_DAY,
+  keyTimeOf,
   parseDuration,
   parseRRule,
   type CalEvent,
@@ -33,34 +32,7 @@ const STATUS: Readonly<Record<CalendarEventRecord["status"], EventStatus>> = {
 };
 
 const timeOf = (t: CalendarTime): EventTime | null => eventTimeOf(t);
-const DIGITS = /^-?\d+$/;
-const WALL_KEY = /^([^|]*)\|(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?\|false$/;
-
-/**
- * The time a stored key string names, in the kind the series starts in: the core writes a moment's milliseconds
- * (a day's UTC midnight for a series of whole days), or `zone|clock|false` where no moment could be said.
- */
-export function keyTimeOf(key: string, seriesStart: EventTime | null): EventTime | null {
-  if (DIGITS.test(key)) {
-    const ms = Number(key);
-    if (seriesStart?.kind === "date") {
-      if (ms % MS_PER_DAY !== 0) return null;
-      return { kind: "date", ...civilFromDays(ms / MS_PER_DAY) };
-    }
-    return { kind: "instant", epochMs: ms };
-  }
-  const m = WALL_KEY.exec(key);
-  if (!m) return null;
-  const wall = {
-    year: Number(m[2]),
-    month: Number(m[3]),
-    day: Number(m[4]),
-    hour: Number(m[5]),
-    minute: Number(m[6]),
-    second: m[7] === undefined ? 0 : Number(m[7]),
-  };
-  return m[1] === "" ? { kind: "floating", wall } : { kind: "zoned", wall, tzid: m[1]! };
-}
+export { keyTimeOf };
 
 /** One record as the core reads an event; `recurrenceId` is what the record replaces, rebuilt by its series. */
 export function calEventOf(record: CalendarEventRecord, recurrenceId: EventTime | null = null): CalEvent {

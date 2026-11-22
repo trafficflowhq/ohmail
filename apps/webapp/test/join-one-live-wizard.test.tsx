@@ -396,6 +396,6 @@ describe("one set of recovery codes across the tab that took over and a second /
     await until(() => a.title() !== en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord), 2_000);
     expect(calls.filter((p) => p === "/auth/2fa/totp/enroll").length, "a second factor was started").toBe(enrolments);
     expect(codeSets, "the codes the second tab showed were cancelled").toBe(1);
-    expect(a.title()).toBe(en.join.startTrialTitle.replace(/\.$/, ""));
+    expect(a.title()).toBe("Start your 14-day trial");
   });
 });

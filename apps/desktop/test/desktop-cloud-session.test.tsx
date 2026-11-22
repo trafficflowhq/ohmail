@@ -273,7 +273,7 @@ describe("the gate over each session state", () => {
     const el = await render();
     expect(mounted(el), "the mail app over a session that is only renewing").toBe(true);
     expect(dialog(el), "a firewall's 403 never opens the sign-in dialog").toBe(false);
-    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudUnreachableTitle))).not.toBeNull();
+    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudUnreachableTitle.replace(/\.$/u, "")))).not.toBeNull();
   });
 
   it("a save the disk refused while signed in: the mail stays and the rail names the seal", async () => {
@@ -281,7 +281,7 @@ describe("the gate over each session state", () => {
     const el = await render();
     expect(mounted(el)).toBe(true);
     expect(dialog(el)).toBe(false);
-    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudSealPausedTitle(machineWord())))).not.toBeNull();
+    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudSealPausedTitle(machineWord()).replace(/\.$/u, "")))).not.toBeNull();
   });
 
   it("the positive control: inside the grace, and when live, the rail says nothing", async () => {
@@ -663,7 +663,7 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     await within(2_000, () => [...el.querySelectorAll("button[aria-haspopup='menu']")].length > 0 || okButton(el) !== undefined);
     await fronted(el);
     expect(await within(2_000, () => okButton(el) !== undefined), "the strip never came").not.toBeNull();
-    const said = "ohmail signed out an older copy of your sign-in.";
+    const said = "An older copy of your sign-in ended";
     expect(text(el).split(said).length - 1, "said once").toBe(1);
     expect([...el.querySelectorAll("button")].filter((b) => b.textContent === S.reuseSweepsOk), "one OK").toHaveLength(1);
     await act(async () => { okButton(el)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });

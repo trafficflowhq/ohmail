@@ -54,6 +54,10 @@
     padding: var(--oh-ecard-pad);
     background: var(--oh-ecard-ground);
   }
+  .oh-ecard[data-neutral-head] {
+    --oh-ecard-edge: var(--ink);
+    --oh-ecard-ground: var(--oh-cal-open-plain);
+  }
   .oh-ecard[data-editing] > .oh-ecard-head {
     padding-block-end: var(--s4);
   }
@@ -427,7 +431,7 @@
     line-height: 1.12;
   }
   .oh-ecard[data-frame="sheet"][data-editing] > .oh-ecard-head {
-    padding: 0;
+    padding: var(--oh-ecard-grab-space) var(--s5) var(--s2);
   }
   .oh-ecard[data-frame="sheet"][data-editing] .oh-ecard-close > .oh-button {
     top: calc(-1 * var(--oh-hair));
@@ -435,6 +439,7 @@
   }
   .oh-ecard[data-frame="sheet"] .oh-ecard-title-input {
     inline-size: calc(100% - var(--cal-edit-title-inset));
+    margin-inline: 0;
     padding-inline: var(--s1);
   }
   :root[data-touch="1"] .oh-ecard[data-frame="sheet"] .oh-ecard-title-input {

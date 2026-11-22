@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE } from "@ohmail/client-engine";
+import { CALENDAR_OUTBOX_TYPE } from "@ohmail/client-engine/calendar-writes";
 import { enforceMirrorOwner, MIRROR_OWNER_FILE } from "../src/cloud-engine.js";
 import {
   createWindowOutbox, LEGACY_WINDOW_OUTBOX_FILE, UNOWNED_WINDOW_OUTBOX_FILE, WINDOW_OUTBOX_ROUTE, WINDOW_OUTBOX_TYPES,
@@ -104,6 +105,21 @@ const entry = (id: string, extra: Record<string, unknown> = {}) => ({
 });
 
 describe("the window's outbox door", () => {
+  it("keeps a pending calendar change for its hosted account across a relaunch", async () => {
+    const dir = tempDir();
+    const row = { type: CALENDAR_OUTBOX_TYPE, id: "calendar-press", entity: { key: "calendar-press" } };
+    const hosted = { calendar: true };
+    expect((await door(dir).post({ puts: [row] })).status).toBe(400);
+    expect((await door(dir, hosted).post({ puts: [row] })).status).toBe(204);
+    const reopened = door(dir, hosted);
+    expect(await reopened.all()).toEqual([row]);
+    expect(await reopened.count()).toBe(1);
+    expect(await reopened.count((key) => key === row.id)).toBe(0);
+    expect(await door(dir, { ...hosted, owner: OWNER_B }).all()).toEqual([]);
+    expect((await reopened.post({ deletes: [row] })).status).toBe(204);
+    expect(await door(dir, hosted).all()).toEqual([]);
+  });
+
   it("spells the engine's own two outbox types", () => {
     expect([...WINDOW_OUTBOX_TYPES].sort()).toEqual([OUTBOX_TYPE, OUTBOX_ABANDONED_TYPE].sort());
   });

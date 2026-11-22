@@ -50,7 +50,7 @@ import {
   type Precondition,
 } from "../request/index.js";
 import { clockOf, endBefore, isDayOf } from "../series.js";
-import { alreadyHolds, sameAudience } from "../write-compare.js";
+import { alreadyHolds, sameAudience, sameCancellationAudience } from "../write-compare.js";
 import { convertEvent, googleTimeOf } from "./convert.js";
 import { GOOGLE_CALENDAR_BASE } from "./hosts.js";
 import { googleAuthorization } from "./reader.js";
@@ -544,6 +544,41 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         return refused("version_stale");
     }
     return true;
+  }
+
+  async function verifyCancellation(
+    token: string,
+    events: string,
+    master: HeldEvent,
+    target: WriteTarget,
+    signal: AbortSignal,
+  ) {
+    const reviewed = target.seriesCancellation!;
+    const matches = (index: SeriesIndex) => {
+      const live = index.exceptions.filter((day) => !day.cancelled);
+      return (
+        index.versions.get(target.id) === target.version &&
+        live.length === reviewed.overrides.length &&
+        reviewed.overrides.every(
+          (day) => live.filter(({ id, tag }) => id === day.id && tag === day.version).length === 1,
+        )
+      );
+    };
+    const index = await readSeriesIndex(token, events, [target.id], signal);
+    if ("ok" in index) return index;
+    if (!matches(index)) return refused("version_stale");
+    const items = [master.item];
+    for (const day of reviewed.overrides) {
+      const read = await readEvent(token, events, day.id, signal);
+      if ("ok" in read) return read;
+      if (read.raw.recurringEventId !== target.id || read.item.version !== day.version)
+        return refused("version_stale");
+      items.push(read.item);
+    }
+    if (!sameCancellationAudience(target.audience, items)) return refused("version_stale");
+    const current = await readSeriesIndex(token, events, [target.id], signal);
+    if ("ok" in current) return current;
+    return matches(current) ? (true as const) : refused("version_stale");
   }
 
   function splitUnchanged(index: SeriesIndex, original: WriteTarget, id: string, tag: string): boolean {
@@ -1132,6 +1167,21 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
   return {
     provider: "google",
 
+    async findMoveCopy(c, cal, key, signal) {
+      const id = writeId(key);
+      return id === null ? refused("not_found") : this.readForMove!(c, cal, id, signal);
+    },
+
+    async readForMove(c, cal, id, signal) {
+      const events = eventsOf(cal);
+      if (!events) return refused("not_found");
+      const signedIn = await bearerOf(c, signal);
+      if (!signedIn.ok) return signedIn;
+      const found = await readEvent(signedIn.token, events, id, signal);
+      if ("ok" in found) return found.reason === "event_gone" ? answered([{ kind: "gone", id }]) : found;
+      return answered([found.item]);
+    },
+
     async create(
       c: Connection,
       cal: CalendarRef,
@@ -1186,39 +1236,116 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
 
     async remove(c, cal, target, signal) {
       // One day of a series is not written by this writer yet, and is never written as the series whole.
-      if (target.occurrence !== null) return refused("repeat_unsupported");
+      if (target.occurrence !== null && !target.recurringSeries) return refused("repeat_unsupported");
       const events = eventsOf(cal);
-      const id = segment(target.id);
+      let id = segment(target.id);
       if (events === null || id === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
-      const pre = await precondition(signedIn.token, events, id, target, signal);
-      if ("ok" in pre) return pre.reason === "event_gone" ? answered([{ kind: "gone", id: target.id }]) : pre;
+      const { token } = signedIn;
+      let pre: Precondition | Refusal;
+      let result: ChangeItem = { kind: "gone", id: target.id };
+      if (target.recurringSeries) {
+        const master = await readEvent(token, events, target.id, signal);
+        if ("ok" in master)
+          return master.reason === "event_gone" && target.occurrence === null ? answered([result]) : master;
+        if (
+          !(target.seriesCancellation ? isSeriesMaster(master) : seriesHead(master, target)) ||
+          master.item.version !== target.version
+        )
+          return refused("version_stale");
+        let tag = master.item.version;
+        if (target.occurrence === null) {
+          const reviewed = target.seriesCancellation
+            ? await verifyCancellation(token, events, master, target, signal)
+            : await checkExceptions(token, events, target, { metadataOnly: false }, signal);
+          if (reviewed !== true) return reviewed;
+        } else {
+          const day = await readInstance(token, events, master, target.occurrence, signal);
+          if ("ok" in day) return day;
+          const originalStart = day.item.event.recurrenceId;
+          const uid = master.item.event.uid;
+          id = segment(day.item.id);
+          if (!uid || !originalStart || !id || !validSeriesAudience(day, target))
+            return refused("version_stale");
+          const reviewed = await checkExceptions(
+            token,
+            events,
+            target,
+            { instance: { id: day.item.id } },
+            signal,
+          );
+          if (reviewed !== true) return reviewed;
+          tag = day.item.version;
+          result = { kind: "cancelled_occurrence", uid, originalStart };
+        }
+        if (!sendableTag(tag)) return refused("version_unknown");
+        pre = { kind: "unchanged", tag };
+      } else {
+        pre = await precondition(token, events, id, target, signal);
+      }
+      if ("ok" in pre) return pre.reason === "event_gone" ? answered([result]) : pre;
       const res = await send(signedIn.token, "DELETE", `${events}/${id}?${NOTIFY}`, null, signal, pre);
       if ("ok" in res) return res;
       // Gone already is what a removal wants.
-      if (res.status === 200 || res.status === 204) return wrote([{ kind: "gone", id: target.id }]);
-      if (res.status === 404 || res.status === 410) return answered([{ kind: "gone", id: target.id }]);
+      if (res.status === 200 || res.status === 204) return wrote([result]);
+      if (res.status === 404 || res.status === 410) return answered([result]);
+      if (res.status === 412 && target.occurrence !== null) return refused("version_stale");
       if (res.status === 412) return afterStale(signedIn.token, events, id, null, signal);
       return refusalOf(res, "event_gone");
     },
 
-    async answer(c, cal, target, req: { readonly as: string; readonly reply: WriteReply }, signal) {
-      // One day of a series is not written by this writer yet, and is never written as the series whole.
-      if (target.occurrence !== null) return refused("repeat_unsupported");
+    async answer(
+      c,
+      cal,
+      target,
+      req: { readonly as: string; readonly reply: WriteReply; readonly retry?: true },
+      signal,
+    ) {
+      if (target.occurrence !== null && !target.recurringSeries) return refused("repeat_unsupported");
       const events = eventsOf(cal);
-      const id = segment(target.id);
-      if (events === null || id === null) return refused("not_found");
+      if (events === null || segment(target.id) === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
-      // The answer is one invitee's line among all of them, so the event is read first and written back under that read's tag.
-      const now = await read(signedIn.token, events, id, signal);
-      if ("ok" in now) return now;
-      if (now.status !== 200) return refusalOf(now, "event_gone");
-      const held = itemOf(now);
-      if (held === null || held.item === null || held.item.kind !== "upsert") return refused("unreadable");
+      const { token } = signedIn;
       const status = { ACCEPTED: "accepted", TENTATIVE: "tentative", DECLINED: "declined" }[req.reply];
-      if (held.item.version !== target.version) return answeredBefore(held, req.as, status);
+      // A day is resolved through its reviewed series before its own tag is used for the answer.
+      const original = await readEvent(token, events, target.id, signal);
+      if ("ok" in original) return original;
+      let held = original;
+      if (target.occurrence !== null) {
+        if (!isSeriesMaster(original) || original.item.version !== target.version)
+          return refused("version_stale");
+        const day = target.exception
+          ? await readEvent(token, events, target.exception.id, signal)
+          : await readInstance(token, events, original, target.occurrence, signal);
+        if ("ok" in day) return day;
+        if (
+          (target.exception && !isReviewedException(day.raw, original, target)) ||
+          day.item.event.organizer?.email !== original.item.event.organizer?.email
+        )
+          return refused("version_stale");
+        const exact = await checkExceptions(
+          token,
+          events,
+          target,
+          { instance: { id: day.item.id, version: target.exception?.version } },
+          signal,
+        );
+        if (exact !== true || (target.exception && day.item.version !== target.exception.version)) {
+          if (exact !== true && exact.reason !== "version_stale") return exact;
+          return req.retry ? answeredBefore(day, req.as, status) : refused("version_stale");
+        }
+        if (req.retry) {
+          const applied = answeredBefore(day, req.as, status);
+          if (applied.ok) return applied;
+        }
+        held = day;
+      } else if (held.item.version !== target.version) {
+        return answeredBefore(held, req.as, status);
+      }
+      const id = segment(held.item.id);
+      if (id === null) return refused("not_found");
       const tag = typeof held.raw.etag === "string" ? held.raw.etag : "";
       if (!sendableTag(tag)) return refused("version_unknown");
       const { people, own } = linesOf(held.raw, req.as);
@@ -1386,12 +1513,30 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     },
 
     async moveEvent(c, from, to, target, signal) {
+      if (target.occurrence !== null) return refused("repeat_unsupported");
       const events = eventsOf(from);
       const id = segment(target.id);
       const destination = segment(to.id);
       if (events === null || id === null || destination === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
+      // The move endpoint has no conditional request. Recheck the version and audience immediately before it.
+      const current = await readEvent(signedIn.token, events, target.id, signal);
+      if ("ok" in current) return current;
+      if (current.item.version !== target.version || !target.audience) return refused("version_stale");
+      if (target.recurringSeries) {
+        if (!seriesHead(current, target)) return refused("version_stale");
+        const verified = await checkExceptions(
+          signedIn.token,
+          events,
+          target,
+          { metadataOnly: false },
+          signal,
+        );
+        if (verified !== true) return verified;
+      } else if (current.item.audienceIncomplete || !sameAudience(target.audience, current.item.event)) {
+        return refused("version_stale");
+      }
       const res = await send(
         signedIn.token,
         "POST",

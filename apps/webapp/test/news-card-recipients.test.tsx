@@ -27,7 +27,7 @@ describe("a card with one recipient is the header it was", () => {
   it("renders NO recipients block — `To: you` under every subject says nothing", async () => {
     const head = await cardHead(letter.to);
     expect(within(head).queryByRole("paragraph"), "a one-recipient card grew a recipients block").toBeNull();
-    expect(within(head).queryByRole("button", { name: /^(me|you)/i })).toBeNull();
+    expect(within(head).queryByRole("button", { name: /^(me|you)\b/i })).toBeNull();
     expect(within(head).getByText("Ida Vogt").textContent).toBe("Ida Vogt");
     expect(within(head).getByRole("time").textContent).toBeTruthy();
   });

@@ -76,7 +76,7 @@ describe("Google: the calendars and the sign-in", () => {
   it("lists the recorded calendar with its name, colour, zone and that it may be written", async () => {
     const { reader, sent } = readerOver({ [CALENDARS]: { json: recorded("calendar-list-writable") } });
     const answer = await reader.listCalendars(signedIn(), never);
-    expect(answer).toEqual({ ok: true, value: [{ id: "cal-1", name: "google-account@bench.example", color: "#9fe1e7", writable: true, byToken: true, zone: ZURICH }] });
+    expect(answer).toEqual({ ok: true, value: [{ id: "cal-1", name: "google-account@bench.example", color: "#9fe1e7", writable: true, owned: true, byToken: true, zone: ZURICH }] });
     expect(sent).toEqual([{ url: CALENDARS, method: "GET", token: "t1", tokenGoesTo: { "www.googleapis.com": true, "oauth2.googleapis.com": false, "accounts.google.com": false, "evil.example": false } }]);
   });
 
@@ -89,7 +89,7 @@ describe("Google: the calendars and the sign-in", () => {
     expect(answer).toEqual({
       ok: true,
       value: [
-        { id: "a", name: "Mine", color: null, writable: true, byToken: true, zone: null },
+        { id: "a", name: "Mine", color: null, writable: true, owned: true, byToken: true, zone: null },
         { id: "b", name: "Team", color: "#16a765", writable: false, byToken: true, zone: null },
       ],
     });

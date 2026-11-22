@@ -24,7 +24,7 @@ describe("the demo's host", () => {
     expect(Object.values(host.signals).every((s) => s === NONE)).toBe(true);
     /* The one member the demo says beside its partition: its frozen day (the demo keeps it, as today's did). */
     expect(host.session).toEqual({
-      resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, mirrorAccount: null, account: null, accountAddress: null, recover: NONE, signOut: NONE,
+      resolve: NONE, confirmed: NONE, state: NONE, scope: DEMO_STORAGE_OWNER, mirrorAccount: null, account: null, accountAddress: null, accountDisplayName: null, recover: NONE, signOut: NONE,
       today: DEMO_NOW,
     });
   });

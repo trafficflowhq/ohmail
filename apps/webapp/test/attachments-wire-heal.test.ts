@@ -116,7 +116,7 @@ describe("an embedded picture the mail server did not serve", () => {
     await act(async () => root!.render(h(Strip)));
     await act(async () => { await engine.loadInlineImages("m1", ["logo@corp"]); });
     for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-    expect(host.textContent).toContain("Your mail server didn't answer. Ohmail will try again shortly.");
+    expect(host.textContent).toContain("Your mail server didn't answer. ohmail will try again shortly.");
     engine.releaseAllAttachments();
   });
 

@@ -540,3 +540,41 @@ it("dispatches an expired deletion at the stored deadline even when its commit s
     vi.useRealTimers();
   }
 });
+
+it("holds a proposal for Undo and sends it without overlaying or writing the event", async () => {
+  vi.useFakeTimers();
+  try {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const event = record("meeting");
+    await store.applyChanges([{ type: "calendar_event", op: "create", id: event.id, entity: event, seq: 1, updatedAt: BASE }]);
+    const { t, asked } = transport(async (act, key) => echo(record(act.eventId), key));
+    const mailProposal = vi.fn(async () => ({ answer: { write: null, events: [] }, seq: null }));
+    let count = 0;
+    const queue = new CalendarWriteQueue(store, { ...t, mailProposal }, { uuid: () => `proposal-${++count}`, now: Date.now });
+    const act = {
+      kind: "calendar_event_propose", recordId: event.id, base: BASE, occurrence: "",
+      start: { kind: "instant", value: "20261118T120000Z" },
+      end: { kind: "instant", value: "20261118T130000Z" },
+    } as const;
+
+    const cancelled = await queue.hold(act, 8000);
+    expect(queue.events()[0]?.record).toEqual(event);
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(mailProposal).not.toHaveBeenCalled();
+    expect(await cancelled.undo()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mailProposal).not.toHaveBeenCalled();
+
+    const sent = await queue.hold(act, 8000);
+    await vi.advanceTimersByTimeAsync(8000);
+    await queue.flush();
+    expect(mailProposal).toHaveBeenCalledWith(act, sent.key, expect.any(AbortSignal));
+    expect(mailProposal).toHaveBeenCalledTimes(1);
+    expect(await sent.undo()).toBe(false);
+    expect(asked).toEqual([]);
+    expect(queue.events()[0]?.record).toEqual(event);
+  } finally {
+    vi.useRealTimers();
+  }
+});

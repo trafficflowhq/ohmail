@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, type ReactNode, type RefObject } from "react";
 import { Field } from "@ohmail/ui/base";
+import { SentenceBlank } from "../../doors/stage/SentenceBlank.js";
 import { secretOf } from "@ohmail/app-logic/mailboxes/connect/secret";
 import type { PasswordHandle } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 
@@ -16,11 +17,13 @@ import type { PasswordHandle } from "@ohmail/app-logic/mailboxes/connect/use-con
 export function PasswordField({
   label,
   hint,
+  blank,
   handle,
   onChange,
 }: {
   label: string;
   hint?: string | undefined;
+  blank?: string;
   handle: RefObject<PasswordHandle | null>;
   /** Whether it holds anything now. Never what. */
   onChange(filled: boolean): void;
@@ -47,17 +50,11 @@ export function PasswordField({
     },
     [],
   );
-  return (
-    <Field
-      ref={box}
-      label={label}
-      type="password"
-      autoComplete="off"
-      hint={hint}
-      onChange={(next) => {
-        filled.current = next !== "";
-        onChange(filled.current);
-      }}
-    />
-  );
+  const changed = (next: string) => {
+    filled.current = next !== "";
+    onChange(filled.current);
+  };
+  if (blank !== undefined)
+    return <SentenceBlank ref={box} label={label} placeholder={blank} type="password" onChange={changed} />;
+  return <Field ref={box} label={label} type="password" autoComplete="off" hint={hint} onChange={changed} />;
 }

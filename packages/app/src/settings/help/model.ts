@@ -20,6 +20,7 @@ export type HelpWrite =
 
 export interface HelpModel {
   readonly write: HelpWrite;
+  readonly clipboard?: Pick<Extract<HelpWrite, { kind: "copy" }>, "copied" | "copy">;
   readonly facts: Pick<
     ReturnType<typeof supportContact>["facts"],
     "version" | "commit" | "os" | "osVersion" | "surface" | "account" | "mailboxes"

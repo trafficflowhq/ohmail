@@ -196,7 +196,7 @@ export function hostFromTodaysInputs(
          where it mounts the demo), else the harness's own account. */
       scope: props.scope !== undefined ? props.scope : storageOwner() ?? HARNESS_SCOPE,
       mirrorAccount: null,
-      account: support?.accountId ?? null, accountAddress: null, signOut: NONE, recover: frame.recover,
+      account: support?.accountId ?? null, accountAddress: null, accountDisplayName: null, signOut: NONE, recover: frame.recover,
       today: props.demo === true ? DEMO_DAY : NONE,
     } satisfies HostSession,
     reads: { mailboxes: orNone(props.mailboxFacts), copyAge: orNone(props.mirrorFreshness), access: NONE },

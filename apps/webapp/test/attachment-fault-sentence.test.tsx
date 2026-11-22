@@ -155,8 +155,8 @@ describe("Try again is offered where asking again can help, and only there", () 
 
 describe("a picture the engine will ask for again says so", () => {
   it.each([
-    ["mailbox_busy", 429, "ohmail already has this mailbox's connections open. Ohmail will try again shortly.", "Ohmail versucht es gleich noch einmal. ohmail hat die Verbindungen zu diesem Postfach schon offen."],
-    ["mail_server_unreachable", 424, "Your mail server didn't answer. Ohmail will try again shortly.", "Ohmail versucht es gleich noch einmal. Dein Mailserver hat nicht geantwortet."],
+    ["mailbox_busy", 429, "ohmail already has this mailbox's connections open. ohmail will try again shortly.", "ohmail versucht es gleich noch einmal. ohmail hat die Verbindungen zu diesem Postfach schon offen."],
+    ["mail_server_unreachable", 424, "Your mail server didn't answer. ohmail will try again shortly.", "ohmail versucht es gleich noch einmal. Dein Mailserver hat nicht geantwortet."],
   ] as const)("%s", async (code, status, sayEn, sayDe) => {
     await mount(failed({ code, status, retryable: true, reasking: true }));
     expect(reason()).toBe(sayEn);

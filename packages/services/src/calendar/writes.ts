@@ -1,3 +1,6 @@
+import { changedSeriesAudience, type CalendarTransfer, type SeriesCancellation } from "@trafficflow/db/calendar";
+import { deleteAudienceOf, sameDeleteAudience } from "@ohmail/cal-core";
+import { cloudDeleteMembers } from "@ohmail/cal-providers/series";
 import { repeatDeleteScopes } from "@ohmail/cal-providers/repeat-shapes";
 /**
  * THE CALENDAR'S WRITES, AS THE SERVER RECORDS THEM. A person's act on an event becomes one
@@ -5,18 +8,17 @@ import { repeatDeleteScopes } from "@ohmail/cal-providers/repeat-shapes";
  * The worker's drain carries the row out inside the account's binding, and the event's record
  * carries the row (`writes`) until the provider has taken it.
  *
- * `cal_events` stays the provider's copy: an existing event's row is never changed here. The one
- * row this file writes into it is a new event's, made as the person wants it and named by its
- * `create` row (`pending:<row id>`), until the provider's answer names it.
+ * Existing rows keep the provider’s copy. Local removal only updates that account’s visibility.
+ * New events wait in the store under the create row’s id until the provider names them.
  *
  * A change is only ever written onto the copy it was made on. The device says which copy it held
  * (`base`, the record's `updatedAt`, and `after`, its own previous act on the event); where the
  * store's copy has moved on since, the act is recorded REFUSED (`version_stale`), so the conflict
  * reaches every device the way any write does, and nothing is sent.
  */
-import { and, eq, inArray, or, sql } from "drizzle-orm";
-import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calWrites } from "@trafficflow/db/mail";
-import { fenceErased, fencedAccountOf, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calWrites, messageInvitations, messages } from "@trafficflow/db/mail";
+import { fenceErased, fencedAccountOf, recordCalendarChanges, invitationCalendarId, invitationStanding, sameAddress, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   CALENDAR_WRITE_LIMITS, CONTINUED_FIELDS, CalendarConnectionGone, asCalendarWriteFault, changedDaysOf, exceptionBaseOf, holdCalendarConnection, isWriteKey, ownOrganizerAddresses,
   parseCalendarAct, parseWritePayload, someoneElses, writeActRefusal, writePayloadOf, writeRowOf, type CalendarWriteException, type CalendarWritePayload, type ContinuedField,
@@ -32,7 +34,7 @@ import type {
 } from "@ohmail/wire";
 import { bridgeTx, withAccountTx, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
-import { derivedRange } from "./event-range.js";
+import { derivedRange, storedOccurrence } from "./event-range.js";
 import { CALENDAR_BUILDERS } from "./feed.js";
 import { requireCalendarOn } from "./settings-service.js";
 import { eventTimeOf, momentOrUtc, storedTimeOf } from "./time.js";
@@ -169,6 +171,8 @@ interface HeldCalendar {
   readonly connectionId: string;
   readonly provider: string;
   readonly access: string;
+  readonly nativeMove: boolean;
+  readonly mailboxId: string | null;
   /** The connection's stored address (CalDAV): where its series are proven. */
   readonly serverUrl: string | null;
   /** Whom the connection signs in as: one of the account's own addresses where it is an address. */
@@ -180,7 +184,7 @@ interface HeldCalendar {
  * waits for the person (signed out, being removed) takes no write. Another account's id is not found.
  */
 async function holdCalendar(tx: Tx, accountId: string, calendarId: string): Promise<HeldCalendar> {
-  const [cal] = await tx.select({ id: calCalendars.id, connectionId: calCalendars.connectionId, access: calCalendars.access })
+  const [cal] = await tx.select({ id: calCalendars.id, connectionId: calCalendars.connectionId, access: calCalendars.access, nativeMove: calCalendars.nativeMove })
     .from(calCalendars).where(and(eq(calCalendars.id, calendarId), eq(calCalendars.accountId, accountId))).limit(1);
   if (cal === undefined) throw notFound();
   let status: string;
@@ -191,10 +195,10 @@ async function holdCalendar(tx: Tx, accountId: string, calendarId: string): Prom
     throw err;
   }
   if (status !== "active" && status !== "failing") throw stopped();
-  const [conn] = await tx.select({ provider: calConnections.provider, serverUrl: calConnections.serverUrl, principal: calConnections.principal })
+  const [conn] = await tx.select({ provider: calConnections.provider, serverUrl: calConnections.serverUrl, principal: calConnections.principal, mailboxId: calConnections.mailboxId })
     .from(calConnections).where(and(eq(calConnections.id, cal.connectionId), eq(calConnections.accountId, accountId))).limit(1);
   if (conn === undefined) throw notFound();
-  return { ...cal, provider: conn.provider, serverUrl: conn.serverUrl, principal: conn.principal };
+  return { ...cal, provider: conn.provider, serverUrl: conn.serverUrl, principal: conn.principal, mailboxId: conn.mailboxId };
 }
 
 /** A calendar a person may write: owner or writer, and not a subscription. */
@@ -370,6 +374,8 @@ async function recordCreate(
 ): Promise<EnqueuedCalendarWrite> {
   const cal = await holdCalendar(tx, accountId, act.calendarId);
   assertWritable(cal);
+  if (act.invitationMessageId && !await reviewedInvitationCopy(tx, accountId, act.invitationMessageId, act))
+    throw readOnly("the invitation is no longer available to add");
   // A new series in a shape proven where the calendar is, from a start its rule names: the drain sends no other.
   assertProven(shapesOf(cal, o), act.event.repeat === null ? null : parseRRule(act.event.repeat), eventTimeOf(storedTime(act.event.start)));
   await assertRoom(tx, accountId, null);
@@ -402,17 +408,139 @@ const OP: Record<Exclude<CalendarEventAct["kind"], "calendar_event_create">, "up
 async function holdEventCopy(tx: Tx, accountId: string, calendarId: string, match: ReturnType<typeof and>) {
   const [held, second] = await dialect(tx).forUpdate(tx.select({
     id: calEvents.id, versionTag: calEvents.versionTag, updatedAt: calEvents.updatedAt,
-    organizer: calEvents.organizer, myAnswer: calEvents.myAnswer, status: calEvents.status, thisAndFuture: calEvents.thisAndFuture, providerId: calEvents.providerId, uid: calEvents.uid,
+    organizer: calEvents.organizer, myAnswer: calEvents.myAnswer, status: calEvents.status, thisAndFuture: calEvents.thisAndFuture, providerId: calEvents.providerId, uid: calEvents.uid, sequence: calEvents.sequence,
     repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates, excludedDates: calEvents.excludedDates,
     startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone, startsAt: calEvents.startsAt,
     endKind: calEvents.endKind, endLocal: calEvents.endLocal, endZone: calEvents.endZone,
     title: calEvents.title, notes: calEvents.notes, place: calEvents.place, callLink: calEvents.callLink, busy: calEvents.busy, private: calEvents.private,
-    original: calEvents.original, partial: calEvents.partial,
+    original: calEvents.original, portableCopy: calEvents.portableCopy, partial: calEvents.partial, duration: calEvents.duration,
+    removedOccurrences: calEvents.removedOccurrences, heldBack: calEvents.heldBack,
   }).from(calEvents).where(and(
     eq(calEvents.accountId, accountId), eq(calEvents.calendarId, calendarId), match,
   )).limit(2), { mode: "update" });
   if (!held || second) return null;
   return { ...held, ...storedObjectFacts(held.original, held.organizer) };
+}
+
+async function calendarLetter(tx: Tx, accountId: string, id: string) {
+  const [letter] = await tx.select({ invitation: messageInvitations, sender: messages.fromAddress, auth: messages.authVerdict })
+    .from(messageInvitations).innerJoin(messages, and(
+      eq(messages.id, messageInvitations.messageId), eq(messages.accountId, accountId)))
+    .where(and(eq(messageInvitations.accountId, accountId), eq(messages.id, id), isNull(messages.deletedAt))).limit(1);
+  return letter;
+}
+
+async function reviewedInvitationCopy(
+  tx: Tx, accountId: string, messageId: string,
+  act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>,
+) {
+  const letter = await calendarLetter(tx, accountId, messageId);
+  const invitation = letter?.invitation;
+  if (!invitation || letter?.auth === "fail" || invitation.method !== "REQUEST" || !invitation.organizer || !invitation.invitedAddress ||
+    (invitation.answer !== "accepted" && invitation.answer !== "tentative") || invitationCalendarId(invitation) !== act.eventId)
+    return false;
+  const start = eventTimeOf(storedTime(act.event.start));
+  if (start === null || (invitation.startsAt && start.kind !== "date" ?
+    momentOrUtc(start, ZONES) !== invitation.startsAt.getTime() : invitation.startRaw !== act.event.start.value)) return false;
+  const standing = await invitationStanding(tx, invitation);
+  if (standing.cancelled || standing.replacedBy) return false;
+  const [already] = await tx.select({ id: calEvents.id }).from(calEvents)
+    .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
+    .innerJoin(calConnections, and(eq(calConnections.id, calCalendars.connectionId), eq(calConnections.accountId, accountId)))
+    .where(and(eq(calEvents.accountId, accountId), eq(calEvents.uid, invitation.uid),
+      eq(calEvents.recurrenceId, invitation.recurrenceId),
+      sql`lower(${calEvents.organizer}) = ${invitation.organizer.toLowerCase()} and ${calEvents.myAnswer} is not null`,
+      or(eq(calConnections.mailboxId, invitation.mailboxId), and(isNull(calConnections.mailboxId),
+        sql`exists (select 1 from ${calAttendees} where ${calAttendees.accountId} = ${accountId}
+          and ${calAttendees.eventId} = ${calEvents.id} and lower(${calAttendees.address}) = ${invitation.invitedAddress.toLowerCase()})`)),
+    )).limit(1);
+  return already === undefined;
+}
+
+async function cancelledByLetter(
+  tx: Tx, accountId: string, id: string,
+  event: NonNullable<Awaited<ReturnType<typeof holdEventCopy>>>,
+  at: string, mailboxId: string | null,
+) {
+  const letter = await calendarLetter(tx, accountId, id);
+  const cancellation = letter?.invitation;
+  if (!cancellation || letter?.auth === "fail" || cancellation.method !== "CANCEL" || !cancellation.invitedAddress ||
+    !sameAddress(cancellation.organizer, letter?.sender)) return false;
+  if (cancellation.recurrenceId !== at) return false;
+  const standing = await invitationStanding(tx, cancellation);
+  if (!standing.cancelled || standing.replacedBy !== null) return false;
+  if (invitationCalendarId(cancellation) === event.id) return true;
+  if (event.myAnswer === null || event.uid !== cancellation.uid || event.sequence > cancellation.sequence ||
+    !sameAddress(event.organizer, cancellation.organizer)) return false;
+  if (mailboxId !== null) return mailboxId === cancellation.mailboxId;
+  const [invitee] = await tx.select({ address: calAttendees.address }).from(calAttendees).where(and(
+    eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, event.id),
+    sql`lower(${calAttendees.address}) = ${cancellation.invitedAddress.toLowerCase()}`,
+  )).limit(1);
+  return invitee !== undefined;
+}
+
+async function recordLocalRemoval(
+  tx: Tx, accountId: string, cal: HeldCalendar, key: string,
+  act: Extract<CalendarEventAct, { kind: "calendar_event_delete" }>,
+  event: NonNullable<Awaited<ReturnType<typeof holdEventCopy>>>,
+): Promise<EnqueuedCalendarWrite> {
+  const at = act.scope.kind === "record" ? "" : act.scope.at;
+  if (cal.access === "busy" || event.heldBack || (event.status !== "cancelled" && event.myAnswer !== "declined" &&
+    (!act.cancelledBy || !await cancelledByLetter(tx, accountId, act.cancelledBy, event, at, cal.mailboxId))))
+    throw readOnly("only a cancelled or declined event can be removed from this account’s calendar");
+  const stale = Date.parse(act.base) !== ms(event.updatedAt);
+  if (!stale && at && !storedOccurrence(event, at))
+    throw invalid("the series has no such day");
+  const state = stale ? "refused" : "applied";
+  const refusal = stale ? "version_stale" : null;
+  const made = await insertRow(tx, {
+    accountId, calendarId: cal.id, eventId: event.id, op: "delete", payload: writePayloadOf(act, null, null),
+    baseVersionTag: event.versionTag, idempotencyKey: key, state, refusal,
+  });
+  if (made === null) return { receipt: (await recorded(tx, accountId, key, act))!, eventIds: [], changes: [], wake: null };
+  const prior = event.removedOccurrences ?? [];
+  if (!stale && !prior.includes("") && !prior.includes(at)) {
+    await tx.update(calEvents).set({ removedOccurrences: at ? [...prior, at] : [""] })
+      .where(and(eq(calEvents.accountId, accountId), eq(calEvents.id, event.id)));
+  }
+  return {
+    receipt: { id: made.id, key, state, reason: refusal },
+    eventIds: [event.id], changes: [{ kind: "calendar_event", id: event.id, op: "update" }], wake: null,
+  };
+}
+
+async function personalTransferOf(
+  tx: Tx, accountId: string, cal: HeldCalendar, to: HeldCalendar,
+  event: NonNullable<Awaited<ReturnType<typeof holdEventCopy>>>, days: number,
+  act: Extract<CalendarEventAct, { kind: "calendar_event_move" }>,
+): Promise<CalendarTransfer> {
+  if (!event.portableCopy || event.partial || event.heldBack || event.myAnswer !== null || event.status !== "confirmed" ||
+    event.removedOccurrences?.length || days || act.after || act.audience?.guests.length ||
+    to.provider === "ics" || !event.versionTag) throw readOnly("this event cannot be copied safely to that calendar");
+  const [guest] = await tx.select({ address: calAttendees.address }).from(calAttendees)
+    .where(and(eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, event.id),
+      sql`lower(trim(${calAttendees.address})) is distinct from ${event.organizer?.trim().toLowerCase() ?? null}`)).limit(1);
+  if (guest) throw readOnly("events with guests stay in their account’s calendars");
+  const alarms = await tx.select({ minutesBefore: calAlarms.minutesBefore, method: calAlarms.method }).from(calAlarms)
+    .where(and(eq(calAlarms.accountId, accountId), eq(calAlarms.eventId, event.id))).limit(L.alarms + 1);
+  const start = timeOfStored(event.startKind, event.startLocal, event.startZone);
+  const end = timeOfStored(event.endKind, event.endLocal, event.endZone);
+  if (!start || !end || alarms.some((alarm) => alarm.method !== "notice")) throw readOnly("this event cannot be copied safely");
+  const copy = checkedAct({ kind: "calendar_event_create", eventId: event.id, calendarId: to.id, event: {
+    title: event.title, notes: event.notes, place: event.place, callLink: event.callLink, busy: event.busy, private: event.private,
+    start: storedTimeOf(start), end: storedTimeOf(end), repeat: event.repeatRule, invitees: [], alarms: alarms.map((alarm) => alarm.minutesBefore),
+  } });
+  if (copy.kind !== "calendar_event_create" || cal.id === to.id) throw invalid("another calendar is required");
+  return { source: event.providerId, fields: copy.event };
+}
+
+async function refuseWhileMoving(tx: Tx, accountId: string, eventId: string) {
+  const [move] = await tx.select({ id: calWrites.id }).from(calWrites).where(and(
+    eq(calWrites.accountId, accountId), eq(calWrites.eventId, eventId), eq(calWrites.state, "pending"),
+    eq(calWrites.op, "move"), sql`${calWrites.payload} ? 'transfer'`,
+  )).limit(1);
+  if (move) throw new ServiceError("calendar_write_left", 409, "the move is still under way");
 }
 
 async function recordOnEvent(
@@ -423,22 +551,32 @@ async function recordOnEvent(
     .where(and(eq(calEvents.id, act.eventId), eq(calEvents.accountId, accountId))).limit(1);
   if (seen === undefined) throw notFound();
   const cal = await holdCalendar(tx, accountId, seen.calendarId);
-  assertWritable(cal);
   const selected = await holdEventCopy(tx, accountId, cal.id, eq(calEvents.id, act.eventId));
   if (selected === null) throw notFound();
+  await refuseWhileMoving(tx, accountId, selected.id);
+  if (act.kind === "calendar_event_delete" && act.localOnly)
+    return recordLocalRemoval(tx, accountId, cal, key, act, selected);
+  assertWritable(cal);
   const paired = exceptionBaseOf(act.base);
   const exceptionEdit = act.kind === "calendar_event_update" && act.audience && writeRowOf(selected) === "day";
+  const answerException = act.kind === "calendar_event_answer" && act.scope.kind === "occurrence" && writeRowOf(selected) === "day";
   const own = await ownOrganizerAddresses(tx, accountId, cal.principal);
   let event = selected;
   let exception: CalendarWriteException | undefined;
-  if (exceptionEdit) {
-    if (someoneElses(selected, own) || selected.partial || selected.status === "cancelled") throw readOnly("this occurrence is view only");
+  if (exceptionEdit || answerException) {
+    const unavailable = selected.partial || selected.status === "cancelled" || selected.heldBack;
+    const invited = someoneElses(selected, own);
+    if (unavailable || (answerException ? !invited || selected.myAnswer === null : invited)) throw readOnly("this occurrence is view only");
     if (selected.thisAndFuture || !selected.versionTag || act.after !== undefined ||
       (act.scope.kind !== "record" && act.scope.at !== selected.recurrenceId) ||
-      (act.scope.kind !== "occurrence" && paired === null)) throw invalid("this occurrence needs its reviewed series and day");
+      (act.scope.kind !== "occurrence" && paired === null) ||
+      (answerException && paired === null)) throw invalid("this occurrence needs its reviewed series and day");
     const master = await holdEventCopy(tx, accountId, cal.id, and(eq(calEvents.uid, selected.uid), eq(calEvents.recurrenceId, "")));
     if (!master || writeRowOf(master) !== "series" || master.partial || !master.versionTag || master.status === "cancelled" ||
       (cal.provider === "caldav" && (master.providerId !== selected.providerId || master.versionTag !== selected.versionTag))) throw readOnly("this occurrence has no writable series");
+    if (answerException && (master.organizer !== selected.organizer || master.myAnswer === null || !someoneElses(master, own)))
+      throw readOnly("this occurrence belongs to another invitation");
+    await refuseWhileMoving(tx, accountId, master.id);
     event = master;
     exception = { id: selected.id, providerId: selected.providerId, version: selected.versionTag, occurrence: selected.recurrenceId };
   } else if (paired) {
@@ -457,6 +595,12 @@ async function recordOnEvent(
   const series = writeRowOf(event) === "series";
   const days = changedDaysOf(event, series ? await changedRows(tx, accountId, cal.id, event.uid) : 0);
   const seriesEdit = series && act.kind === "calendar_event_update" && act.audience !== undefined;
+  if (act.kind === "calendar_event_answer" && (event.heldBack || event.status === "cancelled"))
+    throw readOnly("this invitation is no longer open for an answer");
+  if (act.kind === "calendar_event_answer" && act.scope.kind === "occurrence" && !exception) {
+    const changed = await holdEventCopy(tx, accountId, cal.id, and(eq(calEvents.uid, event.uid), eq(calEvents.recurrenceId, act.scope.at)));
+    if (changed) throw readOnly("this occurrence has its own copy to review");
+  }
   const why = writeActRefusal(event, act, days, own, exception !== undefined);
   if (why !== null) throw why.word === "read_only" ? readOnly(why.why) : invalid(why.why);
   if (!exception && seriesEdit && act.scope.kind === "following" && cal.provider !== "caldav" &&
@@ -473,7 +617,9 @@ async function recordOnEvent(
   const rule = writeRowOf(event) === "series" && event.repeatRule !== null ? parseRRule(event.repeatRule) : null;
   if (writeRowOf(event) === "series") {
     if (rule === null) throw invalid("the repeat is not one this calendar's server was proven to keep");
-    assertProven(d, rule, first, seriesEdit);
+    const cloud = d.place === "google" || d.place === "microsoft";
+    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || ((act.kind === "calendar_event_delete" || act.kind === "calendar_event_move") && act.audience !== undefined));
+    assertProven(d, rule, first, seriesEdit || checkingStoredCloudSeries);
   }
   if (act.kind === "calendar_event_update" && act.scope.kind === "record") {
     const c = act.change;
@@ -501,11 +647,14 @@ async function recordOnEvent(
       assertProven(d, Number.isSafeInteger(at) ? endedRule(rule, first, at, ZONES) : null, first, seriesEdit);
     }
   }
+  let transfer: CalendarTransfer | undefined;
   if (act.kind === "calendar_event_move") {
-    if (cal.provider !== "google") throw invalid("a move between calendars of this provider is not taken yet");
     const to = await holdCalendar(tx, accountId, act.toCalendarId);
-    if (to.connectionId !== cal.connectionId || to.id === cal.id) throw invalid("an event moves to another calendar of the same connection");
-    assertWritable(to);
+    if (to.id === cal.id) throw invalid("another calendar is required");
+    if (to.access !== "owner") throw readOnly("an event can only move to a calendar the account owns");
+    const native = to.connectionId === cal.connectionId &&
+      (cal.provider === "google" || (cal.provider === "caldav" && cal.nativeMove && to.nativeMove));
+    if (!native || act.copyThenRemove) transfer = await personalTransferOf(tx, accountId, cal, to, event, days, act);
   }
   // While a press on a day and the days after it is half carried out on this series (its first part is not done, and the series'
   // record ends exactly where it ends it), no other write may end, remove or re-shape the series: that press's own end could no
@@ -513,6 +662,7 @@ async function recordOnEvent(
   // finding of a later press on an earlier day; the fifth's, of the whole series removed: that ends it too).
   const reshapes = ("scope" in act && act.scope.kind === "following")
     || (act.kind === "calendar_event_update" && act.scope.kind === "record" && (act.change.repeat !== undefined || act.change.start !== undefined))
+    || act.kind === "calendar_event_move"
     || (act.kind === "calendar_event_delete" && act.scope.kind === "record");
   if (reshapes && rule !== null && first !== null && await halfCarriedOut(tx, accountId, event, rule, first)) {
     throw new ServiceError("calendar_write_left", 409, "a change of the days from a day on is half done on this series: it is tried again or let go first");
@@ -531,20 +681,32 @@ async function recordOnEvent(
         : await confirmedSeriesEdit(tx, accountId, cal, event, act, d)))) {
     refusal = "version_stale";
   }
-  if (act.kind === "calendar_event_delete") {
+  let seriesCancellation: SeriesCancellation | undefined;
+  if (act.kind === "calendar_event_delete" || (act.kind === "calendar_event_move" && !transfer)) {
     const deleteGuests = !event.partial && (cal.provider === "google" || cal.provider === "microsoft")
       ? await tx.select({ address: calAttendees.address, name: calAttendees.name }).from(calAttendees)
         .where(and(eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, event.id)))
       : undefined;
+    const wholeChangedCloud = act.kind === "calendar_event_delete" && act.scope.kind === "record" &&
+      rule !== null && days > 0 && act.audience && (cal.provider === "google" || cal.provider === "microsoft");
+    if (wholeChangedCloud && act.kind === "calendar_event_delete" && act.audience) {
+      const changed = await changedSeriesAudience(tx, accountId, { ...event, calendarId: cal.id });
+      const master = cloudDeleteMembers(d.place, { ...event, deleteGuests, unchangedSeries: true }, true, { kind: "record" });
+      const union = master && changed && deleteAudienceOf([...master, ...changed.members], { kind: "record" });
+      if (changed && union && sameDeleteAudience(union.audience, act.audience)) {
+        seriesCancellation = { overrides: changed.overrides, message: act.cancellationMessage ?? "" };
+      }
+    }
     if (!event.versionTag || Date.parse(act.base) !== ms(event.updatedAt) ||
-      !confirmedDeleteAudience(d.place, { ...event, deleteGuests }, rule !== null, act.scope, act.audience, ZONES)) {
+      !(seriesCancellation || confirmedDeleteAudience(d.place, { ...event, deleteGuests, unchangedSeries: days === 0 }, rule !== null,
+        act.kind === "calendar_event_delete" ? act.scope : { kind: "record" }, act.audience, ZONES))) {
       refusal = "version_stale";
     }
   }
   if ((act.kind === "calendar_event_update" || act.kind === "calendar_event_delete") && act.scope.kind === "following") {
     return recordFollowing(tx, accountId, key, act, event, cal, { after, refusal }, d, seriesEdit, exception);
   }
-  const payload: CalendarWritePayload = writePayloadOf(act, after, null, exception);
+  const payload: CalendarWritePayload = { ...writePayloadOf(act, after, null, exception), ...(seriesCancellation && { seriesCancellation }), ...(transfer && { transfer }) };
   const made = await insertRow(tx, {
     accountId, calendarId: cal.id, eventId: event.id, op: OP[act.kind], payload, baseVersionTag: event.versionTag,
     idempotencyKey: key, state: refusal === null ? "pending" : "refused", refusal,
@@ -915,6 +1077,8 @@ export async function retryCalendarWrite(ctx: ServiceContext, writeId: string): 
     const row = await heldWrite(t, ctx.accountId, writeId);
     if (row.state === "applied") throw new ServiceError("calendar_write_left", 409, "the write is done");
     if (row.state !== "refused") return { receipt: receiptOf(row.key, row), eventIds: row.eventId === null ? [] : [row.eventId], seq: null, wake: null };
+    if (parseWritePayload(row.payload)?.transfer)
+      throw new ServiceError("calendar_write_left", 409, "a refused move is reviewed again on the calendar");
     if (await refusedForItsCopy(t, ctx.accountId, row)) {
       throw new ServiceError("calendar_write_left", 409, "a change made on an older copy is made again as a new act");
     }

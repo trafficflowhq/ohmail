@@ -18,6 +18,7 @@ export interface DockPlace {
   /** The registration's live count, read beside its own button. */
   useCount?: () => { readonly count: string; readonly hot: boolean } | null;
   current?: boolean;
+  disabled?: boolean;
   onPress?: () => void;
 }
 
@@ -29,7 +30,7 @@ export interface DockProps {
   /** How many places always stand: the tabs of the app. */
   floor: number;
   /** The rest of the places, behind one entry. It is the current one while the open place stands behind it. */
-  more: Pick<DockPlace, "label" | "current" | "count" | "countHot" | "onPress"> & {
+  more?: Pick<DockPlace, "label" | "current" | "count" | "countHot" | "onPress"> & {
     expanded?: boolean;
     drawer?: boolean;
   };
@@ -39,6 +40,10 @@ export interface DockProps {
   write?: { label: string; icon?: IconName; keyHint?: string; onPress?: () => void };
   /** The way to the other product, where the rail stands upright: the round button, first. */
   switcher?: ReactNode;
+  /** A product control that belongs with the places on the upright rail. */
+  afterPlaces?: ReactNode;
+  /** Controls that stay at the foot of the upright rail. */
+  foot?: readonly DockPlace[];
   /**
    * One column in a low room: the dock stands upright beside the column, as it does beside two. The frame says so
    * from the room it laid out; the window's height alone never turns it.
@@ -64,6 +69,7 @@ function DockEntry({ place, hidden }: { place: DockPlace; hidden: boolean }) {
       data-place={place.id}
       data-words={place.words ? "" : undefined}
       hidden={hidden}
+      disabled={place.disabled}
       aria-current={place.current ? "page" : undefined}
       aria-label={count ? `${place.label}, ${count}` : place.label}
       title={place.label}
@@ -107,7 +113,7 @@ function useDockFit({
     const row = strip.current;
     if (!el || !row) return;
     const fit = () => {
-      const entries = [...el.querySelectorAll<HTMLElement>("[data-place]")];
+      const entries = [...row.querySelectorAll<HTMLElement>("[data-place]")];
       const limit = shown === undefined ? entries.length : Math.max(shown, floor);
       const across = round && getComputedStyle(el).flexDirection === "row";
       const tooSmall = () =>
@@ -145,11 +151,13 @@ export function Dock({
   search,
   write,
   switcher,
+  afterPlaces,
+  foot,
   upright,
   shown,
   onFit,
 }: DockProps) {
-  const round = more.drawer === true && !upright;
+  const round = more?.drawer === true && !upright;
   const { rail, strip, foldedCurrent } = useDockFit({
     places,
     floor,
@@ -165,7 +173,7 @@ export function Dock({
       className="oh-dock"
       aria-label={label}
       data-upright={upright ? "" : undefined}
-      data-drawer-dock={more.drawer ? "" : undefined}
+      data-drawer-dock={more?.drawer ? "" : undefined}
       data-round={round ? "" : undefined}
     >
       {switcher}
@@ -178,25 +186,28 @@ export function Dock({
             hidden={shown !== undefined && index >= Math.max(shown, floor)}
           />
         ))}
-        <button
-          type="button"
-          className="oh-control oh-dock-entry"
-          aria-current={more.current || foldedCurrent ? "page" : undefined}
-          data-drawer-toggle={more.drawer ? "" : undefined}
-          aria-haspopup={more.drawer ? "dialog" : "menu"}
-          aria-expanded={more.drawer ? undefined : more.expanded}
-          aria-label={more.count ? `${more.label}, ${more.count}` : more.label}
-          title={more.label}
-          onClick={more.onPress}
-        >
-          <Icon name="more" size={20} />
-          <span className="oh-dock-word">{more.label}</span>
-          {more.count ? (
-            <span className="oh-dock-count" data-hot={more.countHot ? "" : undefined}>
-              {more.count}
-            </span>
-          ) : null}
-        </button>
+        {afterPlaces}
+        {more ? (
+          <button
+            type="button"
+            className="oh-control oh-dock-entry"
+            aria-current={more.current || foldedCurrent ? "page" : undefined}
+            data-drawer-toggle={more.drawer ? "" : undefined}
+            aria-haspopup={more.drawer ? "dialog" : "menu"}
+            aria-expanded={more.drawer ? undefined : more.expanded}
+            aria-label={more.count ? `${more.label}, ${more.count}` : more.label}
+            title={more.label}
+            onClick={more.onPress}
+          >
+            <Icon name="more" size={20} />
+            <span className="oh-dock-word">{more.label}</span>
+            {more.count ? (
+              <span className="oh-dock-count" data-hot={more.countHot ? "" : undefined}>
+                {more.count}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
       </div>
       {search || write ? (
         <div className="oh-dock-end">
@@ -236,6 +247,13 @@ export function Dock({
               ) : null}
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {foot?.length ? (
+        <div className="oh-dock-foot">
+          {foot.map((place) => (
+            <DockEntry key={place.id} place={place} hidden={false} />
+          ))}
         </div>
       ) : null}
     </nav>

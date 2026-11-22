@@ -13,8 +13,8 @@ export type LookFace = "paper" | "ohmarchy";
 
 /** Where the look applies: the account's look governs this device, or the device holds its own and can hand it on. */
 export type LookScope =
-  | { readonly governs: "all" }
-  | { readonly governs: "device" | "default"; readonly busy: boolean; applyAll(): void };
+  | { readonly governs: "all"; readonly busy?: boolean; pin?(): void }
+  | { readonly governs: "device" | "default"; readonly busy: boolean; applyAll(): void; pin?(): void };
 
 /** A switch whose answer is the server's: the press writes, and the line draws what the write answered. */
 export interface ServerSwitch {

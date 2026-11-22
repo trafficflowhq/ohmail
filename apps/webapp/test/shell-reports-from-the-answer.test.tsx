@@ -351,13 +351,15 @@ describe("the seam: nine families, each refused, each told", () => {
 });
 
 describe("a refusal whose holder stopped names nobody (the server's reason, not its holder)", () => {
+  const nobody = copy.refusedNobody!.replace(/\.$/, "");
+
   it("no_organizer: nothing organizes this mailbox, and the laptop is not called the organizer", async () => {
     await shell();
     await cursorOnFirstRow();
     refusal = { by: { kind: "local", name: "the laptop" }, reason: "no_organizer" };
     refusing = true;
     await key("e");
-    await waitFor(() => said(copy.refusedNobody!), "the nobody sentence is never rendered");
+    await waitFor(() => said(nobody), "the nobody sentence is never rendered");
     expect(said(REFUSED), "a machine that stopped was called the organizer").toBe(false);
   }, 20000);
 
@@ -368,6 +370,6 @@ describe("a refusal whose holder stopped names nobody (the server's reason, not 
     refusing = true;
     await key("e");
     await waitFor(() => said(REFUSED), "the named refusal is never rendered");
-    expect(said(copy.refusedNobody!)).toBe(false);
+    expect(said(nobody)).toBe(false);
   }, 20000);
 });

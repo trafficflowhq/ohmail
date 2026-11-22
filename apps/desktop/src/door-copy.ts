@@ -17,7 +17,7 @@
  */
 import { liveCopy } from "../../webapp/app/shell/locale.js";
 
-import { MACHINE_WORD } from "./platform.js";
+import { BUILD_PLATFORM, MACHINE_WORD } from "./platform.js";
 
 /**
  * THE ENGLISH, AND THE SHAPE OF THE NAMESPACE.
@@ -621,7 +621,15 @@ const EN = {
   engineNoKey: (machine: string) => `This ${machine}'s keystore would not answer`,
   engineNotConfigured: "No mailbox chosen",
   engineUnknown: "Not in this build",
-  installChangingHead: "Changing this install",
+  installChangingHead: "Sign-in",
+  installNameLinux: "ohmail on Linux",
+  installNameMac: "ohmail on Mac",
+  installNameWindows: "ohmail on Windows",
+  installThisComputer: "This computer",
+  installAccount: "Account",
+  installUnreachable: "Unreachable",
+  installConnectionUnknown: "Unknown",
+  installMailboxCount: (count: number, role: "reader" | "organizer"): string => `${count} · ${role === "reader" ? "reader" : "organizes"}`,
   installSignInAgain: "Sign in again",
   installSignInAgainWhy:
     "Your hosted session has gone. Signing in happens in the mail engine on this machine.",
@@ -669,12 +677,12 @@ const EN = {
      The `MailboxProbe` null-versus-empty rule, said on screen. */
   takeoverRosterUnknown: (host: string) =>
     `Could not read which mailboxes ${host} held; enter the server by hand.`,
-  installSwitch: "Switch mailbox",
+  installSwitch: "Mail server or account",
   installSwitchWhy: (machine: string) =>
     `Open a different mail server, or move between this ${machine} and your hosted account. The `
     + "copy of your mail from this one is frozen where it is rather than deleted, so coming back "
     + "does not cost a full re-sync.",
-  installSwitchAction: "Switch…",
+  installSwitchAction: "Switch",
   /* ── THE PAIRED DOOR'S THREE VARIANTS OF ROWS THAT ALREADY EXIST ─────────────────────────
      Each differs from the sentence above it in the one way that matters: the hosted wording says
      "the login — the stored password, or the session for your hosted account", and a paired
@@ -875,6 +883,7 @@ const EN = {
  * answers English before a provider exists and German after one does.
  */
 export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
+  installMailboxCount: ["count", "role"],
   doorLocalName: ["machine"],
   diagnosticWritten: ["path"],
   previewMark: ["commit"],
@@ -999,5 +1008,14 @@ export function keyringSentence(platform: string): string {
     case "darwin": return DOOR_COPY.gateKeychainWhy;
     case "win32": return DOOR_COPY.gateCredentialsWhy;
     default: return DOOR_COPY.gateKeyringWhy;
+  }
+}
+
+export function installName(): string {
+  switch (BUILD_PLATFORM) {
+    case "linux": return DOOR_COPY.installNameLinux;
+    case "darwin": return DOOR_COPY.installNameMac;
+    case "win32": return DOOR_COPY.installNameWindows;
+    default: return "ohmail";
   }
 }

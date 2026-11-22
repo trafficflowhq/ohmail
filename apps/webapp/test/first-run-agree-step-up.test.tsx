@@ -117,7 +117,6 @@ async function mount(
 }
 
 async function toWindow(s: Awaited<ReturnType<typeof mount>>) {
-  await s.press(t.continue);
   expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 }
 
@@ -139,7 +138,7 @@ describe("Agree over the door's second-factor check", () => {
     expect(s.presses, "the same press ran twice").toHaveLength(2);
     expect(s.presses[1]).toEqual(s.presses[0]);
     expect(s.heading()).not.toContain(t.organizeLast.split("<window>")[0]!.trim());
-    expect(s.heading()).not.toBe(t.mapTitle);
+    expect(s.heading()).not.toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 
   it("a second refusal after the code is said, and is not asked again", async () => {
@@ -161,7 +160,7 @@ describe("Agree over the door's second-factor check", () => {
       connect: [refused, refused, { ok: true, value: { mailboxId: id("mb-2"), address: null } }],
     });
     const s = await mountStage({ rows: [], at: "#/first-run/add", door: "selfhost", connect: wire.door });
-    await s.press(P.otherLabel);
+    await s.press(P.otherShort);
     for (const [label, text] of [[O.address, "test@example.test"], [O.password, "app-password-fixture"], [O.imapHost, "imap.example.test"], [O.smtpHost, "smtp.example.test"]]) {
       const input = within(s.el).getByLabelText(label);
       await act(async () => fireEvent.change(input, { target: { value: text } }));
@@ -231,7 +230,7 @@ describe("Organize here instead over the door's second-factor check", () => {
 
   async function toTheTakeover(answers: Array<"step_up" | FirstRunOrganized>) {
     const s = await mount(answers, { mailbox: TAKEN, rerun: true });
-    expect(s.heading()).toBe(t.mapTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.back);
     expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.press(t.continue);

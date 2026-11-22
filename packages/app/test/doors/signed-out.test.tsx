@@ -81,9 +81,14 @@ describe("the signed-out page, state by state", () => {
     expect(view.container.textContent).toContain(en.resume.failedTitle);
     expect(view.container.textContent).toContain(said);
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(buttons()).toEqual([en.resume.signIn]);
+    expect(screen.getAllByRole("button")).toEqual([screen.getByRole("button", { name: en.resume.signIn })]);
     fireEvent.click(screen.getByRole("button", { name: en.resume.signIn }));
     expect(acts.signIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses the expired session’s Sign in action for Enter", () => {
+    draw(doorOf({ at: "signedOut", reason: "expired" }).door);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: en.resume.signIn }));
   });
 
   it("reused: the sign-in used twice is said as a refusal, with Sign in", () => {

@@ -2,14 +2,14 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import type { ManageOutcome, PlanPick, Standing, SubscriptionDoor, SubscriptionStatus } from "@ohmail/app/account";
+import type { Answer, ManageOutcome, PlanPick, PlansAnswer, Standing, SubscriptionDoor, SubscriptionStatus, SubscriptionWord } from "@ohmail/app/account";
 import { NONE } from "@ohmail/app/host";
 import {
-  account, accessFeedFor, accessStorage, apiConfigured, onAccessFeed, type AccountAccess, type AccountLifecycle,
+  account, accessFeedFor, accessAiCredits, accessStorage, apiConfigured, onAccessFeed, type AccountAccess, type AccountLifecycle,
 } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { dayStamp } from "../../shell/format";
-import { formatStorageBytes } from "../../shell/storage-state";
+import { formatStorageBytes, formatStoragePrice, type StorageOffer } from "../../shell/storage-state";
 import { leaveForManagePage } from "./manage-navigation";
 
 /** A day as the reader says it, by the product's one day formatter; nothing for a day that cannot be read. */
@@ -55,9 +55,16 @@ export function subscriptionStatusOf(
   const standing = standingOf(access.lifecycle);
   if (standing === null) return null;
   const storage = accessStorage(access);
+  const progress = access.trialProgress;
+  const credits = accessAiCredits(access);
+  const showsProgress = standing.state === "trial" && progress &&
+    Number.isSafeInteger(progress.day) && Number.isSafeInteger(progress.total) &&
+    progress.day >= 1 && progress.day <= progress.total;
   return {
     standing,
+    ...(showsProgress ? { trialProgress: progress } : {}),
     mailboxes: access.mailboxes,
+    ...(credits ? { aiCredits: credits } : {}),
     storage:
       storage === null
         ? null
@@ -65,11 +72,32 @@ export function subscriptionStatusOf(
   };
 }
 
+function plansOf(offer: StorageOffer, locale: string): PlansAnswer {
+  const price = (amount: number) => formatStoragePrice(amount, offer.currency, locale);
+  return {
+    kind: "plans",
+    plans: offer.plans.map((line) => ({
+      plan: line.plan,
+      mailboxes: line.mailboxes,
+      storage: formatStorageBytes(line.roomBytes, locale, true),
+      price: {
+        month: offer.interval === "month" ? price(line.amount) : null,
+        year: offer.interval === "year" ? price(line.amount) : null,
+      },
+    })),
+    current: {
+      plan: offer.current.plan,
+      interval: offer.interval,
+      addonUnits: offer.current.addonUnits,
+    },
+    addon: null,
+  };
+}
+
 /**
  * THE WEB'S SUBSCRIPTION DOOR. The standing is the access answer this tab already holds for the account the shell
- * hands in (`host.session.scope`), never one read from the browser's jar, and nothing is asked to draw it. The plans'
- * read is not served yet (`GET /account/plans` is not on this line): this door has none, so no price is asked and
- * none is drawn. The press makes the account page's address (`POST /account/manage-link {lang}`, with the plan and
+ * hands in (`host.session.scope`), never one read from the browser's jar. The plans come from that answer's storage
+ * offer and display amounts for the quoted interval. The press makes the account page's address (`POST /account/manage-link {lang}`, with the plan and
  * the interval it was handed from their closed sets) and leaves for it in this tab with no referrer: the address
  * never leaves this file. No address, an empty one or a 404 is no page here: `withdraw` takes the pane away for the
  * shell, and the press answers `nowhere`. A mint that threw could not open the page.
@@ -84,11 +112,17 @@ export function useSubscriptionDoor(scope: string | null, withdraw: () => void):
     return subscriptionStatusOf(entry.answer, (used, limit) => t("storageOf", { used, limit }), locale);
   }, [entry, locale, t]);
   const signal = useMemo(() => ({ read: () => status, subscribe: () => () => {} }), [status]);
+  const plans = useMemo(() => {
+    if (SELF_HOST_BUILD || !apiConfigured() || entry === null) return NONE;
+    const offer = accessStorage(entry.answer)?.offer;
+    const answer: PlansAnswer = offer ? plansOf(offer, locale) : { kind: "unanswered" };
+    return async (): Promise<Answer<PlansAnswer, SubscriptionWord>> => ({ ok: true, value: answer });
+  }, [entry, locale]);
   const manage = useCallback(
     async (pick?: PlanPick): Promise<ManageOutcome> => {
       let url: unknown;
       try {
-        url = (await account.manageLink({ lang, ...pick }))?.url;
+        url = (await account.manageLink({ lang, ...pick }, scope ?? undefined))?.url;
       } catch {
         return "failed";
       }
@@ -100,7 +134,7 @@ export function useSubscriptionDoor(scope: string | null, withdraw: () => void):
       withdraw();
       return "nowhere";
     },
-    [lang, withdraw],
+    [lang, scope, withdraw],
   );
-  return useMemo(() => ({ status: signal, plans: NONE, manage }), [signal, manage]);
+  return useMemo(() => ({ status: signal, plans, manage }), [signal, plans, manage]);
 }

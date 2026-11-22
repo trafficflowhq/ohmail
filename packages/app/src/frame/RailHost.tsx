@@ -246,6 +246,7 @@ export function SideRail({
   );
   const rail = (
     <Rail
+      drawer={drawer}
       switcher={drawer ? undefined : switcher}
       /* While today's rail is fed, the landmark keeps today's name: what a screen reader finds it by. */
       label={t(model ? "landmark.fedRail" : "landmark.places")}

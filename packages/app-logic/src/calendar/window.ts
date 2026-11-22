@@ -101,6 +101,11 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
           ? record.recurrenceId
           : recurrenceKeyString(occurrence.key);
     if (
+      (record.status === "cancelled" || record.myAnswer === "declined") &&
+      [record, series].some((source) => source?.removedOccurrences?.some((at) => at === "" || at === key))
+    )
+      continue;
+    if (
       series &&
       key !== null &&
       byRecord

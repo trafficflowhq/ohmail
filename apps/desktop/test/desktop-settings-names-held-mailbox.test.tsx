@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { waitFor } from "@testing-library/react";
+import { waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -41,6 +41,12 @@ function mount(facts: MailboxFacts[] | Promise<MailboxFacts[]>): Promise<HTMLEle
 afterEach(cleanInstallPane);
 
 describe("Settings → Desktop names the mailbox this install holds", () => {
+  it("shows the running engine and an unreachable mail server from the local roster", async () => {
+    const pane = within(await mount([row("mbx-1", SEED, { unreachableSince: "2026-09-02T09:00:00.000Z" })]));
+    expect(pane.getByRole("group", { name: "Mail engine" }).textContent).toContain("Running");
+    await waitFor(() => expect(pane.getByRole("group", { name: "Connection" }).textContent).toContain("Unreachable"));
+  });
+
   it("the seed was removed while another mailbox remains: the survivor, never the seed", async () => {
     const pane = await mount([
       row("mbx-seed", SEED, { status: "disabled", disabledReason: null }),

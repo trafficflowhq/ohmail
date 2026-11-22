@@ -167,7 +167,7 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
         timeZone={timeZone}
         sync={sync}
         drawn={() => bridge.request("ready", { place: frame.address.read() }).catch(() => {})}
-        noticeChoices={() => storedNoticeChoices(localStorage, config.app === "ohcal")}
+        noticeChoices={() => storedNoticeChoices(localStorage, config.app === "ohcal", config.scope)}
         widgets={widgets}
       />
     </portalRenderer.Provider>,

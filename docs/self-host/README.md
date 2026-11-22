@@ -295,13 +295,13 @@ network, including without TLS; enable it only if you trust those accounts.
 
 ## Place suggestions in the calendar
 
-The place field of an event can suggest addresses and places as you type, from
-a geocoder you run yourself or one you trust: a [Photon](https://github.com/komoot/photon)
-server, named by `PLACES_SUGGEST_URL` in `.env`, with `PLACES_SUGGEST_TOKEN` if it
-asks for a bearer. The apps ask your server and your server asks the geocoder, so
-the geocoder sees your server and the words typed into the field, never who typed
-them; where, only as a region of about ten kilometres when the app sends one.
-Nothing of a question is stored. The address is `https`, or plain `http` to a name
-on this stack's own network. Without the two settings the place field is a plain
-field, and everything else works as before. They are checked at every start and
-used only where the calendar is on.
+On a self-hosted server, the place field suggests places from your own calendar.
+Map suggestions are off by default. To enable them, set
+`PLACES_SUGGEST_URL=https://photon.komoot.io` in `deploy/selfhost/.env` or set
+`PLACES_SUGGEST_URL` to your own Photon server. Use komoot's public endpoint
+fairly. It may throttle heavy use and gives no availability guarantee.
+The public endpoint needs no token. If your own geocoder requires a bearer
+token, set `PLACES_SUGGEST_TOKEN` too.
+
+When map suggestions are on, your server sends what a person types in the
+place field to the configured geocoder. ohmail Cloud uses its own keyed geocoder.

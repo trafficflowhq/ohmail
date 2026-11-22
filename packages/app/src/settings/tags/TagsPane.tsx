@@ -96,8 +96,7 @@ export function TagsPane({ model, at }: TagsPaneProps) {
         );
       })}
       {verbs ? <NewTag model={model} create={verbs.create} typed={at?.typeNew} t={t} /> : null}
-      <SettingNote>{t("tagNote")}</SettingNote>
-      {model.notOnServer ? <SettingNote>{model.notOnServer}</SettingNote> : null}
+      {model.notOnServer ? <p className="oh-vh">{model.notOnServer}</p> : null}
       {verbs && colours ? (
         <ColourMenu
           tag={tags.find((x) => x.id === colours.id) ?? null}

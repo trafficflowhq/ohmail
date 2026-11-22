@@ -23,7 +23,7 @@ const entries: Array<[string, DoorControl]> = [
   // The invite's own page: the account it makes.
   d("invite-email", "textbox", "joinInvite.emailLabel"),
   d("invite-name", "textbox", "joinInvite.nameLabel"),
-  d("invite-password", "textbox", "joinInvite.passwordLabel"),
+  d("invite-password", "textbox", "joinInvite.passwordLabel", { byLabel: true }),
   d("invite-create", "button", "joinInvite.createAccount"),
 
   // The join page, the setup's steps.
@@ -32,7 +32,7 @@ const entries: Array<[string, DoorControl]> = [
   d("join-name", "textbox", "join.nameLabel"),
   d("join-password", "textbox", "join.passwordLabel"),
   d("join-create", "button", "join.continue"),
-  d("join-use-totp", "radio", "join.factorApp"),
+  d("join-use-totp", "radio", "join.factorApp", { nameSuffix: "join.factorTag" }),
   /** The authenticator's key, as the page writes it for a person to type into their app. */
   d("join-key", "code", null, { nameFrom: "none" }),
   d("join-code", "textbox", "join.totpLabel"),

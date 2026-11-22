@@ -164,7 +164,7 @@ describe("the phone shell's answers, per setting", () => {
         engine,
         session: {
           resolve: NONE, confirmed: NONE, state: w.session.state, scope: "p0123456789abcdef0123456789abcdef",
-          account: w.session.account, mirrorAccount: null, accountAddress: null, signOut: w.session.signOut,
+          account: w.session.account, mirrorAccount: null, accountAddress: null, accountDisplayName: null, signOut: w.session.signOut,
           recover: has.frame.recover, today: NONE,
         },
         reads: { mailboxes: expect.any(Function), copyAge: NONE, access: NONE },
@@ -223,7 +223,7 @@ describe("what the page hands the frame", () => {
     const calendar = ohcalMounted(bridge, paired);
     const frame = phoneFrameSupplies(mail, null, () => {}, windowWith(""));
     expect(frame.places).toEqual({ ...calendar.places, ...mailPlaces(), settings: expect.any(Object) });
-    expect(frame.stages).toEqual({ firstRun: { id: "firstRun", Body: expect.any(Function) } });
+    expect(frame.stages).toEqual({ firstRun: NONE });
     expect(frame.overs).toEqual({ palette: NONE, keys: NONE });
     expect(frame.above).toBe(MailGround);
     expect(frame.reader).not.toBe(NONE);

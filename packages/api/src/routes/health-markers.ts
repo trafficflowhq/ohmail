@@ -142,6 +142,7 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // deploy order migration → API. A marker on a nullable column is deliberate: the probe asks
   // whether the column exists, never whether anything has been written — every account starts
   // with no row, and that is the correct state.
+  ["account_settings", "draft_replies"],
   ["account_settings", "seed_confirmed_at"],
   // mail 0037_draft_html — the rich half of a draft. One nullable column on `drafts`, with a
   // second consumer that makes it sharper than the `mailboxes` entries: `materializeDraft`
@@ -1329,7 +1330,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0213_calendar_availability_identity";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0218_account_settings_draft_replies";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

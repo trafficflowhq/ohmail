@@ -207,6 +207,13 @@ export const accountRoutes: Route[] = [
           .then((limit) => (limit === null ? null : storageBlockOf(reading, verdict, limit, deps.now())))
           .catch(() => null)
         : null;
+      const trialStart = Date.parse(verdict.trial?.startedAt ?? "");
+      const trialEnd = Date.parse(verdict.lifecycle?.trialEndsAt ?? "");
+      const now = deps.now().getTime();
+      const dayMs = 24 * 60 * 60 * 1000;
+      const trialProgress = answered && verdict.lifecycle?.state === "trialing" && trialStart <= now && now < trialEnd
+        ? { day: Math.floor((now - trialStart) / dayMs) + 1, total: Math.ceil((trialEnd - trialStart) / dayMs) }
+        : null;
       return json({
         metered: true,
         access: "open",
@@ -218,7 +225,9 @@ export const accountRoutes: Route[] = [
         // from the two above — an account may hold every mailbox it is entitled to and have AI
         // off, or the other way round.
         aiEnabled: verdict.limits.aiEnabled,
+        ...(answered && verdict.aiCredits ? { aiCredits: verdict.aiCredits } : {}),
         ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
+        ...(trialProgress !== null ? { trialProgress } : {}),
         exportPath: "/account/export",
         ...(caughtUp !== null && caughtUp !== "fault" ? { caughtUp } : {}),
         ...(storage !== null ? { storage } : {}),

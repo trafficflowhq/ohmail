@@ -186,8 +186,7 @@ async function mount(start: { mb: OnboardingMailbox; ai?: OnboardingAi; senders?
   };
   /** Consent → window → Agree → AI answered. */
   const agreeThenAnswer = async (answer: "yes" | "no" = "no") => {
-    expect(heading()).toBe(t.mapTitle);
-    await press(t.continue);
+    expect(heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await press(t.agree);
     expect(heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
@@ -253,8 +252,7 @@ describe("Cloud: the import is over before the run's Agree", () => {
 
   it("CONTROL — the senders arrived before the AI answer: the decision at once, the line never said", async () => {
     const s = await mount({ mb: { ...READER, initialImportCompletedAt: IMPORTED } });
-    expect(s.heading()).toBe(t.mapTitle);
-    await s.press(t.continue);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     s.sweepLands(2);

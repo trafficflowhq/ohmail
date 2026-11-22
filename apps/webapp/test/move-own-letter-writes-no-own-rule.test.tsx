@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
-import { letterShown, lettersShown, menuItem, moreButton, reportSays } from "./ohbox/_finders.js";
+import { barVerb, letterShown, lettersShown, menuItem, reportSays } from "./ohbox/_finders.js";
 
 /**
  * A MOVE ON OUR OWN LETTER WRITES NO RULE ABOUT OUR OWN ADDRESS, through the shipped
@@ -91,13 +91,11 @@ function writes(): string[] {
   });
 }
 
-/**
- * Press the panel's Move, then the place, on what is open. The new reader keeps Move in More (FOR-S3-TO-S8 point
- * 63 (d)): More, Move, then the place by its name (today's bar wrote "→ News").
- */
+/** Press Move on the focused action panel and pick a destination. */
 async function pressMove(host: HTMLElement, place: string): Promise<void> {
-  await click(moreButton(host)!);
-  await click(menuItem("Move")!);
+  const move = barVerb(host, "Move");
+  if (!move) throw new Error("no Move action on the reader bar");
+  await click(move);
   const target = menuItem(place);
   if (!target) throw new Error(`no move target ${place}`);
   await click(target);

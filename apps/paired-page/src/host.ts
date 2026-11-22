@@ -119,6 +119,7 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       mirrorAccount: facts.mirrorAccount,
       account: null,
       accountAddress: null,
+      accountDisplayName: null,
       signOut: has.signOut,
       recover: has.frame.recover,
       today: NONE,

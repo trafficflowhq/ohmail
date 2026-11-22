@@ -14,6 +14,7 @@ import {
 } from "./apply.js";
 import { inConnection, type ConnectionDb, type ConnectionKey } from "./connection.js";
 import { rowsOfObject, type MapContext, type Upsert } from "./map.js";
+import type { MoveRefusal } from "./personal-transfer.js";
 import type { WriteWord } from "./write-request.js";
 
 /** A write as its claim found it: what closing it needs. */
@@ -30,6 +31,7 @@ export interface ClaimedWrite {
   /** The stored event is still the one the write stood in for (a new event not yet named by the provider). */
   readonly provisional: boolean;
   readonly series?: boolean;
+  readonly copied?: boolean;
   readonly toCalendarId: string | null;
   /** What its row keeps once applied, in place of its act (`appliedPayloadOf`): at most the day a series' end ended it at. */
   readonly kept: Readonly<Record<string, string>>;
@@ -84,7 +86,7 @@ const eventChange = (changes: CalendarChange[], eventId: string | null): void =>
  * transaction: one change for each event whose mark changed, the head's and its followers' (the
  * second half of a press is the new series' record's).
  */
-export async function refuseInTx(tx: Tx, accountId: string, w: ClaimedWrite, word: WriteWord | "expired" | "earlier_refused", changes: CalendarChange[]): Promise<void> {
+export async function refuseInTx(tx: Tx, accountId: string, w: ClaimedWrite, word: WriteWord | MoveRefusal | "expired" | "earlier_refused", changes: CalendarChange[]): Promise<void> {
   one(await tx.update(calWrites).set({ state: "refused", refusal: word, nextAttemptAt: null, updatedAt: sql`now()` })
     .where(claimed(w, accountId)).returning({ id: calWrites.id }), "refusal");
   const followers = await followersOf(tx, accountId, w.eventId, w.id);
@@ -103,7 +105,7 @@ export async function refuseInTx(tx: Tx, accountId: string, w: ClaimedWrite, wor
  * is what waited for it. A version the provider moved past makes the calendar due, so its copy is
  * read again.
  */
-export async function settleRefused(ctx: SettleContext, w: ClaimedWrite, word: WriteWord | "expired"): Promise<"gone" | void> {
+export async function settleRefused(ctx: SettleContext, w: ClaimedWrite, word: WriteWord | MoveRefusal | "expired"): Promise<"gone" | void> {
   const done = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
     const changes: CalendarChange[] = [];
     await refuseInTx(tx, ctx.key.accountId, w, word, changes);
@@ -177,7 +179,7 @@ export async function settleApplied(
   let works: readonly Work[] = [];
   let unkept = 0;
   let named = targetProviderId;
-  if (w.op === "move") {
+  if (w.op === "move" && !w.copied) {
     // The provider moved the object: both calendars are read at once, and the readings carry it across.
   } else if (w.provisional && w.eventId !== null) {
     const ups = items.filter((i): i is Upsert => i.kind === "upsert");

@@ -115,6 +115,7 @@
       "@ohmail/app/mail": ["../../packages/app/src/mail/index.ts"],
       "@ohmail/app/mailboxes/connect": ["../../packages/app/src/mailboxes/connect/index.ts"],
       "@ohmail/app/mailboxes": ["../../packages/app/src/mailboxes/index.ts"],
+      "@ohmail/app/mailboxes/connect": ["../../packages/app/src/mailboxes/connect/index.ts"],
       "@ohmail/app/ohbox": ["../../packages/app/src/ohbox/index.ts"],
       "@ohmail/app/profile-import": ["../../packages/app/src/profile-import/index.ts"],
       "@ohmail/app/reader/body": ["../../packages/app/src/reader/body/index.ts"],

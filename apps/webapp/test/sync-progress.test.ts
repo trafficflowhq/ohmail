@@ -990,7 +990,7 @@ describe("an empty Ohbox that is CORRECT says so, and only then", () => {
    today's slow sentence is the title and its one action is a press to the mailboxes.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
-const SLOW = messages.sync.awaitingSlow;
+const SLOW = messages.sync.awaitingSlow.replace(/\.$/, "");
 
 describe("an honest wait", () => {
   it("says how long, and a six-minute first import is NOT called slow", async () => {

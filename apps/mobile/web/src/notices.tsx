@@ -9,15 +9,16 @@
  * same choices through the same reader, so the registration follows the two switches. Both are here because both
  * read the choices at the same moments, and a second reader of them could disagree with the first.
  */
+import {
+  CALENDAR_NOTICES_KEY,
+  NOTIFICATION_CHANNELS_KEY,
+  useNoticesVersion,
+} from "@ohmail/app-logic/notices/browser-channels";
 import { useEffect, useMemo } from "react";
 import { useDerivedVersion, useEngine, useSyncStatus } from "@ohmail/app-logic/engine";
 import { noticeReadsOf, useNotices } from "@ohmail/app-logic/notices/use-notices";
 import { NONE, type HostContract } from "@ohmail/app/host";
 import { calendarChoicesOf, mailChoicesOf, noticeChoicesOf, type NoticeChoices } from "./engine-package";
-
-/** The names this device keeps its notice choices under: mail's record and the calendar's, as every shell does. */
-const MAIL_CHOICES = "ohmail.notifications.channels";
-const CALENDAR_CHOICES = "ohmail.notices.calendar";
 
 /** A stored record as it was written, or null: absent, unreadable or no JSON all read as the start values. */
 function stored(storage: Pick<Storage, "getItem">, name: string): unknown {
@@ -29,16 +30,28 @@ function stored(storage: Pick<Storage, "getItem">, name: string): unknown {
   }
 }
 
-/** This device's choices, through the one reader of the two stored records. */
-export function storedNoticeChoices(storage: Pick<Storage, "getItem">, ohcalPhone: boolean): NoticeChoices {
-  return noticeChoicesOf(stored(storage, MAIL_CHOICES), stored(storage, CALENDAR_CHOICES), { ohcalPhone });
+/** Read the same records for the running notices and widgets. Older device-wide mail switches
+ * carry forward, with previews off until this account sets its own choice. */
+function storedChoices(storage: Pick<Storage, "getItem">, ohcalPhone: boolean, scope?: string) {
+  const sharedMail = stored(storage, NOTIFICATION_CHANNELS_KEY);
+  if (scope === undefined) return { mail: sharedMail, calendar: stored(storage, CALENDAR_NOTICES_KEY) };
+  return {
+    mail: stored(storage, `${NOTIFICATION_CHANNELS_KEY}.${scope}`) ??
+      { ...mailChoicesOf(sharedMail, { ohcalPhone }), showMailDetails: false },
+    calendar: stored(storage, `${CALENDAR_NOTICES_KEY}.${scope}`),
+  };
 }
 
-export function storedWidgetChoices(storage: Pick<Storage, "getItem">) {
-  const raw = stored(storage, CALENDAR_CHOICES);
-  const calendar = calendarChoicesOf(raw, { ohcalPhone: true });
-  const mail = mailChoicesOf(stored(storage, MAIL_CHOICES), { ohcalPhone: true });
-  return { ...calendar, cal_alert: mail.master && calendar.cal_alert };
+export function storedNoticeChoices(storage: Pick<Storage, "getItem">, ohcalPhone: boolean, scope?: string): NoticeChoices {
+  const { mail, calendar } = storedChoices(storage, ohcalPhone, scope);
+  return noticeChoicesOf(mail, calendar, { ohcalPhone });
+}
+
+export function storedWidgetChoices(storage: Pick<Storage, "getItem">, scope?: string) {
+  const where = { ohcalPhone: true };
+  const { mail, calendar } = storedChoices(storage, where.ohcalPhone, scope);
+  const choices = calendarChoicesOf(calendar, where);
+  return { ...choices, cal_alert: mailChoicesOf(mail, where).master && choices.cal_alert };
 }
 
 /**
@@ -71,7 +84,7 @@ export function wakeTeller(sync: ((wanted: boolean) => Promise<unknown>) | undef
 
 export function PhoneNotices({ host, choices }: { readonly host: HostContract; readonly choices: () => NoticeChoices }) {
   const engine = useEngine();
-  const version = useDerivedVersion();
+  const version = useNoticesVersion(useDerivedVersion());
   const sync = useSyncStatus();
   const notifications = host.device.notifications;
   // The wake registration follows the two switches: read with the choices, at the first draw and at each change

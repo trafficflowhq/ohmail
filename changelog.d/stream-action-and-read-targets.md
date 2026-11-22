@@ -10,4 +10,4 @@ Delete and Backspace act on a scroll-selected letter once it settles above the s
 
 Tabbing into an expanded stream card directs the shared actions to that card.
 
-A displayed preview can be marked read after its body finishes prefetching and the reader dwells on its text.
+A shown preview can be marked read once its full text has arrived and the reader dwells on it.

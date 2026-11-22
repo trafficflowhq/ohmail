@@ -8,10 +8,11 @@ import type { SignatureEditorProps } from "./model.js";
 export function SignatureEditor({
   editor: Editor,
   preview,
+  tools,
   ...props
 }: SignatureEditorProps & { readonly editor: WriteEditor }) {
   const [handle, setHandle] = useState<EditorHandle | null>(null);
-  const marks = useMarks(preview ? null : handle, props.editable);
+  const marks = useMarks(!preview && tools ? handle : null, props.editable);
   return (
     <div className={preview ? "sig-preview-text" : "sig-settings-editor"}>
       {marks.strip && <ComposerMarks {...marks.strip} />}

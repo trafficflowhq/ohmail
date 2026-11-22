@@ -42,7 +42,7 @@ const STEPS: Readonly<Record<OnboardingStep, (props: StepProps) => ReactNode>> =
   choose: Choose,
   mailbox: MailboxStep,
   elsewhere: Elsewhere,
-  consent: Consent,
+  consent: (props) => (props.run.wait.awaiting ? <Consent {...props} /> : <Window {...props} />),
   window: Window,
   ai: Ai,
   provider: Provider,

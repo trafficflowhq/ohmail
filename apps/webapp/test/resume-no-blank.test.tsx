@@ -107,16 +107,17 @@ describe("the splash paints its card while the refresh door is out", () => {
     expect(refreshes, "the splash never asked the refresh door").toBe(1);
     expect(mark(el), "the splash painted nothing while it waited").toBe("oh");
     expect(el.querySelector('[aria-busy="true"]'), "the wait is not marked busy").not.toBeNull();
-    expect(R.workingBody, "the catalogue has no waiting line").toBe("Checking your sign-in…");
+    expect(R.workingBody, "the catalogue has no waiting line").toBe("Checking your sign-in.");
     // Below the grace, the card alone: a sentence that flashes is worse than a quiet card.
     await advance(LOADING_GRACE_MS - 50);
-    expect(text(el)).not.toContain(R.workingBody);
+    const waiting = R.workingBody.replace(/\.$/, "");
+    expect(text(el)).not.toContain(waiting);
     await advance(100);
-    expect(text(el), "a long wait never says what it waits for").toContain(R.workingBody);
+    expect(text(el), "a long wait never says what it waits for").toContain(waiting);
     // Still waiting, still saying so, and nothing navigated.
     await advance(20_000);
     expect(mark(el)).toBe("oh");
-    expect(text(el)).toContain(R.workingBody);
+    expect(text(el)).toContain(waiting);
     expect(replaced).toEqual([]);
     expect(reloads).toBe(0);
   });
@@ -128,11 +129,11 @@ describe("the splash paints its card while the refresh door is out", () => {
     }));
     expect(html, "the document the edge sends paints nothing").toMatch(/<main\b/);
     expect(html.replace(/<[^>]*>/g, ""), "the page's mark is not in the first paint").toBe("oh");
-    expect(html, "the waiting line is said before the grace").not.toContain(R.workingBody);
+    expect(html, "the waiting line is said before the grace").not.toContain(R.workingBody.replace(/\.$/, ""));
   });
 
   it("the waiting line is said in German too", () => {
-    expect((de.resume as Record<string, string>).workingBody).toBe("Deine Anmeldung wird geprüft …");
+    expect((de.resume as Record<string, string>).workingBody).toBe("Deine Anmeldung wird geprüft.");
   });
 });
 

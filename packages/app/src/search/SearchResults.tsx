@@ -166,7 +166,7 @@ export function SearchHitRow({
       ) : (
         <>
           {cut.before}
-          <mark>{cut.marked}</mark>
+          <mark className="sr-match">{cut.marked}</mark>
           {cut.after}
         </>
       )}

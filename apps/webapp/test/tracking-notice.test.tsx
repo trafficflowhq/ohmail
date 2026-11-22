@@ -153,9 +153,11 @@ describe("a Reads card with a beacon refused", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(card.querySelector(".mb-bar-text"), "the sentence is still said as a bar").toBeNull();
     expect(card.querySelector(".mb-bar"), "a bar with nothing in it is still on the card").toBeNull();
-    // The glyph and the time are adjacent in the same metadata line.
+    // The message menu stands between the glyph and the timestamp in the metadata line.
     const time = card.querySelector("time")!;
-    expect(trigger.parentElement?.nextElementSibling).toBe(time.parentElement);
+    const messageMenu = within(card).getByRole("button", { name: "Message" });
+    expect(trigger.parentElement?.nextElementSibling).toBe(messageMenu);
+    expect(messageMenu.nextElementSibling).toBe(time.parentElement);
   });
 
   it("says it in German when the catalogue is German", async () => {
@@ -208,7 +210,9 @@ describe("Reads with ten such messages", () => {
       const notices = [COPY.pixelCaption, COPY.imagesCaption]
         .flatMap((name) => within(card).queryAllByRole("button", { name }));
       expect(notices, "each card carries one glyph").toHaveLength(1);
-      expect(notices[0]!.parentElement?.nextElementSibling).toBe(card.querySelector("time")?.parentElement);
+      const messageMenu = within(card).getByRole("button", { name: "Message" });
+      expect(notices[0]!.parentElement?.nextElementSibling).toBe(messageMenu);
+      expect(messageMenu.nextElementSibling).toBe(card.querySelector("time")?.parentElement);
     }
     expect(region.querySelectorAll(".mb-bar, .mb-bar-text")).toHaveLength(0);
 
@@ -222,7 +226,9 @@ describe("Reads with ten such messages", () => {
     const amount = within(withoutSubject!).getByText("CHF 12.00");
     const time = metadata.querySelector("time")!;
     expect(metadata.contains(amount)).toBe(true);
-    expect(metadata.lastElementChild).toBe(time.parentElement);
+    const messageMenu = within(withoutSubject!).getByRole("button", { name: "Message" });
+    expect(trigger.parentElement!.nextElementSibling).toBe(messageMenu);
+    expect(messageMenu.nextElementSibling).toBe(time.parentElement);
     expect(amount.compareDocumentPosition(time) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(invoice!).getByRole("heading", { name: "Invoice" }).parentElement
       ?.contains(within(invoice!).getByText("CHF 18.00"))).toBe(true);

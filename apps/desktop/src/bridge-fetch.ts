@@ -24,6 +24,7 @@ import {
   CLIENT_HEADER, clientHeaderValue, HttpAdapter, OhmailEngine, retryingRead, updateAnswerOf, type UpdateAnswer,
   type WindowSearchPhases, type WindowSyncFailure,
 } from "@ohmail/client-engine";
+import type { CalendarWriteTransport } from "@ohmail/client-engine/calendar-writes";
 import { BUILD_VERSION } from "./build-id.js";
 import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import { WindowOutboxStore } from "./window-outbox-store.js";
@@ -501,9 +502,10 @@ export const BRIDGE_DEADLINE_MS = SHELL_DEADLINE_MS;
  * not happen. The deadline above rides the same race (`shell-deadline.ts`, the one helper every
  * shell call here goes through), so a late loser rejecting is never an unhandled rejection.
  */
-export const bridgeFetch: BridgeFetch = async (url, init) => {
+async function requestOverBridge(url: string, init?: unknown, calendarSession?: number): Promise<Response> {
   const options = (init ?? {}) as BridgeInit;
   const method = (options.method ?? "GET").toUpperCase();
+  const expectedCalendarSession = calendarSession ?? options.expectedCalendarSession;
   const bytes = await withDeadline(
     "the local engine",
     () => shell().invoke(REQUEST_COMMAND, {
@@ -511,7 +513,7 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
       url,
       headers: named(headerPairs(options.headers)),
       ...bodyField(options.body),
-      ...(options.expectedCalendarSession === undefined ? {} : { expectedCalendarSession: options.expectedCalendarSession }),
+      ...(expectedCalendarSession === undefined ? {} : { expectedCalendarSession }),
     }),
     {
       ...(options.signal ? { signal: options.signal } : {}),
@@ -524,7 +526,9 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
     },
   );
   return toResponse(asBytes(bytes), url);
-};
+}
+
+export const bridgeFetch: BridgeFetch = requestOverBridge;
 
 /**
  * {@link bridgeFetch} FOR THE WINDOW'S OWN POLLS — the same request, asked again when the engine
@@ -974,6 +978,18 @@ export function readDesktopCalendarSettings(session: number) {
     baseUrl: "",
     fetch: (url, init) => bridgeFetch(url, { ...init, expectedCalendarSession: session }),
   }).calendarSettings();
+}
+
+/** Bind the shared calendar write client to the native account session that opened it. */
+export function desktopCalendarWrites(session: number, onWritten: () => void): CalendarWriteTransport {
+  return new HttpAdapter({
+    baseUrl: "",
+    fetch: async (url, init) => {
+      const answer = await requestOverBridge(url, init, session);
+      if (answer.ok) onWritten();
+      return answer;
+    },
+  });
 }
 
 /** How this window's engine is wired for the door it serves. */

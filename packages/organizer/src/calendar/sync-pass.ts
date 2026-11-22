@@ -17,7 +17,7 @@ import { inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./c
 import { releaseReadings, remember } from "./memory.js";
 import { holdCalendar, ownAddressesOf, readCalendar, type ReadingContext, type TurnBudget } from "./reading.js";
 import { CalendarKeyRingFault, openPassSignIn, sealedCredentialOf, type PassSignIn } from "./sign-in.js";
-import { calendarEnabledAt, holdConnectionUntil, setConnectionState } from "./state.js";
+import { calendarEnabledAt, holdCalendarUntil, holdConnectionUntil, setConnectionState } from "./state.js";
 import type { CalendarSyncDeps, CalendarSyncOutcome, DueConnection } from "./types.js";
 import {
   FAILING_FROM, LIST_EVERY_MS, OFF_RECHECK_MS, PAGE_LINK_RESET_AFTER, READING_PLACE_WAIT_MS, TURN_MS, TURN_PAGES, WAIT_DAY_MS, WORD_PLAN,
@@ -52,6 +52,47 @@ export async function calendarSyncPass(deps: CalendarSyncDeps, c: DueConnection,
     // Only a connection that reads on at once keeps a reading from this turn to the next: one that waits holds no place.
     if (!readsOn) releaseReadings(deps.memory, c.id);
   }
+}
+
+async function openMoveDestination(
+  deps: CalendarSyncDeps, db: ConnectionDb, calendarId: string, source: ConnectionKey, signIn: PassSignIn,
+) {
+  const destination = await inConnection(db, source, async ({ tx }) => {
+    const [row] = await tx.select({ connectionId: calCalendars.connectionId }).from(calCalendars)
+      .where(and(eq(calCalendars.accountId, source.accountId), eq(calCalendars.id, calendarId), eq(calCalendars.access, "owner"))).limit(1);
+    return row ?? null;
+  });
+  if (destination === "gone" || !destination) return null;
+  const key = { accountId: source.accountId, id: destination.connectionId };
+  const gate = await inConnection(db, key, async ({ tx, held }) => {
+    if (!isProviderWord(held.provider) || held.provider === "ics" || await calendarEnabledAt(tx, key.accountId) === null) return null;
+    const [calendar] = await tx.select({ id: calCalendars.providerId }).from(calCalendars).where(and(
+      eq(calCalendars.accountId, key.accountId), eq(calCalendars.connectionId, key.id), eq(calCalendars.id, calendarId),
+      eq(calCalendars.access, "owner"),
+    )).limit(1);
+    const provider = deps.providers.get(held.provider);
+    return calendar && provider?.writer?.readForMove ? {
+      held, calendar, word: held.provider, provider,
+      sealed: key.id === source.id ? null : await sealedCredentialOf(tx, key, held.provider),
+    } : null;
+  });
+  if (gate === "gone" || !gate || !gate.provider.writer) return null;
+  if (key.id === source.id) return { writer: gate.provider.writer, cal: gate.calendar, connection: signIn.connection,
+    markDue: () => markMoveDue(db, key, calendarId, deps.clock.now()) };
+  const opened = await openPassSignIn(deps, { db, key }, gate.sealed, gate.held, gate.word, gate.provider);
+  if (!opened.ok) return null;
+  return { writer: gate.provider.writer, cal: gate.calendar, connection: opened.signIn.connection,
+    markDue: () => markMoveDue(db, key, calendarId, deps.clock.now()),
+  };
+}
+
+async function markMoveDue(db: ConnectionDb, key: ConnectionKey, calendarId: string, now: number) {
+  await inConnection(db, key, async ({ tx, held }) => {
+    if (held.status === "active" && held.errorCode === null) {
+      await holdConnectionUntil(tx, key, new Date(now));
+      await holdCalendarUntil(tx, key, calendarId, new Date(now));
+    }
+  });
 }
 
 async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSignal): Promise<CalendarSyncOutcome> {
@@ -91,7 +132,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
 
   let drainNext: Date | null = null;
   if (deps.drainWrites !== undefined) {
-    const drained = await deps.drainWrites({ db, key, provider: p, connection: signIn.connection, signal });
+    const drained = await deps.drainWrites({ db, key, provider: p, connection: signIn.connection, signal, moveDestination: (calendarId) => openMoveDestination(deps, db, calendarId, key, signIn) });
     const asked = drained.nextAttemptAt;
     // A time no clock holds would make this turn's settle throw, every turn: such an answer asks for nothing.
     drainNext = asked !== null && Number.isFinite(asked.getTime()) ? asked : null;

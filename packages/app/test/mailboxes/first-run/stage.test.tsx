@@ -16,7 +16,7 @@ import frame from "../../../messages/frame.en.json" with { type: "json" };
 import screener from "../../../messages/screener.en.json" with { type: "json" };
 import { fakeHost, NO_ENGINE } from "../../support/fake-host.js";
 import { fakeAddress, movable } from "../../support/fake-window.js";
-import { D, M, MARKER, O, P, WORDS, factorButtons, fakeDoor, id } from "../connect/support.js";
+import { D, J, M, MARKER, O, P, WORDS, factorButtons, fakeDoor, id } from "../connect/support.js";
 
 /**
  * THE FIRST RUN AS THE FRAME'S STAGE, over a fake host and a fake ground, driven by role and name. What it asks of the
@@ -132,6 +132,44 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("starts with provider tiles and asks for the address after a provider is chosen", async () => {
+  stage({ verbs: verbs(), ground: ground({ rows: [] }), door: "selfhost", connect: fakeDoor().door });
+  press(words(O.welcomeStart));
+  await settle();
+  expect(heading()).toContain("My mail is with");
+  expect(screen.queryByLabelText(O.password)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Gmail" }));
+  expect(screen.getByRole("textbox", { name: O.address })).toBeTruthy();
+  expect(screen.getByLabelText(O.password)).toBeTruthy();
+});
+
+it("shows the folder map and the import choice before the same Agree press", async () => {
+  const v = verbs({
+    countDecision: async () => ({ letters: 3, senders: 2, total: 3, complete: true, mirrored: true }),
+  });
+  stage({
+    verbs: v,
+    ground: ground({
+      about: () => ({ ...ABOUT, historyCount: async (window) => (window === "365" ? 12 : 27) }),
+    }),
+  });
+  await settle();
+  const history = () => screen.getByText("in History").parentElement;
+  expect(history()?.textContent).toBe("12in History");
+  expect(screen.getByText(O.countMessages).querySelector(".oh-dot")).toBeNull();
+  expect(screen.getByText(O.mapNewFolders).querySelector(".oh-dot")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: O.windowYear }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: words(O.win90) }));
+  await settle();
+  expect(history()?.textContent).toBe("27in History");
+  expect(screen.getByText(O.mapOhbox)).toBeTruthy();
+  expect(screen.getByRole("button", { name: O.win90 })).toBeTruthy();
+  expect(v.organize).not.toHaveBeenCalled();
+  press(words(O.agree));
+  await settle();
+  expect(v.organize).toHaveBeenCalledOnce();
+});
+
 it("holds focus on the step while organizer checking blocks Continue, then offers Continue", async () => {
   const awaiting = { ...MAILBOX, organizerRole: "reader" as const, organizerChecked: false };
   const v = verbs();
@@ -148,8 +186,8 @@ it("holds focus on the step while organizer checking blocks Continue, then offer
 
   act(() => s.facts.set(ground({ rows: [{ ...awaiting, organizerChecked: true }] })));
   await settle();
-  expect(heading()).toBe(O.mapTitle);
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: words(O.continue) }));
+  expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: words(O.agree) }));
 });
 
 describe("the AI question stops the run and asks; nothing is spent before the press", () => {
@@ -221,8 +259,7 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
   const BODY = { screening: { dormancyDays: 365, scope: "window" }, intent: "join" };
   const toWindow = async (): Promise<void> => {
     await settle();
-    expect(heading()).toContain(O.mapTitle);
-    press(words(O.continue));
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     await settle();
     expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
   };
@@ -361,19 +398,20 @@ describe("Agree is one call, carrying the consent, the window and the scope", ()
     expect({ asked, organizes: organize.mock.calls.length }).toEqual({ asked: false, organizes: 1 });
     /* A run about another mailbox is a new run: it opens on its own statement, and no word of the press it was moved
        under stands on it. */
-    expect(heading()).toContain(O.mapTitle);
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     expect(screen.queryByText(M.cancelledNothingChanged)).toBeNull();
   });
 });
 
 describe("the mailbox step is the one connect form, and the mode is the route's, never a default", () => {
-  const typed = (): void => {
+  const typed = (mode: "seed" | "add" = "add"): void => {
     fireEvent.change(screen.getByLabelText(O.address), { target: { value: "me@lichtgrat.example" } });
-    fireEvent.click(screen.getByRole("button", { name: words(P.otherLabel) }));
+    fireEvent.click(screen.getByRole("button", { name: words(P.otherShort) }));
+    if (mode === "seed") fireEvent.click(screen.getByText(J.manualPorts));
     fireEvent.change(screen.getByLabelText(O.imapHost), { target: { value: "mail-a.home.arpa" } });
     fireEvent.change(screen.getByLabelText(O.smtpHost), { target: { value: "mail-b.home.arpa" } });
     fireEvent.change(screen.getByLabelText(O.password), { target: { value: MARKER } });
-    press(words(O.connect));
+    press(words(mode === "seed" ? J.manualConnect : O.connect));
   };
 
   for (const [at, mode] of [
@@ -386,7 +424,7 @@ describe("the mailbox step is the one connect form, and the mode is the route's,
       await settle();
       if (at === "#/first-run") press(words(O.welcomeStart));
       await settle();
-      typed();
+      typed(mode);
       await settle();
       expect(wire.of("connect").map((c) => (c.sent as { mode: string }).mode)).toEqual([mode]);
     });
@@ -406,7 +444,7 @@ describe("the mailbox step is the one connect form, and the mode is the route's,
     expect(s.address.writes).toEqual([{ next: "#/first-run/add?mailbox=mbx-2", how: "replace" }]);
     act(() => s.facts.set(ground({ rows: [{ ...MAILBOX, id: id("mbx-2") }] })));
     await settle();
-    expect(heading()).toContain(O.mapTitle);
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     expect(document.body.innerHTML).not.toContain(MARKER);
     expect([...document.querySelectorAll("input")].some((i) => i.value.includes(MARKER))).toBe(false);
   });
@@ -442,7 +480,6 @@ describe("a step says its lead: the sentence that explains it is on screen with 
   it("the window says its lead beside the choice", async () => {
     stage({ verbs: verbs(), ground: ground() });
     await settle();
-    press(words(O.continue));
     await settle();
     expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
     expect(screen.getByText(O.nothingMoves)).toBeTruthy();
@@ -482,7 +519,7 @@ describe("the route's word is a claim, answered by the account's own rows", () =
     /* The row arrives: the run goes on with the mailbox the account's own list holds. */
     act(() => s.facts.set(ground({ rows: [MAILBOX, { ...MAILBOX, id: id("mbx-2") }] })));
     await settle();
-    expect(heading()).toContain(O.mapTitle);
+    expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
   });
 });
 
@@ -503,7 +540,7 @@ describe("the keys stand in what was asked last", () => {
     const v = verbs();
     stage({ verbs: v, ground: ground() });
     await settle();
-    const forward = screen.getByRole("button", { name: words(O.continue) });
+    const forward = screen.getByRole("button", { name: words(O.agree) });
     expect(focused()).toBe(forward);
     /* The person is on the foot's Cancel setup, not where the step opened. */
     const footCancel = setup();
@@ -565,7 +602,6 @@ describe("the keys stand in what was asked last", () => {
     const v = verbs();
     stage({ verbs: v, ground: ground() });
     await settle();
-    press(words(O.continue));
     await settle();
     expect(heading()).toContain(O.organizeLast.split("<window>")[0]!.trim());
 
@@ -606,7 +642,6 @@ describe("the keys stand in what was asked last", () => {
     const v = verbs({ organize: organize as never });
     stage({ verbs: v, ground: ground() });
     await settle();
-    press(words(O.continue));
     await settle();
     press(words(O.agree));
     await settle();
@@ -639,7 +674,6 @@ describe("the keys stand in what was asked last", () => {
     });
     stage({ verbs: verbs({ organize }), ground: ground() });
     await settle();
-    press(words(O.continue));
     await settle();
     press(words(O.agree));
     await settle();
@@ -700,25 +734,37 @@ describe("how far the run is: the kit's dots, said as one sentence", () => {
     stage({ verbs: verbs(), ground: ground() });
     await settle();
     const organize = place(O.rail_organize);
-    press(words(O.continue));
+    fireEvent.click(screen.getByRole("button", { name: O.windowYear }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: words(O.win90) }));
     await settle();
     expect(place(O.rail_organize)).toEqual(organize);
     expect(screen.queryByRole("list", { name: O.rail_mailbox })).toBeNull();
   });
 
   it("shows and says the screen count within the mailbox phase of first setup", async () => {
-    stage({ verbs: verbs(), ground: ground({ rows: [] }) });
+    stage({ verbs: verbs(), ground: ground({ rows: [] }), connect: fakeDoor().door });
     await settle();
     press(words(O.welcomeStart));
     await settle();
-    expect(screen.queryByText("2/2")).toBeNull();
-    expect(screen.getByRole("img", { name: new RegExp(`^Step 1 of 4, ${O.rail_mailbox}$`) })).toBeTruthy();
+    expect(screen.getByText("1/3")).toBeTruthy();
+    expect(
+      screen.getByRole("img", { name: new RegExp(`^Step 1 of 4, ${O.rail_mailbox}, 1 of 3$`) }),
+    ).toBeTruthy();
   });
 
-  it("leaves out the screen count when adding a mailbox on its own", async () => {
-    stage({ verbs: verbs(), ground: ground({ rows: [] }), at: "#/first-run/add" });
+  it("shows the provider screen as the first of three when adding a mailbox", async () => {
+    const v = verbs();
+    const s = stage({
+      verbs: v,
+      ground: ground({ rows: [] }),
+      at: "#/first-run/add",
+      connect: fakeDoor().door,
+    });
     await settle();
-    expect(place(O.rail_mailbox).n).toBe(1);
-    expect(screen.queryByText(/^\d+\/\d+$/)).toBeNull();
+    expect(place(O.rail_mailbox)).toEqual({ n: 1, total: 2 });
+    expect(screen.getByText("1/3")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: O.back }));
+    expect(s.address.writes.at(-1)?.next).toBe("#/settings/mailboxes");
+    expect(v.complete).not.toHaveBeenCalled();
   });
 });

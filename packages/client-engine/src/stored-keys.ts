@@ -73,6 +73,12 @@ export const STORED_KEYS = [
     words: false, erased: "never", mark: "kept",
   },
   {
+    key: "ohmail.face.scope", store: "localStorage", owner: "web",
+    at: ["packages/ui/src/theme/ThemeProvider.tsx"],
+    holds: "whether the device face was chosen explicitly for this device",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
     key: "ohmail.face.account", store: "localStorage", owner: "web",
     at: ["packages/ui/src/theme/ThemeProvider.tsx", "apps/webapp/app/shell/face-mirror.ts", "apps/desktop/src/boot-stamp.ts", "apps/paired-page/src/main.tsx"],
     holds: "the account's face as last read from the server, for the first paint",
@@ -500,13 +506,13 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.notifications.channels", store: "localStorage", owner: "web",
-    at: ["packages/app-logic/src/notices/browser-channels.ts", "apps/mobile/web/src/notices.tsx"],
+    at: ["packages/app-logic/src/notices/browser-channels.ts"],
     holds: "which notification channels are switched on, on this device",
     words: false, erased: "never", mark: "kept",
   },
   {
     key: "ohmail.notices.calendar", store: "localStorage", owner: "web",
-    at: ["packages/app-logic/src/notices/browser-channels.ts", "apps/mobile/web/src/notices.tsx"],
+    at: ["packages/app-logic/src/notices/browser-channels.ts"],
     holds: "which of the calendar's notices are switched on on this device, whether a notice or a widget shows an event's title, and when the day's summary rings: switches and a minute of the day, never an event. Read by the web's shell and by the phone's page beside the mail's record, through the one reader of a device's choices; nothing writes it until a Notifications pane offers the calendar's switches, and until then the start values hold",
     words: false, erased: "never", mark: "kept",
   },

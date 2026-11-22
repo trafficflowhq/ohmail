@@ -21,7 +21,7 @@ export {
   motionShape,
 } from "../motion/motion.js";
 export type { AnimateOptions, DurationToken, EaseToken, ShapeToken } from "../motion/motion.js";
-export { design, v } from "./tokens.js";
+export { design, openingReloadDelay, v } from "./tokens.js";
 export type { MotionRole, TokenName } from "./tokens.js";
 
 export { Button } from "./Primitives/Button.js";

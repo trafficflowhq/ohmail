@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 import { ChoiceTiles } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import type { ConnectForm } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
@@ -16,25 +16,48 @@ export function ProviderTiles({
   form,
   picker,
   bridgeHere,
+  onPick,
+  onManual,
+  query = "",
+  ref,
 }: {
   form: ConnectForm;
   picker: Text;
   /** This shell's engine dials a server on this computer, where the bridge runs. */
   bridgeHere: boolean;
+  onPick?: (manual: boolean) => void;
+  onManual?: (() => void) | undefined;
+  query?: string;
+  ref?: Ref<HTMLDivElement>;
 }): ReactNode {
   const [bridge, setBridge] = useState(false);
   const open = bridge || form.bridged;
   const chosen = form.preset?.id ?? null;
   return (
-    <div className="mbx-connect-part">
+    <div ref={ref} className="mbx-connect-part">
       <ChoiceTiles
         label={picker("label")}
+        compact={onPick !== undefined}
         options={[
           ...form.presets.map((preset) => ({
             value: preset.id,
-            label: preset.manual ? picker("otherLabel") : preset.label,
+            label:
+              onPick && preset.manual
+                ? picker("otherShort")
+                : onPick && preset.id === "microsoft"
+                  ? picker("microsoftShort")
+                  : onPick && preset.id === "icloud"
+                    ? picker("icloudShort")
+                    : preset.manual
+                      ? picker("otherLabel")
+                      : preset.label,
+            dim: query !== "" && !preset.label.toLowerCase().includes(query),
           })),
-          { value: BRIDGE, label: form.bridgeLabel },
+          {
+            value: BRIDGE,
+            label: onPick ? picker("protonShort") : form.bridgeLabel,
+            dim: !form.bridgeLabel.toLowerCase().includes(query),
+          },
         ]}
         /* The bridge provider's tile is held while its note stands and no provider is chosen. */
         value={chosen ?? (open ? BRIDGE : null)}
@@ -42,6 +65,9 @@ export function ProviderTiles({
           if (value === BRIDGE) return setBridge((was) => !was);
           setBridge(false);
           form.choose(value);
+          const manual = form.presets.find((preset) => preset.id === value)?.manual === true;
+          if (manual) onManual?.();
+          onPick?.(manual);
         }}
       />
       {open ? (

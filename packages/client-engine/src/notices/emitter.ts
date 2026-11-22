@@ -3,6 +3,7 @@
  * phone's page; the shell hands it in with the host's device part, and a surface that draws none
  * hands in no emitter at all. One caller decides (the gate) and posts; an emitter decides nothing.
  */
+import type { SummaryEvent } from "./snapshot.js";
 import type { EventLabel, Notice, NoticeAct, NoticeKind } from "./kinds.js";
 
 /**
@@ -57,6 +58,17 @@ export interface AheadSet {
   readonly alerts: readonly NoticeAhead[];
 }
 
+/** Optional text read locally for an identified single arrival. */
+export interface MailNoticeDetails {
+  readonly sender: string;
+  readonly subject: string;
+}
+
+export interface CalendarSummaryDetails {
+  readonly zone: string;
+  readonly agenda: readonly SummaryEvent[];
+}
+
 export interface NoticeEmitter {
   /** The kinds this surface draws. The pane offers a switch for these only, and the gate hands over no other. */
   readonly carries: readonly NoticeKind[];
@@ -64,7 +76,7 @@ export interface NoticeEmitter {
   readonly acts: readonly NoticeAct[];
   /** Draw one notice, and say whether the platform took it. Never throws: a notice that cannot be shown takes nothing down. */
   /** A single new letter can be opened locally. The id belongs to the opening act, outside the notice. */
-  post(notice: Notice, current?: () => boolean, letter?: string): NoticeTaken | void;
+  post(notice: Notice, current?: () => boolean, letter?: string, details?: MailNoticeDetails, summary?: CalendarSummaryDetails): NoticeTaken | void;
   /**
    * THE CALENDAR'S HALF. A surface that can ring by itself (the desktop's shell, a phone's alarms)
    * takes the whole set here, replacing the one before: an alert missing from the new set is taken

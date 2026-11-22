@@ -33,6 +33,8 @@ const lang = q.get("lang") === "de" ? "de" : "en";
 const device = (q.get("device") ?? "desktop") as "desktop" | "phone" | "fold" | "foldl";
 const open = q.get("open");
 const shown = searchStateOf(q);
+const many = q.has("many");
+const listBounds = many ? { display: "flex", flexDirection: "column" as const, maxWidth: 420 } : {};
 
 const NOW = new Date("2026-11-10T10:30:00.000Z");
 const day = (d: number, h: number, m = 0) => new Date(Date.UTC(2026, 10, d, h - 1, m)).toISOString();
@@ -121,6 +123,15 @@ const LETTERS: EngineMessage[] = [
     file: true,
   }),
 ];
+
+if (many) {
+  LETTERS.push(...Array.from({ length: 40 }, (_, i) => ({
+    ...LETTERS[0]!,
+    id: `glaze-result-${i + 1}`,
+    subject: `Glaze sample ${i + 1}`,
+    date: day(8, 12, i),
+  })));
+}
 
 const FACETS = {
   folder: { INBOX: 3, Archive: 1 },
@@ -305,7 +316,7 @@ function Page() {
   }, [model]);
   return (
     <SearchAbove model={model} beside={beside} blank={searchBlankOf(model, blankWord)}>
-      <div className="oh-root" style={{ height: "100vh" }}>
+      <div className="oh-root" style={{ height: "100vh", ...listBounds }}>
         {device === "phone" ? <SearchList {...PANE} /> : <Sheet kind="list">{<SearchList {...PANE} />}</Sheet>}
       </div>
     </SearchAbove>

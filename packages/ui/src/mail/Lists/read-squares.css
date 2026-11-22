@@ -1,4 +1,8 @@
 @layer oh {
+  :root {
+    --oh-readsquares-h: 22px;
+  }
+
   .oh-readsquares {
     /* The square, its pitch and the count's slot: the tokens' along a row, the column's own upright. */
     --oh-readsquares-sq: var(--sq);
@@ -6,7 +10,6 @@
     --oh-readsquares-count: var(--sq-more);
     --oh-readsquares-k: 1;
     /* Measures of this part that no token carries yet. */
-    --oh-readsquares-h: 22px;
     --oh-readsquares-pad: 6px;
     --oh-readsquares-box: inset 0 0 0 1px var(--btn-ring);
     --oh-readsquares-own: inset 0 0 0 2px var(--sq-mine);

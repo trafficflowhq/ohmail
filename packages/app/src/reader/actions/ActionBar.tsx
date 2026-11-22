@@ -12,11 +12,13 @@ import {
 } from "./panel-verbs.js";
 export type { PanelRoom } from "./panel-verbs.js";
 import type { EngineMessage, TagEntity } from "@ohmail/wire";
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useContext, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
 import type { ReplyRunState } from "@ohmail/app-logic/piles";
+import { useZoneIs } from "@ohmail/app-logic/keys";
 import { useMirror, useOpenConversation } from "@ohmail/app-logic/reader";
 import { useListVisit } from "@ohmail/app-logic/reading";
+import { FrameContext } from "../../frame/commands.js";
 import { useOwnGone } from "../../frame/own-gone.js";
 import { useResurfaceTime } from "../../frame/room.js";
 import { useText } from "../../text/index.js";
@@ -317,9 +319,14 @@ function usePanelKeyboard({
   calendarAction?: { label: string; onPress: () => void };
   tagLabel: string | undefined;
 }): void {
+  const ohboxReader = useContext(FrameContext)?.api.route.place === "ohbox";
+  const readerFocused = useZoneIs("reader");
+  const scopedTag = !ohboxReader || readerFocused ? tagLabel : undefined;
   useCardKeys(
     cardKeys,
-    card ? { letter: card.letter, verbs, menu: byKey, canAnswerKey: card.canAnswerKey, tagLabel } : null,
+    card
+      ? { letter: card.letter, verbs, menu: byKey, canAnswerKey: card.canAnswerKey, tagLabel: scopedTag }
+      : null,
     card?.deleteTarget ?? null,
     showPanel,
   );
@@ -334,7 +341,7 @@ function usePanelKeyboard({
           menu: byKey,
           screeningLabel: screeningLabel,
           calendarAction,
-          tagLabel: tagLabel,
+          tagLabel: scopedTag,
         },
   );
   useKeyboardBack(replying, stop);

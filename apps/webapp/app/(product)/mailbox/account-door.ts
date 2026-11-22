@@ -36,7 +36,8 @@ export function accountDoor(
         const { user, scope, familyId } = await auth.session();
         if (scope === "full" && user?.accountId) {
           named = { account: user.accountId, family: familyId ?? heldFamily ?? undefined };
-          return { ok: true, value: { address: user.email } };
+          const displayName = typeof user.displayName === "string" ? user.displayName.trim() : "";
+          return { ok: true, value: { address: user.email, ...(displayName ? { displayName } : {}) } };
         }
         return { ok: false, word: "signed_out" };
       } catch (err) {

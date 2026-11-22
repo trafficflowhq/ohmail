@@ -676,7 +676,11 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
           }
         }
       } else {
-        const card = pricesOf(obj(res.body)?.prices);
+        const body = obj(res.body);
+        const remaining = body?.balance;
+        const total = body?.creditAllowance;
+        const aiCredits = isCount(remaining) ? { remaining, ...(isCount(total) && total > 0 ? { total } : {}) } : null;
+        const card = pricesOf(body?.prices);
         if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
         const priced = card !== null && !("bad" in card);
         if (priced) pricesStated = true;
@@ -689,7 +693,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         if (told !== null && "bad" in told) named("/v1/access", res.status, told.bad);
         const verdict: AccessVerdict = read.ok
           ? {
-            ...read, ...(priced ? { prices: card } : {}), ...(carried ? { trialStorage: carry } : {}),
+            ...read, ...(aiCredits ? { aiCredits } : {}), ...(priced ? { prices: card } : {}), ...(carried ? { trialStorage: carry } : {}),
             ...(offer !== null && !("bad" in offer) ? { storageOffer: offer } : {}),
             ...(told !== null && !("bad" in told) ? { storageTold: told } : {}),
           }

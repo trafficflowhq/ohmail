@@ -111,7 +111,7 @@ describe("host notices in the mounted mail frame", () => {
     const dialog = page.getByRole("dialog", { name: en.frame.landmark.stage });
     const stage = within(dialog);
     const offer = stage.getByRole("region", { name: en.profileImport.title });
-    const review = stage.getByRole("heading", { level: 1, name: /written to/ });
+    const review = stage.getByRole("heading", { level: 1, name: /you wrote to/ });
     expect(page.getAllByRole("region", { name: en.profileImport.title, hidden: true })).toHaveLength(1);
     expect(offer.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(hostNotices(dialog)).toHaveLength(0);

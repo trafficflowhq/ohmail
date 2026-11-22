@@ -779,7 +779,7 @@ describe("recovery codes are made only for an account that has none", () => {
     expect(generated(), "a new set cancelled the codes the account already has").toEqual([]);
     expect(c.textContent).toContain(messages.join.codesElsewhere);
     await pressed(c, messages.join.continue);
-    expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_mailbox_title);
+    expect(c.querySelector("h1")?.textContent?.trim()).toBe(messages.onboarding.providerFirst);
     expect(generated()).toEqual([]);
   });
 

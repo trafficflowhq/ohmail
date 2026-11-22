@@ -14,6 +14,50 @@
 
 use crate::words::{Language, NoticeWords};
 
+/// The signed-in document's agenda. Each line has a clock value and one bounded event label.
+#[cfg(feature = "local-engine")]
+pub fn summary_fields(
+    value: &serde_json::Value, opening: Option<&serde_json::Value>, lang: Language,
+) -> Option<(String, String)> {
+    let count = value["count"].as_u64()?;
+    let events = opening?["summary"].as_array()?;
+    if value.as_object()?.len() != 2 || count > COUNT_MAX || events.len() > 12 ||
+        count < events.len() as u64 { return None }
+    let words = crate::words::AlertWords::of(lang);
+    let (title, all_day, empty, more) = match lang {
+        Language::De => ("Heute im Kalender", "Ganztägig", "Heute keine Termine", "weitere"),
+        Language::En => ("Today in Calendar", "All day", "No events today", "more"),
+    };
+    let mut lines = Vec::with_capacity(events.len() + 1);
+    for event in events {
+        if event.as_object()?.len() != 2 { return None }
+        let time = event.get("time")?;
+        let at = if time.is_null() { all_day } else {
+            let time = time.as_str()?;
+            let (hour, minute) = time.split_once(':')?;
+            if hour.len() != 2 || minute.len() != 2 ||
+                !time.bytes().all(|c| c.is_ascii_digit() || c == b':') ||
+                hour.parse::<u8>().ok()? > 23 || minute.parse::<u8>().ok()? > 59 { return None }
+            time
+        };
+        let label = event["label"].as_object()?;
+        let text = match label.get("as")?.as_str()? {
+            "title" if label.len() == 2 => clean_title(label.get("text")?.as_str()?)?,
+            "busy" if label.len() == 1 => words.busy.to_owned(),
+            "event" if label.len() == 1 => words.event.to_owned(),
+            _ => return None,
+        };
+        lines.push(format!("{at} · {text}"));
+    }
+    if count > events.len() as u64 {
+        lines.push(format!("+{} {more}", count - events.len() as u64));
+    }
+    let body = if lines.is_empty() { empty.to_owned() } else { lines.join("\n") };
+    #[cfg(target_os = "linux")]
+    let body = body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    Some((title.to_owned(), body))
+}
+
 /// The largest count a notice says: the window's own bound (`NOTICE_COUNT_MAX`).
 pub const COUNT_MAX: u64 = 9999;
 

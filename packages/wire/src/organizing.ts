@@ -90,6 +90,7 @@ export interface SettingsDTO {
    * and from a server that does not know the setting: a client reads both as `head`.
    */
   subjectHeading?: SubjectHeading;
+  draftReplies?: boolean;
   /**
    * THE ACCOUNT'S NAMED DEVICES, AS THREE WHOLE NUMBERS. A named device is one the Devices list shows by name:
    * a paired phone or browser, a desktop app. Never a label, a name or an address: a notice is decided from

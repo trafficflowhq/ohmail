@@ -57,8 +57,9 @@ const actionIn = (root: ParentNode, name: string): HTMLButtonElement | undefined
 const letterVerb = (root: ParentNode, name: string): HTMLButtonElement | null =>
   [...(openRegion(root)?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.getAttribute("aria-label") === name) ?? null;
 const sendLine = (root: ParentNode = document): string => openRegion(root)?.querySelector('[role="status"]')?.textContent ?? "";
+const reportWords = (sentence: string): string => sentence.replace(/\.$/, "");
 const toastsSay = (words: string): boolean =>
-  [...document.querySelectorAll('.fr-report [role="status"]')].some((n) => n.textContent?.includes(words));
+  [...document.querySelectorAll('.fr-report [role="status"]')].some((n) => n.textContent?.includes(reportWords(words)));
 /** Escape in the open reply's or forward's text: its leave key (today's Cancel, `closeReply`). */
 async function leaveDock(root: ParentNode = document): Promise<void> {
   const text = replySurface(root) ?? forwardSurface(root);
@@ -441,13 +442,13 @@ describe("a forward typed inline is a draft on the account", () => {
       sensitivity: { sensitive: true, category: "otp", no_ai: true, no_forward: true, no_kb: true, priority: true },
     })], [], { parts: true });
     await forwardOn(s);
-    /* The ask is the forward's line, over the letter: its question and its two answers. */
-    const theAsk = (): HTMLElement | null => [...(openRegion(s.el)?.querySelectorAll<HTMLElement>('[role="status"]') ?? [])]
-      .find((n) => (n.textContent ?? "").includes(en.reply.forwardAsk.question)) ?? null;
+    const words = en.write.reply.ask;
+    const theAsk = (): HTMLElement | null => within(document.body).queryByRole("alertdialog", { name: words.question });
     await waitFor(() => theAsk() != null, "the ask");
+    expect(theAsk()?.textContent).toContain(words.otp);
     await rounds(110);
     expect(saves(s), "the forward was saved before the ask was answered").toEqual([]);
-    const yes = [...theAsk()!.querySelectorAll("button")].find((x) => x.textContent === en.reply.forwardAsk.confirm)!;
+    const yes = within(theAsk()!).getByRole("button", { name: words.confirm });
     await act(async () => { yes.click(); });
     await waitFor(() => dock(s)?.querySelector('[role="combobox"][aria-label="To"]') != null, "the editor after the answer");
     await typeTo(s, `${TO}, `);
@@ -546,7 +547,7 @@ describe("a forward typed inline is a draft on the account", () => {
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     await sentElsewhere(s, forwards(s)[0]!.id);
     await waitFor(() => dock(s) == null, "the dock closed");
-    expect(document.body.textContent ?? "").toContain(en.reply.forwardSentElsewhere);
+    expect(document.body.textContent ?? "").toContain(reportWords(en.reply.forwardSentElsewhere));
     await forwardOn(s);
     await waitFor(() => dock(s) != null, "a new forward");
     expect([sends(s), shown(s).includes(TO), surface(s).textContent?.includes(NOTE)]).toEqual([[], false, false]);
@@ -560,7 +561,7 @@ describe("a reply's row sent from another device while its editor is open", () =
     await typeAndPause(s, "See you Thursday", 1);
     await sentElsewhere(s, rowsFor(s, "m1")[0]!.id);
     await waitFor(() => replySurface(s.el) == null, "the editor closed");
-    expect(document.body.textContent ?? "").toContain(en.reply.sentElsewhere);
+    expect(document.body.textContent ?? "").toContain(reportWords(en.reply.sentElsewhere));
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "a new reply");
     expect([sends(s), replySurface(s.el)!.textContent]).toEqual([[], ""]);

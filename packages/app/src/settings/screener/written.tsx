@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 
 /**
@@ -43,6 +43,7 @@ export function WrittenSwitch(props: {
   /** It cannot be pressed for a reason of its own, beside a write in flight. */
   readonly held?: boolean;
   readonly note?: string | null;
+  readonly info?: ReactNode;
   readonly failed: string;
   readonly set: (next: boolean) => Promise<unknown>;
 }) {
@@ -51,6 +52,7 @@ export function WrittenSwitch(props: {
     <>
       <SettingLine
         label={props.label}
+        info={props.info}
         toggle={{ on: props.on, onChange: (next) => write.run(() => props.set(next)) }}
         off={write.pending || props.held === true}
       />

@@ -4,8 +4,8 @@
  * may be about a mailbox another install organizes.
  */
 import type { ReactNode } from "react";
-import { Button, Page, Sentence } from "@ohmail/ui/base";
-import { SettingLine, SettingNote } from "@ohmail/ui/mail";
+import { Button, Counters, Dot, Page, Sentence } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingTable } from "@ohmail/ui/mail";
 import { DoorSheet } from "../../doors/stage/DoorSheet.js";
 import { Next, StepForm, stepTop, type StepProps } from "./parts.js";
 import type { Say } from "./words.js";
@@ -24,49 +24,51 @@ export function HolderWait({ run, say }: { run: FirstRun; say: Say }): ReactNode
   );
 }
 
+const folderLabel = (label: string, name: string): string => (label === name ? label : `${label} (${name})`);
+
 export function FolderMap({ say, history }: { say: Say; history: boolean }): ReactNode {
+  const folders = [
+    [say("onboarding.mapScreener"), "onboarding.mapFirst"],
+    [say("screener.pileReads"), "onboarding.mapNews"],
+    [folderLabel(say("screener.pileReceipts"), "Receipts"), "onboarding.mapReceipts"],
+    [folderLabel(say("onboarding.mapScreened"), "Screened"), "onboarding.mapScreenedMail"],
+    [folderLabel(say("onboarding.mapQuarantine"), "Quarantine"), "onboarding.mapSpam"],
+  ] as const;
   return (
-    <DoorSheet kind="facts">
-      <SettingLine label={say("onboarding.mapInbox")} />
-      <SettingLine sub label={say("screener.pileOhbox")} value={say("onboarding.mapOhbox")} />
-      {history ? (
-        <SettingLine sub label={say("onboarding.mapHistory")} value={say("onboarding.mapOlder")} />
-      ) : null}
-      <SettingLine label="ohmail" />
-      <SettingLine sub label={say("screener.pileReads")} value={say("onboarding.mapNews")} />
-      <SettingLine sub label={say("screener.pileReceipts")} value={say("onboarding.mapReceipts")} />
-      <SettingLine sub label={say("onboarding.mapScreener")} value={say("onboarding.mapFirst")} />
-      <SettingLine sub label={say("onboarding.mapScreened")} value={say("onboarding.mapScreenedMail")} />
-      <SettingLine sub label={say("onboarding.mapQuarantine")} value={say("onboarding.mapSpam")} />
-      <SettingLine label={say("onboarding.mapOther")} value={say("onboarding.mapUnchanged")} />
-      <SettingNote>{say("onboarding.mapShared")}</SettingNote>
-    </DoorSheet>
+    <div className="mbx-run-material">
+      <Counters
+        rows={[{ figure: String(folders.length), words: say("onboarding.mapNewFolders"), end: "none" }]}
+      />
+      <DoorSheet kind="facts">
+        <SettingTable>
+          <SettingLine dense icon="ohbox" label={say("onboarding.mapInbox")} />
+          <SettingLine dense sub label={say("screener.pileOhbox")} value={say("onboarding.mapOhbox")} />
+          {history ? (
+            <SettingLine dense sub label={say("onboarding.mapHistory")} value={say("onboarding.mapOlder")} />
+          ) : null}
+          <SettingLine dense icon="folder" label="ohmail" />
+          {folders.map(([label, value]) => (
+            <SettingLine key={value} dense sub lead={<Dot kind="hot" />} label={label} value={say(value)} />
+          ))}
+          <SettingLine label={say("onboarding.mapOther")} value={say("onboarding.mapUnchanged")} />
+        </SettingTable>
+        <SettingNote>{say("onboarding.mapShared")}</SettingNote>
+        {history ? <SettingNote>{say("onboarding.consentHistory")}</SettingNote> : null}
+      </DoorSheet>
+    </div>
   );
 }
 
 export function Consent({ run, say }: StepProps): ReactNode {
-  const awaiting = run.wait.awaiting;
   return (
-    <StepForm
-      run={run}
-      submit={() => {
-        if (!awaiting) run.acts.forward();
-      }}
-    >
+    <StepForm run={run} submit={() => undefined}>
       <Page
         {...stepTop(run, say, { back: true })}
-        columns={awaiting ? 1 : 2}
-        material={
-          awaiting ? (
-            <HolderWait run={run} say={say} />
-          ) : (
-            <FolderMap say={say} history={run.agree.win !== "all"} />
-          )
-        }
-        acts={<Next label={say("onboarding.continue")} disabled={awaiting} />}
+        material={<HolderWait run={run} say={say} />}
+        acts={<Next label={say("onboarding.continue")} disabled />}
       >
         <Sentence size="xl" level={1} end="hot">
-          {say(awaiting ? "onboarding.resumeCheckingTitle" : "onboarding.mapTitle")}
+          {say("onboarding.resumeCheckingTitle")}
         </Sentence>
       </Page>
     </StepForm>

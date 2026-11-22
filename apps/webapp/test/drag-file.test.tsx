@@ -9,7 +9,7 @@ import { FOLDER_OF_VIEW } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { menuItem, moreButton, ohboxRows, pickedRows } from "./ohbox/_finders.js";
+import { barVerb, menuItem, ohboxRows, pickedRows } from "./ohbox/_finders.js";
 
 /**
  * DRAG-AND-DROP FILING TO THE RAIL — one semantic, new gesture.
@@ -201,9 +201,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
 
     // ── the pill's own Move on the cursor row, as the reference dispatch ──────────────────
     const pillRowId = rows()[0]!.dataset.id!;
-    /* At the seated Ohbox the open letter's Move is an item of More's menu, and its places are items of Move's menu. */
-    await click(moreButton(host!) ?? undefined);
-    await click(menuItem("Move") ?? undefined);
+    await click(barVerb(host!, "Move"));
     await click(menuItem(messages.place.reads) ?? undefined);
     const pillMove = kinds("move");
     expect(pillMove).toHaveLength(1);
@@ -336,7 +334,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     await click(row);
     await click(within(host!).getByRole("button", { name: "Tag" }));
     const picker = within(host!).getByRole("menu", { name: "Tag" });
-    const free = within(picker).getAllByRole("menuitemradio")
+    const free = within(picker).getAllByRole("menuitemcheckbox")
       .find((item) => item.getAttribute("aria-checked") === "false");
     expect(free, "no unassigned tag in the picker").toBeTruthy();
     await click(free!);

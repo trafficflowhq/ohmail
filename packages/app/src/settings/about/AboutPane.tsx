@@ -1,5 +1,7 @@
-import { Button } from "@ohmail/ui/base";
+import { useContext } from "react";
+import { Button, Sentence } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { FrameContext } from "../../frame/commands.js";
 import { useText, type Text } from "../../text/index.js";
 import type { AboutMailboxes, AboutModel } from "./model.js";
 import { ABOUT_NAMESPACE } from "./namespace.js";
@@ -12,6 +14,7 @@ import { ABOUT_NAMESPACE } from "./namespace.js";
 export function AboutPane(props: { readonly model: AboutModel } | { readonly demo: true }) {
   const t = useText("about");
   const own = useText(ABOUT_NAMESPACE);
+  const frame = useContext(FrameContext);
   if ("demo" in props) {
     return (
       <SettingsSheet>
@@ -32,14 +35,26 @@ export function AboutPane(props: { readonly model: AboutModel } | { readonly dem
             : undefined
         }
       >
-        <SettingLine label={t("mailboxesLabel")} />
-        {mailboxes.kind === "failed" ? null : <SettingNote>{mailboxLine(mailboxes, t)}</SettingNote>}
+        <Sentence level={2} end="hot">
+          ohmail
+        </Sentence>
         <SettingLine
           label={t("buildLabel")}
           value={t("build", { version: model.version ?? "", build: model.build })}
         />
-        <SettingLine label={t("keyboardLabel")} />
-        <SettingNote>{t("keys")}</SettingNote>
+        <SettingLine
+          label={t("mailboxesLabel")}
+          value={mailboxes.kind === "failed" ? undefined : mailboxLine(mailboxes, t)}
+        />
+        {frame?.api.plan.device === "desktop" ? (
+          <SettingLine label={t("keyboardLabel")}>
+            <Button kind="quiet" size="s" keyHint="?" onPress={() => frame.api.commands.over("keys")}>
+              {own("showKeyboard")}
+            </Button>
+          </SettingLine>
+        ) : frame === null ? (
+          <SettingNote>{t("keys")}</SettingNote>
+        ) : null}
         {model.namesAccount === false ? (
           <>
             <SettingLine label={t("accountHeaderLabel")} />
@@ -54,7 +69,9 @@ export function AboutPane(props: { readonly model: AboutModel } | { readonly dem
           </Button>
         </SettingLine>
         <SettingNote>{model.publisher.lines.join(" · ")}</SettingNote>
-        {model.policies ? (
+      </SettingsSheet>
+      {model.policies ? (
+        <SettingsSheet>
           <SettingLine label={t("yourMail")} narrow="under">
             <Button kind="quiet" size="s" href={model.policies.privacy}>
               {own("privacy")}
@@ -66,8 +83,8 @@ export function AboutPane(props: { readonly model: AboutModel } | { readonly dem
               {own("imprint")}
             </Button>
           </SettingLine>
-        ) : null}
-      </SettingsSheet>
+        </SettingsSheet>
+      ) : null}
     </>
   );
 }

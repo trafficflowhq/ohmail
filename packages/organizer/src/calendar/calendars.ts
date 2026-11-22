@@ -24,6 +24,7 @@ export interface StoredCalendar {
   readonly name: string;
   readonly color: string | null;
   readonly access: string;
+  readonly nativeMove: boolean;
   readonly timeZone: string | null;
   readonly syncToken: string | null;
   readonly windowStart: string | null;
@@ -35,7 +36,7 @@ export interface StoredCalendar {
 export async function storedCalendars(tx: Tx, key: ConnectionKey): Promise<StoredCalendar[]> {
   const rows = await tx.select({
     id: calCalendars.id, providerId: calCalendars.providerId, name: calCalendars.name, color: calCalendars.color,
-    access: calCalendars.access, timeZone: calCalendars.timeZone, syncToken: calCalendars.syncToken,
+    access: calCalendars.access, nativeMove: calCalendars.nativeMove, timeZone: calCalendars.timeZone, syncToken: calCalendars.syncToken,
     windowStart: calCalendars.windowStart, windowEnd: calCalendars.windowEnd, nextPollAt: calCalendars.nextPollAt,
     errorCode: calCalendars.errorCode,
   }).from(calCalendars)
@@ -55,8 +56,8 @@ const shown = (text: string | null): string | null => (text === null ? null : st
  * What a listing names of a calendar, as its row keeps it: the name, the colour and the zone as the
  * store would hand them back, so that the next listing finds them equal and writes nothing.
  */
-function rowOf(info: CalendarInfo): { name: string; color: string | null; access: string; timeZone: string | null } {
-  return { name: shown(info.name) ?? "", color: shown(info.color), access: info.writable ? "writer" : "reader", timeZone: shown(info.zone) };
+function rowOf(info: CalendarInfo) {
+  return { name: shown(info.name) ?? "", color: shown(info.color), access: info.writable ? (info.owned ? "owner" : "writer") : "reader", nativeMove: info.nativeMove === true, timeZone: shown(info.zone) };
 }
 
 export interface ListingContext {
@@ -101,7 +102,7 @@ export async function applyListing(
             accountId: ctx.key.accountId, connectionId: ctx.key.id, providerId: info.id, ...now, nextPollAt: null,
           }).onConflictDoNothing().returning({ id: calCalendars.id });
           if (made !== undefined) changes.push({ kind: "calendar", id: made.id, op: "create" });
-        } else if (was.name !== now.name || was.color !== now.color || was.access !== now.access || was.timeZone !== now.timeZone) {
+        } else if (was.name !== now.name || was.color !== now.color || was.access !== now.access || was.nativeMove !== now.nativeMove || was.timeZone !== now.timeZone) {
           await tx.update(calCalendars).set({ ...now, updatedAt: sql`now()` })
             .where(and(eq(calCalendars.id, was.id), eq(calCalendars.accountId, ctx.key.accountId)));
           changes.push({ kind: "calendar", id: was.id, op: "update" });

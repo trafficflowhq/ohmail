@@ -7,7 +7,7 @@ working it out letter by letter, and a search by filters alone looks through as 
 it filters by, so old letters to someone show up in fewer steps.
 
 On your own server, the move to 2.0 at its first start writes the letters' table once more to store the key:
-about ten seconds for 400,000 letters on a fast workstation, and about 160 bytes a letter. If the index 1.0 keeps
-for this search (`messages_recipient_keys_idx`) is missing or was renamed, the server stops before it changes
-anything and names it: start 1.0 once more, which builds the index again, then start 2.0. On a phone nothing is
+about ten seconds for 400,000 letters on a fast workstation, and about 160 bytes a letter. If the search index 1.0
+keeps is missing or was renamed, the server stops before it changes anything and names it: start 1.0 once more,
+which builds the index again, then start 2.0. On a phone nothing is
 rewritten, and a search by filters alone looks through as many letters at a time there too.

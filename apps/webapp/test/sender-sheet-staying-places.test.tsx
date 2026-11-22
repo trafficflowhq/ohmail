@@ -198,7 +198,9 @@ describe("L6: a folder place is its mailbox and path", () => {
     await tick(UNDO_MS + 1500);
     const page = within(document.body);
     const move = page.getByRole("button", { name: "Move it" });
-    expect(move.closest("[role=status]")?.textContent).toContain(toast);
+    const report = move.closest("[role=status]");
+    expect(report?.textContent).toContain(toast.slice(0, -1));
+    expect(report?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
     await clickMounted(move);
     await tick(250);
     expect(r.moves).toEqual([{ id: "a-1", folder: "INBOX" }]);

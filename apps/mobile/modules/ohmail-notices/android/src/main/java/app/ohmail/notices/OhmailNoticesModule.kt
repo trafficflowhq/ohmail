@@ -41,6 +41,13 @@ class OhmailNoticesModule : Module() {
       ok
     }
 
+    AsyncFunction("postDetails") { instance: String, sender: String, subject: String ->
+      val ctx = context ?: return@AsyncFunction false
+      if (sender.length !in 1..160 || subject.length !in 1..160 ||
+        sender.any { it.isISOControl() } || subject.any { it.isISOControl() }) return@AsyncFunction false
+      NoticePoster.post(ctx, instance, "ohbox", 1, null, null, sender, subject)
+    }
+
     AsyncFunction("post") { instance: String, kind: String, count: Int, change: String?, device: String? ->
       val ctx = context ?: return@AsyncFunction false
       NoticePoster.post(ctx, instance, kind, count, change, device)

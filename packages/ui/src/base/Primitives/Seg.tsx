@@ -19,6 +19,7 @@ export interface SegProps<V extends string> {
   options: readonly SegOption<V>[];
   value: V;
   onChange?: (value: V) => void;
+  disabled?: boolean;
   /** How close the segments stand on touch. Left out: measured, closer while the row is wider than its line. */
   fit?: SegFit;
 }
@@ -45,7 +46,7 @@ export function useSegFit(fit: SegFit | undefined, again: unknown) {
 }
 
 /** A few choices on one track. A choice takes effect at once. Not for moving between places. */
-export function Seg<V extends string>({ label, options, value, onChange, fit }: SegProps<V>) {
+export function Seg<V extends string>({ label, options, value, onChange, disabled, fit }: SegProps<V>) {
   const [track, fits] = useSegFit(fit, options);
   return (
     <span ref={track} className="oh-seg" role="group" aria-label={label} data-fit={fits}>
@@ -57,6 +58,7 @@ export function Seg<V extends string>({ label, options, value, onChange, fit }: 
           aria-label={option.ariaLabel}
           title={option.title}
           aria-pressed={option.value === value}
+          disabled={disabled}
           onClick={() => onChange?.(option.value)}
         >
           {option.label}

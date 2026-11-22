@@ -88,9 +88,9 @@ async function mount(
   return container;
 }
 
-const junkButton = (el: HTMLElement) => within(el).queryByRole("button", { name: messages.screener.segJunk });
+const junkButton = (el: HTMLElement) => within(el).queryByRole("button", { name: new RegExp(`^${messages.screener.segSpam}(?: [0-9]+)?$`) });
 async function chooseJunk(el: HTMLElement): Promise<void> {
-  const button = within(el).getByRole("button", { name: messages.screener.segJunk });
+  const button = within(el).getByRole("button", { name: new RegExp(`^${messages.screener.segSpam}(?: [0-9]+)?$`) });
   await act(async () => {
     fireEvent.click(button);
     // Deliver the browser's fragment notification in this turn, before checking the first draw.

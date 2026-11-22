@@ -22,7 +22,9 @@ import {
  */
 
 const HINT = en.screener.empty.waiting.hint;
-const NOT_YET_ONE = "ohmail is not organizing this mailbox yet.";
+const NOT_YET_ONE = "Not organizing yet";
+const WAITING = "No one’s waiting";
+const paragraphs = (el: HTMLElement) => within(el).getAllByRole("paragraph").map((line) => line.textContent);
 
 function fact(over: Partial<MailboxFacts> & { id: string }): MailboxFacts {
   return {
@@ -138,8 +140,8 @@ describe("the Screener over a mailbox nothing organizes", () => {
 
   it("a mixed account keeps the screening sentence for the organized mailboxes and names the other, never 'all clear'", async () => {
     const el = await screener(organized("mb-1"), MIXED);
-    expect(within(el).getByText(en.screener.place.empty.waiting)).toBeTruthy();
-    expect(text(el)).toContain(`ohmail is not organizing ${MIXED.address} yet`);
+    expect(paragraphs(el)).toContain(WAITING);
+    expect(text(el)).toContain(`Not organizing ${MIXED.address}`);
     expect(pressNamed(el, en.screener.notYetPress)).toHaveLength(1);
     expect(text(el), "'all clear' over a mailbox nothing organizes").not.toContain("all clear");
     expect(text(head(el))).toContain(`not organizing ${MIXED.address}`);
@@ -147,7 +149,7 @@ describe("the Screener over a mailbox nothing organizes", () => {
 
   it("CONTROL: an organized account reads exactly as before", async () => {
     const el = await screener(organized("mb-1"));
-    expect(within(el).getByText(en.screener.place.empty.waiting)).toBeTruthy();
+    expect(paragraphs(el)).toContain(WAITING);
     expect(text(head(el))).toContain("all clear");
     expect(text(el)).not.toContain("not organizing");
     expect(pressNamed(el, en.screener.notYetPress)).toHaveLength(0);
@@ -206,10 +208,10 @@ describe("nothingOrganizesOf — every mailbox nothing organizes, and why", () =
 describe("the Screener over a mailbox handed back or whose holder stopped", () => {
   it("says it was handed back, never the screening sentence, and its header is not 'all clear'", async () => {
     const el = await screener(HANDED_BACK);
-    expect(text(el)).toContain("You handed this mailbox back.");
-    expect(text(el)).toContain(en.screener.notOrganizingWhy);
+    expect(text(el)).toContain(`${HANDED_BACK.address} is handed back`);
+    expect(text(el)).toContain(en.screener.handedBackWhy);
     expect(text(el), "the screening claim over a mailbox nothing screens").not.toContain(HINT);
-    expect(text(el)).not.toContain(en.screener.empty.waiting.title);
+    expect(text(el)).not.toContain(WAITING);
     expect(text(el)).not.toContain("all clear");
     expect(text(head(el))).toContain(en.screener.metaHandedBack);
   });
@@ -226,7 +228,7 @@ describe("the Screener over a mailbox handed back or whose holder stopped", () =
 
   it("a holder that stopped says nothing organizes the mailbox", async () => {
     const el = await screener(STOPPED);
-    expect(text(el)).toContain("Nothing organizes this mailbox.");
+    expect(text(el)).toContain("Nothing organizes this mailbox");
     expect(text(el)).not.toContain("all clear");
     expect(text(head(el))).toContain(en.screener.metaNotOrganizing);
   });
@@ -235,8 +237,8 @@ describe("the Screener over a mailbox handed back or whose holder stopped", () =
     const el = await screener(organized("mb-1"), {
       ...MIXED, organizeConsentedAt: T, organizerReleasedAt: T,
     });
-    expect(within(el).getByText(en.screener.place.empty.waiting)).toBeTruthy();
-    expect(text(el)).toContain(`You handed ${MIXED.address} back`);
+    expect(paragraphs(el)).toContain(WAITING);
+    expect(text(el)).toContain(`${MIXED.address} is handed back`);
     expect(text(el)).not.toContain("all clear");
     expect(text(head(el))).toContain(`not organizing ${MIXED.address}`);
   });

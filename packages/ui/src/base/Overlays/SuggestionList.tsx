@@ -1,8 +1,9 @@
-import { useLayoutEffect, useRef, type MouseEventHandler, type ReactNode } from "react";
+import { useContext, useLayoutEffect, useRef, type MouseEventHandler, type ReactNode } from "react";
 import { animate } from "../../motion/motion.js";
 import { Tag } from "../Primitives/Tag.js";
 import "./suggestion-list.css";
 import { markTyped } from "./suggestion-mark.js";
+import { portalRenderer } from "./portal-renderer.js";
 import { useAtField, type FieldPlace } from "./suggestion-place.js";
 
 /** One thing a field offers. */
@@ -32,6 +33,7 @@ export type SuggestionVia = "press" | "enter" | "tab";
 export interface SuggestionListProps<R extends SuggestionRow = SuggestionRow> extends Partial<FieldPlace> {
   /** The listbox's id: its field names it, and row `n` is `<id>-<n>`, counted over all groups. */
   id: string;
+  className?: string;
   /** Its name, said to a screen reader: "Place suggestions". */
   label: string;
   groups: readonly SuggestionGroup<R>[];
@@ -66,14 +68,30 @@ const keepCaret: MouseEventHandler = (event) => event.preventDefault();
  * nothing to offer it is not there. It is told its rows and words, and knows nothing of what they stand for.
  */
 export function SuggestionList<R extends SuggestionRow = SuggestionRow>(props: SuggestionListProps<R>) {
-  const { id, label, query, active, onActive, onTake, busy, foot, placement, anchor, boundary, align } =
-    props;
+  const renderPortal = useContext(portalRenderer);
+  const {
+    className,
+    id,
+    label,
+    query,
+    active,
+    onActive,
+    onTake,
+    busy,
+    foot,
+    placement,
+    anchor,
+    boundary,
+    align,
+    span,
+    avoid,
+  } = props;
   const groups = props.groups.filter((group) => group.rows.length);
   const card = useRef<HTMLDivElement | null>(null);
   const list = useRef<HTMLDivElement | null>(null);
   const shown = groups.length > 0;
   const inline = placement === "inline";
-  const atField = !inline && anchor !== undefined ? { anchor, boundary, align } : null;
+  const atField = !inline && anchor !== undefined ? { anchor, boundary, align, span, avoid } : null;
 
   useAtField(card, atField);
   /* It arrives once, when it opens. Rows that change do not arrive again. */
@@ -95,7 +113,7 @@ export function SuggestionList<R extends SuggestionRow = SuggestionRow>(props: S
   const drawn = (
     <div
       ref={card}
-      className="oh-suggest"
+      className={className ? `oh-suggest ${className}` : "oh-suggest"}
       data-inline={inline ? "" : undefined}
       data-busy={busy ? "" : undefined}
       onMouseDown={keepCaret}
@@ -135,7 +153,13 @@ export function SuggestionList<R extends SuggestionRow = SuggestionRow>(props: S
       {foot ? <div className="oh-suggest-foot">{foot}</div> : null}
     </div>
   );
-  return atField ? <div className="oh-suggest-layer">{drawn}</div> : drawn;
+  if (!atField) return drawn;
+  if (typeof document === "undefined") return null;
+  const field = "current" in atField.anchor ? atField.anchor.current : atField.anchor;
+  return renderPortal(
+    <div className="oh-suggest-layer">{drawn}</div>,
+    field?.ownerDocument.body ?? document.body,
+  );
 }
 
 /** One row: the mark of its kind, its first line and its second, a tag at its end. Pressed like a button, and never a stop of the keys: they stay in the field. */

@@ -8,17 +8,13 @@ import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { TextFromIntl } from "../../shell/LocaleContext";
 import { useRefusalSentence } from "../refusal-sentence";
 
-/**
- * Settings → AI — the account's own off switch, and nothing else. `GET/PATCH /account/ai` is the
- * flag every AI call site passes through, which is what makes the published sentence "you can
- * switch the AI off entirely without losing a single feature that files your mail" a property of
- * the account rather than a checkbox; a pane is what gives a person somewhere to press it (the
- * switch used to sit inside the subscription pane, and when that left, the promise had no control
- * on any surface). On every host with an account — the reason it is not part of the subscription
- * pane: a self-hosted server mounts these routes and has no subscription at all. Nothing here reads
- * a plan, a balance or a price.
- */
-export function AiSection({ owner }: { owner?: string | null } = {}) {
+/** The account's AI switches, with any budget already supplied by the access read. */
+export function AiSection({ owner, draftReplies, credits, toPlans }: {
+  owner?: string | null;
+  credits?: { remaining: number; total?: number } | null;
+  toPlans?: () => void;
+  draftReplies?: { enabled: boolean; set(next: boolean): Promise<void> };
+}) {
   const t = useTranslations("settings");
   const tr = useTranslations("aiRefusal");
   const sentence = useRefusalSentence();
@@ -75,9 +71,19 @@ export function AiSection({ owner }: { owner?: string | null } = {}) {
     })();
   }, [enabled, owner, sentence]);
 
+  const [savingDraftReplies, setSavingDraftReplies] = useState(false);
+  function toggleDraftReplies(next: boolean) {
+    if (!draftReplies || savingDraftReplies) return;
+    setError(null);
+    setSavingDraftReplies(true);
+    void draftReplies.set(next).catch((err: unknown) => {
+      if (alive.current) setError(sentence(err));
+    }).finally(() => setSavingDraftReplies(false));
+  }
+
   return (
     <TextFromIntl>
-      <AiPane model={{ enabled, problem: error, noModel, toggle }} noModelSaid={tr("noModel")} cloudModel={!SELF_HOST_BUILD && owner != null && enabled === true && error === null} />
+      <AiPane model={{ enabled, problem: error, noModel, toggle }} noModelSaid={tr("noModel")} credits={credits} toPlans={toPlans} draftReplies={draftReplies && { enabled: draftReplies.enabled, toggle: toggleDraftReplies }} cloudModel={!SELF_HOST_BUILD && owner != null && enabled === true && error === null} />
     </TextFromIntl>
   );
 }

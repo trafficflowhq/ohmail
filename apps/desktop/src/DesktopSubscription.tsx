@@ -147,40 +147,44 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
 /** What the account door's one session read says: whose account, and the reuse sweeps to tell. */
 export interface HostedSessionRead {
   accountId: string | null;
+  address: string | null;
   reuseSweeps: readonly ReuseSweepLine[];
 }
 
-const NO_HOSTED_SESSION: HostedSessionRead = { accountId: null, reuseSweeps: [] };
+const NO_HOSTED_SESSION: HostedSessionRead = { accountId: null, address: null, reuseSweeps: [] };
 
 /**
  * The hosted account's id, for Help & contact's diagnostics, and the reuse sweeps this sign-in is
  * told of: one `GET /auth/session`, forwarded on the account door, and again on `recheck` (the
- * notice asks while shown). Nothing on any other door and until the account answers; never an address.
+ * notice asks while shown). The address is for the sign-out row in Desktop Settings.
  */
-export function useHostedSession(accountDoor: boolean): HostedSessionRead & { recheck: () => Promise<void> } {
-  const [read, setRead] = useState<HostedSessionRead>(NO_HOSTED_SESSION);
+export function useHostedSession(accountDoor: boolean, key: string | null): HostedSessionRead & { recheck: () => Promise<void> } {
+  const [read, setRead] = useState<{ key: string | null; value: HostedSessionRead } | null>(null);
   const door = useRef(0);
   const ask = useCallback(async (): Promise<void> => {
+    if (!accountDoor) return;
     const mine = door.current;
     try {
       const res = await bridgeFetch("/auth/session");
       const body = res.ok
-        ? ((await res.json()) as { user?: { accountId?: unknown }; reuseSweeps?: unknown } | null)
+        ? ((await res.json()) as { user?: { accountId?: unknown; email?: unknown }; reuseSweeps?: unknown } | null)
         : null;
       const named = body?.user?.accountId;
       if (door.current === mine && typeof named === "string" && named !== "") {
-        setRead({ accountId: named, reuseSweeps: reuseSweepLinesOf(body?.reuseSweeps) });
+        const email = body?.user?.email;
+        setRead({ key, value: { accountId: named, address: typeof email === "string" && email.trim() ? email : null,
+          reuseSweeps: reuseSweepLinesOf(body?.reuseSweeps) } });
       }
     } catch { /* no answer: the block keeps what it said */ }
-  }, []);
+  }, [accountDoor, key]);
   useEffect(() => {
     door.current += 1;
-    setRead(NO_HOSTED_SESSION);
+    setRead(null);
     if (!accountDoor) return undefined;
     void ask();
     return () => { door.current += 1; };
   }, [accountDoor, ask]);
-  return { ...read, recheck: ask };
+  return { ...(accountDoor && read?.key === key ? read.value : NO_HOSTED_SESSION), recheck: ask };
 }
 
 /** Nothing drawn yet. */

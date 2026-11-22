@@ -13,7 +13,7 @@
  * draws only while that pairing is the one it keeps as signed in.
  */
 import {
-  BRIDGE_NOTICE_KINDS, readNotice, type BridgeNoticeKind, type NoticePermission, type NoticePosted, type ShellApp,
+  BRIDGE_NOTICE_KINDS, readMailNoticeDetails, readNotice, type BridgeNoticeKind, type NoticePermission, type NoticePosted, type ShellApp,
 } from "../shell/bridge-kinds";
 import { isInstance, posterArgs, type NoticesNative } from "./notices-port";
 
@@ -23,7 +23,7 @@ export interface NoticeDoorDeps {
   /** The app this build is: mail's notices are the mail app's. */
   readonly app: ShellApp;
   /** The notices' native module, or null where the build has none. */
-  readonly native: Pick<NoticesNative, "post"> | null;
+  readonly native: Pick<NoticesNative, "post" | "postDetails"> | null;
   /** The pairing this door's session is: the profile's local id. */
   readonly instance: string;
   /** Whether that session is still the live one. */
@@ -45,21 +45,28 @@ export function noticeKindsHere(d: Pick<NoticeDoorDeps, "platform" | "app" | "na
 
 export interface NoticeDoor {
   /** One notice as the page handed it. A notice that does not read closed is refused and nothing runs. */
-  post(raw: unknown): Promise<{ readonly notice: NoticePosted } | { readonly refused: "malformed" }>;
+  post(raw: unknown, rawDetails?: unknown): Promise<{ readonly notice: NoticePosted } | { readonly refused: "malformed" }>;
 }
 
 export function noticeDoor(deps: NoticeDoorDeps): NoticeDoor {
   return {
-    async post(raw) {
+    async post(raw, rawDetails) {
       const notice = readNotice(raw);
       if (notice === null) return { refused: "malformed" };
+      const details = readMailNoticeDetails(rawDetails);
+      if (rawDetails !== undefined && (details === null || notice.kind !== "ohbox" || notice.count !== 1)) {
+        return { refused: "malformed" };
+      }
       const native = deps.native;
       if (!draws(deps) || native === null) return { notice: "unsupported" };
       if (!deps.live() || !isInstance(deps.instance)) return { notice: "denied" };
       if (deps.permission() !== "granted") return { notice: "denied" };
       if (deps.inFront()) return { notice: "inFront" };
       try {
-        return { notice: (await native.post(deps.instance, ...posterArgs(notice))) === true ? "posted" : "denied" };
+        const posted = details && native.postDetails
+          ? await native.postDetails(deps.instance, details.sender, details.subject)
+          : await native.post(deps.instance, ...posterArgs(notice));
+        return { notice: posted === true ? "posted" : "denied" };
       } catch {
         // A notice that could not be drawn takes nothing down.
         return { notice: "denied" };

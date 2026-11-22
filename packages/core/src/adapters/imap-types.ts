@@ -1047,14 +1047,14 @@ export interface OutboundMessage {
   /**
    * The letter's calendar part: an answer to an invitation (`invitation-reply.ts`), as an iTIP
    * REPLY. It is an alternative of the body, never a file: `outboundToMail` maps it by literal
-   * keys onto a `text/calendar; method=REPLY` alternative, so the delivered letter and the Sent
+   * keys onto a `text/calendar` alternative, so the delivered letter and the Sent
    * copy carry the same part. Absent on every other letter.
    */
   calendar?: OutboundCalendar;
 }
 /** A calendar part as the send path carries it: the method, and the text the reply writer gave. */
 export interface OutboundCalendar {
-  method: "REPLY";
+  method: "REPLY" | "COUNTER" | "DECLINECOUNTER";
   text: string;
 }
 export interface OutboundAttachment {

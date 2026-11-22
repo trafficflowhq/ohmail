@@ -39,7 +39,12 @@ function rim(element: Element) {
   return Number.parseFloat(getComputedStyle(element).borderTopLeftRadius) || 0;
 }
 
-function locateCard(card: HTMLElement, view: HTMLElement, preferred: Element | null): Seat | null {
+function locateCard(
+  card: HTMLElement,
+  view: HTMLElement,
+  preferred: Element | null,
+  reading: boolean,
+): Seat | null {
   const width = view.clientWidth;
   const height = view.clientHeight;
   const origin = view.getBoundingClientRect();
@@ -47,7 +52,9 @@ function locateCard(card: HTMLElement, view: HTMLElement, preferred: Element | n
   const cardHeight = card.offsetHeight;
   if (!width || !height || !origin.width || !cardWidth || !cardHeight) return null;
   const scale = origin.width / width;
-  const anchors = [...view.querySelectorAll<HTMLElement>(OPEN_EVENT)];
+  const anchors = [
+    ...view.querySelectorAll<HTMLElement>(reading ? ".fr-list .oh-erow[data-open]" : OPEN_EVENT),
+  ];
   if (preferred instanceof HTMLElement && anchors.includes(preferred)) {
     anchors.splice(anchors.indexOf(preferred), 1);
     anchors.unshift(preferred);
@@ -57,12 +64,17 @@ function locateCard(card: HTMLElement, view: HTMLElement, preferred: Element | n
   }
   for (const anchor of anchors) {
     const whole = boxIn(anchor, origin, scale);
-    const scroller = anchor.closest(".oh-tg-scroll, .oh-mo-weeks[data-run], .cal-ag-list");
+    const scroller = anchor.closest(
+      reading ? ".fr-list" : ".oh-tg-scroll, .oh-mo-weeks[data-run], .cal-ag-list",
+    );
     const bounds = scroller
       ? boxIn(scroller, origin, scale)
       : { left: 0, right: width, top: 0, bottom: height };
     const box = visibleBox(whole, bounds);
-    if (box) return besideEvent({ anchor, box, whole, bounds, width, height, card, cardWidth, cardHeight });
+    if (box) {
+      const pixel = 1 / (scale * (view.ownerDocument.defaultView?.devicePixelRatio ?? 1));
+      return besideEvent({ anchor, box, whole, bounds, width, height, card, cardWidth, cardHeight, pixel });
+    }
   }
   return null;
 }
@@ -77,6 +89,7 @@ function besideEvent({
   card,
   cardWidth,
   cardHeight,
+  pixel,
 }: {
   anchor: HTMLElement;
   box: Box;
@@ -87,6 +100,7 @@ function besideEvent({
   card: HTMLElement;
   cardWidth: number;
   cardHeight: number;
+  pixel: number;
 }): Seat {
   const right = box.right + GAP;
   const left = box.left - GAP - cardWidth;
@@ -128,6 +142,7 @@ function besideEvent({
     height,
     side,
     line,
+    pixel,
     event: { box, whole, radius: eventRadius },
     card: {
       box: { left: x, top: y, right: x + cardWidth, bottom: y + cardHeight },
@@ -163,20 +178,21 @@ function shadowCut(box: Box, whole: Box, radius: number, x: number, y: number): 
 export function useEventPlacement(
   card: RefObject<HTMLDivElement | null>,
   enabled: boolean,
-  revision: number | undefined,
+  revision: number | string | undefined,
+  reading = false,
 ) {
   const [seat, setSeat] = useState<Seat>();
   useLayoutEffect(() => {
     if (!enabled) return;
     const element = card.current;
-    const view = element?.closest<HTMLElement>(".cal-body-view");
+    const view = element?.closest<HTMLElement>(reading ? ".fr-main" : ".cal-body-view");
     const win = view?.ownerDocument.defaultView;
     if (!element || !view || !win) return;
     const active = view.ownerDocument.activeElement;
     const preferred = active?.closest(OPEN_EVENT) ?? null;
     let frame = 0;
     const measure = () => {
-      const next = locateCard(element, view, preferred);
+      const next = locateCard(element, view, preferred, reading);
       setSeat(
         (last) =>
           next ??
@@ -204,6 +220,6 @@ export function useEventPlacement(
       view.removeEventListener("scroll", schedule, true);
       win.removeEventListener("resize", schedule);
     };
-  }, [card, enabled, revision]);
+  }, [card, enabled, revision, reading]);
   return enabled ? seat : undefined;
 }

@@ -15,6 +15,7 @@
     "accounts": {
       "useCalendar": "Use ohcal",
       "add": "Add a calendar account",
+      "addAccount": "Add account",
       "none": "No calendar account",
       "noneShort": "None",
       "signInAgain": "Sign in again",

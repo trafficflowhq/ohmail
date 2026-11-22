@@ -31,9 +31,16 @@ export interface FaceEdits {
   chosen: FaceName | null;
   confirmed: FaceName | null;
   pin: FaceName | null;
+  pinExplicit: boolean;
 }
 
-export const newFaceEdits = (): FaceEdits => ({ pending: null, chosen: null, confirmed: null, pin: null });
+export const newFaceEdits = (): FaceEdits => ({
+  pending: null,
+  chosen: null,
+  confirmed: null,
+  pin: null,
+  pinExplicit: false,
+});
 
 interface AccountLook {
   hold(face: FaceName): void;
@@ -47,10 +54,14 @@ export const useAccountLook = () => useContext(FaceHoldContext);
 type ConsentFace = { themeFace: FaceName | null; themeFaceKnown: boolean; standalone: boolean };
 
 /** What is followed where the host stands no theme: nothing to adopt into, and nothing pinned. */
-const NO_THEME: Pick<ThemeContextValue, "adoptAccountFace" | "accountFace" | "facePreference" | "setFace"> = {
+const NO_THEME: Pick<
+  ThemeContextValue,
+  "adoptAccountFace" | "accountFace" | "facePreference" | "deviceFaceExplicit" | "setFace"
+> = {
   adoptAccountFace: () => undefined,
   accountFace: null,
   facePreference: null,
+  deviceFaceExplicit: false,
   setFace: () => undefined,
 };
 
@@ -74,7 +85,8 @@ function useFaceFollowsAccount(
   const { scope, mirrorAccount, account } = host.session;
   const awaitingWebConsent =
     host.device.build.surface === "web" && mirrorAccount !== null && mirrorAccount !== account;
-  const { adoptAccountFace, accountFace, facePreference, setFace } = useOptionalTheme() ?? NO_THEME;
+  const { adoptAccountFace, accountFace, facePreference, deviceFaceExplicit, setFace } =
+    useOptionalTheme() ?? NO_THEME;
   const { themeFace, themeFaceKnown, standalone } = consent;
   /** Whose frame this still is: the mount's own scope, and nobody's once the frame has gone (a sign-out ends it). */
   const whose = useRef<string | null>(scope);
@@ -108,6 +120,7 @@ function useFaceFollowsAccount(
     if (apply === null || awaitingWebConsent) return;
     const owed = held.current;
     held.current = null;
+    if (deviceFaceExplicit) return;
     if (owed !== null && owed === facePreference) {
       setFace(null);
       if (owed === themeFace) return;
@@ -125,7 +138,17 @@ function useFaceFollowsAccount(
     }
     if (facePreference === null) kept.current = null;
     else if (themeFace !== null && facePreference !== kept.current) setFace(null);
-  }, [apply, awaitingWebConsent, themeFace, facePreference, setFace, adoptAccountFace, toast, t]);
+  }, [
+    apply,
+    awaitingWebConsent,
+    themeFace,
+    facePreference,
+    deviceFaceExplicit,
+    setFace,
+    adoptAccountFace,
+    toast,
+    t,
+  ]);
   return hold;
 }
 

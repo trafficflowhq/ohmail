@@ -46,15 +46,17 @@ const read = (rel: string): string => readFileSync(resolve(ROOT, rel), "utf8");
 
 describe("the premise that drafting is disabled, checked in the four places it would have to be", () => {
   it("a reader can ask for a drafted reply — the verb is in the message menu", () => {
-    /* Re-pointed by path (the older tests' sorting): today's reader pane leaves with the switch. The
-       new reader draws Draft reply behind its letter's More (`ActionBar.tsx`'s item, pressed: the verb's `draft`),
-       and the verb is handed wherever a drafter stands (`use-verbs.ts`). */
+    /* More uses the reader's draft verb, which drafts for the conversation's current reply target. */
     const bar = read("packages/app/src/reader/actions/ActionBar.tsx");
     const verbs = read("packages/app/src/reader/actions/use-verbs.ts");
     const menu = read("packages/app/src/reader/actions/ActionMenus.tsx");
     expect(
-      /<DraftReplyItem draft=\{verbs\.draft\} close=\{close\} words=\{words\} \/>/.test(menu) && /{words\.draftReply}/.test(menu) && /t\("verb\.draftReply"\)/.test(bar)
-        && /draft:\s*drafter !== null && message !== null \? \(\) => drafter\(message\.id\)/.test(verbs),
+      /const draft = separate \? null : verbs\.draft;/.test(menu)
+        && /<DraftReplyItem draft=\{draft\} close=\{close\} words=\{words\} \/>/.test(menu)
+        && /<MenuItem[\s\S]{0,180}?\bdraft\(\);[\s\S]{0,35}?\{words\.draftReply\}/.test(menu)
+        && /t\("verb\.draftReply"\)/.test(bar)
+        && /const replyTo = latest \?\? message;/.test(verbs)
+        && /draft:\s*drafter !== null && replyTo !== null \? \(\) => drafter\(replyTo\.id\)/.test(verbs),
       "the ⋯ menu no longer offers Draft reply",
     ).toBe(true);
   });

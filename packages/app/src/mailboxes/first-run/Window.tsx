@@ -1,6 +1,7 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Counters, Menu, MenuItem, Page, Slot, Tag } from "@ohmail/ui/base";
-import { decisionCountSentence } from "@ohmail/app-logic/mailboxes/first-run/rules";
+import { SettingNote } from "@ohmail/ui/mail";
+import { decisionCountSentence, type WindowChoice } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import { SaidWith } from "../../doors/stage/Said.js";
 import { useLocale, useText } from "../../text/index.js";
 import { FolderMap, HolderWait } from "./Consent.js";
@@ -27,6 +28,19 @@ export function Window({ run, say }: StepProps): ReactNode {
   const name = say(word);
   const exact = count !== null && count.complete && count.mirrored && count.total === count.letters;
   const blocked = wait.awaiting || writes.busy;
+  const { historyCount } = run.about;
+  const [preview, setPreview] = useState<{ window: WindowChoice; count: number | null } | null>(null);
+  useEffect(() => {
+    if (!exact || historyCount === undefined) return;
+    let current = true;
+    void historyCount(agree.win).then((count) => {
+      if (current) setPreview({ window: agree.win, count });
+    });
+    return () => {
+      current = false;
+    };
+  }, [exact, historyCount, agree.win]);
+  const history = preview?.window === agree.win ? preview.count : null;
   return (
     <StepForm run={run} submit={run.acts.agree}>
       <Page
@@ -77,10 +91,17 @@ export function Window({ run, say }: StepProps): ReactNode {
                 {
                   figure: number.format(count.letters),
                   words: say(count.letters === 1 ? "onboarding.countMessage" : "onboarding.countMessages"),
+                  end: "none",
                 },
                 {
                   figure: number.format(count.senders),
                   words: say(count.senders === 1 ? "onboarding.countSender" : "onboarding.countSenders"),
+                  end: "none",
+                },
+                {
+                  figure: history === null ? "—" : number.format(history),
+                  words: say("onboarding.countHistory"),
+                  end: "none",
                 },
               ]}
             />
@@ -90,6 +111,7 @@ export function Window({ run, say }: StepProps): ReactNode {
             </p>
           )}
         </div>
+        <SettingNote>{say("onboarding.windowLater")}</SettingNote>
         {run.pull.reconnecting ? <Tag>{say("onboarding.pullReconnecting")}</Tag> : null}
         {wait.awaiting ? <HolderWait run={run} say={say} /> : null}
       </Page>

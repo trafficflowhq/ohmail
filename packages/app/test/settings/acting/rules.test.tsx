@@ -104,6 +104,13 @@ describe("the Rules pane", () => {
     expect(seen("anna@example.org")).toBe(false);
   });
 
+  it("shows the destination filter when all the rules file into the same place", () => {
+    drawn(<RulesPane model={model({ rules: [RULES[0]!], facets: [FACETS[0]!] })} />);
+    const filter = within(screen.getByRole("group", { name: r("facetLabel") }));
+    expect(filter.getByRole("button", { name: "All" })).toBeTruthy();
+    expect(filter.getByRole("button", { name: "Ohbox" })).toBeTruthy();
+  });
+
   it("revokes a rule only after saying that mail already filed stays where it is", () => {
     const revoke = vi.fn();
     drawn(<RulesPane model={model({ revoke })} />);

@@ -23,7 +23,6 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 const A = messages.account as Record<string, string>;
-const R = messages.resume as Record<string, string>;
 const PENDING = "signed_out_pending";
 const REFUSED_WITH_UNVERIFIED_WIPE = A.signOutServerRefusedUnverified!.replace("{reason}", "busy");
 /** The registry's anchor: this origin was seen holding no mirror before the registry named them all. */
@@ -164,7 +163,7 @@ describe("a wipe that does not land ends the ladder, and is said", () => {
     expect(count("door"), "asking the door again cannot unblock a tab that holds the mirror open").toBe(1);
     expect(alerts(el), "a blocked wipe ended in silence").toEqual([A.signOutBlocked]);
     expect(signOutButton(el)).not.toBeNull();
-    expect(el.textContent).toContain(R.pendingBody);
+    expect(alerts(el)[0]).toContain("Your session is ended, but the mail cached in this browser is still here");
     expect(count("session") + count("refresh")).toBe(0);
   });
 

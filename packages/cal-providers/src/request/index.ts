@@ -13,7 +13,7 @@ import type { Hop } from "./shape.js";
  * The methods reading needs, and the three a writer adds. No other: a calendar is never made or
  * copied here, and a move without a provider's own call is a new object and a removal.
  */
-export type HttpMethod = "GET" | "POST" | "PROPFIND" | "REPORT" | "PUT" | "PATCH" | "DELETE";
+export type HttpMethod = "GET" | "OPTIONS" | "MOVE" | "POST" | "PROPFIND" | "REPORT" | "PUT" | "PATCH" | "DELETE";
 
 /**
  * What a write is made against, written by the port itself as it writes the sign-in's line: the
@@ -29,7 +29,7 @@ export type Precondition =
   | { readonly kind: "own-channel" };
 
 /** The headers an adapter may name. Every other line of a request is the port's own. */
-export type AdapterHeader = "accept" | "content-type" | "depth" | "prefer";
+export type AdapterHeader = "accept" | "content-type" | "depth" | "prefer" | "destination" | "overwrite";
 
 /**
  * A sign-in for one request. The Authorization line is built inside the port, for each hop anew, and
@@ -59,7 +59,7 @@ export interface HttpRequest {
   readonly auth: Authorization | null;
   /** Sent with the first request only: a validator belongs to the address it came from. With both, the tag is sent. */
   readonly validators: { readonly etag: string | null; readonly lastModified: string | null } | null;
-  /** Required on PUT, PATCH and DELETE, and refused on every other method. */
+  /** Required on object writes. The series cancellation action can also carry the reviewed version. */
   readonly precondition?: Precondition;
   readonly signal: AbortSignal;
 }

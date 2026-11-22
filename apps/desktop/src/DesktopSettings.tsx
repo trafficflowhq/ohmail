@@ -6,14 +6,16 @@
  */
 
 import { useState } from "react";
-import { Button } from "@ohmail/ui/base";
+import { Button, Tag } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 
 import { engineLogout, type EngineStatus, type SignedOut } from "./bridge-fetch.js";
-import { renewCloudSession } from "./cloud-session.js";
+import { renewCloudSession, type CloudSessionWire } from "./cloud-session.js";
 import type { HostedSession } from "./doors.js";
-import { DOOR_COPY, machineWord } from "./door-copy.js";
+import { DOOR_COPY, installName, machineWord } from "./door-copy.js";
 import { hostLabelOf, isDesktopHost, isManagedDoor, pairedHostOf, pairedViaOf } from "./doors.js";
+import { clockOf } from "@ohmail/app-logic/text/format";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import { DefaultMailRow } from "./DesktopDefaultMail.js";
@@ -24,7 +26,7 @@ import type { LocalAiStatus } from "./local-ai.js";
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
-import { isRemovedMailbox, readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
+import { isRemovedMailbox, readerHolder, screenerMode, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 
 /**
@@ -139,16 +141,6 @@ function credentialLine(
   }
 }
 
-/**
- * WHY THE ENGINE ROW IS DRAWN AT ALL, and it is drawn only when it is the problem.
- *
- * "Mail engine: Running" was a permanent row stating the ordinary case. It is the ordinary case on
- * every healthy install, which makes it a line that never says anything — and a settings pane whose
- * rows are mostly noise is one whose one real warning gets read as noise too. `serving` renders
- * nothing now; every other state renders the row with the sentence for THAT state, because the
- * recoveries differ and "stopped and did not come back" is false of an engine that is still coming
- * up. That distinction is the whole reason this is a function and not one string.
- */
 function engineWhy(status: EngineStatus): string {
   switch (status.state) {
     case "starting":
@@ -192,6 +184,18 @@ function engineLine(status: EngineStatus): string {
   }
 }
 
+function connectedThrough(status: EngineStatus): string {
+  const host = pairedHostOf(status);
+  if (isDesktopHost(status) && host !== null) return host;
+  if (status.mode === "local") return DOOR_COPY.doorLocalName(machineWord());
+  if (status.mode === "cloud") return isManagedDoor(status) ? DOOR_COPY.doorCloudName : DOOR_COPY.doorServerNamed;
+  return DOOR_COPY.doorNotChosen;
+}
+
+export function desktopStatusSummary(status: EngineStatus): string {
+  return `${connectedThrough(status)} · ${engineLine(status)}`;
+}
+
 export function DesktopSettings({
   status,
   /** The status this pane produced. The gate re-reads its own routing from it. */
@@ -228,6 +232,9 @@ export function DesktopSettings({
    * answering. `null` on every other door, and before the first answer.
    */
   connection,
+  hostedConnection,
+  hostedCheckedAt,
+  hostedAddress,
   defaultMail = false,
   /** Open the pairing card over the app, for an install whose pairing has ended. */
   onPairAgain,
@@ -238,6 +245,9 @@ export function DesktopSettings({
   session: HostedSession;
   sealFailed?: boolean;
   connection?: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
+  hostedConnection?: CloudSessionWire | null;
+  hostedCheckedAt?: number | null;
+  hostedAddress?: string | null;
   defaultMail?: boolean;
   onStatus: (next: EngineStatus, stillListedFrom?: EngineStatus | null, waiting?: SignedOut["waiting"]) => void;
   onSwitchDoor: () => void;
@@ -268,18 +278,12 @@ export function DesktopSettings({
   /* What this install's door is called. Built in the render for the reason `DesktopAbout`'s is:
      both halves are catalogue reads, and a module constant would freeze the locale that was set
      when this file was first imported. */
-  const doorName: Record<string, string> = {
-    local: DOOR_COPY.doorLocalName(machineWord()),
-    cloud: isManagedDoor(status) ? DOOR_COPY.doorCloudName : DOOR_COPY.doorServerNamed,
-  };
-  /* THE OTHER COMPUTER'S NAME, or null. Every paired sentence below interpolates it, and each one
-     falls back to the door's older wording rather than rendering a hole — see `credentialLine`. */
   const host = pairedHostOf(status);
   const paired = isDesktopHost(status) && host !== null;
-  const door = paired
-    ? host
-    : status.mode ? (doorName[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen;
+  const door = connectedThrough(status);
   const credential = credentialLine(status, session, host);
+  const showCredential = status.mode === "cloud" ? session !== "live" : status.credentialState !== "ready";
+  const compactHosted = status.mode === "cloud" && !paired && session === "live";
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
   const facts = useMailboxFacts();
@@ -287,7 +291,8 @@ export function DesktopSettings({
   /* THE MAILBOXES THIS INSTALL HOLDS, from the roster (`GET /mailboxes`). `status.address` is the
      seed in the settings file, which stays when the seed is removed while another mailbox remains,
      so it named a mailbox the install no longer held. Before the roster answers: the seed. */
-  const held = facts === null ? null : facts.filter((m) => !isRemovedMailbox(m)).map((m) => m.address);
+  const roster = facts?.filter((mailbox) => !isRemovedMailbox(mailbox)) ?? null;
+  const held = roster?.map((mailbox) => mailbox.address) ?? null;
   const multipleMailboxes = held !== null && held.length > 1;
   const mailboxValue = held === null ? (status.address ?? "—") : held.length > 0 ? held.join(", ") : "—";
 
@@ -306,17 +311,33 @@ export function DesktopSettings({
     }
   };
 
-  const reach = paired ? connectionLine(connection ?? null, pairedViaOf(status)) : null;
-  const signOutWhy = paired
-    ? DOOR_COPY.installSignOutWhyHost(host, machineWord())
-    : DOOR_COPY.installSignOutWhy(machineWord());
+  const reach = paired
+    ? connectionLine(connection ?? null, pairedViaOf(status))
+    : { value: connectionValue(status.mode, hostedConnection, roster, hostedCheckedAt) };
+  const signOutLabel = paired ? host : status.mode === "local" && held?.length === 1
+    ? held[0]!
+    : status.mode === "cloud" && session === "live" && hostedAddress
+      ? displayAddress(hostedAddress)
+      : DOOR_COPY.installAccount;
   const confirmWhy = paired
     ? DOOR_COPY.installSignOutConfirmWhyHost(machineWord(), host)
     : DOOR_COPY.installSignOutConfirmWhy(machineWord());
 
   return (
     <>
-      <SettingsSheet title={DOOR_COPY.aboutInstallHead} sign="desktop">
+      <SettingsSheet title={installName()} sign="desktop" aside={<Tag>{DOOR_COPY.installThisComputer}</Tag>}>
+        <SettingLine
+          label={DOOR_COPY.installConnectedThrough}
+          description={paired ? doorDescription(status, host) : undefined}
+          value={door}
+        />
+        {compactHosted ? (
+          <SettingLine label={DOOR_COPY.mailboxesLabel}>
+            <span title={held?.length ? mailboxValue : undefined}>
+              {held === null ? DOOR_COPY.installConnectionUnknown : DOOR_COPY.installMailboxCount(held.length, readOnly ? "reader" : "organizer")}
+            </span>
+          </SettingLine>
+        ) : (
         <SettingLine
           label={multipleMailboxes ? DOOR_COPY.mailboxesLabel : DOOR_COPY.mailboxLabel}
           description={mailboxRowWhy(readOnly, paired ? host : null)}
@@ -324,19 +345,17 @@ export function DesktopSettings({
         >
           {multipleMailboxes ? <span className="set-val-left">{mailboxValue}</span> : null}
         </SettingLine>
+        )}
+        <SettingLine label={DOOR_COPY.connLabel} {...reach} />
         <SettingLine
-          label={DOOR_COPY.installConnectedThrough}
-          description={doorDescription(status, host)}
-          value={door}
+          label={DOOR_COPY.engineLabel}
+          value={engineLine(status)}
+          description={status.state === "serving" ? undefined : engineWhy(status)}
         />
-        {reach ? <SettingLine label={DOOR_COPY.connLabel} {...reach} /> : null}
-        {status.state !== "serving" ? (
-          <SettingLine label={DOOR_COPY.engineLabel} description={engineWhy(status)} value={engineLine(status)} />
-        ) : null}
       </SettingsSheet>
 
       <SettingsSheet title={DOOR_COPY.installChangingHead}>
-        <SettingLine {...credential} />
+        {showCredential ? <SettingLine {...credential} /> : null}
         {sealFailed ? (
           <SettingLine label={DOOR_COPY.cloudSealPausedTitle(machineWord())} description={DOOR_COPY.credSealFailedNote(machineWord())}>
             {status.mode === "cloud" && session === "live" ? (
@@ -362,12 +381,7 @@ export function DesktopSettings({
             <Button kind="quiet" size="s" onPress={onTakeOver} disabled={busy}>{DOOR_COPY.takeoverAction}</Button>
           </SettingLine>
         ) : null}
-        <SettingLine
-          label={DOOR_COPY.installSwitch}
-          description={paired
-            ? DOOR_COPY.installSwitchWhyHost(host, machineWord())
-            : DOOR_COPY.installSwitchWhy(machineWord())}
-        >
+        <SettingLine label={DOOR_COPY.installSwitch}>
           <Button kind="quiet" size="s" onPress={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
         </SettingLine>
         {status.pairingLeftAt ? (
@@ -383,11 +397,11 @@ export function DesktopSettings({
             </Button>
           </SettingLine>
         ) : (
-          <SettingLine label={DOOR_COPY.signOut} description={signOutWhy}>
+          <SettingLine label={signOutLabel}>
             <Button kind="quiet" size="s" onPress={() => setMode("confirm")} disabled={busy}>{DOOR_COPY.signOut}</Button>
           </SettingLine>
         )}
-        <SettingNote>{DOOR_COPY.installPasswordNote}</SettingNote>
+
       </SettingsSheet>
 
       {defaultMail ? <SettingsSheet><DefaultMailRow /></SettingsSheet> : null}
@@ -431,15 +445,39 @@ function connectionLine(
   const when = freshness?.asOf ? agoStamp(freshness.asOf, Date.now()).abs : "—";
   const check = via === "lan" ? DOOR_COPY.hostCheckLan(machineWord()) : DOOR_COPY.hostCheckTs;
   if (freshness?.state === "current") {
-    return { value: DOOR_COPY.connCurrentValue, description: DOOR_COPY.connCurrentWhy(when) };
+    return { value: withCheckedTime(DOOR_COPY.connCurrentValue, freshness.asOf), description: DOOR_COPY.connCurrentWhy(when) };
   }
   if (freshness?.state === "stale") {
     return {
-      value: DOOR_COPY.connStaleValue,
+      value: withCheckedTime(DOOR_COPY.connStaleValue, freshness.asOf),
       description: DOOR_COPY.connStaleWhy(when, machineWord()),
     };
   }
   /* `unknown` AND "not asked yet" render alike, and that is the honest reading of both: no pull
      has completed, so there is nothing to report but what to check. */
   return { value: DOOR_COPY.connUnknownValue, description: check };
+}
+
+/** Hosted health and the local mail roster report different parts of the connection. */
+function connectionValue(
+  door: EngineStatus["mode"],
+  session: CloudSessionWire | null | undefined,
+  roster: readonly MailboxFacts[] | null,
+  checkedAt: number | null | undefined,
+): string {
+  if (door === "cloud") {
+    if (session?.state === "live") return withCheckedTime(DOOR_COPY.connCurrentValue, checkedAt);
+    if (session?.state === "unreachable") return withCheckedTime(DOOR_COPY.installUnreachable, checkedAt);
+  }
+  if (door === "local" && roster) {
+    if (roster.some((mailbox) => mailbox.unreachableSince)) return DOOR_COPY.installUnreachable;
+
+  }
+  return DOOR_COPY.installConnectionUnknown;
+}
+
+function withCheckedTime(value: string, at: number | string | null | undefined): string {
+  if (at == null) return value;
+  const date = new Date(at);
+  return Number.isFinite(date.getTime()) ? `${value} · ${clockOf(date.toISOString())}` : value;
 }

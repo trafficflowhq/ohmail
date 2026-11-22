@@ -29,6 +29,7 @@ export function cloudConsent(expectedOwner?: string): ConsentTransport {
       consentApi.setMailboxSignature(mailboxId, signature, signatureHtml, expectedOwner),
     setThemeFace: (themeFace) =>
       consentApi.setThemeFace(themeFace, expectedOwner).then((stored) => ({ themeFace: stored })),
+    setDraftReplies: (next) => consentApi.setDraftReplies(next, expectedOwner),
     setResurfaceTime: (resurfaceTime) =>
       consentApi.setResurfaceTime(resurfaceTime, expectedOwner).then((stored) => ({ resurfaceTime: stored })),
   };

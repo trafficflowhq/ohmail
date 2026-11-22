@@ -34,6 +34,8 @@ export interface BridgeInput {
   side: BridgeSide;
   /** The width of the line that runs round both, as it is drawn. */
   line: number;
+  /** One painted pixel on the boxes’ coordinate scale. */
+  pixel?: number;
   /** Mail's marks in the column. The bridge never attaches where one stands in the gap. */
   marks?: readonly BridgeBox[];
   /** A gap between two screens: no bridge is drawn across it. One folding screen has none. */
@@ -51,9 +53,6 @@ export interface BridgeShape {
   liquid: BridgeForm;
   /** The sides run straight across, for the face that keeps square corners. */
   straight: BridgeForm;
-  /** The two stretches of ring the bridge stands on: drawn over, so the two outlines become one. */
-  ends: [string, string];
-  endWidth: number;
   /** Under or over its event the same shape is drawn turned: across is down. */
   turned: boolean;
   /** Along the two edges, where it begins and ends. */
@@ -76,10 +75,12 @@ const HALF = 16;
 const WAIST = 0.4;
 /** Under this half-height there is no bridge: never a stub. */
 const LEAST = 5;
+const STRAIGHT = 20;
 /** How far round a corner it may attach, in degrees: a side leaves the edge at 35° at most. */
 const ARC = 55;
 /** The widest gap it crosses. */
 const GAP = 40;
+const LAP = 3;
 /** The air round a mark of mail. */
 const AIR = 2;
 
@@ -110,6 +111,8 @@ interface Ends {
   top: number;
   bottom: number;
   half: number;
+  cutTop: boolean;
+  cutBottom: boolean;
 }
 interface Point {
   x: number;
@@ -118,20 +121,25 @@ interface Point {
   round?: number;
 }
 
-const n2 = (n: number): number => Math.round(n * 100) / 100;
+const coordinate = (n: number): number => Math.round(n * 10000) / 10000;
 
 /**
  * The bridge between an open event and its card, or `null` where it lets go: the card on its event,
  * a gap wider than 40 px, less than 10 px of edge in common, a hinge between two screens in the way.
  * It is drawn whole or not at all.
  */
-export function bridgeShape({ event, card, side, line, marks = [], hinge }: BridgeInput): BridgeShape | null {
+export function bridgeShape({
+  event,
+  card,
+  side,
+  line,
+  pixel,
+  marks = [],
+  hinge,
+}: BridgeInput): BridgeShape | null {
   if (side === "o") return null;
   const turned = side === "t" || side === "b";
-  const frame = (o: BridgeBox): Frame =>
-    turned
-      ? { l: o.top, r: o.bottom, t: o.left, b: o.right }
-      : { l: o.left, r: o.right, t: o.top, b: o.bottom };
+  const frame = (box: BridgeBox) => frameOf(box, turned, pixel);
   const eventFirst = side === "r" || side === "b";
   const e: Body = {
     o: frame(event.box),
@@ -147,10 +155,19 @@ export function bridgeShape({ event, card, side, line, marks = [], hinge }: Brid
   const eL = endsOf(L, line);
   const eR = endsOf(R, line);
   const least = 1 - Math.cos((ARC * Math.PI) / 180);
-  const a = Math.max(L.o.t + eL.top * least, R.o.t + eR.top * least);
-  const z = Math.min(L.o.b - eL.bottom * least, R.o.b - eR.bottom * least);
-
-  const part = partOf([a, z], marks.map(frame), Math.min(L.o.r, R.o.l), Math.max(L.o.r, R.o.l));
+  const limit = (ends: Ends, radius: number, cut: boolean) => Math.max(radius, ends.half, cut ? LAP + 1 : 0);
+  const band = (round: number): [number, number] => [
+    Math.max(L.o.t + limit(eL, eL.top * round, eL.cutTop), R.o.t + limit(eR, eR.top * round, eR.cutTop)),
+    Math.min(
+      L.o.b - limit(eL, eL.bottom * round, eL.cutBottom),
+      R.o.b - limit(eR, eR.bottom * round, eR.cutBottom),
+    ),
+  ];
+  const obstacles = marks.map(frame);
+  const low = Math.min(L.o.r, R.o.l),
+    high = Math.max(L.o.r, R.o.l);
+  const flat = partOf(band(1), obstacles, low, high);
+  const part = flat && flat[1] - flat[0] >= STRAIGHT ? flat : partOf(band(least), obstacles, low, high);
   if (!part) return null;
   const half = Math.min(HALF, (part[1] - part[0]) / 2);
   if (half < LEAST) return null;
@@ -174,13 +191,39 @@ export function bridgeShape({ event, card, side, line, marks = [], hinge }: Brid
     if (hinge.at - reach < c1 && hinge.at + reach > c0) return null;
   }
 
-  const edgeR = along(R, eR, false, y1, y2);
-  const edgeL = along(L, eL, true, y2, y1);
-  /* Each side leaves its ring at a tangent and dips to the waist; with no pull it runs straight across. */
+  const lapped = (X: Body, at: number, above: boolean): number =>
+    above ? Math.min(at, Math.max(at - LAP, X.o.t + 0.5)) : Math.max(at, Math.min(at + LAP, X.o.b - 0.5));
+  const step = pixel ?? 1;
+  const pad = line / 2 + 1;
+  const intoLeft = coordinate(Math.floor((Math.min(near1.x, near2.x) - pad) / step) * step);
+  const intoRight = coordinate(Math.ceil((Math.max(far1.x, far2.x) + pad) / step) * step);
+
   const formOf = (pull: number): BridgeForm => {
-    const over = `M${n2(near1.x)} ${n2(y1)} C${n2(near1.x + pull * near1.tx)} ${n2(y1 + pull * near1.ty)} ${n2(far1.x + pull * far1.tx)} ${n2(y1 + pull * far1.ty)} ${n2(far1.x)} ${n2(y1)}`;
-    const back = `C${n2(far2.x - pull * far2.tx)} ${n2(y2 - pull * far2.ty)} ${n2(near2.x - pull * near2.tx)} ${n2(y2 - pull * near2.ty)} ${n2(near2.x)} ${n2(y2)}`;
-    return { fill: `${over}${edgeR}${back}${edgeL} Z`, sides: [over, `M${n2(far2.x)} ${n2(y2)} ${back}`] };
+    const handle = (point: Point, gap: number) =>
+      point.tx ? Math.min(pull, (0.45 * gap) / Math.abs(point.tx)) : pull;
+    const curve = (u: Point, v: Point, y: number, direction: number) => {
+      const gap = Math.abs(v.x - u.x);
+      const a = handle(u, gap) * direction;
+      const b = handle(v, gap) * direction;
+      return ` C${coordinate(u.x + a * u.tx)} ${coordinate(y + a * u.ty)} ${coordinate(v.x + b * v.tx)} ${coordinate(y + b * v.ty)} ${coordinate(v.x)} ${coordinate(y)}`;
+    };
+    const top = curve(near1, far1, y1, 1);
+    const bottom = curve(far2, near2, y2, -1);
+    const inset = pull === 0 ? line / 2 : 0;
+    const start = coordinate(y1 + inset);
+    const end = coordinate(y2 - inset);
+    const fill = `M${intoLeft} ${start} H${coordinate(near1.x)} L${coordinate(near1.x)} ${coordinate(y1)}${top} V${start} H${intoRight} V${end} H${coordinate(far2.x)} V${coordinate(y2)}${bottom} V${end} H${intoLeft} Z`;
+    const lt = lapped(L, y1, true);
+    const rt = lapped(R, y1, true);
+    const lb = lapped(L, y2, false);
+    const rb = lapped(R, y2, false);
+    return {
+      fill,
+      sides: [
+        `M${coordinate(point(L, eL, true, lt).x)} ${coordinate(lt)}${along(L, eL, true, lt, y1)}${top}${along(R, eR, false, y1, rt)}`,
+        `M${coordinate(point(R, eR, false, rb).x)} ${coordinate(rb)}${along(R, eR, false, rb, y2)}${bottom}${along(L, eL, true, y2, lb)}`,
+      ],
+    };
   };
 
   const middle = y1 + half;
@@ -194,25 +237,36 @@ export function bridgeShape({ event, card, side, line, marks = [], hinge }: Brid
   return {
     liquid: formOf((half - half * WAIST) / 0.75),
     straight: formOf(0),
-    ends: [`M${n2(near1.x)} ${n2(y1)}${along(L, eL, true, y1, y2)}`, `M${n2(far1.x)} ${n2(y1)}${edgeR}`],
-    endWidth: n2(line + 2),
     turned,
     top: y1,
     bottom: y2,
-    from: n2(atEvent),
-    to: n2(atCard),
+    from: coordinate(atEvent),
+    to: coordinate(atCard),
     meets,
     root: swap(atEvent, middle),
     middle: swap(atCard, middle),
   };
 }
 
+function frameOf(box: BridgeBox, turned: boolean, pixel?: number): Frame {
+  const snap = (value: number) => (pixel ? Math.round(value / pixel) * pixel : value);
+  const left = snap(box.left);
+  const right = snap(box.right);
+  const top = snap(box.top);
+  const bottom = snap(box.bottom);
+  return turned ? { l: top, r: bottom, t: left, b: right } : { l: left, r: right, t: top, b: bottom };
+}
+
 /* A corner the scroll cut away is no corner: that end is straight. */
 function endsOf(X: Body, line: number): Ends {
-  const r = Math.min(X.radius, (X.o.b - X.o.t) / 2, (X.o.r - X.o.l) / 2);
+  const r = Math.min(X.radius, (X.real.b - X.real.t) / 2, (X.real.r - X.real.l) / 2);
+  const cutTop = Math.abs(X.o.t - X.real.t) > 0.5;
+  const cutBottom = Math.abs(X.o.b - X.real.b) > 0.5;
   return {
-    top: Math.abs(X.o.t - X.real.t) > 0.5 ? 0 : r,
-    bottom: Math.abs(X.o.b - X.real.b) > 0.5 ? 0 : r,
+    top: cutTop ? 0 : r,
+    bottom: cutBottom ? 0 : r,
+    cutTop,
+    cutBottom,
     half: X.inside ? line / 2 : -line / 2,
   };
 }
@@ -260,6 +314,8 @@ function pointOn(X: Body, en: Ends, right: boolean, y: number, line: number): Po
 /** A body's ring from one height to another, with the arcs where it rounds a corner. */
 function alongRing(X: Body, en: Ends, right: boolean, from: number, to: number, line: number): string {
   const way = to > from ? 1 : -1;
+  if (from === to) return "";
+  const sweep = right === way > 0 ? 1 : 0;
   const stops = [from];
   for (const y of [X.o.t + en.top, X.o.b - en.bottom])
     if ((y - from) * way > 0 && (to - y) * way > 0) stops.push(y);
@@ -270,8 +326,8 @@ function alongRing(X: Body, en: Ends, right: boolean, from: number, to: number, 
     const p = pointOn(X, en, right, stops[i]!, line);
     const mid = pointOn(X, en, right, (stops[i - 1]! + stops[i]!) / 2, line);
     d += mid.round
-      ? ` A${n2(mid.round)} ${n2(mid.round)} 0 0 0 ${n2(p.x)} ${n2(stops[i]!)}`
-      : ` L${n2(p.x)} ${n2(stops[i]!)}`;
+      ? ` A${coordinate(mid.round)} ${coordinate(mid.round)} 0 0 ${sweep} ${coordinate(p.x)} ${coordinate(stops[i]!)}`
+      : ` L${coordinate(p.x)} ${coordinate(stops[i]!)}`;
   }
   return d;
 }

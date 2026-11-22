@@ -85,6 +85,9 @@ describe("SignaturesRow — the compose editor, and one of two save shapes", () 
 
   it("mounts the compose editor rather than a bare textarea", async () => {
     const view = await mountPane([mailbox]);
+    expect(within(view.pane).queryByRole("toolbar")).toBeNull();
+    await act(async () => view.editor().focus());
+    expect(within(view.pane).getByRole("toolbar")).toBeTruthy();
     await act(async () => { typeInto(view.editor(), "Signature"); });
     expect(view.editor().textContent).toBe("Signature");
   });
@@ -94,6 +97,7 @@ describe("SignaturesRow — the compose editor, and one of two save shapes", () 
       signatures: { "mb-one": "Anna\nohmail" }, signaturesHtml: { "mb-one": HTML },
     });
     expect(editor().querySelector("strong")?.textContent).toBe("Anna");
+    await act(async () => editor().focus());
     expect(within(pane).getByRole("textbox", { name: words.preview }).querySelector("strong")?.textContent).toBe("Anna");
     expect(pane.textContent).not.toContain("<strong>");
   });
@@ -114,6 +118,7 @@ describe("SignaturesRow — the compose editor, and one of two save shapes", () 
     });
     expect(view.pane.textContent).not.toContain(words.mailboxRead);
     expect(view.pane.textContent).toContain(words.mailboxOn);
+    await act(async () => view.editor().focus());
     expect(view.save()).not.toBeNull();
     expect(view.editor().getAttribute("contenteditable")).toBe("true");
   });
@@ -123,6 +128,7 @@ describe("SignaturesRow — the compose editor, and one of two save shapes", () 
       signatures: { "mb-one": "-- \nmine" },
     });
     expect(view.pane.textContent).not.toContain(words.mailboxRead);
+    await act(async () => view.editor().focus());
     expect(view.save()).not.toBeNull();
   });
 
@@ -130,6 +136,7 @@ describe("SignaturesRow — the compose editor, and one of two save shapes", () 
     it(`an organizer mailbox (role ${String(role)}) keeps its editor and its Save`, async () => {
       const view = await mountPane([{ ...mailbox, organizerRole: role }], { signatures: { "mb-one": "-- \nmine" } });
       expect(view.pane.textContent).not.toContain(words.mailboxRead);
+      await act(async () => view.editor().focus());
       expect(view.save()).not.toBeNull();
       expect(view.editor().getAttribute("contenteditable")).toBe("true");
     });

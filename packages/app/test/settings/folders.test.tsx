@@ -41,7 +41,7 @@ describe("Folders", () => {
     const write = held();
     const set = vi.fn(() => write.promise);
     mount({ ...foldersState(false), set });
-    expect(screen.getByText(F.useOff)).toBeTruthy();
+    expect(sw(F.useTitle).getAttribute("aria-checked")).toBe("false");
     fireEvent.click(sw(F.useTitle));
     fireEvent.click(sw(F.useTitle));
     expect(set).toHaveBeenCalledTimes(1);
@@ -61,7 +61,7 @@ describe("Folders", () => {
         <FoldersPane model={{ ...foldersState(true), on: false }} />
       </TextProvider>,
     );
-    expect(screen.queryByText(F.mailboxesNote)).toBeNull();
+    expect(screen.getAllByRole("switch")).toEqual([sw(F.useTitle)]);
   });
 
   it("writes one mailbox switch at a time and says a refusal on the mailboxes' sheet", async () => {
@@ -73,9 +73,7 @@ describe("Folders", () => {
     expect(setMailbox).toHaveBeenCalledTimes(1);
     expect(setMailbox).toHaveBeenCalledWith("m2", false);
     await act(async () => write.settle(false));
-    const sheet = screen
-      .getByRole("heading", { name: F.mailboxesTitle })
-      .closest(".oh-settingssheet") as HTMLElement;
+    const sheet = sw("mila.brunner@work.example").closest(".oh-settingssheet") as HTMLElement;
     expect(within(sheet).getByText(F.failed, { exact: false })).toBeTruthy();
     expect(sw("mila.brunner@work.example").getAttribute("aria-checked")).toBe("true");
   });

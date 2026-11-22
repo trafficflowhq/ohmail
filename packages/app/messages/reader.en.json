@@ -237,6 +237,7 @@
     "faultOhmail": "ohmail couldn't fetch this file",
     "faultBusy": "ohmail already has this mailbox's connections open",
     "faultUnreachable": "Your mail server didn't answer",
+    "faultWillRetry": "{reason}. ohmail will try again shortly.",
     "faultServerBusy": "Your mail server isn't serving this mailbox right now",
     "faultNotSecured": "Your mail server wouldn't secure the connection",
     "faultLoginRefused": "Your mail server refused the sign-in — check the password in Settings",

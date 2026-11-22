@@ -16,7 +16,9 @@ describe("the shell wiring, pinned by source", () => {
     expect(frame).not.toContain("away.state(");
     expect(supplies).toContain("useEffect(() => awayFeed?.start(), [awayFeed])");
     expect(awayNotice).toContain("const reading = wire.state().finally(");
-    expect(awayNotice).toMatch(/if \(started\) return;\s+started = true;\s+void initialState\(\)\.catch\(/);
+    expect(awayNotice).toMatch(/if \(started\) return;\s+started = true;\s+if \(current\.read\(\) === null\) void initialState\(\)\.catch\(/);
+    expect(awayNotice).toContain('route.place === "settings" && route.sub === "away"');
+    expect(awayNotice).toContain("if (active && !paneReads) feed?.start()");
   });
 
   it("support is the hosted client OR a host's own wire — never a bare `apiConfigured()`", () => {
@@ -28,7 +30,7 @@ describe("the shell wiring, pinned by source", () => {
 
   it("the Ohbox notice is gated on demo, support, and the responder actually being on", () => {
     expect(awayNotice).toContain("!demo && host.capabilities.awayRunsOn !== NONE");
-    expect(awayNotice).toContain("if (!active || !row?.enabled) return [];");
+    expect(awayNotice).toContain("if (!active || !row?.enabled || row === dismissed) return [];");
     expect(awayNotice).toContain("awayEffectivePiles(row.piles");
     expect(awayNotice).toContain("audience: row.audience");
     expect(awayNotice).toContain("throttle: row.throttle");
@@ -39,7 +41,8 @@ describe("the shell wiring, pinned by source", () => {
     const frameParts = mounted("packages/app/src/frame/FrameParts.tsx");
     expect(frameParts).toContain("<FeatureNotices features={host.features} notices={inner.notices}");
     expect(frameParts).toContain("<NoticeHost store={inner.notices}");
-    expect(awayNotice).toMatch(/kind: "away",\s+title,/);
+    expect(awayNotice).toMatch(/kind: "away",\s+title: frame\("awayNoticeTitle"\),\s+line,/);
+    expect(awayNotice).toMatch(/const line =\s*piles\.length === 0\s*\? t\("noticeNone"\)\s*:\s*t\("notice",/);
     expect(awayNotice).toMatch(/piles: new Intl.ListFormat[^\n]*\.format\(\s*piles,?\s*\)/);
   });
 

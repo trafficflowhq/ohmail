@@ -414,8 +414,8 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
         microsoftValidation: cfg.calendar.notices.microsoftValidation, log: parts.logger, now: () => Date.now(),
       }),
     } : {}),
-    // PLACE SUGGESTIONS, beside the calendar and only where a geocoder is set (`PLACES_SUGGEST_URL`):
-    // one suggester for the program, whose limits, answers and holds live as long as it does.
+    // PLACE SUGGESTIONS, beside the calendar where the operator sets `PLACES_SUGGEST_URL`.
+    // One suggester for the program, whose limits, answers and holds live as long as it does.
     ...(cfg.calendar.enabled && cfg.places !== null
       ? { places: makePlaceSuggester(cfg.places, { resolver: nodeHostResolver }) }
       : {}),

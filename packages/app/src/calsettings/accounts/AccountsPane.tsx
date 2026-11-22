@@ -149,8 +149,12 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
       ))}
     </>
   );
+  const footerAdd =
+    add && host.capabilities.products === "both" ? { ...add, label: t("accounts.addAccount") } : add;
   const foot =
-    add || (enabled && check) ? <AccountsToolbar add={add} check={enabled ? check : null} /> : null;
+    footerAdd || (enabled && check) ? (
+      <AccountsToolbar add={footerAdd} check={enabled ? check : null} />
+    ) : null;
   return sheet ? (
     sheet(content, foot)
   ) : (

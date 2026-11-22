@@ -261,7 +261,7 @@ describe("Every ending of a draft discard says what happened", () => {
     expect(
       toastText(),
       "a refusal with no sentence was answered with silence",
-    ).toContain(messages.drafts.discardRefusedUnnamed);
+    ).toContain(messages.drafts.discardRefusedUnnamed.replace(/\.$/, ""));
   }, 30_000);
 
   /**
@@ -367,7 +367,7 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
     await finishUndoWindow();
     await reconnect(s);
     expect({ sends: sends(s), discards: discards(s), gone: s.store.isTombstoned("draft", D), waiting: s.engine.waitingSends().length, said: said() })
-      .toEqual({ sends: 1, discards: 1, gone: true, waiting: 0, said: drafts.discardedNotSent });
+      .toEqual({ sends: 1, discards: 1, gone: true, waiting: 0, said: drafts.discardedNotSent.replace(/\.$/, "") });
   }, 60_000);
 
   it("a Cancel nobody can answer deletes nothing, and says so in the row", async () => {

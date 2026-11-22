@@ -804,7 +804,7 @@ describe("the mailbox roster opened through desktop Settings", () => {
     }));
     const frame = await render("local", {}, "#/ohbox");
     const action = within(frame).getByRole("button", { name: messages.mailboxes.noticeCountShow });
-    expect(action.closest('[role="status"]')?.textContent).toContain("4 mailboxes are organized elsewhere now.");
+    expect(action.closest('[role="status"]')?.textContent).toContain("4 mailboxes are organized elsewhere now");
     await act(async () => action.click());
     const roster = within(frame).getByRole("dialog");
     expect(within(roster).getAllByRole("listitem").map((row) => row.textContent))
@@ -1207,7 +1207,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
 
     const panel = el.querySelector('[role="alertdialog"]');
     expect(panel, "the confirmation is not an alertdialog").not.toBeNull();
-    expect(panel!.textContent ?? "").toContain("Remove someone@example.test?");
+    expect(panel!.textContent ?? "").toContain("Remove someone@example.test");
     const dialog = within(el).getByRole("alertdialog");
     const keep = within(dialog).getByRole("button", { name: "Keep it" }) as HTMLButtonElement;
     expect(document.activeElement).toBe(keep);
@@ -1657,7 +1657,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(el.querySelectorAll('[role="alertdialog"]').length,
       "one press opened a confirmation on more than one row").toBe(1);
     expect(el.querySelector('[role="alertdialog"]')!.textContent ?? "")
-      .toContain("Remove second@example.test?");
+      .toContain("Remove second@example.test");
 
     bridgeReply = () => new Response(null, { status: 200 });
     await act(async () => {

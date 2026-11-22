@@ -237,6 +237,18 @@ describe("the filings that wait — the desktop's block over the bridge", () => 
     ]);
   });
 
+  it("the waiting lines stand under the mailbox's own lines, in that mailbox's sheet", async () => {
+    const node = await renderFilings(engineBy((method) => [200, filings]));
+    const row = node.closest("[data-mailbox]");
+    const heading = within(node).getByRole("heading", { name: /^Waiting to be filed/ });
+    expect(heading.closest(".oh-settingssheet")).toBe(node);
+    expect(within(node).queryByText("ann@example.test")).toBeTruthy();
+    const said = node.textContent ?? "";
+    expect(said.indexOf("ann@example.test")).toBeLessThan(said.indexOf("Waiting to be filed"));
+    expect(row?.contains(heading)).toBe(true);
+    expect(row?.contains(within(node).getByRole("button", { name: en.mailboxFilings.retry }))).toBe(true);
+  });
+
   it("a 409 says another install organizes it now", async () => {
     const node = await renderFilings(engineBy((method) =>
       method === "GET" ? [200, filings] : [409, { error: { code: "conflict", message: "x" } }],

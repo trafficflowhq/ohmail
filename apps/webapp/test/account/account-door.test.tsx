@@ -68,7 +68,7 @@ beforeEach(() => {
   written = catchConsole();
   tab = catchLoads();
   server = serve({
-    [SESSION]: () => json(session()),
+    [SESSION]: () => json(session({ displayName: "" })),
     [LOGOUT]: () => new Response(null, { status: 204 }),
   });
 });
@@ -114,8 +114,15 @@ const press = async (name: string, inside: HTMLElement = document.body) => {
 describe("who is signed in, as the door answers it", () => {
   const say = (): string => "said by the renderer";
 
-  it("a full session names its address, and nothing else of the account leaves the door", async () => {
+  it("a full session without a display name falls back to its address", async () => {
+    server.answer(SESSION, json(session({ displayName: " " })));
     expect(await accountDoor(say, toSignIn).who()).toEqual({ ok: true, value: { address: ADDRESS } });
+  });
+
+  it("uses the display name from the existing signed-in session", async () => {
+    server.answer(SESSION, json(session({ displayName: "Fixture Person" })));
+    await opened();
+    expect(within(document.body).getByText("Fixture Person")).toBeTruthy();
   });
 
   it("an enrolment still open, or a session that names no account, is nobody signed in", async () => {

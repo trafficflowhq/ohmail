@@ -787,9 +787,22 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
       const a = await one.text();
       const b = await other.text();
       expect(wordIn(a), "a client-sent word was believed").toBe("wait");
-      expect(a).not.toContain(TOKEN);
-      expect(a).not.toContain("m".repeat(43));
-      const blank = (html: string, res: Response) => html.split(nonceOf(res)!).join("N");
+      for (const html of [a, b]) {
+        expect(html).not.toContain(TOKEN);
+        expect(html).not.toContain("m".repeat(43));
+      }
+      const blank = (html: string, res: Response) => {
+        const nonce = nonceOf(res)!;
+        expect(html).toContain(nonce);
+        let blanked = html.replaceAll(nonce, "N");
+        // The serialized boot props can carry a nonce across two React Flight script chunks.
+        const boundary = '"])</script><script nonce="N">self.__next_f.push([1,"';
+        for (let split = 1; split < nonce.length; split += 1) {
+          const divided = nonce.slice(0, split) + boundary + nonce.slice(split);
+          blanked = blanked.replaceAll(divided, "N" + boundary);
+        }
+        return blanked;
+      };
       expect(blank(a, one)).toBe(blank(b, other));
       const head = await fetch(at("/"), { method: "HEAD", headers: jar(TOKEN) });
       expect(head.headers.get("set-cookie")).toBeNull();

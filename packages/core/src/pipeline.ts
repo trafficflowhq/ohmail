@@ -1072,7 +1072,8 @@ function sentCopyRecipients(
   const at = internalDate ?? msg.date;
   if (since === undefined || at === null || at.getTime() <= since.getTime()) return [];
   if (autoReplySuppression(msg.headers, msg.from.address) !== null) return [];
-  if (itipReplyByHeaders(msg) || msg.calendar?.invitation?.method === "REPLY") return [];
+  const method = msg.calendar?.invitation?.method;
+  if (itipReplyByHeaders(msg) || method === "REPLY" || method === "COUNTER" || method === "DECLINECOUNTER") return [];
   const bcc = (msg.headers["bcc"] ?? []).flatMap((line) => line.split(","))
     .map((part) => /<([^<>@\s]+@[^<>\s]+)>/.exec(part)?.[1] ?? part.trim());
   return [...new Set([...msg.to.map((a) => a.address), ...msg.cc.map((a) => a.address), ...bcc]

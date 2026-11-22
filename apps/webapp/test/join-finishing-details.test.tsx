@@ -325,7 +325,7 @@ describe("the Checkout return", () => {
     session = { status: 200, body: { user: user({ twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: true } }), scope: "full" } };
     answers["/account/access"] = { status: 200, body: { access: "open", metered: true, canAddMailbox: true, mailboxes: 0 } };
     const ui = await render("join", { billingReturn: "success" });
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
+    expect(ui.host.querySelector("h1")?.textContent?.trim()).toBe(en.onboarding.providerFirst);
     expect(window.location.search).toBe("?billing=success");
   });
 });

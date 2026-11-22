@@ -10,7 +10,15 @@ export { refusalOf, SignOutAgain, type Refusal } from "../stage/pending.js";
 const ACCOUNT_PART = { invite: 1, account: 1, sent: 2, verify: 2, factor: 3, codes: 4, plan: 5 } as const;
 const STAGES = ["rail_account", "rail_mailbox", "rail_organize", "rail_read", "rail_decisions"] as const;
 
-export function Progress({ door, join }: { door: JoinDoor; join: Text }): ReactNode {
+export function Progress({
+  door,
+  join,
+  mailboxPart,
+}: {
+  door: JoinDoor;
+  join: Text;
+  mailboxPart?: number;
+}): ReactNode {
   const at = door.state.at;
   const stage =
     door.state.at === "done" ? (door.state.decisionAhead ? 2 : STAGES.length) : at === "mailbox" ? 1 : 0;
@@ -18,6 +26,16 @@ export function Progress({ door, join }: { door: JoinDoor; join: Text }): ReactN
   if (stage === STAGES.length)
     return <StepDots label={join("progressComplete")} steps={STAGES.length} at={stage} />;
   const name = join(STAGES[stage]!);
+  if (mailboxPart !== undefined) {
+    return (
+      <StepDots
+        label={join("progressMailbox", { stage: stage + 1, name, part: mailboxPart })}
+        steps={STAGES.length}
+        at={stage}
+        sub={`${mailboxPart}/3`}
+      />
+    );
+  }
   const said =
     part === null
       ? join("progressStage", { stage: stage + 1, name })

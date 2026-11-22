@@ -165,6 +165,7 @@ interface HostedAuth {
   erased: boolean;
   /** `/health.session` — the dialog's cause and the rail's notice. Null from an older engine. */
   session: CloudSessionWire | null;
+  checkedAt: number;
   /** Has the fault in `session` lasted long enough to say so (`cloud-session.ts`)? */
   noticeDue: boolean;
   /** `/health.queued.count` — the window's changes this launch's owner still keeps; 0 from an older engine. */
@@ -195,6 +196,7 @@ function hostedAuthOf(key: string, health: {
     gone: health.sessionExpired === true,
     preAuth: health.sessionExpired !== true && health.signedIn === false,
     session,
+    checkedAt: Date.now(),
     noticeDue: cloudNoticeDue(session, Date.now()),
     queued: typeof queued === "number" && Number.isInteger(queued) && queued > 0 ? queued : 0,
   };
@@ -215,6 +217,7 @@ async function readHostedAuth(key: string): Promise<HostedAuth | null> {
 function sameHostedAuth(a: HostedAuth | null, b: HostedAuth): boolean {
   return a !== null && a.key === b.key && a.gone === b.gone && a.preAuth === b.preAuth
     && a.restartRequired === b.restartRequired && a.sealFailed === b.sealFailed && a.erased === b.erased
+    && Math.floor(a.checkedAt / 60_000) === Math.floor(b.checkedAt / 60_000)
     && a.noticeDue === b.noticeDue && a.queued === b.queued && a.session?.state === b.session?.state
     && a.session?.code === b.session?.code && a.session?.since === b.session?.since;
 }
@@ -616,7 +619,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
   const { manageOffered, withdrawManage, storage, reread: rereadAccess } = useDesktopManageOffer(accountDoor);
-  const { accountId: hostedAccountId, reuseSweeps, recheck: recheckHostedSession } = useHostedSession(accountDoor);
+  const { accountId: hostedAccountId, address: hostedAddress, reuseSweeps, recheck: recheckHostedSession } = useHostedSession(accountDoor, authKey);
   /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
   /** May this build point at a purchase at all (not the Mac App Store)? */
   const mayLinkOut = linksOutToBilling();
@@ -1414,6 +1417,9 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
             /* THE CONNECTION NOTICE YIELDS for a refused session: the card says why. */
             sessionRefused={readers !== null && !readers.strip}
             sealFailed={hostedSealFailed}
+            hostedConnection={hostedAuthKnown ? hostedAuth.session : null}
+            hostedCheckedAt={hostedAuthKnown ? hostedAuth.checkedAt : null}
+            hostedAddress={hostedAddress}
             paired={paired}
             hostLabel={hostLabel}
             freshness={freshness}

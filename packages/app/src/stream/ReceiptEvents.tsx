@@ -1,14 +1,12 @@
-import { createContext, useContext, useMemo, useRef, type ReactElement, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactElement, type ReactNode } from "react";
 import type { CalendarPort } from "@ohmail/app-logic/calendar";
 import type { CalendarSuggestionRecord } from "@ohmail/app-logic/calendar/found";
 import { isProtected } from "@ohmail/app-logic/reader";
 import type { EngineMessage } from "@ohmail/wire";
 import { FoundEventRow } from "@ohmail/ui/calendar";
-import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
-import { useFrame, useReport } from "../frame/commands.js";
-import { usePressWhereOn } from "../frame/room.js";
+import { useFrame } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
-import { useAdd, useFound } from "../frommail/use-found.js";
+import { useAdd, useDismissFound, useFound } from "../frommail/use-found.js";
 import { whenOf } from "../invitations/index.js";
 import { useLocale, useText } from "../text/index.js";
 
@@ -23,63 +21,10 @@ export function ReceiptEvents({ children }: { children: ReactNode }) {
   return <ReceiptEventsOn port={port}>{children}</ReceiptEventsOn>;
 }
 
-function useDismiss(port: CalendarPort) {
-  const t = useText("frommail");
-  const mailWords = useText("ohbox");
-  const report = useReport();
-  const retryWords = useText("viewError");
-  const press = usePressWhereOn();
-  const pending = useRef(new Set<string>());
-  const setDismissed = port.setSuggestionDismissed;
-  if (!setDismissed || !press) return undefined;
-
-  return async (id: string) => {
-    if (pending.current.has(id)) return;
-    const reservation = press.reserveUndo();
-    if (!reservation) return;
-    const { claim, signal, drop } = reservation;
-    const toast = press.undoToast;
-    const restore = async () => {
-      if (signal.aborted) return;
-      try {
-        await setDismissed(id, false);
-      } catch {
-        if (signal.aborted) return;
-        toast(t("restoreFailed"), {
-          action: retryWords("tryAgain"),
-          undo: true,
-          actionUntilPressed: true,
-          signal,
-          onAction: () => void restore(),
-        });
-      }
-    };
-    pending.current.add(id);
-    try {
-      await setDismissed(id, true);
-      if (!signal.aborted) {
-        toast(t("dismissed"), {
-          action: mailWords("undo"),
-          undo: true,
-          duration: UNDO_MS,
-          claim,
-          signal,
-          onAction: () => void restore(),
-        });
-      }
-    } catch {
-      if (!signal.aborted) report(t("dismissFailed"));
-    } finally {
-      drop();
-      pending.current.delete(id);
-    }
-  };
-}
-
 function ReceiptEventsOn({ port, children }: { port: CalendarPort; children: ReactNode }) {
   const { commands, host } = useFrame();
   const t = useText("frommail");
-  const dismiss = useDismiss(port);
+  const dismiss = useDismissFound(port);
   const locale = useLocale();
   const found = useFound(port);
   const { add } = useAdd(port, found);

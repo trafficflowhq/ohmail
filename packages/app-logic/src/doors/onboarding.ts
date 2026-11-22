@@ -204,11 +204,7 @@ export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | n
   // organizes, whatever `organizer_role` says.
   if (heldByOther && !consented) return "elsewhere";
 
-  // ROW 4 — NO CONSENT. The re-arrangement statement and, on its heels, the window: they are two
-  // screens and ONE write (`POST /mailboxes/:id/organize` carries consent, baseline, window and
-  // scope in one transaction), so the derivation names only the first of them. Reaching "window"
-  // is forward navigation inside a run, never a resume target — there is no truth-condition
-  // between them to resume ON, which is exactly what "one write" means.
+  // ROW 4 — NO CONSENT. The folder map and history window are agreed with one write.
   if (!consented) return "consent";
 
   // ROW 5 — THE AI QUESTION IS UNANSWERED. Ahead of the pull deliberately; the divergence from
@@ -276,7 +272,7 @@ export function onboardingPath(
       && (!mb.organizeConsentedAt || mb.organizerRole === "reader")) {
     out.push("elsewhere");
   }
-  out.push("consent", "window");
+  out.push("consent");
   // THE AI PAIR IS THE INSTALL'S QUESTION, ASKED ONCE. See the `add` parameter.
   if (!add) {
     out.push("ai");

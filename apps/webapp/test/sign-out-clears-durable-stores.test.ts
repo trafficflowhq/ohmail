@@ -308,7 +308,7 @@ describe("sign-out clears the durable decision stores", () => {
     }
   });
 
-  it("removes every one of them, for every owner, plus the legacy un-owned key", () => {
+  it("removes every one of them, for every owner, plus the legacy un-owned key", async () => {
     const jar: Record<string, string> = {
       [`${SEND_LOCKS_PREFIX}acct-a`]: "[]",
       [`${SEND_LOCKS_PREFIX}local`]: "[]",
@@ -347,6 +347,17 @@ describe("sign-out clears the durable decision stores", () => {
 
     for (const key of Object.keys(jar)) expect(window.localStorage.getItem(key)).toBeNull();
     expect(window.localStorage.getItem("ohmail.locale")).toBe("de");
+
+    // A signed-out session's explicit scope goes, and the device's face pin survives.
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    localStorage.setItem("ohmail.face", "ohmarchy");
+    localStorage.setItem("ohmail.face.scope", "device");
+
+    const result = await forgetThisBrowser(undefined, { revokeWake: false });
+
+    expect(result.inventoryComplete).toBe(true);
+    expect(localStorage.getItem("ohmail.face.scope")).toBeNull();
+    expect(localStorage.getItem("ohmail.face")).toBe("ohmarchy");
   });
 
   it("is wired into signOut itself, not merely available", () => {

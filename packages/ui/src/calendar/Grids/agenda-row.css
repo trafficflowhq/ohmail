@@ -180,9 +180,17 @@
     grid-column: 2;
     min-width: 0;
   }
-  .oh-erow[data-tail] {
+  .oh-erow[data-tail=""] {
     height: auto;
     min-height: var(--row);
     padding-block: var(--s3);
+  }
+  .oh-erow[data-tail="end"] {
+    grid-template-columns: var(--gutter) minmax(0, 1fr) auto;
+    column-gap: var(--s2);
+  }
+  .oh-erow[data-tail="end"] > .oh-erow-tail {
+    grid-area: 1 / 3 / span 2;
+    align-self: center;
   }
 }

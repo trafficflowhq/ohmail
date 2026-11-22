@@ -1,13 +1,17 @@
+import { useState } from "react";
 import { Button, Tag } from "@ohmail/ui/base";
 import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
+import type { PaneSheet } from "../../settings/contract.js";
 import { StorageInfo } from "../storage/StoragePane.js";
-import type { Standing, SubscriptionModel } from "./model.js";
-import { readPlansOf, SubscriptionPlans } from "./SubscriptionPlans.js";
+import type { PlanName, Standing, SubscriptionModel } from "./model.js";
+import { readPlansOf, SubscriptionPayment, SubscriptionPlans } from "./SubscriptionPlans.js";
+import "./trial-progress.css";
 
 export interface SubscriptionPaneProps {
   readonly model: SubscriptionModel;
   readonly connectedCount?: number;
+  readonly sheet?: PaneSheet;
   /** The way to Storage from the storage line: the place's own way between sections, or `null` where there is none. */
   readonly toStorage: (() => void) | null;
 }
@@ -18,13 +22,14 @@ export interface SubscriptionPaneProps {
  * press. Nothing is bought here. It holds no state and reaches nothing: it draws its model, and its verbs are the
  * model's.
  */
-export function SubscriptionPane({ model, toStorage, connectedCount }: SubscriptionPaneProps) {
+export function SubscriptionPane({ model, toStorage, connectedCount, sheet }: SubscriptionPaneProps) {
   const t = useText("settings");
   const own = useText("accountSubscription");
-  return (
+  const [selection, select] = useState<PlanName>();
+  const body = (
     <>
       <StandingSheet model={model} toStorage={toStorage} connectedCount={connectedCount} />
-      <SubscriptionPlans model={model} />
+      <SubscriptionPlans model={model} selection={selection} select={select} />
       <SettingsSheet
         wants={model.failed ? { word: own("notOpened"), line: t("subscriptionManageFailed") } : undefined}
       >
@@ -34,6 +39,15 @@ export function SubscriptionPane({ model, toStorage, connectedCount }: Subscript
           </Button>
         </SettingLine>
       </SettingsSheet>
+    </>
+  );
+  const foot = <SubscriptionPayment model={model} selection={selection} />;
+  return sheet ? (
+    sheet(body, foot)
+  ) : (
+    <>
+      {body}
+      {foot}
     </>
   );
 }
@@ -66,6 +80,7 @@ const wordOf = (standing: Standing): string =>
 function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPaneProps) {
   const t = useText("settings");
   const own = useText("accountSubscription");
+  const ai = useText("settingsAi");
   const read = readPlansOf(model);
   const { status } = model;
   const current = read === null ? null : read.answer.current;
@@ -78,6 +93,7 @@ function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPanePro
         ? own("noPlan")
         : t("storagePlanHead");
   const standing = status === null ? null : status.standing;
+  const progress = status?.trialProgress;
   const runOn = standing?.state === "overdue" || standing?.state === "grace" ? standing : null;
   const paymentFailed = runOn?.state === "overdue";
   const price =
@@ -109,6 +125,22 @@ function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPanePro
           : undefined
       }
     >
+      {progress ? (
+        <>
+          <SettingLine label={own("trialDay")} value={own("trialDayOf", progress)} />
+          <div className="trial-progress" aria-hidden="true">
+            {Array.from({ length: Math.min(progress.total, 31) }, (_, index) => (
+              <span
+                className="trial-progress-day"
+                key={index}
+                data-elapsed={
+                  index < (progress.day * Math.min(progress.total, 31)) / progress.total ? "" : undefined
+                }
+              />
+            ))}
+          </div>
+        </>
+      ) : null}
       {standing?.state === "trial" && standing.ends ? (
         <SettingLine label={own("trialEnds")} value={standing.ends} />
       ) : null}
@@ -128,6 +160,15 @@ function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPanePro
           }
         />
       )}
+      {status?.aiCredits ? (
+        <SettingLine
+          label={ai("budget")}
+          value={ai(
+            status.aiCredits.total === undefined ? "creditsBalance" : "creditsLeft",
+            status.aiCredits,
+          )}
+        />
+      ) : null}
       {stored === null ? null : (
         <SettingLine label={t("storage")} value={stored} info={<StorageInfo />}>
           {toStorage === null ? null : (

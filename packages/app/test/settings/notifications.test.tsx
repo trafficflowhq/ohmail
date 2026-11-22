@@ -35,6 +35,15 @@ const state = (over: Partial<NotificationsModel> = {}): NotificationsModel => ({
 afterEach(cleanup);
 
 describe("Notifications", () => {
+  it("keeps mail details off until the person asks this device to show them", () => {
+    const set = vi.fn();
+    mount(state({ set, showsMailDetails: true }));
+    const details = screen.getByRole("switch", { name: "Show who it is from and the subject" });
+    expect(details.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(details);
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ showMailDetails: true }));
+  });
+
   it("is on only when it is stored on AND the platform granted it", () => {
     mount(state({ permission: "default", live: false }));
     expect(sw(S.notifyMaster).getAttribute("aria-checked")).toBe("false");
@@ -119,10 +128,10 @@ describe("Notifications", () => {
     expect(screen.queryByText(S.notifyAskFirst)).toBeNull();
     expect(screen.getByText("This device")).toBeTruthy();
     expect(
-      screen.queryByText(
+      screen.getByText(
         "The numbers mean the same thing on every device: the app icon and the Ohbox count unread mail in your Ohbox, the Screener counts first-time senders waiting, and News and Receipts count what arrived since you last looked.",
       ),
-    ).toBeNull();
+    ).toBeTruthy();
   });
 
   it("reads in German", () => {

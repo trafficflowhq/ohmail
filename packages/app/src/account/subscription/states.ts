@@ -29,7 +29,7 @@ const at = (address: string | null, over: Partial<SubscriptionModel>) =>
  * The pane's states, each with its address in the comparison's registry, or `null` where no picture draws it. No
  * amount is written into the app: the plans and their prices are the read the states page hands in (the pictures'
  * card), and without it every state draws what today's web draws, the standing and the press, with no plans and no
- * figure. The registry's `credits` is not built (no read of a balance exists); its `door=cloud&…&state=managelink`
+ * figure. Credit figures are supplied when the access read names a balance. The registry’s `door=cloud&…&state=managelink`
  * is the desktop's own step of showing the made address as a link, which this pane does not have.
  */
 export function subscriptionStates(read: PlansAnswer | null = null) {

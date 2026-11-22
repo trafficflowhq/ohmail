@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   LAST_DRAIN_AT_META, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OhmailEngine, isOwnSent, type EngineAdapter,
 } from "@ohmail/client-engine";
+import { CALENDAR_OUTBOX_TYPE } from "@ohmail/client-engine/calendar-writes";
 
 import {
   WINDOW_OUTBOX_PATH, WindowOutboxStore, forgetWindowSentFolders, type OutboxFetch, type WindowKeep,
 } from "../src/window-outbox-store.js";
 
 /**
- * The window's store (`window-outbox-store.ts`): the mirror in memory, the two outbox types on the
+ * The window's store (`window-outbox-store.ts`): the mirror in memory, queued changes on the
  * engine's door. What it must never do is make a request for any other row — the eager body pass
  * writes hundreds — or publish an outbox row the door did not take.
  */
@@ -32,6 +33,22 @@ const AT = `${WINDOW_OUTBOX_PATH}?scope=${SCOPE}`;
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 
 describe("WindowOutboxStore", () => {
+  it("loads a queued calendar change after the window closes and removes it after the answer", async () => {
+    const pending = row(CALENDAR_OUTBOX_TYPE, "calendar-press");
+    const writes = door();
+    const first = new WindowOutboxStore({ scope: SCOPE, write: writes.fetch });
+    await first.commitLocal([pending], []);
+    expect(writes.sent[0]?.body).toEqual({ puts: [pending], deletes: [] });
+
+    const reopened = new WindowOutboxStore({
+      scope: SCOPE, write: writes.fetch, read: async () => json({ rows: [pending] }),
+    });
+    await reopened.load();
+    expect(reopened.get(pending.type, pending.id)).toEqual(pending.entity);
+    await reopened.commitLocal([], [pending]);
+    expect(writes.sent[1]?.body).toEqual({ puts: [], deletes: [{ type: pending.type, id: pending.id }] });
+  });
+
   it("a commit of bodies alone asks the door nothing", async () => {
     const d = door();
     const store = new WindowOutboxStore({ scope: SCOPE, write: d.fetch });

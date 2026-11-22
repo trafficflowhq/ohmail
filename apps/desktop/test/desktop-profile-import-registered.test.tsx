@@ -1,10 +1,12 @@
 /** @vitest-environment jsdom */
-import { waitFor, within } from "@testing-library/react";
+import { fireEvent, waitFor, within } from "@testing-library/react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AheadSet } from "@ohmail/client-engine";
+import { pressAndHear, type CalendarAct, type CalendarPort } from "@ohmail/app-logic/calendar";
 import { CALENDAR_NOTICES_KEY } from "@ohmail/app-logic/notices/browser-channels";
+import { NONE } from "@ohmail/app/host";
 import { letter } from "../../../packages/app/test/reader/support/fake-mail.js";
 import { calendarOf, connection, event } from "../../../packages/app-logic/test/calendar/invitations/fixtures.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -14,6 +16,18 @@ import { DOOR_COPY } from "../src/door-copy.js";
 import { profileImportPath } from "../src/local-profile-import.js";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+let drawnCalendar: CalendarPort | typeof NONE = NONE;
+vi.mock("@ohmail/app/frame", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ohmail/app/frame")>();
+  return {
+    ...actual,
+    Frame: (props: Parameters<typeof actual.Frame>[0]) => {
+      drawnCalendar = props.host.wires.calendar;
+      return <actual.Frame {...props} />;
+    },
+  };
+});
 
 const MB = { id: "6e0a4c1e-0000-4000-8000-000000000001", address: "mailbox@example.invalid" };
 const FINGERPRINT = "b".repeat(64);
@@ -45,6 +59,7 @@ interface RegisteredDoor {
   alerts?: AheadSet[];
   openings?: Array<(value: unknown) => void>;
   calendarRequests?: Array<number | undefined>;
+  calendarWrites?: Array<{ url: string; body: unknown; key: string | undefined; session: number | undefined }>;
 }
 interface RequestBody {
   set?: AheadSet;
@@ -54,6 +69,7 @@ interface RequestBody {
   method?: string;
   url?: string;
   body?: number[];
+  headers?: Array<[string, string]>;
 }
 const host = globalThis as unknown as {
   __TAURI_INTERNALS__?: {
@@ -100,6 +116,11 @@ async function answer(door: RegisteredDoor, method: string, url: string): Promis
     enabledAt: CONNECTED, secondZone: null, weekNumbers: false, dayFromMinute: null,
     dayToMinute: null, newEventsCalendarId: null,
   });
+  if (door.calendarWrites && method === "POST") {
+    if (url === "/calendar/writes") return encode(200, { write: null, events: [] });
+    if (url === "/calendar/proposals") return encode(200, { status: "sent" });
+    if (url.startsWith("/local/window/outbox?")) return encode(200, {});
+  }
   if (url.startsWith("/consent")) return encode(200, { seedConfirmedAt: CONNECTED });
   return encode(404, { error: { code: "not_found" } });
 }
@@ -124,7 +145,13 @@ async function mountRegisteredWindow(door: RegisteredDoor = {}): Promise<void> {
       const url = request?.url ?? "";
       if (url.startsWith("/calendar/")) door.calendarRequests?.push(request?.expectedCalendarSession);
       const raw = request?.body?.length ? new TextDecoder().decode(Uint8Array.from(request.body)) : "";
-      asked.push({ method, url, body: raw ? JSON.parse(raw) : null });
+      const body = raw ? JSON.parse(raw) : null;
+      asked.push({ method, url, body });
+      if (method === "POST" && url.startsWith("/calendar/")) {
+        door.calendarWrites?.push({
+          url, body, key: Object.fromEntries(request?.headers ?? [])["idempotency-key"], session: request?.expectedCalendarSession,
+        });
+      }
       return answer(door, method, url);
     },
   };
@@ -148,6 +175,7 @@ const click = (element: HTMLElement) => act(async () => element.click());
 
 beforeEach(() => {
   root = null;
+  drawnCalendar = NONE;
   asked = [];
   candidate = FOUND;
   localStorage.clear();
@@ -308,6 +336,76 @@ it("schedules a mirrored calendar reminder from the native mail frame and withdr
   await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
   await act(async () => { window.location.hash = "#/cal/week/2026-11-16/e/appointment"; });
   await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
+});
+
+it("creates, edits, moves, deletes, answers and proposes times on the hosted ohmail account", async () => {
+  const calendar = calendarOf();
+  const calendarWrites: NonNullable<RegisteredDoor["calendarWrites"]> = [];
+  await mountRegisteredWindow({
+    status: { ...STANDALONE, mode: "cloud", flavor: "managed", accountId: MB.id, noticeDocument: 1, noticeSession: 2 },
+    calendarSnapshot: {
+      asOfSeq: 1,
+      changes: [
+        { type: "settings", id: MB.id, entity: { calendarEnabledAt: CONNECTED }, op: "create", seq: 1, updatedAt: CONNECTED },
+        { type: "calendar_connection", id: connection().id, entity: connection(), op: "create", seq: 1, updatedAt: CONNECTED },
+        { type: "calendar", id: calendar.id, entity: calendar, op: "create", seq: 1, updatedAt: CONNECTED },
+      ],
+      nextCursor: null,
+      window: { days: 90, minRows: 500 },
+      calendarWindow: { daysBack: 366, daysAhead: 731, maxRows: 10_000 },
+    },
+    calendarWrites,
+  });
+  const desktop = within(hostEl);
+  await click(await desktop.findByRole("button", { name: /^(calendar|ohcal)$/i }));
+  await click(await desktop.findByRole("button", { name: "New event" }));
+  const form = within(await desktop.findByRole("dialog", { name: "New event" }));
+  const port = drawnCalendar;
+  if (port === NONE) throw new Error("The signed-in account has no calendar");
+  await act(async () => {
+    fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Lunch" } });
+  });
+  await click(form.getByRole("button", { name: "Add" }));
+  await waitFor(() => expect(calendarWrites).toHaveLength(1));
+  const create = calendarWrites[0]!;
+  expect(create).toMatchObject({
+    url: "/calendar/writes", session: 2, key: expect.any(String),
+    body: { kind: "calendar_event_create", eventId: expect.any(String), event: { title: "Lunch" } },
+  });
+  const eventId = (create.body as { eventId: string }).eventId;
+  const base = CONNECTED;
+  const scope = { kind: "record" } as const;
+  const edit: CalendarAct = { kind: "calendar_event_update", eventId, base, scope, change: { title: "Team lunch" } };
+  const acts: CalendarAct[] = [
+    edit,
+    { kind: "calendar_event_move", eventId, base, toCalendarId: "work" },
+    { kind: "calendar_event_delete", eventId, base, scope },
+    { kind: "calendar_event_answer", eventId: "invitation", base, scope, answer: "accepted" },
+  ];
+  for (const action of acts) {
+    await act(async () => {
+      const { key, verdict } = await pressAndHear(port, action);
+      expect(verdict).toMatchObject({ kind: "taken" });
+      expect(calendarWrites.at(-1)).toMatchObject({ url: "/calendar/writes", session: 2, key, body: action });
+    });
+  }
+
+  const holdProposal = port.holdProposal;
+  if (!holdProposal) throw new Error("The signed-in calendar cannot propose a time");
+  const proposal = {
+    kind: "calendar_event_propose", recordId: "invitation", base, occurrence: "",
+    start: { kind: "date", value: "20261123" }, end: { kind: "date", value: "20261124" },
+  } as const;
+  await act(async () => {
+    const { key } = await holdProposal(proposal, 0);
+    await port.flush();
+    expect(port.verdict(key)).toMatchObject({ kind: "taken" });
+    expect(calendarWrites.at(-1)).toEqual({ url: "/calendar/proposals", session: 2, key, body: proposal });
+  });
+  expect(calendarWrites).toHaveLength(acts.length + 2);
+  await act(async () => root!.unmount());
+  root = null;
+  await expect(port.press(edit)).rejects.toThrow();
 });
 
 it("opens the second occurrence of a weekly reminder", async () => {

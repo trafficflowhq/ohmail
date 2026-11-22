@@ -34,4 +34,4 @@ export { calendarRefusalSentence, pressAndHear, sentenceOf, type Heard } from ".
 export { moveTime, reschedule, resizeSlot, resizeTime } from "./reschedule.js";
 export * from "./grid/index.js";
 export * from "./spans/index.js";
-export { readQuickEntry } from "./quick-entry.js";
+export { readDateQuery, readQuickEntry, weekdayDateQuery } from "./quick-entry.js";

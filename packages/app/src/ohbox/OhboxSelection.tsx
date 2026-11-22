@@ -16,6 +16,7 @@ import { pickVerbs } from "./selection-verbs.js";
 export function OhboxSelection({ model, beside }: { model: OhboxListModel; beside: OhboxBeside }) {
   const t = useText("ohbox");
   const foot = useRef<HTMLDivElement>(null);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   const [more, setMore] = useState(false);
   /* The verbs the bar had no room for (the kit says which, whenever that changes): they stand behind More. */
   const [folded, setFolded] = useState<readonly string[]>([]);
@@ -83,13 +84,16 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
         anchor={foot}
         up
         kind="ask"
+        initialFocus={cancelDelete}
         label={t("bulkDeleteAsk", { count: letters })}
       >
         <h4 className="oh-text oh-menu-title">
           <EndDot kind="hot">{t("bulkDeleteAsk", { count: letters }).slice(0, -1)}</EndDot>
         </h4>
         <MenuItem onPress={() => model.deletePicked()}>{t("deleteConfirm")}</MenuItem>
-        <MenuItem onPress={close}>{t("moveCancel")}</MenuItem>
+        <MenuItem ref={cancelDelete} onPress={close}>
+          {t("moveCancel")}
+        </MenuItem>
       </Menu>
     </div>
   );

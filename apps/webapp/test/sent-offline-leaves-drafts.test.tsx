@@ -251,7 +251,7 @@ describe("a reply sent while offline", () => {
     await offlineReplySent(s, ["Kept, not sent"]);
     // Offline, the server cannot be asked: the Cancel is owed, and the dock holds until it is answered.
     await cancelReply();
-    await waitFor(() => toasts().includes(en.compose.cancelUnreachable), "the owed Cancel said");
+    await waitFor(() => toasts().includes(en.compose.cancelUnreachable.replace(/\.$/u, "")), "the owed Cancel said");
 
     s.withdrawAnswer.outcome = "withdrawn";
     s.offline.on = false;

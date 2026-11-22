@@ -1,14 +1,16 @@
 import { useSyncExternalStore } from "react";
 import {
   DEFAULT_CHANNELS,
+  calendarChoicesOf,
+  type CalendarNoticeChoices,
   noticeChoicesOf,
-  type CalendarNoticeKind,
   type NoticeChoices,
   type NoticePermission,
   type NotificationChannels,
 } from "@ohmail/client-engine";
 import { scopeMayMount } from "../storage/scope.js";
 import { isDemoOwned } from "../storage/storage-owner.js";
+import type { LocalSweep } from "../session/boot-cache.js";
 import { localStorageDoor, type DurableWrite } from "../storage/durable.js";
 
 export { channelsAreLive, DEFAULT_CHANNELS } from "@ohmail/client-engine";
@@ -48,6 +50,7 @@ export function readChannels(scope: string | null): NotificationChannels {
   for (const k of Object.keys(DEFAULT_CHANNELS) as (keyof NotificationChannels)[]) {
     if (typeof src[k] === "boolean") out[k] = src[k] as boolean;
   }
+  if (src.showMailDetails === true) out.showMailDetails = true;
   return out;
 }
 
@@ -60,6 +63,7 @@ export function writeChannels(next: NotificationChannels, scope: string | null):
   if (key === null) return "lost";
   const record = storedBeside(key);
   for (const k of Object.keys(DEFAULT_CHANNELS) as (keyof NotificationChannels)[]) record[k] = next[k];
+  if (next.showMailDetails !== undefined) record.showMailDetails = next.showMailDetails;
   // The in-memory value still drives this session; the refusal is no longer silent.
   const written = preferences.set(key, JSON.stringify(record));
   choicesWritten();
@@ -84,9 +88,18 @@ export function readCalendarNotices(scope: string | null): unknown {
   }
 }
 
-export function writeCalendarNotice(
-  key: CalendarNoticeKind | "showTitles",
-  value: boolean,
+export type CalendarChoiceSetter = <K extends keyof CalendarNoticeChoices>(
+  key: K,
+  value: CalendarNoticeChoices[K],
+) => void;
+
+export function storedCalendarChoices(scope: string | null, ohcalPhone = false): CalendarNoticeChoices {
+  return calendarChoicesOf(readCalendarNotices(scope), { ohcalPhone });
+}
+
+export function writeCalendarNotice<K extends keyof CalendarNoticeChoices>(
+  key: K,
+  value: CalendarNoticeChoices[K],
   scope: string | null,
 ): DurableWrite {
   const storageKey = preferenceKey(CALENDAR_NOTICES_KEY, scope);
@@ -96,6 +109,71 @@ export function writeCalendarNotice(
   const written = preferences.set(storageKey, JSON.stringify({ ...record, [key]: value }));
   choicesWritten();
   return written;
+}
+
+/** Forget the signed-out account's private choices while retaining its older device switches. */
+export function forgetNewNoticeChoices(scope: string | null | undefined): LocalSweep {
+  const survivors: string[] = [];
+  let enumerated = true;
+  if (scope === undefined) return { survivors, enumerated };
+  for (const base of [NOTIFICATION_CHANNELS_KEY, CALENDAR_NOTICES_KEY]) {
+    const key = preferenceKey(base, scope);
+    if (key === null) continue;
+    try {
+      const raw = preferences.get(key);
+      if (raw === null) continue;
+      let holding: unknown;
+      try {
+        holding = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (typeof holding !== "object" || holding === null || Array.isArray(holding)) continue;
+      const next = holding as Record<string, unknown>;
+      const fields =
+        base === NOTIFICATION_CHANNELS_KEY
+          ? ["showMailDetails"]
+          : [
+              "widgetTitles",
+              "summaryDay",
+              ...(Object.hasOwn(next, "cal_summary") ? ["cal_summary", "summaryAt"] : []),
+            ];
+      if (!fields.some((field) => Object.hasOwn(next, field))) continue;
+      for (const field of fields) delete next[field];
+      const clean = JSON.stringify(next);
+      if (preferences.set(key, clean) === "lost" || preferences.get(key) !== clean) survivors.push(key);
+    } catch {
+      enumerated = false;
+      survivors.push(key);
+    }
+  }
+  return { survivors, enumerated };
+}
+
+/** Only an accepted draw advances the date. The same account's tabs share the lock and record. */
+export async function postCalendarSummaryOnce(
+  scope: string,
+  day: string,
+  current: () => boolean,
+  post: () => boolean | Promise<boolean> | void,
+  lock?: (key: string, run: () => Promise<void>) => Promise<void>,
+) {
+  const key = preferenceKey(CALENDAR_NOTICES_KEY, scope);
+  if (key === null) return;
+  const held = () => {
+    const raw = readCalendarNotices(scope);
+    return typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  };
+  const run = async () => {
+    const { summaryDay } = held();
+    if (typeof summaryDay === "string" && summaryDay >= day) return;
+    if ((await post()) === true && current())
+      preferences.set(key, JSON.stringify({ ...held(), summaryDay: day }));
+  };
+  if (lock) await lock(key, run);
+  else await run();
 }
 
 /*

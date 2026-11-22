@@ -86,15 +86,27 @@ export function Outcome({ d }: { d: Drawn }): ReactNode {
 }
 
 /** The presses of the credential fields: the one that sends, the test where this mount has one, an edit's way back. */
-export function Acts({ d }: { d: Drawn }): ReactNode {
+export function Acts({ d, manual }: { d: Drawn; manual?: boolean }): ReactNode {
   const { form, ask, subject, words, say } = d;
   if (form.way !== null || (subject === null && form.preset === null)) return null;
   const { busy } = form;
+  const submit =
+    busy === "connect" || busy === "edit"
+      ? say(words.working)
+      : manual
+        ? d.text("join")("manualConnect")
+        : say(words.submit);
   const off = !form.ready || busy !== null || form.asking !== null;
-  return (
+  const actions = (
     <SettingActs>
-      <Button type="submit" size="l" disabled={off}>
-        {busy === "connect" || busy === "edit" ? say(words.working) : say(words.submit)}
+      <Button
+        type="submit"
+        size="l"
+        disabled={off}
+        label={manual ? submit : undefined}
+        keyHint={manual ? "↵" : undefined}
+      >
+        {submit}
       </Button>
       {words.test && d.door.probe !== NONE ? (
         <Button kind="two" disabled={off} onPress={form.test}>
@@ -110,6 +122,7 @@ export function Acts({ d }: { d: Drawn }): ReactNode {
       ) : null}
     </SettingActs>
   );
+  return manual ? <div data-page-form-submit="">{actions}</div> : actions;
 }
 
 /** The ways out a mount hands in: later, and a mail to support that carries the tile's id and a closed word alone. */

@@ -154,15 +154,15 @@ describe("the facets are controls a keyboard reaches", () => {
     expect(await within(host).findByRole("button", { name: messages.search.facetFrom, expanded: false })).toBeTruthy();
   });
 
-  it("a typed from: or in: says it is not a filter and points at the facets", async () => {
+  it("typed from: and in: are searched as words and the facets stay available", async () => {
     const door = await mounted(await engine());
-    door.type("alphaword");
-    await sleep(30);
-    expect(within(host).queryByText(/from: and in: are not filters here/)).toBeNull();
+    const ui = within(host);
     for (const q of ["from:firstsender alphaword", "alphaword in:inbox"]) {
       door.type(q);
-      for (let i = 0; i < 100 && !within(host).queryByText(/from: and in: are not filters here/); i++) await sleep(5);
-      expect(within(host).queryByText(/from: and in: are not filters here/)?.textContent, q).toContain("not filters");
+      await expect.poll(() => asked.some((request) => request.q === q && request.sender === null)).toBe(true);
+      expect(ui.getByRole("textbox", { name: messages.search.aria })).toHaveProperty("value", q);
+      expect(ui.getByRole("button", { name: messages.search.facetFrom, expanded: false })).toBeTruthy();
+      expect(ui.getByRole("button", { name: messages.search.facetPlace, expanded: false })).toBeTruthy();
     }
   });
 });

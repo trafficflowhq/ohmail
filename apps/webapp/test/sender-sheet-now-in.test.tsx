@@ -96,7 +96,7 @@ describe("the sheet reads the list's placement", () => {
   it("allow Ohbox and a deny Screened: the row shows in Screened, and so does the sheet", async () => {
     const s = await sheet([msg("m1", "INBOX")], [rule("r-allow", "INBOX"), rule("r-deny", "ohmail/Screened")]);
     expect(s.placeOf.get("m1")).toBe("ohmail/Screened");
-    expect(s.now, "the sheet named the filed folder").toContain("now in Screened out");
+    expect(s.now, "the sheet named the filed folder").toBe("Now in Screened out");
     expect(s.checked).toEqual(["Screened out"]);
   });
 
@@ -106,21 +106,21 @@ describe("the sheet reads the list's placement", () => {
     // 24: a sheet marking the letters' place hid the rule once the letters were split).
     const s = await sheet([msg("m1", "INBOX")], [rule("r-news", "ohmail/News")]);
     expect(s.placeOf.get("m1")).toBe("INBOX");
-    expect(s.now).toContain("now in Ohbox");
+    expect(s.now).toBe("Now in Ohbox");
     expect(s.checked).toEqual(["News"]);
   });
 
   it("a rule in the News pile's older spelling is the same pile", async () => {
     // Mail the organizer FILED in the old-spelled folder since ARCH-R902 — the place is its folder.
     const s = await sheet([msg("m1", "ohmail/Reads" as never)], [rule("r-old", "ohmail/Reads")]);
-    expect(s.now).toContain("now in News");
+    expect(s.now).toBe("Now in News");
     expect(s.checked).toEqual(["News"]);
   });
 
   it("a dormant stranger's read mail is in History, and no pile is checked", async () => {
     const s = await sheet([msg("m1", "INBOX", { unread: false, date: "2026-01-05T09:00:00.000Z" })], []);
     expect(s.placeOf.get("m1")).toBeNull();
-    expect(s.now).toContain("now in History");
+    expect(s.now).toBe("Now in History");
     expect(s.checked).toEqual([]);
   });
 
@@ -140,18 +140,18 @@ describe("the sheet reads the list's placement", () => {
       msg("m3", "ohmail/Screened"),
       msg("m4", "ohmail/Quarantine"),
     ], []);
-    expect(s.now).toContain("spread across several views");
+    expect(s.now).toBe("Now in 4 places");
   });
 
   it("the ordinary case is unchanged: one rule where the mail is filed", async () => {
     const s = await sheet([msg("m1", "INBOX")], [rule("r-allow", "INBOX")]);
-    expect(s.now).toContain("now in Ohbox");
+    expect(s.now).toBe("Now in Ohbox");
     expect(s.checked).toEqual(["Ohbox"]);
   });
 
   it("with no placement handed in the sheet reads the filed folder, as it always did", async () => {
     const s = await sheet([msg("m1", "INBOX")], [rule("r-allow", "INBOX"), rule("r-deny", "ohmail/Screened")], { placed: false });
-    expect(s.now).toContain("now in Ohbox");
+    expect(s.now).toBe("Now in Ohbox");
   });
 });
 

@@ -461,7 +461,8 @@ describe("the frame", () => {
     mount({ address: fakeAddress("#/first-run"), stages: { firstRun: { id: "firstRun", Body: Pairing } } });
     const dialog = within(screen.getByRole("dialog"));
     fireEvent.click(dialog.getByRole("button", { name: "Copy pairing link" }));
-    expect(dialog.getByRole("status").textContent).toBe("Link copied.");
+    expect(dialog.getByRole("status").textContent).toBe("Link copied");
+    expect(dialog.getByRole("status").querySelector(".oh-nowrap > .oh-dot")).not.toBeNull();
   });
 
   it("shows waiting setup feedback after a hidden keyed Undo expires", async () => {
@@ -488,11 +489,12 @@ describe("the frame", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByRole("button", { name: /Undo/ })).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Copy pairing link" }));
-    expect(within(dialog).queryByText("Link copied.")).toBeNull();
+    expect(within(dialog).queryByText("Link copied")).toBeNull();
 
     await act(async () => vi.advanceTimersByTime(UNDO_MS + 500));
     expect(screen.getByRole("dialog")).toBe(dialog);
-    expect(within(dialog).getByRole("status").textContent).toBe("Link copied.");
+    expect(within(dialog).getByRole("status").textContent).toBe("Link copied");
+    expect(within(dialog).getByRole("status").querySelector(".oh-nowrap > .oh-dot")).not.toBeNull();
     expect(within(dialog).queryByRole("button", { name: /Undo/ })).toBeNull();
   });
 

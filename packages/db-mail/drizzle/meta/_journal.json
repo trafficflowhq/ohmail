@@ -1366,6 +1366,41 @@
       "when": 1795111215039,
       "tag": "0213_calendar_availability_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1795355540000,
+      "tag": "0214_invitation_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1795355550000,
+      "tag": "0215_calendar_removed_occurrences",
+      "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "7",
+      "when": 1795355560000,
+      "tag": "0216_calendar_native_move",
+      "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1795355570000,
+      "tag": "0217_calendar_portable_copy",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "7",
+      "when": 1795372343503,
+      "tag": "0218_account_settings_draft_replies",
+      "breakpoints": true
     }
   ]
 }

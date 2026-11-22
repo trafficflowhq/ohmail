@@ -182,47 +182,6 @@
     --oh-ev-pad: 0 4px 0 5px;
   }
 
-  /* The line of now crosses it. The line keeps its whole reach over the chip and the words stand in front of
-     it: each glyph carries a halo of the chip's own ground, a stroke painted under its fill, so the line is
-     broken only round the ink. What the halo paints past a box's edge is given back to the box. */
-  .oh-ev[data-now] .oh-ev-t,
-  .oh-ev[data-now] .oh-ev-p {
-    position: relative;
-    z-index: var(--oh-ev-z-words);
-  }
-  .oh-ev[data-now] .oh-ev-tt,
-  .oh-ev[data-now] .oh-ev-p {
-    --oh-ev-halo: 5px;
-    -webkit-text-stroke: var(--oh-ev-halo) var(--oh-ev-bg);
-    paint-order: stroke fill;
-    transition: -webkit-text-stroke-color var(--d-fade) var(--e-std);
-  }
-  .oh-ev[data-now] .oh-ev-tt {
-    --oh-ev-halo-out: 0 -3px;
-    --oh-ev-halo-in: 0 3px;
-    margin: var(--oh-ev-halo-out);
-    padding: var(--oh-ev-halo-in);
-  }
-  .oh-ev[data-now] .oh-ev-p {
-    --oh-ev-halo-out: 0 -3px -3px;
-    --oh-ev-halo-in: 3px;
-    margin: var(--oh-ev-halo-out);
-    padding-right: var(--oh-ev-halo-in);
-    padding-bottom: var(--oh-ev-halo-in);
-    text-indent: var(--oh-ev-halo-in);
-  }
-  .oh-ev[data-now] .oh-ev-t .oh-ev-ico {
-    filter: drop-shadow(1.5px 0 0 var(--oh-ev-bg)) drop-shadow(-1.5px 0 0 var(--oh-ev-bg))
-      drop-shadow(0 1.5px 0 var(--oh-ev-bg)) drop-shadow(0 -1.5px 0 var(--oh-ev-bg));
-    transition: filter var(--d-fade) var(--e-std);
-  }
-  .oh-ev[data-now] .oh-ev-sign {
-    --oh-ev-sign-over: color-mix(in oklab, var(--ink2) 75%, var(--oh-ev-bg));
-    color: var(--oh-ev-sign-over);
-    opacity: 1;
-    transition: color var(--d-fade) var(--e-std);
-  }
-
   /* The series' sign: the repeat glyph after the title; one changed for itself wears it struck. */
   .oh-ev-sign {
     --oh-ev-sign-in: 2px;
@@ -360,9 +319,6 @@
   }
   .oh-ev[data-lap][data-state="to-answer"] {
     box-shadow: var(--oh-ev-apart), var(--oh-ev-out);
-  }
-  .oh-ev[data-lap][data-now] {
-    z-index: auto;
   }
   /* Found in mail, a draft, a proposed time: dashed. Found has no colour yet: the letter's glyph instead. */
   .oh-ev[data-state="from-mail"],

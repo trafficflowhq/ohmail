@@ -25,7 +25,7 @@ import { StreamBackToTop } from "./StreamBackToTop.js";
 import { StreamColumn } from "./StreamColumn.js";
 import { StreamReplyContext } from "./StreamAbove.js";
 import { useStreamKeys } from "./keys.js";
-import { senderOf, stampOf, useStreamText } from "./words.js";
+import { receiptAmount, senderOf, stampOf, useStreamText } from "./words.js";
 import "./stream.css";
 
 import { MailSelectionFoot } from "../place-list/MailSelectionFoot.js";
@@ -78,9 +78,9 @@ function ItemRow({
       preview={shown.snippet ?? undefined}
       when={shown.date ? model.stamp(shown.date) : ""}
       whenTitle={stamp.full}
-      amount={model.place === "receipts" ? m.amount : undefined}
+      amount={model.place === "receipts" ? receiptAmount(m, model.textOf(m.id)) : undefined}
       file={m.hasAttachments ? t("item.file") : undefined}
-      open={model.openId === m.id}
+      open={selected}
       cursor={selected && !model.openId}
       stream
       unread={unread}

@@ -593,9 +593,10 @@ describe("a draft changed on another device while it is open here", () => {
     await sync();
     await typeSubject("Plans for Friday, typed here");
     await press(button("Send"), "Send");
-    await waitFor(() => creates().length > 0, "the typed words saved as a new draft", 120).catch(() => undefined);
-    await waitFor(() => text().includes(compose.changedElsewhere!), "the new draft acknowledged");
-    expect({ took: sends().length, creates: creates(), buffer: readComposeDraft(OWNER).subject, says: text().includes(compose.changedElsewhere!) },
+    await waitFor(() => creates().length > 0, "the typed words saved as a new draft", 120);
+    const kept = compose.changedElsewhere!.replace(/\.$/, "");
+    await waitFor(() => text().includes(kept), "the new draft acknowledged");
+    expect({ took: sends().length, creates: creates(), buffer: readComposeDraft(OWNER).subject, says: text().includes(kept) },
       "the line said the words were kept as a new draft, and none was made").toEqual({
       took: 1, creates: [{ row: null, subject: "Plans for Friday, typed here" }], buffer: "Plans for Friday, typed here", says: true,
     });
@@ -676,7 +677,7 @@ describe("a draft changed on another device while it is open here", () => {
     await pause(300);
     expect({
       creates: creates(), theirs: shell.store.get<EngineDraft>("draft", D)?.body,
-      said: text().split(compose.keptAsNewElsewhere ?? "\u0000").length - 1,
+      said: text().split(compose.keptAsNewElsewhere!.replace(/\.$/, "")).length - 1,
     }, "the words typed offline were dropped in silence").toEqual({
       creates: [{ row: null, subject: "Plans for Friday, typed offline" }], theirs: "Written on the other device.", said: 1,
     });
@@ -744,7 +745,7 @@ describe("a save refused, then a draft opened from Drafts", () => {
     await refused();
     await openRow(B);
     const toast = report();
-    expect({ buffer: readComposeDraft(OWNER).subject, said: toast.includes(drafts.reopenBlockedUnsaved!) }).toEqual({ buffer: TYPED, said: true });
+    expect({ buffer: readComposeDraft(OWNER).subject, said: toast.includes(drafts.reopenBlockedUnsaved!.replace(/\.$/, "")) }).toEqual({ buffer: TYPED, said: true });
   }, 60_000);
 
   for (const target of [D, B]) {
@@ -761,7 +762,7 @@ describe("a save refused, then a draft opened from Drafts", () => {
       await pause(300);
       await openRow(target);
       const toast = report();
-      expect({ buffer: readComposeDraft(OWNER).subject, said: toast.includes(drafts.reopenBlockedUnsaved!) })
+      expect({ buffer: readComposeDraft(OWNER).subject, said: toast.includes(drafts.reopenBlockedUnsaved!.replace(/\.$/, "")) })
         .toEqual({ buffer: TYPED, said: target === B });
       if (target === D) expect(field()).toBe(TYPED);
     }, 60_000);

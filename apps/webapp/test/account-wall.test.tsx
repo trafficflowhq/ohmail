@@ -423,6 +423,7 @@ describe("the wall's box, not its sentences", () => {
     const selectors = [...css.matchAll(/^([^@{}\n][^{}\n]*)\{/gm)]
       .map((m) => m[1]!.trim())
       .filter((s) => s.includes(".wall-"));
+    expect(selectors.length).toBeGreaterThanOrEqual(4);
     expect(selectors).toEqual(expect.arrayContaining([
       ".gate-card.wall-card",
       ".gate-card .wall-lead",

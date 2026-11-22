@@ -42,16 +42,17 @@ describe("the Cloud consent step says what a draft sends", () => {
     const deBody = de.onboarding.aiDraftSends;
     expect(enBody).toContain(`up to ${THREAD} other messages in its thread`);
     expect(enBody).toContain(`up to ${NOTES} matching knowledge-base notes`);
-    const enProvider = /via the (.+? API) \(Anthropic\)/.exec(enSite.faq.a3)?.[1];
+    // The site FAQ is the single source of the provider's name in each language.
+    const enProvider = /^On Cloud: via the (.+? API) \([^()]+\),/.exec(enSite.faq.a3)?.[1];
     expect(enProvider).toBeDefined();
-    expect(enBody).toContain(enProvider!);
+    expect(/, through the ([^.]+)\./.exec(enBody)?.[1]).toBe(enProvider);
     expect(enBody).toContain("Codes and login links are never sent");
     expect(enBody).not.toContain("Only the sender");
     expect(deBody).toContain(`bis zu ${THREAD} weiteren Nachrichten im Thread`);
     expect(deBody).toContain(`bis zu ${NOTES} passende Notizen aus der Wissensdatenbank`);
-    const deProvider = /über die (.+?-API) \(Anthropic\)/.exec(deSite.faq.a3)?.[1];
+    const deProvider = /^In der Cloud: über die (.+?-API) \([^()]+\),/.exec(deSite.faq.a3)?.[1];
     expect(deProvider).toBeDefined();
-    expect(deBody).toContain(deProvider!);
+    expect(/^Ein Entwurf sendet über die (.+?) dieselben Angaben\b/.exec(deBody)?.[1]).toBe(deProvider);
     expect(deBody).toContain("Codes und Login-Links werden nie gesendet");
     expect(deBody).not.toContain("Gesendet werden nur");
 

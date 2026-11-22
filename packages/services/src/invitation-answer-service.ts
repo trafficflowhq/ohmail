@@ -77,20 +77,20 @@ function answerWord(raw: unknown, field: string): InvitationAnswer {
   throw new ServiceError("validation_failed", 400, `${field} must be accepted, tentative or declined`);
 }
 
-const notAnswerable = (why: string): ServiceError => new ServiceError("invitation_not_answerable", 422, why);
-const cancelled = (): ServiceError => new ServiceError("invitation_cancelled", 409, "The organizer cancelled this event.");
+export const notAnswerable = (why: string): ServiceError => new ServiceError("invitation_not_answerable", 422, why);
+export const cancelled = (): ServiceError => new ServiceError("invitation_cancelled", 409, "The organizer cancelled this event.");
 
 /** The letter's row, the letter's conversation and its mailbox. Another account's letter, a deleted one, one without a row: the missing letter's 404. */
-async function readInvitation(ctx: ServiceContext, messageId: string) {
+export async function readInvitation(ctx: ServiceContext, messageId: string) {
   const db = bridgeTx(ctx.db);
-  const [found] = await db.select({ row: messageInvitations, threadId: messages.threadId }).from(messageInvitations)
+  const [found] = await db.select({ row: messageInvitations, threadId: messages.threadId, from: messages.fromAddress }).from(messageInvitations)
     .innerJoin(messages, and(eq(messages.id, messageInvitations.messageId), eq(messages.accountId, messageInvitations.accountId)))
     .where(and(eq(messageInvitations.accountId, ctx.accountId), eq(messageInvitations.messageId, messageId), isNull(messages.deletedAt)))
     .limit(1);
   if (found === undefined) throw new ServiceError("not_found", 404, "message not found");
   const [mailbox] = await db.select({ address: mailboxes.address, status: mailboxes.status }).from(mailboxes)
     .where(and(eq(mailboxes.id, found.row.mailboxId), eq(mailboxes.accountId, ctx.accountId))).limit(1);
-  return { row: found.row, threadId: found.threadId, mailbox: mailbox ?? null };
+  return { ...found, mailbox: mailbox ?? null };
 }
 
 /** The calendar part this row and press write, or null when it cannot be written exactly. */
@@ -189,7 +189,7 @@ async function recorded(
 }
 
 /** A key a Cancel tombstoned (`POST /sends/withdraw`) sends nothing, and makes no draft either. */
-async function refuseWithdrawnKey(ctx: ServiceContext, key: string): Promise<void> {
+export async function refuseWithdrawnKey(ctx: ServiceContext, key: string): Promise<void> {
   const [held] = await bridgeTx(ctx.db).select({ status: outboundSends.status }).from(outboundSends)
     .where(and(eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.idempotencyKey, key))).limit(1);
   if (held?.status === "withdrawn") throw new ServiceError("send_withdrawn", 409, SEND_WITHDRAWN_SENTENCE, undefined, false);

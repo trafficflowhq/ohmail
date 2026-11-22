@@ -6,7 +6,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useHistoryModel, type HistoryModel, type HistoryMonth } from "@ohmail/app-logic/history";
 import { Empty, RefusalLine, Seg } from "@ohmail/ui/base";
-import { ListHead, MonthRail } from "@ohmail/ui/mail";
+import { ListHead, MonthRail, ReadSquares, type SquareKind } from "@ohmail/ui/mail";
+import type { ThreadMark } from "@ohmail/client-engine";
+import { SquaresRoomContext, useSquaresRoom, useSquaresRun } from "../ohbox/squares-run.js";
 import type { PaneProps } from "../frame/contract.js";
 import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { LetterRows, ListColumn, ListMenu } from "../place-list/index.js";
@@ -26,6 +28,7 @@ export function HistoryList({ plan }: PaneProps) {
   const localScroller = useRef<HTMLDivElement>(null);
   const scroller = model.windowed?.scroller ?? localScroller;
   const windowed = model.windowed;
+  const squareRoom = useSquaresRoom(scroller);
   const selection = useRowSelection(model.list.rows);
   const contact = useRowContact();
   /* The month on show: the one pressed, else the one the list's top stands in. */
@@ -96,36 +99,61 @@ export function HistoryList({ plan }: PaneProps) {
         onPick={pick}
       >
         {model.list.rows.length > 0 || windowed?.slots.length ? (
-          <LetterRows
-            selection={selection}
-            contact={contact}
-            label={t("title")}
-            rows={model.list.rows}
-            windowed={
-              windowed && {
-                start: windowed.window.start,
-                total: windowed.total,
-                top: windowed.window.padTop,
-                bottom: windowed.window.padBottom,
-                rowHeight: windowed.window.rowHeight,
-                slots: windowed.slots,
+          <SquaresRoomContext.Provider value={squareRoom}>
+            <LetterRows
+              selection={selection}
+              contact={contact}
+              label={t("title")}
+              rows={model.list.rows}
+              windowed={
+                windowed && {
+                  start: windowed.window.start,
+                  total: windowed.total,
+                  top: windowed.window.padTop,
+                  bottom: windowed.window.padBottom,
+                  rowHeight: windowed.window.rowHeight,
+                  slots: windowed.slots,
+                }
               }
-            }
-            cursor={model.list.cursor}
-            press={model.list.press}
-            stamp={model.stamp}
-            file={t("row.file")}
-            who={(m) => m.from.name ?? m.from.address}
-            fitAddress
-            where={model.placeOf}
-            spoken={(m) => (m.unread ? t("row.unread") : t("row.read"))}
-          />
+              cursor={model.list.cursor}
+              press={model.list.press}
+              stamp={model.stamp}
+              file={t("row.file")}
+              who={(m) => m.from.name ?? m.from.address}
+              fitAddress
+              where={model.placeOf}
+              squares={(m) => {
+                const marks = model.conversationMarks?.get(m.id);
+                return marks ? <HistorySquares marks={marks} /> : undefined;
+              }}
+              spoken={(m) => (m.unread ? t("row.unread") : t("row.read"))}
+            />
+          </SquaresRoomContext.Provider>
         ) : null}
         {model.loading ? <Empty label={t("loading")} /> : null}
         {model.empty ? <Empty label={t("emptyTitle")} /> : null}
       </MonthRail>
       {contact.card}
     </ListColumn>
+  );
+}
+
+const SQUARE: Record<ThreadMark, SquareKind> = { read: "seen", unread: "unseen", mine: "own" };
+
+function HistorySquares({ marks }: { readonly marks: readonly ThreadMark[] }) {
+  const t = useText("ohbox");
+  const run = useSquaresRun(marks.length, -1);
+  if (run === null) return null;
+  return (
+    <ReadSquares
+      axis="row"
+      squares={marks.map((mark) => SQUARE[mark])}
+      run={run}
+      label={t("row.marks", {
+        count: marks.length,
+        unread: marks.filter((mark) => mark === "unread").length,
+      })}
+    />
   );
 }
 
@@ -167,7 +195,12 @@ function useMonthScroll(
       readTop(box);
       return;
     }
-    const row = box.querySelector<HTMLElement>(`[role=option][data-index="${target.slot}"]`);
+    const folded = box.querySelector<HTMLElement>(`[data-folded-row][data-index="${target.slot}"]`);
+    const row = folded
+      ? [...box.querySelectorAll<HTMLElement>("[role=option][data-index]")].find(
+          (candidate) => Number(candidate.dataset.index) > target.slot,
+        )
+      : box.querySelector<HTMLElement>(`[role=option][data-index="${target.slot}"]`);
     if (!row) {
       move(box, windowed.window.offsetOf(target.slot));
       return;

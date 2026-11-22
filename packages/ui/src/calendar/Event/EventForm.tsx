@@ -1,10 +1,11 @@
-import type { ChangeEvent, MouseEventHandler, ReactNode, Ref } from "react";
+import type { MouseEventHandler, ReactNode, Ref } from "react";
 import { Avatar, Button, Slot, Switch, type SuggestionField } from "../../base/index.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { CalendarSquare } from "../Grids/CalendarSquare.js";
 import type { CalendarTone } from "../tone.js";
 import "../../base/Primitives/slot.css";
 import "./event-form.css";
+import { eventField } from "./EventField.js";
 
 /** One thing in a row of the form. A row is made of these, in the order given. */
 export type EventFormItem =
@@ -43,6 +44,15 @@ export type EventFormItem =
       suggests?: SuggestionField;
       ref?: Ref<HTMLInputElement>;
     }
+  | {
+      kind: "openText";
+      value: string;
+      label: string;
+      placeholder: string;
+      ref: Ref<HTMLButtonElement>;
+      onPress: () => void;
+    }
+  | { kind: "status"; text: string }
   /** Several lines: the notes. Enter is a new line here. */
   | { kind: "notes"; value: string; label: string; placeholder?: string; onChange?: (value: string) => void }
   /** A quiet word between two things: "to", "Invite". */
@@ -120,73 +130,6 @@ function remove(r: { label: string; onPress?: () => void }, key?: number): React
 }
 
 /** A field: a time, a line of words, or the notes. */
-function field(it: Extract<EventFormItem, { kind: "time" | "text" | "notes" }>, key: number): ReactNode {
-  switch (it.kind) {
-    case "time": {
-      const input = (
-        <input
-          key={key}
-          className="oh-control oh-evform-field"
-          data-kind="time"
-          type="text"
-          inputMode="numeric"
-          autoComplete="off"
-          value={it.value}
-          aria-label={it.label}
-          onChange={(e) => it.onChange?.(e.target.value)}
-        />
-      );
-      return (
-        <div key={key} className="oh-evform-timed">
-          {input}
-          {it.cue && (
-            <button
-              type="button"
-              className="oh-control oh-evform-cue"
-              aria-haspopup="dialog"
-              aria-expanded={it.cue.expanded}
-              onClick={it.cue.onPress}
-            >
-              {it.cue.word}
-            </button>
-          )}
-        </div>
-      );
-    }
-    case "text":
-      return (
-        <input
-          key={key}
-          ref={it.ref}
-          className="oh-control oh-evform-field"
-          type="text"
-          spellCheck={false}
-          placeholder={it.placeholder}
-          aria-label={it.label}
-          {...(it.suggests ?? {
-            autoComplete: "off",
-            value: it.value,
-            onChange: (e: ChangeEvent<HTMLInputElement>) => it.onChange?.(e.target.value),
-          })}
-        />
-      );
-    case "notes":
-      return (
-        <textarea
-          key={key}
-          className="oh-control oh-evform-field"
-          data-kind="notes"
-          rows={2}
-          spellCheck={false}
-          value={it.value}
-          placeholder={it.placeholder}
-          aria-label={it.label}
-          onChange={(e) => it.onChange?.(e.target.value)}
-        />
-      );
-  }
-}
-
 /** A person or a file the event holds, with the way to take it off. */
 function held(it: Extract<EventFormItem, { kind: "person" | "file" }>, key: number): ReactNode {
   switch (it.kind) {
@@ -252,7 +195,28 @@ function item(it: EventFormItem, key: number): ReactNode {
     case "time":
     case "text":
     case "notes":
-      return field(it, key);
+      return eventField(it, key);
+    case "openText":
+      return (
+        <button
+          key={key}
+          type="button"
+          className="oh-control oh-evform-field"
+          data-kind="open-text"
+          aria-label={it.label}
+          aria-haspopup="dialog"
+          ref={it.ref}
+          onClick={it.onPress}
+        >
+          {it.value || it.placeholder}
+        </button>
+      );
+    case "status":
+      return (
+        <span key={key} className="oh-evform-status" role="status">
+          {it.text}
+        </span>
+      );
     case "word":
       return (
         <span key={key} className="oh-evform-word">

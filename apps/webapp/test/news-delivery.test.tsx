@@ -33,15 +33,16 @@ it.each([
   [WORK.id, "en", WORK.displayName, "Delivered to"],
   [HOME.id, "en", HOME.address, "Delivered to"],
   [WORK.id, "de", WORK.displayName, "Zugestellt an"],
-] as const)("names the receiving mailbox on the row and card (%s, %s)", async (id, locale, label, phrase) => {
+] as const)("names the receiving mailbox in the card head and omits it from the row (%s, %s)", async (id, locale, label, phrase) => {
   const { row, card } = await show(ROSTER, id, locale);
   const title = `${phrase} ${label}`;
-  expect(row.getByTitle(title).textContent).toBe(label);
+  // Studio keeps mailbox attribution in the message head and clears the list row of badges.
+  expect(row.queryByTitle(title)).toBeNull();
   expect(card.getByTitle(title).textContent).toBe(label);
   const hint = (locale === "de" ? de : en).news.item.keyboardOpen;
   const unread = (locale === "de" ? readerDe : readerEn).message.rowUnread;
   expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description"))
-    .toBe(`${title}. ${hint}. ${unread}`);
+    .toBe(`${hint}. ${unread}`);
   expect(card.queryByText("list@example.invalid")).toBeNull();
 });
 

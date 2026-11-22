@@ -53,9 +53,9 @@ const ACCOUNT_PER_MINUTE = 60;
  */
 const ACCOUNT_CALL_MS = 1_000;
 /**
- * The whole program. The geocoder's own limits (15 a second, a burst of 30, two searches at once, a
- * waiting line of 50 for up to 1.2 s) are for all its callers together, every server of ours
- * included, and it runs about three fresh searches a second.
+ * The ohmail Cloud geocoder's limits (15 calls a second, a burst of 30, two searches at once, and
+ * a queue of 50 for up to 1.2 s) apply across all its callers. Each server keeps the same pace
+ * of three calls a second for any operator-named geocoder.
  */
 const PROGRAM_PER_SECOND = 3;
 const CACHE_MS = 10 * 60_000;

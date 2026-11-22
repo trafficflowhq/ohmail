@@ -14,8 +14,8 @@
  * its timestamp. A calendar notice can carry an opaque handle for the opening act in this page.
  */
 import {
-  leadWords, noticeFields,
-  type Clock, type Notice, type NoticeFacts, type NoticeKind, type NoticeTaken, type NoticeWording,
+  cleanNoticeText, leadWords, noticeFields,
+  type CalendarSummaryDetails, type Clock, type MailNoticeDetails, type Notice, type NoticeFacts, type NoticeKind, type NoticeTaken, type NoticeWording,
 } from "@ohmail/client-engine";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 
@@ -120,6 +120,16 @@ export function noticeWordingOf(say: NoticeSay): NoticeWording {
     title: (facts) => words(facts).title,
     body: (facts) => words(facts).body,
     label: (as) => say(as === "busy" ? "alertBusy" : "alertEvent"),
+    summary({ agenda, zone }, count) {
+      const time = new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit" });
+      const lines = agenda.map(({ label, startMs, allDay }) => {
+        const at = allDay ? say("summaryAllDay") : time.format(startMs);
+        const name = label.as === "title" ? cleanNoticeText(label.text) : say(label.as === "busy" ? "alertBusy" : "alertEvent");
+        return name ? say("summaryLine", { at, name }) : at;
+      });
+      if (count > lines.length) lines.push(say("summaryMore", { count: count - lines.length }));
+      return { title: say("summaryTitle"), body: lines.join("\n") || say("summaryEmpty") };
+    },
   };
 }
 
@@ -148,6 +158,7 @@ const TAGS: Partial<Readonly<Record<NoticeKind, string>>> = {
   cal_change: "ohmail-cal-change",
   cal_answer: "ohmail-cal-answer",
   cal_found: "ohmail-cal-found",
+  cal_summary: "ohmail-cal-summary",
 };
 
 /**
@@ -158,19 +169,33 @@ export function webNoticeEmitter(
   page: NoticePage,
   wording: () => NoticeWording,
   opening?: (notice: Notice, letter?: string) => (() => boolean) | undefined,
+  summaries = false,
 ): HostNoticeEmitter {
+  const carries = summaries ? [...CARRIES, "cal_summary" as const] : CARRIES;
   return {
-    carries: CARRIES,
+    carries,
+    showsMailDetails: true,
+    async lockSummary(key, run) {
+      if (navigator.locks) await navigator.locks.request(key, run);
+      else await run();
+    },
     acts: [],
     ahead: "none",
-    post(notice: Notice, current?: () => boolean, letter?: string): NoticeTaken {
+    post(notice: Notice, current?: () => boolean, letter?: string, details?: MailNoticeDetails, summary?: CalendarSummaryDetails): NoticeTaken {
       try {
-        if (!CARRIES.includes(notice.kind)) return false;
+        if (!carries.includes(notice.kind)) return false;
+        if (notice.kind === "cal_summary") {
+          const lines = summary && wording().summary?.(summary, notice.events);
+          return lines ? page.show(lines.title, lines.body, TAGS.cal_summary!, current) ?? false : false;
+        }
         if (page.focused()) return false;
         if (notice.kind === "ohbox" && !page.visible()) return false;
         const tag = TAGS[notice.kind];
         if (tag === undefined) return false;
-        const { title, body } = noticeFields(notice, wording());
+        const generic = noticeFields(notice, wording());
+        const sender = notice.kind === "ohbox" && notice.count === 1 ? cleanNoticeText(details?.sender ?? "") : null;
+        const subject = sender === null ? null : cleanNoticeText(details?.subject ?? "");
+        const { title, body } = sender && subject ? { title: sender, body: subject } : generic;
         if (title === "") return false;
         return page.show(
           title, body, tag,

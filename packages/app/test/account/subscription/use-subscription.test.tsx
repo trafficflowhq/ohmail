@@ -168,11 +168,19 @@ describe("the plans' read", () => {
 
   it("chooses month or year for the prices shown, once the plans are read", async () => {
     const door = fakeSubscriptionDoor({ plans: [READS.card] });
-    const { result } = mounted(door);
+    const { result, rerender } = renderHook(
+      (current: Pick<SubscriptionDoor, "plans">) => useSubscription({ ...door, ...current }),
+      { initialProps: { plans: door.plans } },
+    );
     act(() => result.current.choose("year"));
     expect(result.current.plans).toEqual({ at: "loading" });
     await settled();
     act(() => result.current.choose("year"));
+    expect(result.current.plans).toMatchObject({ at: "read", interval: "year" });
+    const refreshed = fakeSubscriptionDoor({ plans: [READS.card] });
+    // A new access answer supplies a fresh plans read for the same open pane.
+    await settled(() => rerender({ plans: refreshed.plans }));
+    expect(refreshed.reads()).toBe(1);
     expect(result.current.plans).toMatchObject({ at: "read", interval: "year" });
   });
 });

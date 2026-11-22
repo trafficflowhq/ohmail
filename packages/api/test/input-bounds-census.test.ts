@@ -7,6 +7,7 @@ import {
   type ApiDeps, type Route,
 } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
+import { SEND_KEY_MAX } from "../src/send-deps.js";
 import { CALENDAR_WRITE_LIMITS } from "@trafficflow/db/calendar";
 import { CALDAV_PASSWORD_MAX_CHARS, CALDAV_USER_MAX_CHARS } from "../../services/src/calendar/connect.js";
 import { CALENDAR_NAME_MAX_CHARS } from "../../services/src/calendar/connect-acts.js";
@@ -858,6 +859,10 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // The JSON ceiling caps parsing. Only the boolean reaches the update, keyed by the session's
   // account and the UUID checked by the router (Section 6).
   "PATCH /calendar/suggestions/:id": { bounds: [JSON_BODY_MAX_BYTES], scalarsOnly: true },
+  // The hosts cap JSON, and the send key has its own ceiling. The service checks both ids as
+  // UUIDs and matches the base to the stored timestamp. It caps the occurrence, time values
+  // and zoned time names at 256, 16 and 128 characters respectively.
+  "POST /calendar/proposals": { bounds: [JSON_BODY_MAX_BYTES, SEND_KEY_MAX, 256, 16, 128] },
   "POST /calendar/writes": { bounds: [
     CALENDAR_WRITE_LIMITS.keyChars, CALENDAR_WRITE_LIMITS.payloadBytes,
     CALENDAR_WRITE_LIMITS.invitees, CALENDAR_WRITE_LIMITS.alarms,

@@ -162,6 +162,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "POST", pattern: "/calendar/connections/:id/check" },
   { method: "POST", pattern: "/calendar/connections/:id/sign-in" },
   { method: "POST", pattern: "/calendar/places/suggest" },
+  { method: "POST", pattern: "/calendar/proposals" },
   { method: "POST", pattern: "/calendar/writes" },
   { method: "POST", pattern: "/calendar/writes/:id/retry" },
   { method: "POST", pattern: "/consent/reset" },

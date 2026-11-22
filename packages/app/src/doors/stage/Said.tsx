@@ -1,5 +1,6 @@
 import { cloneElement, Fragment, isValidElement, type ReactNode } from "react";
 import { Dot, EndDot, Sentence } from "@ohmail/ui/base";
+import "./sheet.css";
 
 /**
  * A page's one sentence, ending in the dot: `hot` while something waits on the person, `ink` once it is done. The
@@ -23,6 +24,15 @@ export function Said({
     <Sentence size="xl" level={level}>
       {ends ? <EndDot kind={dot}>{words}</EndDot> : text}
     </Sentence>
+  );
+}
+
+export function SaidTrail({ text }: { text: string }): ReactNode {
+  return (
+    <span className="oh-nowrap way-said-trail">
+      {text}
+      <Dot kind="hot" />
+    </span>
   );
 }
 

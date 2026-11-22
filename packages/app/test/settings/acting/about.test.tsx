@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
-import { cleanup, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AboutPane,
   aboutMailboxesOf,
@@ -9,6 +9,7 @@ import {
   HOSTED_POLICIES,
   type AboutModel,
 } from "../../../src/settings/about/index.js";
+import { FrameContext, type FrameInner } from "../../../src/frame/commands.js";
 import { drawn, said } from "./words.js";
 
 afterEach(cleanup);
@@ -47,6 +48,18 @@ describe("where the policies are linked", () => {
 });
 
 describe("the About pane", () => {
+  it("opens the frame's keyboard sheet from About", () => {
+    const over = vi.fn();
+    const frame = { api: { commands: { over }, plan: { device: "desktop" } } } as unknown as FrameInner;
+    drawn(
+      <FrameContext.Provider value={frame}>
+        <AboutPane model={states.synced.model} />
+      </FrameContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: said("en", "settingsAbout", "showKeyboard") }));
+    expect(over.mock.calls).toEqual([["keys"]]);
+  });
+
   it("says a failed read as not read, with the server's sentence, never as no mailbox", () => {
     drawn(<AboutPane model={states.failed.model} />);
     expect(seen(said("en", "settingsAbout", "notRead"))).toBe(true);

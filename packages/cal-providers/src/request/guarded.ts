@@ -48,10 +48,10 @@ export interface GuardDeps {
 }
 
 const USER_AGENT = "ohmail-Calendar/2.0";
-const ADAPTER_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "depth", "prefer"]);
+const ADAPTER_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "depth", "prefer", "destination", "overwrite"]);
 const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 /** The methods that change something at the provider. Each needs a sign-in and a precondition, and none follows a redirect. */
-const WRITING: ReadonlySet<string> = new Set(["PUT", "PATCH", "DELETE"]);
+const WRITING: ReadonlySet<string> = new Set(["PUT", "PATCH", "DELETE", "MOVE"]);
 const PRINTABLE = /^[\x20-\x7e]*$/;
 const TOKEN = /^[\x21-\x7e]+$/;
 
@@ -141,7 +141,7 @@ const base64 = (text: string): string => btoa(String.fromCharCode(...new TextEnc
 /** The request's lines for one hop, made new each time: nothing of an earlier hop rides along. `null`: the credential is no line. */
 function headersFor(req: HttpRequest, body: Uint8Array | null, hop: number): Record<string, string> | null {
   const headers: Record<string, string> = { "user-agent": USER_AGENT, accept: req.headers.accept ?? "*/*", "accept-encoding": "identity" };
-  for (const name of ["content-type", "depth", "prefer"] as const) {
+  for (const name of ["content-type", "depth", "prefer", "destination", "overwrite"] as const) {
     const value = req.headers[name];
     if (value !== undefined) headers[name] = value;
   }
@@ -175,8 +175,10 @@ function headersFor(req: HttpRequest, body: Uint8Array | null, hop: number): Rec
  * a DELETE alone, that what goes is a notice channel of this program's own), and no reading's
  * validators; a precondition on any other method is a fault too. Asked before any lookup.
  */
-function assertWriteShape(deps: GuardDeps, req: HttpRequest): boolean {
-  const writing = WRITING.has(req.method);
+function assertWriteShape(deps: GuardDeps, req: HttpRequest, url: string): boolean {
+  const conditionalCancel = req.method === "POST" && req.precondition?.kind === "unchanged" &&
+    /^https:\/\/[^/?#]+\/[^?#]*\/events\/[^/?#]+\/cancel$/.test(url);
+  const writing = WRITING.has(req.method) || conditionalCancel;
   if (!writing) {
     if (req.precondition !== undefined) throw new TypeError(`a calendar ${req.method} may not carry a precondition`);
     return false;
@@ -200,7 +202,16 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
   for (const [name, value] of Object.entries(req.headers)) {
     if (!ADAPTER_HEADERS.has(name) || !PRINTABLE.test(value)) throw new TypeError(`a calendar request may not carry the header ${name} as given`);
   }
-  const writing = assertWriteShape(deps, req);
+  if (req.method === "MOVE") {
+    const from = new URL(first);
+    const destination = req.headers.destination && new URL(req.headers.destination);
+    if (!destination || destination.origin !== from.origin || destination.username || destination.password ||
+      destination.hash || req.headers.overwrite !== "F" || req.precondition?.kind !== "unchanged")
+      throw new TypeError("a calendar move needs a version and a same-origin destination without overwrite");
+  } else if (req.headers.destination !== undefined || req.headers.overwrite !== undefined) {
+    throw new TypeError("only a calendar move can carry a destination");
+  }
+  const writing = assertWriteShape(deps, req, first);
   const refused = (reason: ProviderRefusal): HttpAnswer => ({ arrived: false, reason });
   if (req.signal.aborted) return refused("timeout");
   const body = req.body === null ? null : new TextEncoder().encode(req.body);

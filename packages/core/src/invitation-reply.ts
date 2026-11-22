@@ -9,6 +9,7 @@
  * sender wrote is repeated, and a value that would need one refuses the whole reply (null).
  */
 import type { InvitationAnswer } from "@ohmail/wire";
+import { parseIcsDate } from "./ics.js";
 import { holdsControl, isPlainAddress } from "./invitation-mail.js";
 
 /** What the writer reads: the stored row and the press, nothing else. */
@@ -36,7 +37,7 @@ const LINE_OCTETS = 75;
 const DAY_MS = 86_400_000;
 /** The stored occurrence keys this writer can say (`ics.ts` `canonicalRecurrenceId`): an instant, a floating clock time. */
 const INSTANT_KEY = /^-?\d{1,16}$/;
-const FLOATING_KEY = /^\|(\d{8}T\d{4})\|false$/;
+const FLOATING_KEY = /^\|(\d{8}T\d{4})(\d{2})?\|false$/;
 const DAY_START = /^\d{8}$/;
 const UTC_START = /^\d{8}T\d{6}Z$/;
 const CLOCK_START = /^\d{8}T\d{6}$/;
@@ -83,7 +84,7 @@ function occurrenceLines(key: string, wholeDay: boolean): string[] | null {
     return ms % DAY_MS === 0 ? [`RECURRENCE-ID;VALUE=DATE:${at.slice(0, 8)}`] : null;
   }
   const floating = FLOATING_KEY.exec(key);
-  return floating !== null && !wholeDay ? [`RECURRENCE-ID:${floating[1]}00`] : null;
+  return floating !== null && !wholeDay ? [`RECURRENCE-ID:${floating[1]}${floating[2] ?? "00"}`] : null;
 }
 
 /**
@@ -127,7 +128,32 @@ function folded(line: string): string {
  * not one plain address, an occurrence key naming a zone, a value outside its range.
  */
 export function invitationReplyText(i: InvitationReplyInput): string | null {
-  const partstat = PARTSTAT.get(i.answer);
+  return invitationText(i, "REPLY", PARTSTAT.get(i.answer), startLines(i, FLOATING_KEY.test(i.recurrenceId)));
+}
+
+export type InvitationCounterInput = Omit<InvitationReplyInput, "answer"> & {
+  method: "COUNTER" | "DECLINECOUNTER";
+  answer: InvitationAnswer | "delegated" | "none";
+  start: string;
+  end: string;
+};
+
+export function invitationCounterText(i: InvitationCounterInput): string | null {
+  const date = DAY_START.test(i.start);
+  const shape = date ? DAY_START : UTC_START.test(i.start) ? UTC_START : CLOCK_START;
+  if (![i.start, i.end].every((value) => shape.test(value) && parseIcsDate(value, null, null)
+    && (date || Number(value.slice(13, 15)) < 60)) || i.end <= i.start) return null;
+  const suffix = date ? ";VALUE=DATE" : "";
+  const partstat = i.answer === "none" ? "NEEDS-ACTION" : i.answer === "delegated" ? "DELEGATED" : PARTSTAT.get(i.answer);
+  return invitationText(i, i.method, partstat, [
+    `DTSTART${suffix}:${i.start}`, `DTEND${suffix}:${i.end}`, "SUMMARY:",
+  ]);
+}
+
+function invitationText(
+  i: Omit<InvitationReplyInput, "answer">, method: "REPLY" | InvitationCounterInput["method"],
+  partstat: string | undefined, interval: string[],
+): string | null {
   if (partstat === undefined) return null;
   if (i.uid === "" || holdsControl(i.uid) || !wholeCharacters(i.uid)) return null;
   if (!isPlainAddress(i.organizer) || !isPlainAddress(i.invitedAddress)) return null;
@@ -137,9 +163,9 @@ export function invitationReplyText(i: InvitationReplyInput): string | null {
   const occurrence = occurrenceLines(i.recurrenceId, i.startRaw !== null && DAY_START.test(i.startRaw));
   if (occurrence === null) return null;
   return [
-    "BEGIN:VCALENDAR", "VERSION:2.0", `PRODID:${INVITATION_REPLY_PRODID}`, "METHOD:REPLY", "BEGIN:VEVENT",
+    "BEGIN:VCALENDAR", "VERSION:2.0", `PRODID:${INVITATION_REPLY_PRODID}`, `METHOD:${method}`, "BEGIN:VEVENT",
     `UID:${escapedText(i.uid)}`, ...occurrence, `SEQUENCE:${i.sequence}`, `DTSTAMP:${stamp}`,
-    ...startLines(i, FLOATING_KEY.test(i.recurrenceId)),
+    ...interval,
     `ORGANIZER:mailto:${i.organizer}`, `ATTENDEE;PARTSTAT=${partstat}:mailto:${i.invitedAddress}`,
     "END:VEVENT", "END:VCALENDAR",
   ].map(folded).join("");

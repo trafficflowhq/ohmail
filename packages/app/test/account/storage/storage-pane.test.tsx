@@ -215,10 +215,10 @@ describe("the plans", () => {
     expect(seen(said("storageAddonMax", { count: 4 }))).toBe(false);
   });
 
-  it("keeps prices on the Subscription screen", () => {
+  it("shows plan and add-on prices on the linked-out Storage pane", () => {
     drawn(STATES.rest.model);
     for (const amount of [...Object.values(AMOUNTS.plan), AMOUNTS.addon])
-      expect(seen(amount), amount).toBe(false);
+      expect(seen(amount), amount).toBe(true);
     cleanup();
     drawn(STATES.rest.model, { body: "facts" });
     expect(text()).not.toMatch(/\$/);

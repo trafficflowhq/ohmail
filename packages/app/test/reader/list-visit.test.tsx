@@ -117,11 +117,10 @@ describe("with the list's visit of the open letter", () => {
     expect(visit.act).not.toHaveBeenCalled();
   });
 
-  it("Move, behind More, offers every place but the letter's own and moves on the list's path", () => {
+  it("The visible reader action Move offers every place but the letter's own and moves on the list's path", () => {
     const visit = visitOf("m1");
     const { mail } = mountReader({ letters: [letter("m1")], open: "m1", meeting: { visit, blank: null } });
-    fireEvent.click(within(panel()).getByRole("button", { name: "More" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Move" }));
+    fireEvent.click(within(panel()).getByRole("button", { name: "Move" }));
     const menu = screen.getByRole("menu", { name: "Move" });
     expect(
       within(menu)
@@ -159,6 +158,7 @@ describe("with no list's visit", () => {
 
   it("Move is not offered: moving to a place writes a sender's routing, which is the list's to run", () => {
     mountReader({ letters: [letter("m1")], open: "m1" });
+    expect(within(panel()).queryByRole("button", { name: "Move" })).toBeNull();
     fireEvent.click(within(panel()).getByRole("button", { name: "More" }));
     expect(screen.queryByRole("menuitem", { name: "Move" })).toBeNull();
     expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();

@@ -1052,7 +1052,7 @@ describe("a session revoked from another device", { timeout: 60_000 }, () => {
     const mirrors = await disk();
     const tab1 = await openTab("tab-1");
     await renewalRefused("refresh_expired");
-    expect(tab1.querySelector(".session-end")?.textContent).toContain(shell.messages.session.endedMidUse);
+    expect(tab1.querySelector('[role="alertdialog"]')?.textContent).toContain(shell.messages.session.endedMidUse);
     expect(tab1.querySelector(":is(.row, [role=option])[data-id]"), "the rows left from behind the scrim").not.toBeNull();
     expect(await mirrors()).toEqual([`ohmail-mirror:${ACCOUNT}`]);
     expect(leaves).toBe(0);

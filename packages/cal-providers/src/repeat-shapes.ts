@@ -456,8 +456,9 @@ export function repeatDeleteScopes(
   nowMs: number,
   proven: ProvenRepeats = PROVEN_REPEATS,
 ): readonly ("record" | "occurrence" | "following")[] {
-  if (!seriesProven(place, rule, first, zones, nowMs, proven)) return [];
-  if (!place?.startsWith("caldav:")) return ["record"];
+  if (place === "google" || place === "microsoft")
+    return seriesEditShape(place, rule, first, zones, nowMs) ? ["record", "occurrence"] : [];
+  if (!place?.startsWith("caldav:") || !seriesProven(place, rule, first, zones, nowMs, proven)) return [];
   const ended = endedRule(rule, first, momentOrUtc(first, zones) + MS_PER_DAY, zones);
   return ended && repeatProven(place, ended, proven)
     ? ["record", "occurrence", "following"]

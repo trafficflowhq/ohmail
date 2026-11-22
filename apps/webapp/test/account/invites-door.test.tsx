@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { createHash } from "node:crypto";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FactorSlot, GatedAsk } from "@ohmail/app/account";
 import { catchConsole, en, foundIn, json, refusal, serve, settle, type Server } from "./account-harness";
@@ -293,7 +293,11 @@ describe("the invite link, made once", () => {
     server.answer(MINT, minted(INVITE.label, INVITE.id));
     await opened();
     await press(en.invites.mintAction);
-    await press(en.invites.revoke);
+    const shown = screen.getByRole("img", { name: en.invites.qrAria }).closest<HTMLElement>(".oh-sheet")!;
+    await act(async () => {
+      fireEvent.click(within(shown).getByRole("button", { name: en.invites.revoke }));
+    });
+    await settle();
     expect(server.on(REVOKE)).toHaveLength(1);
     expect(scanned()).toBe(LINK);
   });

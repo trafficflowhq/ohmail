@@ -46,7 +46,7 @@ journeysOf("gate", () => {
     }
     await person.act("type", "login-code", { value: await who.code() });
     await person.act("press", "login-code-verify");
-    // An account with no mailbox yet carries on with its setup.
+    // The account still needs to save its recovery codes before connecting a mailbox.
     await person.here("first-run");
   });
 
@@ -63,7 +63,7 @@ journeysOf("gate", () => {
     const app = new Authenticator(await person.text("join-key"));
     await person.act("type", "join-code", { value: await app.code() });
     await person.act("press", "join-activate");
-    await person.reads("join.step_codes_title");
+    await person.readsWithDot("join.step_codes_title");
   });
 
   journey(GUARDS[2]!, async (b) => {

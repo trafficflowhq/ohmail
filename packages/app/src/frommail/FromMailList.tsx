@@ -3,8 +3,9 @@
  * list's head. An event already on a shown calendar says so and leads to it, and offers no Add. With no calendar that
  * can be written, Add is not drawn. Nothing is added without a press.
  */
-import { Button, Empty, RefusalLine } from "@ohmail/ui/base";
-import { AgendaRow } from "@ohmail/ui/calendar";
+import { useState, type MouseEventHandler } from "react";
+import { Button, Empty, RefusalLine, Slot } from "@ohmail/ui/base";
+import { AgendaRow, CalendarSquare, type CalendarTone } from "@ohmail/ui/calendar";
 import { ListHead, Sheet } from "@ohmail/ui/mail";
 import type { CalendarPort } from "@ohmail/app-logic/calendar";
 import type { FoundRow } from "@ohmail/app-logic/calendar/found";
@@ -14,7 +15,9 @@ import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
 import { whenOf } from "../invitations/index.js";
+import { DraftCalendarMenu } from "../calendar/DraftCalendarMenu.js";
 import { useAdd, useFound } from "./use-found.js";
+import "./from-mail-list.css";
 
 export function FromMailList(props: PaneProps) {
   const { host } = useFrame();
@@ -30,8 +33,13 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
   const locale = useLocale();
   const found = useFound(port);
   const { add, busy } = useAdd(port, found);
+  const [selected, setSelected] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [menu, setMenu] = useState<{ row: string; anchor: HTMLButtonElement } | null>(null);
   if (found === null) return <RefusalLine>{t("noZone")}</RefusalLine>;
-  const { rows, today, target, toneOf, onCalendar } = found;
+  const { rows, today, target, choices, toneOf, onCalendar } = found;
+  const phone = plan.device === "phone";
+  const destination = (row: string, reading: NonNullable<typeof found>) =>
+    reading.choices.find(({ id }) => id === selected.get(row)) ?? reading.target;
   const addable = target === null ? [] : rows.filter((r) => r.alreadyOn === null);
   const head = (
     <ListHead
@@ -40,7 +48,17 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
       hot={addable.length > 0}
       aside={
         target !== null && addable.length > 1 ? (
-          <Button kind="two" size="s" disabled={busy} onPress={() => void add(addable, target.id)}>
+          <Button
+            kind="two"
+            size="s"
+            disabled={busy}
+            onPress={() =>
+              void add(
+                addable,
+                phone ? (row, reading) => destination(row.id, reading)?.id ?? null : target.id,
+              )
+            }
+          >
             {t("addAll", { count: addable.length })}
           </Button>
         ) : null
@@ -49,6 +67,7 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
   );
   const item = (row: FoundRow) => {
     const on = row.alreadyOn;
+    const calendar = phone ? destination(row.id, found) : target;
     return (
       <AgendaRow
         key={row.id}
@@ -59,16 +78,26 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
         quiet={on === null}
         open={route.open === row.id}
         onOpen={() => commands.go({ place: "frommail", open: row.id })}
+        tailAtEnd={plan.device === "desktop"}
         tail={
           on !== null ? (
             <Button kind="quiet" size="s" onPress={() => commands.event(on)}>
               {t("show")}
             </Button>
-          ) : target !== null ? (
-            <Button kind="ink" size="s" disabled={busy} onPress={() => void add([row], target.id)}>
+          ) : calendar === null ? undefined : phone ? (
+            <PhoneAddActions
+              calendarName={calendar.name}
+              tone={toneOf(calendar.id) ?? "neutral"}
+              expanded={menu?.row === row.id}
+              busy={busy}
+              onPick={(event) => setMenu({ row: row.id, anchor: event.currentTarget })}
+              onAdd={() => void add([row], calendar.id)}
+            />
+          ) : (
+            <Button kind="ink" size="s" disabled={busy} onPress={() => void add([row], calendar.id)}>
               {t("add")}
             </Button>
-          ) : undefined
+          )
         }
       />
     );
@@ -85,10 +114,65 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
         ))}
       </div>
     );
-  return (
+  return phone ? (
+    <div className="cal-frommail-phone">
+      {head}
+      <Sheet kind="plain" scroll flushBottom>
+        {list}
+      </Sheet>
+      {menu && addable.some(({ id }) => id === menu.row) ? (
+        <DraftCalendarMenu
+          anchor={menu.anchor}
+          choices={choices}
+          current={destination(menu.row, found)?.id}
+          choose={(id) => {
+            setSelected((previous) => new Map(previous).set(menu.row, id));
+            setMenu(null);
+          }}
+          close={() => setMenu(null)}
+        />
+      ) : null}
+    </div>
+  ) : (
     <>
       {head}
-      {plan.device === "phone" ? <Sheet kind="plain">{list}</Sheet> : list}
+      <div className="cal-frommail-results">{list}</div>
     </>
+  );
+}
+
+function PhoneAddActions({
+  calendarName,
+  tone,
+  expanded,
+  busy,
+  onPick,
+  onAdd,
+}: {
+  calendarName: string;
+  tone: CalendarTone;
+  expanded: boolean;
+  busy: boolean;
+  onPick: MouseEventHandler<HTMLButtonElement>;
+  onAdd: () => void;
+}) {
+  const t = useText("frommail");
+  return (
+    <span className="cal-frommail-actions">
+      <span className="cal-frommail-target">
+        <CalendarSquare tone={tone} />
+        <Slot
+          label={t("goesToCalendar", { name: calendarName })}
+          expanded={expanded}
+          disabled={busy}
+          onPress={onPick}
+        >
+          {calendarName}
+        </Slot>
+      </span>
+      <Button kind="two" size="s" disabled={busy} onPress={onAdd}>
+        {t("add")}
+      </Button>
+    </span>
   );
 }

@@ -5923,8 +5923,16 @@ fn notify<R: tauri::Runtime>(
 ) -> Result<(), String> {
     use tauri::Manager;
     use tauri_plugin_notification::{NotificationExt, PermissionState};
-    let notice = crate::notice::read(&notice).map_err(|refused| refused.to_string())?;
-    let (title, body) = crate::notice::compose(&notice, crate::shell_language::spoken());
+    let language = crate::shell_language::spoken();
+    let (mail, title, body) = if notice["kind"].as_str() == Some("cal_summary") {
+        let (title, body) = crate::notice::summary_fields(&notice, opening.as_ref(), language)
+            .ok_or_else(|| crate::notice::Refused::Members.to_string())?;
+        (None, title, body)
+    } else {
+        let mail = crate::notice::read(&notice).map_err(|refused| refused.to_string())?;
+        let (title, body) = crate::notice::compose(&mail, language);
+        (Some(mail), title, body)
+    };
     // ASK ONCE, AND ONLY WHEN THE ANSWER IS NOT ALREADY KNOWN. A permission prompt on every
     // notification is the behaviour that gets an app's notifications turned off for good; a
     // refusal is reported and never retried in a loop.
@@ -5937,12 +5945,30 @@ fn notify<R: tauri::Runtime>(
         },
         Err(err) => return Err(format!("this computer would not say whether ohmail may post notifications ({err})")),
     }
-    if let crate::notice::Notice::Ohbox { count } = notice {
+    if matches!(mail, None | Some(crate::notice::Notice::Ohbox { .. })) {
+        let count = match mail { Some(crate::notice::Notice::Ohbox { count }) => count, _ => 0 };
         let refused = || crate::alerts::Refused::Superseded.to_string();
         let shell = app.try_state::<Arc<Shell>>().ok_or_else(refused)?;
         let alerts = app.try_state::<Arc<crate::alerts::Alerts>>().ok_or_else(refused)?;
         return submit_mail_notice(&shell, &alerts, opening.as_ref(), |live, document| {
-            show_mail_notice(&app, &title, &body, count, opening.as_ref(), live, document)
+            let details = opening.as_ref().filter(|value| count == 1 && mail_notice_letter(value).is_some())
+                .and_then(|value| value["details"].as_object())
+                .filter(|value| value.len() == 2)
+                .and_then(|value| {
+                    let sender = crate::notice::clean_title(value.get("sender")?.as_str()?)?;
+                    let subject = crate::notice::clean_title(value.get("subject")?.as_str()?)?;
+                    #[cfg(target_os = "linux")]
+                    let subject = subject.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                    Some((sender, subject))
+                });
+            let (title, body) = details.as_ref().map_or((title.as_str(), body.as_str()), |(sender, subject)| {
+                (sender.as_str(), subject.as_str())
+            });
+            if mail.is_none() {
+                return app.notification().builder().title(title).body(body).show()
+                    .map_err(|err| format!("the notification could not be shown ({err})"));
+            }
+            show_mail_notice(&app, title, body, count, opening.as_ref(), live, document)
         }).map_err(|error| error.to_string())?;
     }
     app.notification()
@@ -5971,13 +5997,18 @@ fn submit_mail_notice<T>(
     })).ok_or(Refused::Superseded)?
 }
 
+#[cfg(feature = "local-engine")]
+fn mail_notice_letter(value: &serde_json::Value) -> Option<&str> {
+    value["letter"].as_str().filter(|id| !id.is_empty() && id.len() <= 128
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'))
+}
+
 #[cfg(all(feature = "local-engine", not(target_os = "macos")))]
 fn show_mail_notice<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>, title: &str, body: &str, count: u32, opening: Option<&serde_json::Value>,
     live: crate::alerts::Live, document: u64,
 ) -> Result<(), String> {
-    let letter = opening.and_then(|value| value["letter"].as_str()).filter(|id| count == 1 && !id.is_empty() && id.len() <= 128
-        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'));
+    let letter = opening.filter(|_| count == 1).and_then(mail_notice_letter);
 
     let mut notification = notify_rust::Notification::new();
     notification.summary(title).body(body).auto_icon();

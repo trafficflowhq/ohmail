@@ -2103,6 +2103,7 @@ export const messageInvitations = sqliteTable("message_invitations", {
   /** The letter's DTSTAMP: it orders one revision's letters. */
   stampedAt: integer("stamped_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  proposal: text("proposal", { mode: "json" }).$type<import("@ohmail/wire").InvitationProposal>(),
 }, (t) => ({
   pk: primaryKey({ name: "message_invitations_pk", columns: [t.accountId, t.messageId] }),
   byUid: index("message_invitations_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),
@@ -2319,6 +2320,8 @@ export const accountSettings = sqliteTable("account_settings", {
   /** Mail 0210 — where a conversation's subject stands, and when it was stated. See the server twin. LAST. */
   subjectHeading: text("subject_heading"),
   subjectHeadingAt: integer("subject_heading_at", { mode: "timestamp_ms" }),
+  // LAST: ADD COLUMN appends to the migrated table.
+  draftReplies: integer("draft_replies", { mode: "boolean" }).notNull().default(true),
 });
 
 /**

@@ -280,3 +280,25 @@ describe("which part, and how much of it", () => {
     expect(read("﻿" + google)?.uid).toBe("kickoff-17@studio.example");
   });
 });
+
+it("keeps the proposed interval from a counter-proposal", () => {
+  expect(read(ics(["METHOD:COUNTER"], REQUEST_EVENT))?.proposal).toEqual({
+    start: { kind: "instant", value: "20261201T100000Z" },
+    end: { kind: "instant", value: "20261201T110000Z" },
+  });
+});
+
+it("recognizes a refusal of one attendee's proposal without echoed times", () => {
+  expect(read(ics(["METHOD:DECLINECOUNTER"], [
+    "UID:planning", "SEQUENCE:4", "DTSTAMP:20261122T120000Z",
+    "ORGANIZER:mailto:host@calendar.example", "ATTENDEE:mailto:guest@calendar.example",
+  ]))?.method).toBe("DECLINECOUNTER");
+});
+
+it("reads a proposed interval whose end was sent as a duration", () => {
+  const lines = REQUEST_EVENT.filter((line) => !line.startsWith("DTEND"));
+  expect(read(ics(["METHOD:COUNTER"], [...lines, "DURATION:PT45M"]))?.proposal).toEqual({
+    start: { kind: "instant", value: "20261201T100000Z" },
+    end: { kind: "instant", value: "20261201T104500Z" },
+  });
+});

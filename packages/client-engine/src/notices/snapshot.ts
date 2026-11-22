@@ -46,11 +46,15 @@ export interface SnapshotMonth {
   readonly marked: readonly number[];
 }
 
+/** What the summary needs of an event, without an identity or any opening act. */
+export type SummaryEvent = Pick<SnapshotEvent, "label" | "startMs" | "allDay">;
+
 /** The daily summary to ring, or `null` while its switch is off. */
 export interface SnapshotSummary {
   readonly atMs: number;
   readonly events: number;
   readonly first: Clock | null;
+  readonly agenda?: readonly SummaryEvent[];
   readonly toAnswer: number;
 }
 

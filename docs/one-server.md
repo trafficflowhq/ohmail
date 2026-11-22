@@ -74,10 +74,9 @@ never starts as the other service.
 
 A configuration put together half-way does not start on the lax side either. Beside `OHMAIL_ORIGIN`,
 each of these refuses the start, named: `TF_AUTH_ORIGINS`, `TF_RP_ID`, `TF_COOKIE_HOSTS`,
-`DATABASE_URL_ADMIN`, `TF_ADMIN_SECRET`, `CRON_SECRET`, `TF_PUBLIC_SIGNUP`, `TF_INVITE_CODES`. They are
-the managed service's, no self-hosted file carries one, and read as a self-hosted server the
-configuration would migrate the database, meter nothing and ask no verified address. An emptied value is
-not set.
+`DATABASE_URL_ADMIN`, `TF_ADMIN_SECRET`, `CRON_SECRET`, `TF_PUBLIC_SIGNUP`, `TF_INVITE_CODES`.
+They belong to the managed service. An emptied value
+is treated as unset.
 
 Inside the managed service, `ENTITLEMENTS_URL` and `BILLING_PLANE_SECRET` are one marker for metering.
 Both set: limits and AI credits are asked of the entitlements program. Neither: the managed service runs
@@ -162,9 +161,15 @@ No name an operator has in a file changed. A refusal names the variable and neve
 | `TF_VAPID_PUBLIC_KEY` | none | its generated public key |
 | `TF_API_CLOCKS` | off | nothing (see Clocks) |
 | `OHMAIL_CALENDAR` | off: no calendar routes, and `/hello` says nothing of one | `1` enables Calendar; set it on both server and worker |
-| `PLACES_SUGGEST_URL`, `PLACES_SUGGEST_TOKEN` | none: the calendar's place field suggests nothing, and `/hello` does not offer it | a geocoder of its own, if any: its address (https, or plain http to a private service name) and its bearer if it takes one; checked at every start, used only beside `OHMAIL_CALENDAR`, the token never without the address |
+| `PLACES_SUGGEST_URL`, `PLACES_SUGGEST_TOKEN` | blank = off | a Photon-compatible geocoder's URL (HTTPS, or HTTP to a private service name) and optional bearer token. The token requires a URL. Used only with `OHMAIL_CALENDAR`. |
 | `OHCAL_NOTICE_ORIGIN` | none: no provider is given an address to tell this server that a calendar changed, and every calendar is polled | nothing yet. It is the public https origin at which a calendar's provider reaches `POST /calendar/notices/google` and `POST /calendar/notices/microsoft`; the organizer reads the same variable and is what opens a channel at a provider, so set it on both. The two routes are mounted beside `OHMAIL_CALENDAR` whether it is set or not, and answer every call alike. With `OHCAL_MICROSOFT=1` beside it the server also answers the call by which Microsoft checks the address |
 | `OHCAL_CONNECT_GOOGLE`, `OHCAL_CONNECT_MICROSOFT` | off: the way is neither listed nor taken. `1` offers it once the provider's client is configured and its sign-in is built (neither is built yet); any other value but `0` refuses the start | nothing |
+
+The calendar's place field always suggests places from the person's own calendar. For map suggestions,
+a self-hosted operator may set `PLACES_SUGGEST_URL=https://photon.komoot.io` or use their own Photon
+server. Komoot's public endpoint needs no token. Use it fairly. It may throttle heavy use and gives
+no availability guarantee. When enabled, the server sends what a person types in the place field to
+the configured geocoder. ohmail Cloud uses its own keyed geocoder.
 
 Mail to customers is one setting: the transport is whichever of `SMTP_URL` and `RESEND_API_KEY` is set.
 Both refuse; so does either without `MAIL_FROM`, or `MAIL_FROM` alone. `TF_ALERT_EMAIL` without a mailer

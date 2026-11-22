@@ -272,7 +272,7 @@ describe("the `?` sheet says WHY a message row is grey", () => {
     await key("?");
     await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
 
-    const del = sheetRow(messages.shortcuts.deleteKey);
+    const del = sheetRow(messages.reader.key.deleteKey);
     expect(del, "the sheet does not document the delete key").toBeTruthy();
     expect(del!.getAttribute("aria-disabled")).toBe("true");
     expect(del!.getAttribute("title")).toBe(messages.shortcuts.needsCursor);
@@ -291,7 +291,7 @@ describe("the `?` sheet says WHY a message row is grey", () => {
     await key("?");
     await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
 
-    const del = sheetRow(messages.shortcuts.deleteKey);
+    const del = sheetRow(messages.reader.key.deleteKey);
     expect(del, "the sheet does not document the delete key").toBeTruthy();
     expect(del!.getAttribute("aria-disabled")).not.toBe("true");
     expect(del!.getAttribute("title"), "the sentence outlived the state it describes").toBeNull();

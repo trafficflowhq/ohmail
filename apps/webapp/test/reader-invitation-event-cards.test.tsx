@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { Blob } from "node:buffer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import en from "../messages/en.json";
@@ -75,7 +76,11 @@ beforeEach(() => {
       const id = decodeURIComponent(bytes[1]!);
       const part = shapes.flatMap((s) => s.parts).find((p) => p.id === id);
       // Served untyped, so the bytes stay the runtime's own Blob (jsdom's has no `text()`).
-      return new Response(part?.bytes ?? "", { status: 200, headers: { "content-type": "application/octet-stream" } });
+      const response = new Response(part?.bytes ?? "", { status: 200, headers: { "content-type": "application/octet-stream" } });
+      Object.defineProperty(response, "blob", {
+        value: async () => new Blob([part?.bytes ?? ""], { type: "application/octet-stream" }),
+      });
+      return response;
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
   };
@@ -131,15 +136,15 @@ async function openInReader(id: string): Promise<HTMLElement> {
   return reader;
 }
 
-/** The card stands before the mail and outside it. */
-function expectAbove(card: Element | null, mail: Element | null): void {
+/** The card follows the mail and stands outside it. */
+function expectBelow(card: Element | null, mail: Element | null): void {
   expect(card, "no event card").not.toBeNull();
   expect(mail, "the premise: the mail element").not.toBeNull();
   expect(mail!.contains(card!), "the card is inside the mail").toBe(false);
-  expect(card!.compareDocumentPosition(mail!) & Node.DOCUMENT_POSITION_FOLLOWING, "the card is under the mail").toBeTruthy();
+  expect(card!.compareDocumentPosition(mail!) & Node.DOCUMENT_POSITION_PRECEDING, "the card follows the mail").toBeTruthy();
 }
 
-describe("the reader shows one card per event, above the mail", () => {
+describe("the reader shows one card per event below the mail", () => {
   it("Google's invitation (alternative + invite.ics) shows one card", async () => {
     await mountWith([GOOGLE]);
     const page = await openInReader(idOf(GOOGLE));
@@ -159,11 +164,11 @@ describe("the reader shows one card per event, above the mail", () => {
     expect(files!.querySelector(".oh-files-head")).toBeNull();
   }, 60_000);
 
-  it("an Exchange invitation's card comes before its long html body, not under it", async () => {
+  it("an Exchange invitation's card follows its long HTML body", async () => {
     await mountWith([EXCHANGE_ICAL]);
     const page = await openInReader(idOf(EXCHANGE_ICAL));
     expect(page.querySelectorAll(".ics-card")).toHaveLength(1);
-    expectAbove(page.querySelector(".ics-card"), page.querySelector("[data-read-body]"));
+    expectBelow(page.querySelector(".ics-card"), page.querySelector("[data-read-body]"));
   }, 60_000);
 
   it("an embedded calendar part (inline, under multipart/related) shows its card", async () => {
@@ -184,7 +189,7 @@ describe("the reader shows one card per event, above the mail", () => {
     await mountWith([HOSTILE_DURATION]);
     const page = await openInReader(idOf(HOSTILE_DURATION));
     expect(page.querySelectorAll(".ics-card")).toHaveLength(1);
-    expectAbove(page.querySelector(".ics-card"), page.querySelector("[data-read-body]"));
+    expectBelow(page.querySelector(".ics-card"), page.querySelector("[data-read-body]"));
   }, 60_000);
 
   it("an Outlook Web App stub shows the note and no card (control)", async () => {
@@ -203,8 +208,8 @@ describe("the reader shows one card per event, above the mail", () => {
   }, 60_000);
 });
 
-describe("an open News card shows the event above the issue", () => {
-  it("one card, before the card's text", async () => {
+describe("an open News card shows the event below the issue", () => {
+  it("one event card follows the issue text", async () => {
     folder = "ohmail/News";
     await mountWith([GOOGLE]);
     await goHash("#/reads");
@@ -214,17 +219,17 @@ describe("an open News card shows the event above the issue", () => {
     await settleCards();
     const card = within(news).getByRole("article");
     expect(card.querySelectorAll(".ics-card")).toHaveLength(1);
-    expectAbove(card.querySelector(".ics-card"), card.querySelector("[data-read-body]"));
+    expectBelow(card.querySelector(".ics-card"), card.querySelector("[data-read-body]"));
   }, 60_000);
 });
 
-describe("a conversation panel and the Screener preview show the event above the mail", () => {
-  it("a conversation panel: one card for Google's pair, before .pm-body", async () => {
+describe("a conversation panel and the Screener preview show the event below the mail", () => {
+  it("a conversation panel shows one card for Google's pair after the mail body", async () => {
     await mountWith([GOOGLE], { thread: true });
     const reader = await openInReader(REPLY_ID);
     const invitation = reader.querySelector(`[data-conv-id="${idOf(GOOGLE)}"]`);
     expect(invitation, "the other letter in the conversation is present").not.toBeNull();
     expect(reader.querySelectorAll(".ics-card")).toHaveLength(1);
-    expectAbove(invitation!.querySelector(".ics-card"), invitation!.querySelector("[data-read-body]"));
+    expectBelow(invitation!.querySelector(".ics-card"), invitation!.querySelector("[data-read-body]"));
   }, 60_000);
 });

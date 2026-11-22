@@ -4,7 +4,7 @@
  */
 import type { ReactNode } from "react";
 import { Button, Page, Sentence } from "@ohmail/ui/base";
-import { SettingLine } from "@ohmail/ui/mail";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { holderName } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import { readerHolder } from "@ohmail/app-logic/reading/reader-holder";
 import { NONE } from "../../host/index.js";
@@ -34,7 +34,7 @@ function Done({ run, say, service }: StepProps): ReactNode {
         ) : null}
       </>
     );
-  if (organizing) return null;
+  if (organizing) return <SettingNote>{say("onboarding.doneWhere")}</SettingNote>;
   const { label, line } = holderLines(facts, run.mailbox, say, {
     managed: HOLDER_MANAGED[service],
     stopped,

@@ -25,8 +25,10 @@ export type Standing =
 /** What the access answer says of the subscription. */
 export interface SubscriptionStatus {
   readonly standing: Standing;
+  readonly trialProgress?: { readonly day: number; readonly total: number };
   /** How many mailboxes the account may connect; `null` where the answer does not say. */
   readonly mailboxes: number | null;
+  readonly aiCredits?: { remaining: number; total?: number } | null;
   /** What is stored of the limit, as the reader says it; `null` where the answer carries no storage block. */
   readonly storage: string | null;
 }
@@ -35,7 +37,7 @@ export interface SubscriptionStatus {
 export interface PlanLine {
   readonly plan: PlanName;
   readonly mailboxes: number;
-  readonly credits: number;
+  readonly credits?: number;
   /** Its room, as the reader says it. */
   readonly storage: string;
   readonly price: Readonly<Record<PlanInterval, string | null>>;
@@ -113,7 +115,9 @@ export interface SubscriptionModel {
  */
 
 /** What the pane holds between two events: everything it draws but the standing, which the door holds. */
-export type SubscriptionState = Pick<SubscriptionModel, "plans" | "opening" | "failed">;
+export type SubscriptionState = Pick<SubscriptionModel, "plans" | "opening" | "failed"> & {
+  readonly chosenInterval?: PlanInterval;
+};
 
 export type SubscriptionEvent =
   /** The plans are asked: as the pane opens, or by Try again. */
@@ -139,17 +143,29 @@ function firstInterval(answer: PlansAnswer): PlanInterval {
 export function subscriptionStep(state: SubscriptionState, event: SubscriptionEvent): SubscriptionState {
   switch (event.kind) {
     case "plansAsked":
-      return state.plans.at === "none" ? state : { ...state, plans: { at: "loading" } };
+      return { ...state, plans: { at: "loading" } };
     case "plansAnswered": {
       if (state.plans.at !== "loading") return state;
       const { answer } = event;
       // Whatever kept the read from answering, the prices could not be read: no figure, and Try again.
       if (!answer.ok) return { ...state, plans: { at: "unavailable" } };
-      return { ...state, plans: { at: "read", answer: answer.value, interval: firstInterval(answer.value) } };
+      const interval = state.chosenInterval;
+      const canKeep =
+        answer.value.kind === "plans" &&
+        interval !== undefined &&
+        answer.value.plans.some((line) => line.price[interval] !== null);
+      return {
+        ...state,
+        plans: {
+          at: "read",
+          answer: answer.value,
+          interval: canKeep ? interval : firstInterval(answer.value),
+        },
+      };
     }
     case "chosen":
       return state.plans.at === "read"
-        ? { ...state, plans: { ...state.plans, interval: event.interval } }
+        ? { ...state, chosenInterval: event.interval, plans: { ...state.plans, interval: event.interval } }
         : state;
     case "pressed":
       return state.opening ? state : { ...state, opening: true, failed: false };

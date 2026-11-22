@@ -69,7 +69,7 @@ describe("the send chord from a reply's people", () => {
     to.focus();
     await chord(to);
     await waitFor(
-      () => (document.body.textContent ?? "").includes(en.compose.needRecipient),
+      () => (document.body.textContent ?? "").includes(en.compose.needRecipient.replace(/\.$/u, "")),
       "Ctrl+Enter with nobody in To said nothing",
     );
     await rounds(8);

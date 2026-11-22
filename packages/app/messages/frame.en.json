@@ -297,6 +297,8 @@
     "copied": "Copied"
   },
   "frame": {
+    "awayNoticeTitle": "Away responder is on",
+    "awayNoticeDismiss": "Not now",
     "products": {
       "label": "Mail or Calendar",
       "mail": "Mail",
@@ -329,6 +331,11 @@
       "moreClose": "Close"
     },
     "systemNotice": {
+      "summaryTitle": "Today in Calendar",
+      "summaryAllDay": "All day",
+      "summaryLine": "{at} · {name}",
+      "summaryMore": "+{count} more",
+      "summaryEmpty": "No events today",
       "ohboxTitle": "New mail",
       "ohboxBody": "{count, plural, one {One new message for you.} other {# new messages for you.}}",
       "screenerTitle": "Screener",

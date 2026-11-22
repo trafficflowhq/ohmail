@@ -617,6 +617,8 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           ? { setSuggestionDismissed: gatedPress(adapter.setSuggestionDismissed.bind(adapter), "changing a calendar suggestion") } : {}),
         ...(adapter.calendarSettings
           ? { calendarSettings: gatedPress(adapter.calendarSettings.bind(adapter), "reading calendar settings") } : {}),
+        ...(adapter.mailProposal
+          ? { mailProposal: gatedPress(adapter.mailProposal.bind(adapter), "sending a calendar proposal") } : {}),
         ...(adapter.writeCalendar
           ? { writeCalendar: gatedPress(adapter.writeCalendar.bind(adapter), "saving a calendar change") } : {}),
         ...(adapter.retryCalendarWrite

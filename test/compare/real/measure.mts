@@ -272,6 +272,7 @@ async function readSide(page: Page, elements: readonly Element[], side: "app" | 
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
+  const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
   const readings: Readings = {};
   for (const [i, el] of elements.entries()) {
     const mark = `e${i}`;
@@ -287,10 +288,19 @@ async function readSide(page: Page, elements: readonly Element[], side: "app" | 
       reading.padding = await page.evaluate(contentInsets, [mark, side === "app" ? el.contentChild : null] as [string, string | null]);
     }
     if (reading && el.kind === "text") {
-      const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
-      const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: `[data-real-measure="${mark}"]` });
-      const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
-      reading.face = fonts.map((f) => `${f.familyName} (${f.isCustomFont ? "web font" : "system"})`).join(" + ") || "(no glyphs)";
+      const selector = `[data-real-measure="${mark}"]`;
+      const { nodeIds } = await cdp.send("DOM.querySelectorAll", {
+        nodeId: root.nodeId,
+        selector: `${selector}, ${selector} *`,
+      });
+      const faces = new Map<string, string>();
+      // Chromium can omit deep text runs when asked only about their ancestor.
+      for (const { fonts } of await Promise.all(nodeIds.map((nodeId) => cdp.send("CSS.getPlatformFontsForNode", { nodeId })))) {
+        for (const { familyName, isCustomFont } of fonts) {
+          faces.set(familyName, `${familyName} (${isCustomFont ? "web font" : "system"})`);
+        }
+      }
+      reading.face = [...faces.values()].sort().join(" + ") || "(no glyphs)";
     }
     readings[el.name] = reading;
   }

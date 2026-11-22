@@ -1,5 +1,6 @@
 {
   "frommail": {
+    "source": "aus E-Mails",
     "title": "Aus Mails",
     "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
     "noZone": "Termine aus Mails können nicht aufgelistet werden: Dieses Gerät kennt seine Zeitzone nicht.",
@@ -14,8 +15,9 @@
     "show": "Im Kalender zeigen",
     "onCalendar": "In deinem Kalender",
     "waiting": "{count, plural, =0 {Nichts hinzuzufügen} one {# hinzuzufügen} other {# hinzuzufügen}}",
-    "words": "In der Mail",
+    "words": "Wörter",
     "goesTo": "Kommt in",
+    "goesToCalendar": "In den Kalender {name}",
     "close": "Schließen",
     "allDay": "ganztägig",
     "span": "{from}–{to}"

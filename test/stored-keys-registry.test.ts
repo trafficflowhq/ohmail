@@ -255,7 +255,7 @@ const NOTICE_WORKER = "apps/webapp/public/sw.js";
 const NOTICE_TAGS: Readonly<Record<string, string>> = {
   ohbox: "ohmail-new-mail", screener: "ohmail-screener", scheduled: "ohmail-scheduled", pairing: "ohmail-pairing",
   cal_alert: "ohmail-cal-alert", cal_invitation: "ohmail-cal-invitation", cal_change: "ohmail-cal-change",
-  cal_answer: "ohmail-cal-answer", cal_found: "ohmail-cal-found",
+  cal_answer: "ohmail-cal-answer", cal_found: "ohmail-cal-found", cal_summary: "ohmail-cal-summary",
 };
 
 /** Literal positions in the page's actual tag table or the worker's notification options. */

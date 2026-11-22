@@ -213,7 +213,8 @@ describe("a forward from the keyboard starts in To, and a send with nobody says 
     await act(async () => {
       to.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
     });
-    await waitFor(() => (document.body.textContent ?? "").includes(messages.compose.needRecipient),
+    const refusal = messages.compose.needRecipient.replace(/\.$/, "");
+    await waitFor(() => (document.body.textContent ?? "").includes(refusal),
       "Ctrl+Enter with no recipient said nothing");
     expect(panel(), "the refused send closed the forward").not.toBeNull();
   });

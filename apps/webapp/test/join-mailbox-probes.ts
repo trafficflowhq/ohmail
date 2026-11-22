@@ -29,7 +29,11 @@ export function mailboxProbes(host: HTMLElement, messages: JoinMessages, act: Ac
   /** A field by its label's words. */
   const labelled = (label: string): HTMLInputElement | null => {
     const found = [...host.querySelectorAll("label")].find((l) => l.textContent === label);
-    return found ? (host.ownerDocument.getElementById(found.htmlFor) as HTMLInputElement | null) : null;
+    return found
+      ? (host.ownerDocument.getElementById(found.htmlFor) as HTMLInputElement | null)
+      : [...host.querySelectorAll<HTMLInputElement>("input[aria-label]")].find(
+          (input) => input.getAttribute("aria-label") === label,
+        ) ?? null;
   };
   const field = (name: JoinField): HTMLInputElement | null => labelled(LABEL[name]);
   /** A field by the name a case calls it: the mailbox step's by its label, another step's by its own id. */
@@ -37,6 +41,8 @@ export function mailboxProbes(host: HTMLElement, messages: JoinMessages, act: Ac
     Object.hasOwn(LABEL, name) ? field(name as JoinField) : host.querySelector<HTMLInputElement>(`#${name}`);
   const typeInto = async (input: HTMLInputElement | null, value: string, what: string): Promise<void> => {
     if (input === null) throw new Error(`${what} is not on screen`);
+    const closed = input.closest("details:not([open])");
+    if (closed) await act(async () => { closed.querySelector("summary")?.click(); });
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -44,7 +50,10 @@ export function mailboxProbes(host: HTMLElement, messages: JoinMessages, act: Ac
   };
   const type = (name: string, value: string): Promise<void> => typeInto(input(name), value, name);
   /** The providers' tiles: the presses of the picker's group that name a provider of the table. */
-  const names = new Set(PROVIDERS.map((p) => (p.manual ? picker.otherLabel! : p.label)));
+  const names = new Set([
+    ...PROVIDERS.map((p) => (p.manual ? picker.otherLabel! : p.label)),
+    picker.otherShort, picker.microsoftShort, picker.icloudShort,
+  ]);
   const group = (): HTMLElement | null =>
     [...host.querySelectorAll<HTMLElement>('[role="group"]')].find(
       (g) => g.getAttribute("aria-label") === picker.label,
@@ -69,10 +78,10 @@ export function mailboxProbes(host: HTMLElement, messages: JoinMessages, act: Ac
   /** The provider whose mail reaches other apps only through its own bridge: its press beside the tiles. */
   const bridge = (): HTMLElement | null =>
     [...(group()?.querySelectorAll<HTMLElement>("button[aria-pressed]") ?? [])].find(
-      (b) => b.textContent === PROTON.label,
+      (b) => b.textContent === PROTON.label || b.textContent === picker.protonShort,
     ) ?? null;
   const button = (name: string): HTMLButtonElement | null =>
-    [...host.querySelectorAll("button")].find((b) => b.textContent === name) ?? null;
+    [...host.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? b.textContent) === name) ?? null;
   const link = (name: string): HTMLAnchorElement | null =>
     [...host.querySelectorAll("a")].find((a) => a.textContent === name) ?? null;
   /** Every refusal on screen: what is said as an alert. */

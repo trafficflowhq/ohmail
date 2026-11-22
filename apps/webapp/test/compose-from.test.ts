@@ -1418,6 +1418,8 @@ describe("ACCEPTANCE: composing to a domain you own switches the From (R10-4)", 
     expect(hint, "the sender changed under the user with nothing on screen").not.toBeNull();
     expect(hint!.parentElement).toBe(fromControl()!.parentElement);
     expect(hint!.closest('[role="status"]')).toBeNull();
+    expect(hint!.id).not.toBe("");
+    expect(fromControl()!.getAttribute("aria-describedby")).toBe(hint!.id);
   });
 
   it("sends from the matched mailbox and stores NOTHING as the user's pick", async () => {

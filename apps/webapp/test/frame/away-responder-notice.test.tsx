@@ -76,7 +76,7 @@ async function press(button: HTMLElement) {
   await tick(0);
 }
 
-const sentence = new RegExp(en.away.noticeTitle);
+const sentence = new RegExp(en.frame.awayNoticeTitle);
 
 async function bringAwayToFront(screen: ReturnType<typeof within>) {
   if (screen.queryByRole("button", { name: en.away.noticeSettings })) return;
@@ -102,7 +102,7 @@ it("dismisses the Away notice until the next reading without changing the respon
   const count = () => screen.queryAllByRole("status").filter((el) => sentence.test(el.textContent ?? "")).length;
   await bringAwayToFront(screen);
   expect(count()).toBe(1);
-  await press(screen.getByRole("button", { name: en.away.noticeDismiss }));
+  await press(screen.getByRole("button", { name: en.frame.awayNoticeDismiss }));
   expect(count()).toBe(0);
   expect(reads).toHaveLength(1);
 
@@ -126,12 +126,12 @@ const noticeCases: {
 }[] = [
   {
     name: "people let in, Ohbox, daily", enabled: true, reads: 1,
-    words: en.away.noticeTitle,
+    words: en.frame.awayNoticeTitle,
   },
   {
     name: "everyone, Receipts, weekly", enabled: true, reads: 1,
     options: { saved: { audience: "everyone", throttle: "per_week", piles: ["ohmail/Receipts"] } },
-    words: en.away.noticeTitle,
+    words: en.frame.awayNoticeTitle,
   },
   { name: "disabled", enabled: false, reads: 1 },
   { name: "no confirmed host wire", enabled: true, options: { unconfirmed: true }, reads: 0 },

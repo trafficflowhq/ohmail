@@ -94,7 +94,7 @@ async function waitFor(condition: () => boolean, what: string) {
 
 function junkButton(host: HTMLElement): HTMLElement | null {
   const sections = within(host).queryByRole("group", { name: messages.screener.segAria });
-  return sections ? within(sections).queryByRole("button", { name: messages.screener.segJunk }) : null;
+  return sections ? within(sections).queryByRole("button", { name: new RegExp(`^${messages.screener.segSpam}(?: [0-9]+)?$`) }) : null;
 }
 
 async function openScreener(host: HTMLElement): Promise<void> {

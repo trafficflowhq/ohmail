@@ -5,6 +5,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { waitFor, within } from "@testing-library/dom";
 import messages from "../messages/en.json";
 
 /**
@@ -56,7 +57,9 @@ beforeEach(() => {
     const method = init?.method ?? "GET";
     if (method === "GET" && url.includes("/api/devices")) {
       if (holdDevices) return new Promise<Response>((res) => { heldDevices.push(res); });
-      return json(devicesStatus === 200 ? { items: [WEB_CURRENT] } : { error: "boom" }, devicesStatus);
+      return json(devicesStatus === 200
+        ? { items: [WEB_CURRENT] }
+        : { error: { code: "internal", message: "The device list read failed", retryable: false } }, devicesStatus);
     }
     if (method === "GET" && url.includes("/api/pair")) return json({ items: [] });
     return json({});
@@ -95,8 +98,9 @@ describe("the devices list's three states", () => {
   it("while GET /devices is in flight the pane SAYS so — never a blank where the list belongs", async () => {
     holdDevices = true;
     const c = await mountSection();
-    const status = c.querySelector('.set-note-inline[role="status"]');
-    expect(status?.textContent, "the loading sentence").toContain("Loading your devices");
+    const view = within(c);
+    await waitFor(() => expect(heldDevices).toHaveLength(1));
+    expect(view.getByText(messages.devices.loading, { selector: '[role="status"]' })).toBeTruthy();
     // The subhead the list will keep is already standing — rows arriving replace only the
     // sentence, so nothing above or beside it moves.
     expect(c.textContent).toContain("Signed in");
@@ -108,14 +112,14 @@ describe("the devices list's three states", () => {
       await Promise.resolve();
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(c.querySelector('.set-note-inline[role="status"]')).toBeNull();
+    expect(view.queryByText(messages.devices.loading)).toBeNull();
     expect(c.textContent).toContain("This browser");
   });
 
   it("a FAILED first read is a sentence and a retry, and the retry refetches", async () => {
     devicesStatus = 500;
     const c = await mountSection();
-    expect(c.textContent).toContain("Your devices could not be loaded");
+    await waitFor(() => expect(c.textContent).toContain("Your devices could not be loaded"));
     const retry = buttonByText(c, "Try again");
     expect(retry, "the retry affordance").toBeTruthy();
     expect(c.textContent).not.toContain("This browser");

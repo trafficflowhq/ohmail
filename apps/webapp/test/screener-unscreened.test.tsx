@@ -110,7 +110,7 @@ describe("the row renders through the engine the product actually builds", () =>
   it("a total the server's walk stopped at is said as a floor, off the wire", async () => {
     await mount({ ...DOOR, complete: false });
     expect(lead()?.textContent).toBe(
-      "At least 12 messages from senders you have not decided about are still in the Inbox on your mail server.",
+      "At least 12 messages from senders you have not decided about are still in the Inbox on your mail server",
     );
   });
 });
@@ -142,7 +142,7 @@ describe("the undecided-sender row in the Screener header", () => {
   it("a floor says 'at least', and the press names what it moves", async () => {
     await mount({ ...DOOR, total: 40, complete: false });
     expect(lead()?.textContent).toBe(
-      "At least 40 messages from senders you have not decided about are still in the Inbox on your mail server.",
+      "At least 40 messages from senders you have not decided about are still in the Inbox on your mail server",
     );
     expect(pressButton().textContent).toContain("Screen 40");
     await teardownScreeningWeb();

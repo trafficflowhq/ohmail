@@ -82,7 +82,14 @@ it.each(["screened", "spam"] as const)(
     expect(asked.bodies).toEqual(["held-10,held-11,held-12 urgent"]);
     expect([...new Set(loads.mock.calls.map(([id]) => id))]).toEqual(["held-10", "held-11", "held-12"]);
     expect(hold.mock.calls.map(([id]) => id)).toEqual(["held-10", "held-11", "held-12"]);
-    expect(reading().getByText("12 letters")).toBeTruthy();
+    if (segment === "screened") {
+      expect(reading().getByText("12 held")).toBeTruthy();
+    } else {
+      expect(reading().getByRole("heading", { name: /Held correspondence.*goes to Spam/ })).toBeTruthy();
+      // Studio puts the Spam total on the sender's shelf row.
+      const sender = screen.getByRole("option", { name: /^Held correspondence/ });
+      expect(within(sender).getByText("12 held")).toBeTruthy();
+    }
   },
 );
 

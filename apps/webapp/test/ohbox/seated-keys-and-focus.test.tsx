@@ -137,7 +137,7 @@ const BASE_A_ROW_PICKED = [
   "ArrowUp|Previous message|on", "ArrowDown|Next message|on",
 ].sort();
 
-describe("the seated Ohbox's own keys read as the base's", () => {
+describe("the seated Ohbox's own key registrations", () => {
   it("with nothing open, with the first row open, and with a row picked", async () => {
     wide();
     await mount([msg("a", 11), msg("b", 10), msg("c", 9)]);
@@ -151,7 +151,10 @@ describe("the seated Ohbox's own keys read as the base's", () => {
 
     await key("j", document);
     await key("x", document);
-    expect(ours(), "a row picked").toEqual(BASE_A_ROW_PICKED);
+    // The picked list owns Tag. The old table also registered Tag for just the current message.
+    const picked = ours();
+    expect(picked, "a row picked").toEqual(BASE_A_ROW_PICKED.filter((row) => row !== "t|Tag the message|on"));
+    expect(picked.filter((row) => row.startsWith("t|"))).toEqual(["t|Tag the selection|on"]);
   });
 
   it("binds no chord twice under one label", async () => {

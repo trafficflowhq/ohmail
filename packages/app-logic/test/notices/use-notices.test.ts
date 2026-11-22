@@ -131,6 +131,65 @@ function recording(
   return { emitter, posted, takenBack: () => takenBack };
 }
 
+it("rings the account's agenda once for the calendar day and cancels a departed account's timer", async () => {
+  const scope = "agenda-account";
+  const now = Date.parse("2026-11-17T07:00:00Z");
+  const store = await copyWith();
+  const { emitter } = recording(["cal_summary"]);
+  const post = vi.spyOn(emitter, "post");
+  let live: string | null = scope;
+  const agenda = [
+    { allDay: false, startMs: now + 3600_000, label: { as: "title" as const, text: "Fixture meeting" } },
+  ];
+  const calendar: CalendarReads = {
+    liveScope: () => live,
+    changes: () => null,
+    ahead: () => null,
+    clock: () => null,
+    summary: (_scope, readAt) => ({
+      zone: "UTC",
+      summary: {
+        atMs: readAt < now ? now : now + 86_400_000,
+        events: 1,
+        first: null,
+        toAnswer: 0,
+        agenda,
+      },
+    }),
+  };
+  const caller = new NoticeCaller(
+    emitter,
+    noticeReadsOf(
+      { read: () => store },
+      { permission: () => "granted" },
+      {
+        choices: () => noticeChoicesOf({}, { cal_summary: true }, { ohcalPhone: false }),
+        atDevices: () => false,
+        calendar,
+      },
+    ),
+  );
+  caller.settle(scope, store, now - 1000);
+  expect(caller.nextAtMs()).toBe(now);
+  caller.ring(now);
+  await vi.waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "cal_summary" }),
+      expect.any(Function),
+      undefined,
+      undefined,
+      expect.objectContaining({ agenda, zone: "UTC" }),
+    ),
+  );
+  caller.settle(scope, store, now + 1000);
+  caller.ring(now + 10_000);
+  expect(post).toHaveBeenCalledTimes(1);
+  live = null;
+  caller.suspendCalendar(now + 10_001);
+  expect(caller.nextAtMs()).toBeNull();
+  caller.end();
+});
+
 /** A device's storage, as a door over a map. */
 function jar(): StorageDoor & { readonly kept: Map<string, string> } {
   const kept = new Map<string, string>();

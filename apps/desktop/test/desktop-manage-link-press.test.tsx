@@ -435,7 +435,7 @@ describe("the storage card on the Cloud door", () => {
     access = withStorage(FULL);
     await open(CLOUD_SERVING, "#/ohbox");
     expect(card()?.textContent).toContain("Storage full");
-    expect(card()?.textContent).toContain("Text kept for letters from April 2019 on; older ones stay on your mail server.");
+    expect(card()?.textContent).toContain("Text kept from April 2019.");
     expect(card()?.querySelector("a")?.getAttribute("href")).toBe("#/settings/storage");
     // The first paint's read and the offer's, as on any first launch: the card asks nothing of its own.
     expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH)).toHaveLength(2);
@@ -466,7 +466,7 @@ describe("the storage card on the Cloud door", () => {
     access = withStorage(FULL, "active");
     await open(CLOUD_SERVING, "#/ohbox");
     access = withStorage({ ...FULL, card: null }, "active");
-    await press(mountPoint!.querySelector<HTMLElement>("[data-storage-card] [aria-label=Dismiss]")!);
+    await press([...card()!.querySelectorAll("button")].find((button) => button.textContent === "Not now")!);
     expect(card()).toBeNull();
     expect(enginePaths).toContain("/account/storage");
     await act(async () => { root!.unmount(); });

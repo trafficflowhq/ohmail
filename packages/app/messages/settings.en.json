@@ -60,7 +60,7 @@
       "original": "Original"
     },
     "screening": {
-      "title": "What reaches your Ohbox",
+      "title": "Ohbox",
       "postureTitle": "Keep my Ohbox for what's relevant",
       "postureOn": "Real people and the service mail you act on stay in the Ohbox. Newsletters and promotions go to News, receipts to Receipts.",
       "postureOff": "Everything from a sender you've written to reaches your Ohbox, promotions included.",
@@ -122,10 +122,10 @@
       "failed": "Couldn't save that — try again."
     },
     "dormancy": {
-      "title": "When a sender goes quiet",
+      "title": "Asks about senders of the last",
       "description": "How far back, before you started screening, the Screener asks about senders you've never decided about. Senders who last wrote before that wait in History.",
       "dayLabel": "{days}",
-      "dayLabelDefault": "{days} (default)",
+      "dayLabelDefault": "{days} days",
       "allTime": "All time",
       "ariaLabel": "Days before a sender goes quiet",
       "microcopy": "This only changes who the Screener asks you about. No mail moves: mail from the senders it doesn't ask about, read or unread, is listed under History.",
@@ -381,6 +381,7 @@
     "writeWhyCopy": "support@ohmail.app",
     "copyAddress": "Copy address",
     "copyDiag": "Copy diagnostics",
+    "copyShort": "Copy",
     "copied": "Copied",
     "versionLabel": "Version",
     "subject": "Help with ohmail",
@@ -591,8 +592,6 @@
     "noticePileReceipts": "in Receipts",
     "noticePileScreener": "in the Screener",
     "noticeNone": "Away responder is on, but no pile is set to get a reply — nothing is sent.",
-    "noticeSettings": "Away settings",
-    "noticeTitle": "Away responder is on",
-    "noticeDismiss": "Not now"
+    "noticeSettings": "Away settings"
   }
 }

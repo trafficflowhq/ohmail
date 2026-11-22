@@ -30,6 +30,7 @@ import {
   type SnapshotDay,
   type SnapshotEvent,
   type SnapshotSummary,
+  type SummaryEvent,
 } from "@ohmail/client-engine";
 import type { CalendarEventRecord } from "@ohmail/wire";
 import { nowIn } from "../grid/days.js";
@@ -47,6 +48,7 @@ export interface SnapshotInput extends AheadInput {
   /** The day's summary is switched on, and when it rings: a whole minute of the day. */
   readonly summaryOn: boolean;
   readonly summaryAt: number;
+  readonly summaryTitles?: boolean;
   /** The account's own addresses: an event one of them organizes is no invitation to answer. */
   readonly ownAddresses: readonly string[];
 }
@@ -86,7 +88,12 @@ export function calendarSnapshotOf(input: SnapshotInput): CalendarSnapshot | nul
     zones: input.zones,
   });
 
-  const listed: { first: number; last: number; event: SnapshotEvent }[] = [];
+  const listed: {
+    first: number;
+    last: number;
+    event: SnapshotEvent;
+    summaryLabel: SnapshotEvent["label"];
+  }[] = [];
   for (const o of shown) {
     const { record } = o;
     const busyOnly = o.calendar.access === "busy";
@@ -103,6 +110,7 @@ export function calendarSnapshotOf(input: SnapshotInput): CalendarSnapshot | nul
     listed.push({
       first: dayNumberOf(span.first)!,
       last: dayNumberOf(span.last)!,
+      summaryLabel: busyOnly ? { as: "busy" } : (eventLabel(record, input.summaryTitles === true) ?? label),
       event: {
         eventId: record.id,
         label,
@@ -115,20 +123,28 @@ export function calendarSnapshotOf(input: SnapshotInput): CalendarSnapshot | nul
   }
 
   // Each listed day: all day first, then by start.
+  const agendas: SummaryEvent[][] = [];
   const days: SnapshotDay[] = shownDays.map((day) => {
     const n = dayNumber(day);
-    const events = listed
+    const ordered = listed
       .filter((l) => l.first <= n && n <= l.last)
-      .map((l) => l.event)
       .sort(
-        (a, b) =>
+        ({ event: a }, { event: b }) =>
           Number(b.allDay) - Number(a.allDay) || a.startMs - b.startMs || (a.eventId < b.eventId ? -1 : 1),
       );
+    const visible = ordered.slice(0, SNAPSHOT_DAY_EVENTS_MAX);
+    agendas.push(
+      visible.map(({ event, summaryLabel }) => ({
+        label: summaryLabel,
+        startMs: event.startMs,
+        allDay: event.allDay,
+      })),
+    );
     return {
       year: day.year,
       date: dateOf(day),
-      events: events.slice(0, SNAPSHOT_DAY_EVENTS_MAX),
-      more: Math.max(0, events.length - SNAPSHOT_DAY_EVENTS_MAX),
+      events: visible.map(({ event }) => event),
+      more: ordered.length - visible.length,
     };
   });
 
@@ -152,7 +168,7 @@ export function calendarSnapshotOf(input: SnapshotInput): CalendarSnapshot | nul
     days,
     month: { year, month, marked: [...marked].sort((a, b) => a - b) },
     toAnswer,
-    summary: input.summaryOn ? summaryOf(input, shownDays, today.minutes, days, toAnswer) : null,
+    summary: input.summaryOn ? summaryOf(input, shownDays, today.minutes, days, agendas, toAnswer) : null,
   });
 }
 
@@ -162,6 +178,7 @@ function summaryOf(
   shownDays: readonly PlainDate[],
   nowMinutes: number,
   days: readonly SnapshotDay[],
+  agendas: readonly SummaryEvent[][],
   toAnswer: number,
 ): SnapshotSummary | null {
   const at =
@@ -179,5 +196,11 @@ function summaryOf(
   const listed = days[which]!;
   const timed = listed.events.filter((e) => !e.allDay);
   const first = timed.length === 0 ? null : noticeClockOf(timed[0]!.startMs, atMs, input.zone, input.zones);
-  return { atMs, events: listed.events.length + listed.more, first, toAnswer };
+  return {
+    atMs,
+    events: listed.events.length + listed.more,
+    first,
+    toAnswer,
+    ...(input.summaryTitles === undefined ? {} : { agenda: agendas[which] }),
+  };
 }

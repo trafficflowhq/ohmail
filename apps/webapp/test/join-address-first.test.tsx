@@ -124,7 +124,7 @@ async function mount() {
     await act(async () => { b!.click(); });
   };
   const press = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const button = probes.button(label);
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
@@ -136,7 +136,7 @@ async function mount() {
 describe("the address comes first and chooses the tile", () => {
   it("the address field is on screen before any tile is chosen", async () => {
     const ui = await mount();
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
+    expect(ui.host.querySelector("h1")?.textContent?.trim()).toBe(en.onboarding.providerFirst);
     expect(ui.checked()).toEqual([]);
     expect(ui.field("join-mb-address")).toBeTruthy();
     const address = ui.field("join-mb-address")!;
@@ -152,7 +152,9 @@ describe("the address comes first and chooses the tile", () => {
     for (const p of PROVIDERS.filter((x) => !x.manual)) {
       expect(AT[p.id], `a domain for ${p.id}`).toBeTruthy();
       await ui.address(at(AT[p.id]!));
-      expect(ui.checked(), p.id).toEqual([p.label]);
+      const name = p.id === "microsoft" ? en.providerPicker.microsoftShort
+        : p.id === "icloud" ? en.providerPicker.icloudShort : p.label;
+      expect(ui.checked(), p.id).toEqual([name]);
     }
     expect(ui.lookups()).toEqual([]);
   });
@@ -160,6 +162,7 @@ describe("the address comes first and chooses the tile", () => {
   it("the preset's note opens with what you'll need", async () => {
     const ui = await mount();
     await ui.address(at("web.de"));
+    await ui.tile("WEB.DE");
     expect(ui.host.textContent).toContain(en.providerPicker.need_webde);
   });
 
@@ -167,6 +170,7 @@ describe("the address comes first and chooses the tile", () => {
     const ui = await mount();
     await ui.address(at("gmail.com"));
     expect(ui.checked()).toEqual(["Gmail"]);
+    await ui.tile("Gmail");
     const links = [en.providerPicker.help_gmail, en.providerPicker.prereq_gmail].map(
       (name) => [...ui.host.querySelectorAll("a")].find((a) => a.textContent === name) ?? null,
     );
@@ -185,7 +189,7 @@ describe("the address comes first and chooses the tile", () => {
     await ui.address(at("acme-workspace.example"));
     expect(ui.checked()).toEqual(["Gmail"]);
     await ui.address(at("acme-365.example"));
-    expect(ui.checked()).toEqual(["Microsoft 365 & Outlook.com"]);
+    expect(ui.checked()).toEqual([en.providerPicker.microsoftShort]);
     expect(ui.lookups()).toEqual([{ domain: "acme-workspace.example" }, { domain: "acme-365.example" }]);
   });
 
@@ -215,12 +219,13 @@ describe("the address comes first and chooses the tile", () => {
     const ui = await mount();
     await ui.address(at("acme-slow.example"));
     await ui.tile("Infomaniak");
+    expect(ui.tiles()).toEqual([]);
     await ui.type("join-mb-pass", fixturePassword("join-address-first"));
-    expect(ui.checked()).toEqual(["Infomaniak"]);
     answer(found("gmail"));
     await ui.settle();
-    expect(ui.checked()).toEqual(["Infomaniak"]);
     expect(ui.field("join-mb-pass")?.value).toBe(fixturePassword("join-address-first"));
+    await ui.press(en.onboarding.back);
+    expect(ui.checked()).toEqual(["Infomaniak"]);
   });
 
   it("the manual tile pressed while the lookup is out gives way to the preset it finds; pressed after, it stays", async () => {
@@ -228,14 +233,16 @@ describe("the address comes first and chooses the tile", () => {
     discover["acme-ws.example"] = new Promise((r) => { answer = r; });
     const ui = await mount();
     await ui.address(at("acme-ws.example"));
-    await ui.tile(en.providerPicker.otherLabel);
-    expect(ui.checked()).toEqual([en.providerPicker.otherLabel]);
+    await ui.tile(en.providerPicker.otherShort);
+    expect(ui.tiles()).toEqual([]);
+    expect(ui.host.textContent).toContain(en.join.manualTitle);
     answer(found("gmail"));
     await ui.settle();
     expect(ui.checked()).toEqual(["Gmail"]);
-    await ui.tile(en.providerPicker.otherLabel);
+    await ui.tile(en.providerPicker.otherShort);
     await ui.settle();
-    expect(ui.checked()).toEqual([en.providerPicker.otherLabel]);
+    expect(ui.tiles()).toEqual([]);
+    expect(ui.host.textContent).toContain(en.join.manualTitle);
   });
 
   it("a pause in typing looks the domain up without leaving the field", async () => {
@@ -245,7 +252,7 @@ describe("the address comes first and chooses the tile", () => {
     await ui.act(async () => { await new Promise((r) => setTimeout(r, LOOKUP_PAUSE_MS + 50)); });
     await ui.settle();
     expect(ui.lookups()).toEqual([{ domain: "acme-typed.example" }]);
-    expect(ui.checked()).toEqual(["Microsoft 365 & Outlook.com"]);
+    expect(ui.checked()).toEqual([en.providerPicker.microsoftShort]);
   });
 
   it("a Proton address shows Proton's note, and so does a domain the lookup finds on Proton", async () => {
@@ -269,10 +276,13 @@ describe("after a refusal", () => {
     create = { status: r.httpStatus, body: { error: { code: r.code, message: r.message, details: r.details } } };
     const ui = await mount();
     await ui.address(at("web.de"));
+    await ui.tile("WEB.DE");
     await ui.type("join-mb-pass", fixturePassword("join-address-first"));
     await ui.press(en.join.connectMailbox);
     expect(ui.alerts().map((a) => a.textContent)).toEqual([en.mailboxes.probe_auth_webde]);
+    await ui.press(en.onboarding.back);
     expect(ui.tiles().length).toBe(PROVIDERS.length);
+    expect(ui.checked()).toEqual(["WEB.DE"]);
   });
 
   it("an unreachable host on the manual tile offers the hosts the lookup found, and the press only fills them", async () => {
@@ -286,12 +296,12 @@ describe("after a refusal", () => {
     };
     const ui = await mount();
     await ui.address(at("acme-srv.example"));
-    await ui.tile(en.providerPicker.otherLabel);
+    await ui.tile(en.providerPicker.otherShort);
     expect(ui.host.textContent, "nothing offered before a refusal").not.toContain("imap.acme-srv.example");
     await ui.type("join-imap", "mail.acme-srv.example");
     await ui.type("join-smtp", "mail.acme-srv.example");
     await ui.type("join-mb-pass", fixturePassword("join-address-first"));
-    await ui.press(en.join.connectMailbox);
+    await ui.press(en.join.manualConnect);
     const creates = () => sent.filter((s) => s.path === "/mailboxes").length;
     expect(creates()).toBe(1);
     expect(ui.host.textContent).toContain("imap.acme-srv.example");
@@ -312,14 +322,14 @@ describe("after a refusal", () => {
     };
     const ui = await mount();
     await ui.address(at("acme-srv.example"));
-    await ui.tile(en.providerPicker.otherLabel);
+    await ui.tile(en.providerPicker.otherShort);
     await ui.type("join-imap", "mail.acme-srv.example");
     await ui.type("join-smtp", "mail.acme-srv.example");
     await ui.type("join-mb-pass", fixturePassword("join-address-first"));
-    await ui.press(en.join.connectMailbox);
+    await ui.press(en.join.manualConnect);
     // Another tab signs this browser in as somebody else: the next press sends nothing and the wizard says so.
     session = { status: 200, body: { ...FULL, user: { ...FULL.user, accountId: "b2", email: "sam@family.example" } } };
-    await ui.press(en.join.connectMailbox);
+    await ui.press(en.join.manualConnect);
     const changed = en.join.accountChanged.replace("{email}", "sam@family.example");
     expect(ui.host.textContent).toContain(changed);
     await ui.press(en.providerPicker.discoveredUse);

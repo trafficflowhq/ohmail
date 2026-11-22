@@ -1,4 +1,5 @@
 /** The door of `search`: Search's behaviour, apart from what draws it. */
+export { shortCivilDateStamp } from "@ohmail/client-engine";
 export * from "./types.js";
 export * from "./context.js";
 export { useSearchList } from "./search-list.js";

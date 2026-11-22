@@ -204,6 +204,7 @@ function EditorContents({
         <DraftFields
           {...{ draft, today, calendar, tone, change }}
           choices={[]}
+          placeSource={original.id}
           cancel={{ label: t("edit.cancel"), onPress: cancelEdit }}
           submit={{ label: t("edit.save"), keyHint: "↵", disabled: !ready, onPress: submit }}
           fixedTime={timeEditable ? undefined : when}

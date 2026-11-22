@@ -4,7 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { queryAllByRole, queryByRole } from "@testing-library/dom";
+import { getByRole, queryAllByRole, queryByRole } from "@testing-library/dom";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
@@ -105,6 +105,9 @@ const bars = (): string[] =>
   ).map((panel) => (panel.textContent ?? "").replace(/\s+/g, " ").trim());
 const barButton = (label: string): HTMLElement | null =>
   queryByRole(queryByRole(host!, "toolbar", { name: "Actions" }) ?? host!, "button", { name: label });
+async function openMoveFromBar(): Promise<void> {
+  await click(barButton("Move"));
+}
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 beforeEach(() => {
@@ -301,10 +304,8 @@ async function markAllSpamConfirmed(): Promise<void> {
   expect(asked.length, "one waiting sender: no pile to mark").toBeGreaterThan(1);
   await click(queryByRole(seatedList(host!) ?? host!, "button", { name: "List" }));
   await click(menuItem(messages.screener.markAllSpam));
-  const ask = queryByRole(document.body, "dialog", { name: /waiting senders? as spam/ });
-  expect(ask?.textContent?.match(/(\d+) waiting senders? as spam\?/)?.[1], "the question names another number").toBe(String(asked.length));
-  const yes = messages.screener.askAllSpamYes.replace("{count}", String(asked.length));
-  await click(ask && queryByRole(ask, "button", { name: yes }));
+  const ask = getByRole(document.body, "dialog", { name: `Mark ${asked.length} as spam` });
+  await click(getByRole(ask, "button", { name: messages.screener.askAllSpamYes }));
 }
 
 const HELD: readonly HeldPress[] = [
@@ -312,14 +313,14 @@ const HELD: readonly HeldPress[] = [
     name: "the Screener decide (r → News)",
     press: async () => { await mountShell("#/screener"); await tick(2000); await key("r"); },
     sends: () => kinds("screener_decide").length,
-    undone: /^Undone — 1 waiting again\.$/,
+    undone: /^Undone — 1 waiting again$/,
   },
   {
     name: "a Screener pile (Mark all spam, its question, Mark N as spam)",
     press: async () => { await mountShell("#/screener"); await tick(2000); await markAllSpamConfirmed(); await tick(2000); },
     sends: () => kinds("screener_decide").length,
     // Every sender it named comes back, not some.
-    get undone() { return new RegExp(`^Undone — ${asked.length} waiting again\\.$`); },
+    get undone() { return new RegExp(`^Undone — ${asked.length} waiting again$`); },
     named: () => ({ sent: decisions().sort(), named: asked.map((id) => `${id} spam`).sort() }),
   },
   {
@@ -327,8 +328,7 @@ const HELD: readonly HeldPress[] = [
     press: async () => {
       await mountShell("#/ohbox");
       await openFirstOhboxLetter();
-      await click(barButton("More"));
-      await click(menuItem("Move"));
+      await openMoveFromBar();
       await click(menuItem("News"));
     },
     sends: () => sent.filter((m) => m.kind.startsWith("rule_")).length,
@@ -338,7 +338,7 @@ const HELD: readonly HeldPress[] = [
     name: "the delete window (Backspace)",
     press: async () => { await mountShell("#/ohbox"); await openFirstOhboxLetter(); await key("Backspace"); },
     sends: () => kinds("message_delete").length,
-    undone: new RegExp(`^${messages.ohbox.deleteUndone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+    undone: /^Not deleted — the message is where it was$/,
   },
 ];
 
@@ -346,7 +346,7 @@ const HELD: readonly HeldPress[] = [
 const notice = (): string => reportSays() ||
   (queryAllByRole(document.body, "status")
     .map((region) => region.textContent?.trim() ?? "")
-    .find((line) => line === messages.shortcuts.nothingToUndo) ?? "");
+    .find((line) => line === "Nothing to undo") ?? "");
 
 describe("z takes back what the toast's Undo takes back, inside the window", () => {
   for (const p of HELD) {
@@ -392,7 +392,7 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       await tick(30_000);
       expect(p.sends()).toBe(committed);
       // Past the window `z` says so rather than nothing; it never claims an undo.
-      expect(answer).toBe(messages.shortcuts.nothingToUndo);
+      expect(answer).toBe("Nothing to undo");
     });
   }
 
@@ -587,13 +587,14 @@ async function strokesOf(caps: string[]): Promise<Array<{ key: string; init: Key
   return [{ key: keyOf(rest[0]!), init: { shiftKey: shift, ctrlKey: ctrl } }];
 }
 
-/** Everything a key can change: the route, the wire, the page, the root's stamps, focus. */
+/** Everything a key can change: the route, the wire, the page, the root's stamps, focus, and scroll. */
 const effect = () => ({
   hash: window.location.hash,
   wire: sent.length,
   dom: host!.innerHTML,
   root: [...document.documentElement.attributes].map((a) => `${a.name}=${a.value}`).join(" "),
   focus: document.activeElement,
+  scroll: host!.querySelector<HTMLElement>("[data-reading-scroll]")?.scrollTop ?? 0,
   body: document.body.childElementCount,
 });
 const moved = (a: ReturnType<typeof effect>, b: ReturnType<typeof effect>): boolean =>
@@ -668,10 +669,19 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
       for (const row of table.filter((r) => r.live && r.label !== messages.shortcuts.undo && r.label !== v.here)) {
         for (const chord of row.chords) {
           await openOn(v);
+          const goesToTop = row.label === "Back to top" && (v.name === "News" || v.name === "Receipts");
+          if (goesToTop) {
+            const stream = getByRole(host!, "region", { name: `${v.name} stream` });
+            const port = stream.querySelector<HTMLElement>("[data-reading-scroll]");
+            expect(port).not.toBeNull();
+            port!.scrollTop = 200;
+          }
           const before = effect();
           for (const s of await strokesOf(chord)) await key(s.key, s.init);
           await tick(50);
-          if (!moved(before, effect())) dead.push(`${chord.join("")} ${row.label}`);
+          const after = effect();
+          if (goesToTop) expect([before.scroll, after.scroll]).toEqual([200, 0]);
+          if (!moved(before, after)) dead.push(`${chord.join("")} ${row.label}`);
         }
       }
       expect(dead, `${v.name}: live rows that did nothing`).toEqual([]);
@@ -707,7 +717,7 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
     await tick(2000);
     expect(cursorRow(host!), "a row was selected on arrival").toBeNull();
     const table = await sheetTable();
-    const move = table.find((r) => r.label === messages.shortcuts.move);
+    const move = table.find((r) => r.label === messages.reader.key.move && r.chords.some(([key]) => key === "m"));
     expect(move?.reason).toBe(messages.shortcuts.needsCursor);
   });
 });
@@ -750,8 +760,7 @@ describe("the key sends what its button sends", () => {
       await tick(500);
       sent = [];
       await openCard(id);
-      await click(barButton("More"));
-      await click(menuItem("Move"));
+      await openMoveFromBar();
       await click(firstDestination());
       await tick(30_000);
       expect(wire()).toEqual(byKey);
@@ -772,7 +781,7 @@ describe("the key sends what its button sends", () => {
       sent = [];
       await openCard(id);
       await click(barButton("More"));
-      await click([...document.querySelectorAll("[role=menuitem]")].find((b) => (b.textContent ?? "").trim() === messages.ohbox.actionDelete));
+      await click(menuItem(messages.reader.verb.delete));
       const confirm = queryByRole(document.body, "dialog", { name: "Move to Trash" });
       await click(confirm && queryByRole(confirm, "button", { name: "Move" }));
       await tick(30_000);

@@ -147,6 +147,7 @@ export function SeedReview({
               </ul>
             </details>
           ) : null}
+          {offer.reopened ? <SettingNote>{say("seed.reopenConsequence")}</SettingNote> : null}
         </div>
       }
       acts={

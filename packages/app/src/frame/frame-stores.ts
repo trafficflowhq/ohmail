@@ -30,6 +30,7 @@ export function useFrameStores(address: FrameHost["device"]["address"]) {
     foot: createFeed<RailFootModel | null>(null),
     connection: createFeed<ConnectionFeed>(NO_CONNECTION, sameFeed),
     draft: { current: null as LinkedDraft | null },
+    calendarInvitation: { current: null as import("../calendar/faces.js").CalendarEventFace | null },
     calendarDraftSeed: { current: null as CalendarDraftSeed | null },
     entered: createFeed<EnteredTarget | null>(null),
     readerPosition: { current: null as ReaderPosition | null },

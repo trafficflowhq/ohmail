@@ -304,53 +304,61 @@ describe("the away responder's Ohbox notice", () => {
 
   it("stands in a box of its own, distinct from the pile sublines under it", async () => {
     const width = 420;
-    vi.stubGlobal("innerWidth", width);
-    try {
+    const snapshots: { html: string; root: string; expected: string }[] = [];
+    for (const piles of [[], [...AWAY_ANSWERABLE_PILES]]) {
+      vi.stubGlobal("innerWidth", width);
       stored.enabled = true;
       stored.audience = "everyone";
-      stored.piles = [...AWAY_ANSWERABLE_PILES];
+      stored.piles = piles;
       await mount({ active: true });
       const status = notice()!;
-      expect(status).toBeTruthy();
+      const expected = piles.length === 0 ? messages.away.noticeNone : "whose mail lands in Ohbox, in News, in Receipts, or in the Screener";
+      expect(status.textContent).toContain(expected);
       expect(status.getAttribute("data-place")).toBe("bar");
       const root = [...document.documentElement.attributes].map(({ name, value }) => `${name}="${value}"`).join(" ");
-      const html = document.body.innerHTML;
+      snapshots.push({ html: document.body.innerHTML, root, expected });
+      await teardownConfirmEnv();
+    }
+    try {
       vi.useRealTimers();
       const browser = await chromium.launch();
       try {
         const page = await browser.newPage({ viewport: { width, height: 844 } });
         page.setDefaultTimeout(5000);
-        await page.setContent(pageOf({ html, root }));
-        const box = page.getByRole("status").filter({ hasText: /^Away responder is on/ });
-        await expect(box.count()).resolves.toBe(1);
-        expect(await box.getByRole("button", { name: messages.away.noticeSettings }).isVisible()).toBe(true);
-        const measured = await box.evaluate((el) => {
-          const title = el.querySelector(".oh-notice-title")!;
-          const walker = document.createTreeWalker(title, NodeFilter.SHOW_TEXT);
-          const fragments: DOMRect[] = [];
-          for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-            const range = document.createRange();
-            range.selectNodeContents(node);
-            fragments.push(...[...range.getClientRects()].filter((rect) => rect.width > 0));
-          }
-          const rect = el.getBoundingClientRect();
-          const bar = el.closest(".fr-noticebar")!.getBoundingClientRect();
-          const list = document.querySelector(".ob-scroll")!;
-          return {
-            wraps: fragments.some((fragment) => fragment.top > fragments[0]!.top + 1),
-            textFits: fragments.every((fragment) =>
-              fragment.left >= rect.left && fragment.right <= rect.right && fragment.bottom <= rect.bottom),
-            boxFits: rect.left >= bar.left && rect.right <= bar.right && rect.right <= window.innerWidth &&
-              el.scrollWidth <= el.clientWidth,
-            outsideScroller: !list.contains(el),
-            aboveScroller: bar.bottom <= list.getBoundingClientRect().top + 1,
-            calm: el.closest('[role="alert"]') === null,
-          };
-        });
-        expect(measured).toEqual({
-          wraps: true, textFits: true, boxFits: true,
-          outsideScroller: true, aboveScroller: true, calm: true,
-        });
+        for (const { html, root, expected } of snapshots) {
+          await page.setContent(pageOf({ html, root }));
+          const box = page.getByRole("status").filter({ hasText: /^Away responder is on/ });
+          await expect(box.count()).resolves.toBe(1);
+          expect(await box.textContent()).toContain(expected);
+          expect(await box.getByRole("button", { name: messages.away.noticeSettings }).isVisible()).toBe(true);
+          const measured = await box.evaluate((el) => {
+            const sentence = el.querySelector(".oh-notice-say")!;
+            const walker = document.createTreeWalker(sentence, NodeFilter.SHOW_TEXT);
+            const fragments: DOMRect[] = [];
+            for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              fragments.push(...[...range.getClientRects()].filter((rect) => rect.width > 0));
+            }
+            const rect = el.getBoundingClientRect();
+            const bar = el.closest(".fr-noticebar")!.getBoundingClientRect();
+            const list = document.querySelector(".ob-scroll")!;
+            return {
+              wraps: fragments.some((fragment) => fragment.top > fragments[0]!.top + 1),
+              textFits: fragments.every((fragment) =>
+                fragment.left >= rect.left && fragment.right <= rect.right && fragment.bottom <= rect.bottom),
+              boxFits: rect.left >= bar.left && rect.right <= bar.right && rect.right <= window.innerWidth &&
+                el.scrollWidth <= el.clientWidth,
+              outsideScroller: !list.contains(el),
+              aboveScroller: bar.bottom <= list.getBoundingClientRect().top + 1,
+              calm: el.closest('[role="alert"]') === null,
+            };
+          });
+          expect(measured).toEqual({
+            wraps: true, textFits: true, boxFits: true,
+            outsideScroller: true, aboveScroller: true, calm: true,
+          });
+        }
       } finally {
         await browser.close();
       }

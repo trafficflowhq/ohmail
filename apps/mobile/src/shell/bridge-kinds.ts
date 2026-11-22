@@ -34,6 +34,7 @@
 import { isWidgetGeneration, type WidgetTarget } from "../calendar/opened";
 import { readCalendarSnapshot, type CalendarSnapshot } from "../calendar/record";
 import { isSwitchPlace, type SwitchPlace } from "../switch/place";
+import { cleanNoticeText, type MailNoticeDetails } from "../state/surface";
 import type { MailboxRow } from "@ohmail/app-logic/mailboxes/pane-contract";
 import type { Answered } from "@ohmail/app-logic/mailboxes/connect/types";
 import type { PhoneDiagnosticRequest } from "./phone-diagnostics";
@@ -182,7 +183,7 @@ export type ShellAct =
   | { readonly act: "notifications.request" }
   | { readonly act: "backup.read" }
   /** Draw one mail notice. Native writes its words; what was done with it comes back as `notice`. */
-  | { readonly act: "notices.post"; readonly notice: BridgeNotice }
+  | { readonly act: "notices.post"; readonly notice: BridgeNotice; readonly details?: MailNoticeDetails }
   | { readonly act: "calendar.snapshot"; readonly snapshot: CalendarSnapshot; readonly publication?: string }
   | { readonly act: "calendar.clear"; readonly publication: string }
   | { readonly act: "calendar.resolve"; readonly generation: string }
@@ -504,10 +505,24 @@ export function readNotice(raw: unknown): BridgeNotice | null {
 export const BRIDGE_NOTICE_KINDS = Object.keys(NOTICE_MEMBERS) as readonly BridgeNoticeKind[];
 
 /** The keys the act `notices.post` crosses with: the envelope's three, the act and its notice. */
-const POST_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "notice"]);
-/** The act that draws a notice is as closed as its notice: no key beside its own, and a notice that reads. */
-const isNoticePost = (m: Record<string, unknown>): boolean =>
-  Reflect.ownKeys(m).every((key) => typeof key === "string" && POST_KEYS.has(key)) && readNotice(m.notice) !== null;
+const POST_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "notice", "details"]);
+
+export function readMailNoticeDetails(raw: unknown): MailNoticeDetails | null {
+  if (typeof raw !== "object" || raw === null || Reflect.ownKeys(raw).length !== 2
+      || !Object.hasOwn(raw, "sender") || !Object.hasOwn(raw, "subject")) return null;
+  const { sender, subject } = raw as Record<string, unknown>;
+  if (typeof sender !== "string" || typeof subject !== "string" ||
+      sender.length > 160 || subject.length > 160) return null;
+  return cleanNoticeText(sender) === sender && cleanNoticeText(subject) === subject ? { sender, subject } : null;
+}
+
+/** The paired OS can draw opt-in text for only one identified message. */
+function isNoticePost(m: Record<string, unknown>): boolean {
+  const notice = readNotice(m.notice);
+  return notice !== null && Reflect.ownKeys(m).every((key) => typeof key === "string" && POST_KEYS.has(key))
+    && (!Object.hasOwn(m, "details")
+      || (notice.kind === "ohbox" && notice.count === 1 && readMailNoticeDetails(m.details) !== null));
+}
 
 /** The keys the act `calendar.snapshot` crosses with: the envelope's three, the act and its record. */
 const SNAPSHOT_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "snapshot", "publication"]);

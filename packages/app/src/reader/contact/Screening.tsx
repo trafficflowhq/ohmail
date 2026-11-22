@@ -243,7 +243,8 @@ function screeningExtras({
     now:
       count > 0
         ? {
-            line: current ? t("nowIn", { count, place: current }) : t("nowSpread", { count }),
+            line: current ? t("nowIn", { place: current }) : t("nowSpread", { count }),
+            description: current ? t("nowInWithCount", { place: current, count }) : undefined,
             place: current,
             all:
               scopeHere === "sender" && openAudit

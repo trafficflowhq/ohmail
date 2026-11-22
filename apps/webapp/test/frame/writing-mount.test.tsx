@@ -128,6 +128,7 @@ async function account(
     messages?: EngineMessage[];
     drafts?: EngineDraft[];
     draftReply?: DraftReplyWire;
+    draftReplies?: boolean;
     room?: "desktop" | "phone";
     linkIn?: LinkIn;
     /** No signal: every change waits on the outbox. */
@@ -144,6 +145,12 @@ async function account(
   const sendGate: Account["sendGate"] = { wait: null };
   const saveGate: Account["saveGate"] = { wait: null };
   const store = await storeWith(o.messages ?? [message("m1")], o.drafts ?? []);
+  if (o.draftReplies !== undefined) {
+    await store.applyChanges([{
+      seq: 99, type: "settings", id: scope, op: "update", updatedAt: new Date(0).toISOString(),
+      entity: { draftReplies: o.draftReplies },
+    }]);
+  }
   const versions = o.versions === true ? new Map<string, string>() : null;
   const offline = { on: o.offline === true };
   const engine = engineOver(
@@ -582,6 +589,16 @@ describe("the host's draft wire reaches the one composer, and none is never repl
     expect(now().composer.replyBody.text).toBe("Noon works.");
     expect(now().writing.replyTo).toBe("m1");
     expect(sends(A), "a drafted reply is not a sent one").toEqual([]);
+
+    const blockedWire = countingWire();
+    const a = await account("acc-a", { draftReply: blockedWire.wire, draftReplies: false });
+    await stand(a.host);
+    expect(now().writing.draftReply.offered).toBe(false);
+    await act(async () => now().writing.draftReply.press("m1", { text: "", html: "" }));
+    expect(blockedWire.asked).toEqual({ create: [], read: [] });
+    const b = await account("acc-b", { draftReply: blockedWire.wire, draftReplies: true });
+    await stand(b.host);
+    expect(now().writing.draftReply.offered).toBe(true);
   }, 60_000);
 
   it.each([

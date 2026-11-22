@@ -1036,6 +1036,28 @@ describe("the onboarding-consent routes", () => {
       .where(eq(accountSettings.accountId, s.accountId))).toHaveLength(0);
   });
 
+  it("stores the draft reply choice for its account and sends it on the settings feed", async () => {
+    const { db, deps } = await makeDeps();
+    const a = await seedAccount(db, FIXED_NOW);
+    const b = await seedAccount(db, FIXED_NOW);
+    const read = async (bearer: string) =>
+      (await H(req("GET", "/consent", { bearer }), deps)).json();
+    const write = (bearer: string, draftReplies: unknown) =>
+      H(req("PATCH", "/consent/settings", { bearer, body: JSON.stringify({ draftReplies }) }), deps);
+
+    expect((await read(a.token)).draftReplies).toBe(true);
+    expect((await write(a.token, "false")).status).toBe(400);
+    const off = await write(a.token, false);
+    expect(off.status).toBe(200);
+    expect(await off.json()).toEqual({ draftReplies: false });
+    expect((await read(a.token)).draftReplies).toBe(false);
+    expect((await read(b.token)).draftReplies).toBe(true);
+    const feed = await (await H(req("GET", "/sync?since=0&types=settings", { bearer: a.token }), deps)).json();
+    expect([...feed.changes.creates, ...feed.changes.updates].at(-1)?.entity.draftReplies).toBe(false);
+    expect((await write(a.token, true)).status).toBe(200);
+    expect((await read(a.token)).draftReplies).toBe(true);
+  });
+
   /**
    * THE RESURFACE TIME (mail 0110) — a WALL CLOCK, `themeFace`'s wire discipline over a format
    * rather than a closed set, and `null` is sendable: it means "back to the product's 09:00".

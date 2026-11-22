@@ -10,6 +10,7 @@
  * core's own writer of a new event, a repeat through the core's own reader of a rule, and every
  * string that keys or names something is held to the reader's ceiling at this door.
  */
+import { portableMicrosoft } from "../portable.js";
 import {
   eventOf,
   instant,
@@ -333,7 +334,8 @@ function upsertOf(raw: Json, id: string, shape: Shape, nowMs: number): Upsert | 
   const event = eventOf({ ...made, properties: [...made.properties, ...more] });
   return {
     kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null,
-    ...(incompleteAudience(raw, event) && { audienceIncomplete: true }),
+    // A normal Graph read cannot prove that no legacy extended properties exist.
+    ...(Array.isArray(raw.singleValueExtendedProperties) && Array.isArray(raw.multiValueExtendedProperties) && portableMicrosoft(raw) && { portableCopy: true as const }), ...(incompleteAudience(raw, event) && { audienceIncomplete: true }),
   };
 }
 

@@ -1,10 +1,13 @@
-import { useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useContext, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { closeTopmost, useOverlayEscape } from "./overlay-escape.js";
 import { cycleTab, useOverlayFocus } from "./overlay-focus.js";
+import { portalRenderer } from "./portal-renderer.js";
 import "./overlay.css";
 
 export interface OverlayProps {
   open: boolean;
+  /** Place the overlay above a containing panel that clips its children. */
+  portal?: boolean;
   /** A panel being pulled into view, before it takes focus or becomes modal. */
   preview?: boolean;
   panelRef?: RefObject<HTMLDivElement | null>;
@@ -43,6 +46,7 @@ const firstButton = (box: HTMLElement) => box.querySelector<HTMLElement>("button
  */
 export function Overlay({
   open,
+  portal,
   preview = false,
   panelRef,
   onClose,
@@ -60,6 +64,7 @@ export function Overlay({
   onKey,
   children,
 }: OverlayProps) {
+  const renderPortal = useContext(portalRenderer);
   const ownBox = useRef<HTMLDivElement | null>(null);
   const box = panelRef ?? ownBox;
   useOverlayFocus(open, box, first ?? firstButton, returnFocus, false, inertBackground);
@@ -75,7 +80,7 @@ export function Overlay({
     } else cycleTab(e, e.currentTarget);
   };
 
-  return (
+  const drawn = (
     <div className="oh-over" inert={!open || undefined} aria-hidden={!open || undefined}>
       <div
         className="oh-scrim"
@@ -100,4 +105,5 @@ export function Overlay({
       </div>
     </div>
   );
+  return portal ? (typeof document === "undefined" ? null : renderPortal(drawn, document.body)) : drawn;
 }

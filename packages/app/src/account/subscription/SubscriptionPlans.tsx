@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Button, RadioLines, Seg } from "@ohmail/ui/base";
 import { ActionPanel, SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
@@ -39,10 +38,22 @@ function payingVerb(model: SubscriptionModel, read: ReadPlans): "fix" | "subscri
  * says so with Try again, and the verbs stay. A read answered draws every plan as a line with its price for the
  * interval chosen, the person's own marked, and the add-on as its own line.
  */
-export function SubscriptionPlans({ model }: { readonly model: SubscriptionModel }) {
+type PlanSelection = {
+  readonly model: SubscriptionModel;
+  readonly selection?: PlanName;
+};
+
+function pickedPlan(answer: ReadPlans, selection: PlanName | undefined): PlanName | undefined {
+  return answer.plans.find(({ plan }) => plan === selection)?.plan ?? answer.current?.plan;
+}
+
+export function SubscriptionPlans({
+  model,
+  selection,
+  select,
+}: PlanSelection & { readonly select: (plan: PlanName) => void }) {
   const t = useText("settings");
   const own = useText("accountSubscription");
-  const [selection, select] = useState<PlanName>();
   if (model.plans.at === "unavailable") {
     return (
       <SettingsSheet
@@ -63,32 +74,37 @@ export function SubscriptionPlans({ model }: { readonly model: SubscriptionModel
   if (read === null) return null;
   const { answer, interval } = read;
   const { current } = answer;
+  const both =
+    answer.plans.some((line) => line.price.month !== null) &&
+    answer.plans.some((line) => line.price.year !== null);
   const verb = payingVerb(model, answer);
   const selectable = verb === "subscribe";
-  const picked = selectable
-    ? (answer.plans.find(({ plan }) => plan === selection)?.plan ?? current?.plan)
-    : current?.plan;
-  const pick: PlanPick = picked ? { plan: picked, interval } : { interval };
+  const picked = selectable ? pickedPlan(answer, selection) : current?.plan;
   const options = answer.plans.map((line) => ({
     value: line.plan,
     label: t("storagePlanName", { plan: line.plan }),
     tag: current?.plan === line.plan ? t("storageTagYours") : undefined,
-    note: own("planFacts", { mailboxes: line.mailboxes, credits: line.credits, storage: line.storage }),
+    note:
+      line.credits === undefined
+        ? own("planFactsWithoutCredits", { mailboxes: line.mailboxes, storage: line.storage })
+        : own("planFacts", { mailboxes: line.mailboxes, credits: line.credits, storage: line.storage }),
     figure: line.price[interval] ?? undefined,
   }));
   return (
     <SettingsSheet
       title={t("storagePlansHead")}
       aside={
-        <Seg
-          label={own("billing")}
-          options={[
-            { value: "month", label: own("monthly") },
-            { value: "year", label: own("yearly") },
-          ]}
-          value={interval}
-          onChange={model.choose}
-        />
+        both ? (
+          <Seg
+            label={own("billing")}
+            options={[
+              { value: "month", label: own("monthly") },
+              { value: "year", label: own("yearly") },
+            ]}
+            value={interval}
+            onChange={model.choose}
+          />
+        ) : undefined
       }
     >
       {selectable && options.length > 0 ? (
@@ -112,26 +128,38 @@ export function SubscriptionPlans({ model }: { readonly model: SubscriptionModel
           />
         ))
       )}
-      {verb === null || model.status?.standing.state === "overdue" ? null : (
-        <ActionPanel
-          label={t("storagePlansHead")}
-          items={[
-            {
-              id: "pay",
-              kind: "ink",
-              rank: 0,
-              disabled: model.opening,
-              label:
-                verb === "fix"
-                  ? own("fixPayment")
-                  : picked
-                    ? own("subscribeTo", { plan: picked })
-                    : own("subscribe"),
-              onPress: () => (verb === "fix" ? model.manage() : model.manage(pick)),
-            },
-          ]}
-        />
-      )}
     </SettingsSheet>
+  );
+}
+
+export function SubscriptionPayment({ model, selection }: PlanSelection) {
+  const t = useText("settings");
+  const own = useText("accountSubscription");
+  const read = readPlansOf(model);
+  if (read === null || model.status?.standing.state === "overdue") return null;
+  const verb = payingVerb(model, read.answer);
+  if (verb === null) return null;
+  const picked = pickedPlan(read.answer, selection);
+  const pick: PlanPick = picked ? { plan: picked, interval: read.interval } : { interval: read.interval };
+  return (
+    <ActionPanel
+      label={t("storagePlansHead")}
+      items={[
+        {
+          id: "pay",
+          kind: "ink",
+          icon: verb === "subscribe" ? "check" : undefined,
+          rank: 0,
+          disabled: model.opening,
+          label:
+            verb === "fix"
+              ? own("fixPayment")
+              : picked
+                ? own("subscribeTo", { plan: picked })
+                : own("subscribe"),
+          onPress: () => (verb === "fix" ? model.manage() : model.manage(pick)),
+        },
+      ]}
+    />
   );
 }

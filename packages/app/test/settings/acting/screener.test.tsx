@@ -181,12 +181,14 @@ describe("what reaches the Ohbox", () => {
   it("saves written words trimmed, the default as nothing stored, and offers the default only once words are stored", async () => {
     const saveBar = vi.fn((bar: string | null) => Promise.resolve({ bar, travelled: false }));
     drawn(<ScreenerPane model={only({ ohbox: ohbox({ saveBar }) })} />);
-    const save = screen.getByRole("button", { name: said("en", "settings", "screening.save") });
-    expect(isOff(save)).toBe(true);
+    const saveName = said("en", "settings", "screening.save");
+    expect(screen.queryByRole("button", { name: saveName })).toBeNull();
     expect(screen.queryByRole("button", { name: said("en", "settings", "screening.reset") })).toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: said("en", "settings", "screening.barLabel") }), {
       target: { value: "  Only people.  " },
     });
+    const save = screen.getByRole("button", { name: saveName });
+    expect(isOff(save)).toBe(false);
     fireEvent.click(save);
     await settle();
     expect(saveBar.mock.calls).toEqual([["Only people."]]);
@@ -235,6 +237,9 @@ describe("how far back the Screener asks", () => {
       [180, "window"],
       [undefined, "all_time"],
     ]);
+    fireEvent.click(
+      screen.getByRole("button", { name: `About ${said("en", "settings", "dormancy.title")}` }),
+    );
     expect(seen(said("en", "settings", "dormancy.microcopy"))).toBe(true);
   });
 });
@@ -292,6 +297,9 @@ describe("the suggestions, acting on them, and unsubscribing", () => {
     fireEvent.click(sw("en", "autoUnsub.title"));
     await settle();
     expect(setBlocked.mock.calls).toEqual([[true]]);
+    fireEvent.click(
+      screen.getByRole("button", { name: `About ${said("en", "settings", "autoUnsub.title")}` }),
+    );
     expect(seen(said("en", "settings", "autoUnsub.microcopyComputer"))).toBe(true);
   });
 });

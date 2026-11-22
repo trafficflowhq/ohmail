@@ -12,6 +12,7 @@ import {
   isSharedDomain,
   PILE_VERB_KEY,
   refused,
+  senderCheckSentence,
   suggestionWords,
   type DecisionDestination,
   type ScreenerView,
@@ -24,6 +25,7 @@ import { useText } from "../../text/index.js";
 import { useNoAdvice, useScreener } from "../contract.js";
 import { useFrame } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
+import { IdentityNotice } from "./IdentityNotice.js";
 import { lookalikeBrand, whoOf } from "./Sentence.js";
 
 export interface CardActions {
@@ -93,19 +95,7 @@ function OpenCard({ view, sender, anchor, choosing, actions }: CardProps) {
               },
             }
       }
-      notice={
-        claim || shared ? (
-          <div className="sc-sentence-tools">
-            {claim ? <Tag>{t("senderCheck.chip", { brand: claim })}</Tag> : null}
-            {shared ? (
-              <>
-                <Tag>{t("place.sharedProvider")}</Tag>
-                <Tag>{t("place.perAddress")}</Tag>
-              </>
-            ) : null}
-          </div>
-        ) : undefined
-      }
+      notice={<SenderNotice sender={sender} claim={claim} shared={shared} />}
       scope={
         may && !shared
           ? {
@@ -218,6 +208,34 @@ function CardWays({
         </MenuItem>
       ) : null}
       {children}
+    </>
+  );
+}
+
+function SenderNotice({
+  sender,
+  claim,
+  shared,
+}: {
+  sender: ScreenerSenderDTO;
+  claim: string | undefined;
+  shared: boolean;
+}) {
+  const t = useText("screener");
+  return (
+    <>
+      {sender.checked ? <IdentityNotice>{senderCheckSentence(t, sender.checked)}</IdentityNotice> : null}
+      {claim || shared ? (
+        <div className="sc-sentence-tools">
+          {claim ? <Tag>{t("senderCheck.chip", { brand: claim })}</Tag> : null}
+          {shared ? (
+            <>
+              <Tag>{t("place.sharedProvider")}</Tag>
+              <Tag>{t("place.perAddress")}</Tag>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </>
   );
 }

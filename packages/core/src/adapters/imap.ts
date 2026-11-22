@@ -6296,7 +6296,7 @@ export function outboundToMail(msg: OutboundMessage, messageId: string, date: Da
     // or `raw` there would have nodemailer read a file or fetch an address. Not `icalEvent`, which
     // also attaches the text as a file. Omitted when absent: every other letter is unchanged.
     ...(msg.calendar !== undefined
-      ? { alternatives: [{ contentType: "text/calendar; charset=utf-8; method=REPLY", content: msg.calendar.text }] }
+      ? { alternatives: [{ contentType: `text/calendar; charset=utf-8; method=${msg.calendar.method}`, content: msg.calendar.text }] }
       : {}),
   };
 }

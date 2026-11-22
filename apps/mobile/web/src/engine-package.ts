@@ -22,6 +22,6 @@ const CARRIED: ReadonlySet<string> = new Set([
 export const isCarriedLocalType = (type: string): boolean => CARRIED.has(type);
 export type { EmailAddress, EngineMutation } from "@ohmail/wire";
 export type {
-  CalendarNoticeChoices, CalendarSnapshot, IndexedDbMirrorStoreOptions, MailNotice, MirrorRecord, MirrorStore, Notice,
+  CalendarNoticeChoices, CalendarSnapshot, IndexedDbMirrorStoreOptions, MailNotice, MailNoticeDetails, MirrorRecord, MirrorStore, Notice,
   NoticeChoices, NoticePermission, NoticeTaken, SyncChange,
 } from "@ohmail/client-engine";

@@ -160,9 +160,9 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
   const revokedHere = useRevokedHere(resolvedDemo, tabAccount);
   const [accountCleanup, showAccountCleanup] = useState<AccountCleanup | null>(null);
   /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
-  const [account, setAccount] = useState<{ id: string; address: string | null } | null>(null);
+  const [account, setAccount] = useState<{ id: string; address: string | null; displayName?: string } | null>(null);
   const confirmFaceOwner = useContext(ConfirmBrowserFaceOwner);
-  const onConfirmed = useCallback((accountId: string, address?: string, familyId?: string) => {
+  const onConfirmed = useCallback((accountId: string, address?: string, familyId?: string, displayName?: string) => {
     // A sign-out pending on this jar: the tab is leaving, and nothing is bound for this answer.
     if (!listenFor(accountId, familyId)) return;
     bindApiOwner(accountId, familyId);
@@ -173,7 +173,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
       destination.hash = "/ohbox";
       window.history.replaceState(window.history.state, "", destination.href);
     }
-    setAccount({ id: accountId, address: address ?? null });
+    setAccount({ id: accountId, address: address ?? null, displayName });
   }, [confirmFaceOwner, listenFor, wakeSession]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
@@ -355,7 +355,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
 
   const words: WebWords = {
     server, invites: userInvites, subscriptionPage: manageOffered, withdrawManage, storageBlock: storageOffered,
-    account: account?.id ?? null, accountAddress: account?.address ?? null, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
+    account: account?.id ?? null, accountAddress: account?.address ?? null, accountDisplayName: account?.displayName, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
   };
   return (
     <EngineProvider

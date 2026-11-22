@@ -82,7 +82,7 @@ export {
 // The one door to `message_invitations` (mail 0204): an invitation's identity and the answer on it.
 export {
   INVITATION_UID_MAX_BYTES, INVITATION_RECURRENCE_ID_MAX_BYTES, INVITATION_ADDRESS_MAX_CHARS, sameAddress,
-  writeInvitation, recordInvitationAnswer, invitationStanding, putInvitationCopy, invitationFieldOf,
+  writeInvitation, recordInvitationAnswer, invitationStanding, putInvitationCopy, invitationFieldOf, invitationCalendarId,
   type InvitationWrite, type InvitationAnswerRecord, type InvitationStandingAsk, type InvitationCopyOf,
 } from "./message-invitations.js";
 export {

@@ -8,7 +8,7 @@ import {
 import { addDays, clockOf, dayLong, isoOfDay, resizeSlot } from "@ohmail/app-logic/calendar";
 import { EventChip } from "@ohmail/ui/calendar";
 import type { CalendarEventFace } from "./faces.js";
-import { resizedDays } from "./event-time-change.js";
+import { resizedDays, type EventChange } from "./event-time-change.js";
 import type { EventActions } from "./use-event-actions.js";
 import type { DayEdge, TimedSegment } from "./view.js";
 import { useLocale, useText } from "../text/index.js";
@@ -263,7 +263,7 @@ export function useEventDrag(actions: EventActions, page: string) {
   function drag(
     face: CalendarEventFace,
     press: ReactPointerEvent<HTMLButtonElement>,
-    local?: (first: string, last: string) => void,
+    local?: (change: EventChange) => void,
     segment?: TimedSegment,
   ) {
     if (press.button !== 0 || press.altKey || stop.current) return;
@@ -290,23 +290,13 @@ export function useEventDrag(actions: EventActions, page: string) {
         }, 0);
       },
       commit: (days, minutes) => {
-        if (!local) {
-          latest.current.start(
-            face,
-            timed
-              ? { kind: "resize-time", edge: timed.edge, minutes }
-              : resize
-                ? { kind: "resize", edge: resize, days }
-                : { kind: "time", days, minutes },
-            chip,
-            expected ?? undefined,
-          );
-        } else if (resize) {
-          const span = resizedDays(face.start, face.end, resize, days);
-          if (span) local(span.first, span.last);
-        } else if (face.start.kind === "date" && face.end.kind === "date" && days) {
-          local(addDays(isoOfDay(face.start), days), addDays(isoOfDay(face.end), days - 1));
-        }
+        const change: EventChange = timed
+          ? { kind: "resize-time", edge: timed.edge, minutes }
+          : resize
+            ? { kind: "resize", edge: resize, days }
+            : { kind: "time", days, minutes };
+        if (local) local(change);
+        else latest.current.start(face, change, chip, expected);
       },
     });
   }

@@ -11,3 +11,6 @@ export { countWhen, listSurface, metaWhen, saysEmpty } from "@ohmail/client-engi
 export type { ListSurface, ListSurfaceInput } from "@ohmail/client-engine";
 // Is a first import still unknown: the web strip's bounded floor, which the Screener's empty shelf reads.
 export { importFloorInWindow } from "@ohmail/client-engine";
+
+// The native bridge uses the same notice text limits as the other surfaces.
+export { cleanNoticeText, type MailNoticeDetails } from "@ohmail/client-engine";

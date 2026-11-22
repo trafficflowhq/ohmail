@@ -14,6 +14,8 @@ export interface RailEntryProps {
   kind: "place" | "sub" | "fold" | "tool";
   /** Its name. */
   children: string;
+  /** Draw the product wordmark with its own stop. */
+  wordmark?: boolean;
   /** Its sign. A `fold` draws its chevron instead. */
   icon?: IconName;
   /**
@@ -149,7 +151,7 @@ export function RailEntry(props: RailEntryProps) {
           <Icon name={icon} size={kind === "sub" ? 16 : 20} />
         </span>
       ) : null}
-      <span className="oh-railentry-name">
+      <span className="oh-railentry-name" data-wordmark={props.wordmark ? "" : undefined}>
         {children}
         {props.hint ? <small className="oh-railentry-hint">{props.hint}</small> : null}
       </span>

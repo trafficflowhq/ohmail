@@ -263,6 +263,7 @@ export function useListWindow({
     let sum = 0;
     let n = 0;
     for (const h of heights.current.values()) {
+      if (h === 0) continue;
       sum += h;
       n += 1;
     }
@@ -295,21 +296,25 @@ export function useListWindow({
   }, [scrollerRef]);
 
   const height = viewport > 0 ? viewport : FALLBACK_VIEWPORT_PX;
-  /** The last index that starts at or before `px` — the row under that line of the scroller. */
+  /** The first index whose bottom edge lies below `px`. */
   const indexAt = (px: number): number => {
     let lo = 0;
     let hi = count;
     while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (prefix[mid]! <= px) lo = mid;
-      else hi = mid - 1;
+      const mid = (lo + hi) >> 1;
+      if (prefix[mid + 1]! <= px) lo = mid + 1;
+      else hi = mid;
     }
     return lo;
   };
 
   const windowed = count > (stamped === false ? FULL_RANGE_MAX_ROWS : MEASURED_FULL_RANGE_MAX_ROWS);
+  // Measuring folded tail slots can shorten the list before the browser reports its clamped scroll position.
+  const rowsEnd = prefix[count]!;
+  const lastStart = rowsEnd === prefix[count - 1] ? Math.max(0, rowsEnd - height) : Infinity;
   /** The top edge in slot pixels: negative while the chrome above the rows is on screen. */
-  const rel = scrollTop - origin;
+  const edgeAt = (top: number) => Math.min(top - origin, lastStart);
+  const rel = edgeAt(scrollTop);
   const visibleStart = Math.max(0, Math.min(count, indexAt(rel) - overscan));
   const visibleEnd = Math.min(count, indexAt(rel + height) + 1 + overscan);
   const start = windowed ? visibleStart : 0;
@@ -322,7 +327,7 @@ export function useListWindow({
     const last = indexAt(rel + height);
     const step = Math.min(scrollStep, Math.max(1, overscan));
     drawAt.current = (top) => {
-      const edge = top - origin;
+      const edge = edgeAt(top);
       const moved = Math.max(Math.abs(indexAt(edge) - first), Math.abs(indexAt(edge + height) - last));
       if (moved >= step || (edge > 0) !== (rel > 0)) setScrollTop(top);
     };
@@ -375,7 +380,7 @@ export function useListWindow({
       if (!Number.isInteger(i) || i < 0 || i >= count) continue;
       found = true;
       const h = node.offsetHeight;
-      if (h <= 0) continue;
+      if (h <= 0 && !node.hasAttribute("data-folded-row")) continue;
       const was = heights.current.get(i);
       if (was === undefined || Math.abs(was - h) >= 1) {
         heights.current.set(i, h);

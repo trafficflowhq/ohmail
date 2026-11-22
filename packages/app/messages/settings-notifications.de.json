@@ -1,5 +1,6 @@
 {
   "settingsNotifications": {
+    "badgeRule": "Die Zahlen bedeuten auf jedem Gerät dasselbe: App-Icon und Ohbox zählen ungelesene Mails in deiner Ohbox, der Screener zählt wartende neue Absender, und News und Belege zählen, was seit deinem letzten Blick angekommen ist.",
     "on": "An",
     "off": "Aus",
     "ohbox": "Ohbox",
@@ -26,6 +27,9 @@
     "mail": "Mail",
     "onlyWhileOpen": "Nur wenn ohmail geöffnet ist",
     "notRegistered": "Nicht registriert",
-    "noCentre": "Keine Mitteilungszentrale"
+    "noCentre": "Keine Mitteilungszentrale",
+    "showMailDetails": "Absender und Betreff anzeigen",
+    "dailySummary": "Tagesübersicht",
+    "summaryTime": "Uhrzeit der Tagesübersicht"
   }
 }
