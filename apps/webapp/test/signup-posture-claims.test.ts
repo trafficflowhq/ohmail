@@ -7,7 +7,9 @@ import de from "../messages/de.json";
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 const SURFACES = [
-  ["login", ["inviteOnly", "inviteOnlyBeta", "inviteOnlySelfhost"]],
+  ["login", [
+    "inviteOnly", "inviteOnlyBeta", "inviteOnlySelfhost", "signupOpen", "signupByInvitation", "signupOnServer", "haveInvite",
+  ]],
   ["join", ["step_invite_lead", "step_invite_lead_open", "step_invite_lead_selfhost"]],
 ] as const;
 const CATALOGUES = [
@@ -19,7 +21,7 @@ const CATALOGUES = [
   {
     locale: "de", messages: de,
     claims: [/nur mit Einladung/i, /per Einladung/i, /Einladungscode ist nicht nötig/i, /brauchst du keinen/i],
-    open: "Ein Einladungscode ist nicht nötig.", gated: "Accounts gibt es nur mit Einladung.",
+    open: "Ein Einladungscode ist nicht nötig.", gated: "Konten gibt es nur mit Einladung.",
   },
 ] as const;
 const makesClaim = (line: string, claims: readonly RegExp[]) => claims.some((rule) => rule.test(line));
@@ -40,13 +42,13 @@ describe("the signup posture", () => {
   });
 });
 
-describe("the former posture copy", () => {
+describe("the signup copy", () => {
   for (const { locale, messages, claims } of CATALOGUES) {
     it.each(SURFACES)(`${locale} · %s has no retired posture key`, (surface, retired) => {
       for (const key of retired) expect(messages[surface]).not.toHaveProperty(key);
     });
 
-    it.each(SURFACES)(`${locale} · %s introduces no new posture claim`, (surface) => {
+    it.each(SURFACES)(`${locale} · %s has no signup posture claims`, (surface) => {
       const found = Object.entries(messages[surface]).filter(([, value]) => makesClaim(value, claims));
       expect(found).toEqual([]);
     });

@@ -156,7 +156,7 @@ describe("the password step", () => {
     );
   });
 
-  it("names the service and keeps the route to account setup for each posture", () => {
+  it("names the service and offers account creation only when signup is open", () => {
     for (const [note, service] of [
       ["managed-invite", L.whereCloud],
       ["managed-open", L.whereCloud],
@@ -165,10 +165,11 @@ describe("the password step", () => {
       const view = draw(doorOf(password(), { note }).door);
       expect(view.container.textContent).toContain(service);
       expect(view.container.textContent).not.toMatch(
-        /invite code is not required|accounts are by invitation/i,
+        /invite-only|by invitation|you can sign up|invite code is not required/i,
       );
-      expect(screen.getByRole("link", { name: L.createAccount }).getAttribute("href")).toBe("/join");
-      expect(screen.queryByRole("link", { name: "Have an invite code?" })).toBeNull();
+      expect(view.container.textContent).not.toContain("Have an invite code?");
+      const create = screen.queryByRole("link", { name: L.createAccount });
+      expect(create?.getAttribute("href") ?? null).toBe(note === "managed-open" ? "/join" : null);
       cleanup();
     }
   });

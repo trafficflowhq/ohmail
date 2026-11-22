@@ -50,6 +50,7 @@ export function Status({
   send,
   held,
   locked,
+  showShortSending = false,
   onResolve,
 }: {
   /**
@@ -63,6 +64,8 @@ export function Status({
   held: string | null;
   /** The sentence of a send this letter cannot see the end of. */
   locked: string | null;
+  /** Show the short sending line when the same letter is reopened after hand-off. */
+  showShortSending?: boolean;
   onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
 }) {
   const t = useText("write");
@@ -74,7 +77,7 @@ export function Status({
   if (where === null || (at !== "one" && at !== where)) return null;
   if (locked !== null) return <SendStatus place="top">{locked}</SendStatus>;
   const line = beside.sendLine(send, sendingLong(send))!;
-  if (line.key === "statusSending") return null;
+  if (line.key === "statusSending" && !showShortSending) return null;
   const place = at === "one" ? "top" : where;
   const offline = send.phase === "queued" && send.accepted !== true && !beside.online();
   const words = offline ? t("status.offline") : statusWords(t, line.key, beside);
@@ -112,7 +115,13 @@ export function useLetterSendLines(): { top: ReactNode; foot: ReactNode } {
   const beside = useWriteBeside();
   const held = w.composeHeld?.draftId ?? null;
   const locked = w.composeLocked?.sentence ?? null;
-  const said = { send: w.composeSend, held, locked, onResolve: w.resolveHeldSend };
+  const said = {
+    send: w.composeSend,
+    held,
+    locked,
+    showShortSending: w.composeReopenedSending,
+    onResolve: w.resolveHeldSend,
+  };
   const at = sendLineAt(w.composeSend, held, locked, beside);
   return {
     top: at === "top" ? <Status at="top" {...said} /> : null,

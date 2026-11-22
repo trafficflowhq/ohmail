@@ -61,7 +61,7 @@ export interface PendingSignOutDoor {
 
 export interface SignInDoor {
   readonly state: SignInState;
-  /** Which sentence about invite codes is true of this deployment. */
+  /** This deployment's signup posture. */
   readonly note: SignupPosture;
   /** Where the sign-in carries on, named: the account page, or the setup. */
   readonly continues: "manage" | "join" | null;
