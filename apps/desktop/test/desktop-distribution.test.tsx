@@ -79,7 +79,7 @@ async function lockAnchors(distribution: string): Promise<string[]> {
   });
   // The way back is a BUTTON that mints its address at the press; no anchor carries the 402's.
   expect([...(host as HTMLDivElement).querySelectorAll("a")]).toEqual([]);
-  return [...(host as HTMLDivElement).querySelectorAll("button.primary")].map((b) => b.textContent ?? "");
+  return [...(host as HTMLDivElement).querySelectorAll('button[data-kind="ink"]')].map((b) => b.textContent ?? "");
 }
 
 /** The Cloud door's words and presses under one distribution. */

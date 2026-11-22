@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { namedJourney } from "../bench/journey.js";
 import type { Account, Bench, Person } from "../bench/seam.js";
-import { WEB, journey, journeysOf, type DoorFault, type Guard } from "../bench/web.js";
+import { WEB, journey, journeysOf, signOutReachedFront, type DoorFault, type Guard } from "../bench/web.js";
 import { PEOPLE } from "../vocabulary/world.js";
 
 /**
@@ -67,7 +67,10 @@ journeysOf("compose", () => {
     await halfReply(p, namedA, "AWORDS-REPLY half written");
     await halfLetter(p, "AWORDS-SUBJECT", "AWORDS-LETTER half written");
     await p.later(SAVED);
+    const localWords = Object.values(await p.kept(MARK)).flat();
+    expect(localWords).toEqual(expect.arrayContaining(["AWORDS-LETTER", "AWORDS-REPLY"]));
     await signOut(p);
+    await signOutReachedFront(p);
     await p.gone("rail", {}, 60_000);
     if (b.setting === "W-s") await p.here("gate");
     expect(holdingWordsOf(await p.kept(MARK), "A"), "a key this browser keeps with A's words after A signed out").toEqual([]);
@@ -123,14 +126,19 @@ journeysOf("compose", () => {
     await p.keep(slot, JSON.stringify({ to: "giulia@lichtgrat.example", cc: "", bcc: "", subject: "BWORDS-SUBJECT", body: "BWORDS-HANDOFF" }));
     await halfLetter(p, "AWORDS-SUBJECT", "AWORDS-ONE");
     await p.later(SAVED);
-    await b.signedInElsewhere(p, B);
+    // Leave an edit pending as the other tab establishes its session.
     await p.act("write", "compose-body", { value: " AWORDS-TWO" });
+    await b.signedInElsewhere(p, B);
+    await p.gone("compose-body");
+    await p.gone("rail");
     await p.later(SAVED);
     await p.later(SAVED);
+    await p.until(async () => !(await p.shows("AWORDS")), "the departing editor’s text to be gone");
     const kept = await p.kept(MARK);
     expect(kept[slot], "B's letter as B's closed tab left it").toEqual(["BWORDS-HANDOFF", "BWORDS-SUBJECT"]);
     expect(naming(kept, B).filter((k) => k !== slot), "a key of B's that A's page wrote").toEqual([]);
     expect(holdingWordsOf(kept, "A").filter((k) => k.includes(B.accountId)), "A's words under a key of B's").toEqual([]);
+    expect(await draftsOf(b, B), "B's server received none of A's work").not.toContain("AWORDS");
   });
 
   it.skipIf(keepTheOldPage.skip)(keepTheOldPage.title, keepTheOldPage.options, keepTheOldPage.run);

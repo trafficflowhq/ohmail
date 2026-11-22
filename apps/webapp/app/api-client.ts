@@ -909,12 +909,12 @@ async function transported(
 ): Promise<Response> {
   const holds = () => path !== null && apiOwnerHolds(path)
     && (expected === null || (readOwner() === expected && sessionFamilyHolds(family)));
+  const syncRead = expected !== null && !press && (path === "/sync" || path === "/sync/snapshot");
   const checked = (res: Response): Response => {
     const seen = res.headers.get(OWNER_HEADER);
-    if (expected !== null && !press && (path === "/sync" || path === "/sync/snapshot")
-      && (apiOwnerVerdict(path) === "signed-out" || sessionEnded())) {
+    if (syncRead && (!holds() || sessionEnded())) {
       void res.body?.cancel().catch(() => undefined);
-      throw new SyncAbortedError("the local session closed while the reply was in flight");
+      throw new SyncAbortedError("the browser session changed while sync was in flight");
     }
     if (expected === null || (seen === expected && holds()) || (!res.ok && seen === null)) return res;
     void res.body?.cancel().catch(() => undefined);
@@ -938,6 +938,7 @@ async function transported(
   } else if (renews && path !== null) {
     waited = (await otherTabRenewalSettled() && namesAnAccount(path)) || waited;
   }
+  if (syncRead && !holds()) throw new SyncAbortedError("the browser session changed before sync");
   if (waited && path !== null) {
     // A WAIT NEVER CHANGES WHICH ACCOUNT A REQUEST REACHES. Asked again after it, as `api()` asks
     // (`mustHold`): another tab may have signed in as somebody else meanwhile, and a press built for

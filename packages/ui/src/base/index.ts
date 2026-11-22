@@ -117,6 +117,7 @@ export type { PaletteCommand, PaletteProps } from "./Overlays/Palette.js";
 export { KeyHelp } from "./Overlays/KeyHelp.js";
 export type { KeyHelpGroup, KeyHelpProps, KeyHelpRow } from "./Overlays/KeyHelp.js";
 
+export { ActivityLine } from "./Feedback/ActivityLine.js";
 export { Notice } from "./Feedback/Notice.js";
 export type { NoticeAct, NoticeProps } from "./Feedback/Notice.js";
 export { NoticeSlot, slotOrder } from "./Feedback/NoticeSlot.js";

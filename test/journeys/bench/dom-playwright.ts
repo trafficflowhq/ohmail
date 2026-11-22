@@ -310,7 +310,7 @@ export class PlaywrightPerson implements Person {
     await this.page.clock.runFor(ms);
   }
 
-  /** The jar this window shares, signed in as an account by the bench's own five cookies (`web.ts`). */
+  /** The jar this window shares, signed in as an account with the bench's sign-in cookies (`web.ts`). */
   async jarNames(cookies: Parameters<BrowserContext["addCookies"]>[0]): Promise<void> {
     await this.context.addCookies(cookies);
   }

@@ -12,7 +12,7 @@
 
 import { useCallback, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Button, Spinner } from "@ohmail/ui";
+import { ActivityLine, Button, Mark, Page, RefusalLine, Sentence } from "@ohmail/ui/base";
 
 import {
   ACCOUNT_ACCESS_PATH, bridgeFetch, engineLogout,
@@ -125,78 +125,56 @@ export function DesktopAccessLock(
      one sentence that replaces it: where to go instead. A screen that simply dropped its only
      control would leave a person with nowhere, which is the trap this lock may never be. */
   const mayLinkOut = linksOutToBilling();
+  const browserOnly = Boolean(facts.manageUrl) && !mayLinkOut;
+
+  const title = headline.date !== undefined
+    ? t(headline.key, { date: dayStamp(headline.date) })
+    : t(headline.key);
+  const line = lifecycle === undefined ? t("kept") : t("mailboxUntouched");
+  const note = lifecycle === undefined ? undefined : held
+    ? t("erasureHeld")
+    : erasureAt !== null ? t("erasure", { date: dayStamp(erasureAt) }) : t("erasureUnknown");
+  const mintSaid = mintRefusal === null ? null
+    : t(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed");
+
+  const signOutSaid = signOutRefused === null ? null : DOOR_COPY.accessLockSignOutRefused(signOutRefused);
+
+  const hasFeedback = browserOnly || check !== "idle" || mintSaid !== null || signOutSaid !== null;
 
   return (
-    <div className="gate">
-      <div className="gate-card">
-        <span className="wordmark"><b>ohmail</b><em>.</em></span>
-        <h1>
-          {headline.date !== undefined
-            ? t(headline.key, { date: dayStamp(headline.date) })
-            : t(headline.key)}
-        </h1>
-        {/* A server that says nothing about the lifecycle gets the sentence this window has always
-            shown. With one, the window says the thing that matters on a machine holding a copy of
-            somebody's mail: the mailbox is untouched, and here is when the rest goes. */}
-        {lifecycle !== undefined
-          ? (
-            <>
-              {/* The one sentence a person has to believe wears the browser wall's own emphasis
-                  (`.gate-card .wall-master`, full ink) and the erasure clock its quiet
-                  (`.wall-fine`, ink3) — same stylesheet, same three-level hierarchy, so the
-                  window and the tab weigh the promise identically. */}
-              <p className="wall-master">{t("mailboxUntouched")}</p>
-              <p className="wall-fine">
-                {held
-                  ? t("erasureHeld")
-                  : erasureAt !== null
-                    ? t("erasure", { date: dayStamp(erasureAt) })
-                    : t("erasureUnknown")}
-              </p>
-            </>
-          )
-          : <p>{t("kept")}</p>}
-        {facts.manageUrl && !mayLinkOut ? <p>{t("openInBrowser")}</p> : null}
-        {check === "checking"
-          ? (
-            <div className="wall-check" role="status" aria-busy="true">
-              <Spinner className="mbx-spin" />
-              <span>{t("checking")}</span>
-            </div>
-          )
-          : null}
-        {check === "pending" ? <p className="wall-note" role="status">{t("pending")}</p> : null}
-        {mintRefusal !== null
-          ? <p className="wall-warn" role="alert">{t(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed")}</p>
-          : null}
-        <div className="gate-actions">
-          {check === "pending" ? <Button onClick={checkAgain}>{t("checkAgain")}</Button> : null}
-          {/* Rendered ONLY where the service operates a page — this app holds no plan, no balance
-              and no page of its own. The press mints; the minted address is drawn as a link in
-              its place, and the person's own click on it is what the window's link interceptor
-              hands to the browser where they are already signed in. */}
-          {facts.manageUrl && mayLinkOut && check !== "checking"
-            ? (page.href !== null
-              ? <AccountPageLink href={page.href} label={t("openPage")} onFollow={page.followed} />
-              : (
-                <Button
-                  variant="primary"
-                  data-run={minting ? "working" : undefined}
-                  aria-busy={minting || undefined}
-                  onClick={() => { void doMint(); }}
-                >
-                  {lifecycle !== undefined ? t("openAccount") : t("manage")}
-                </Button>
-              ))
-            : null}
-          <Button onClick={() => { void doSignOut(); }} disabled={signingOut}>
-            {t("signOut")}
-          </Button>
-        </div>
-        {signOutRefused !== null
-          ? <p className="wall-warn" role="alert">{DOOR_COPY.accessLockSignOutRefused(signOutRefused)}</p>
-          : null}
-      </div>
+    <div className="oh-root">
+      <Page
+        trail={<Mark>ohmail</Mark>}
+        line={line}
+        note={note}
+        afterLine={hasFeedback ? (
+          <>
+            {browserOnly ? <p className="oh-text">{t("openInBrowser")}</p> : null}
+            {check === "checking" ? (
+              <div role="status" aria-busy="true">
+                <p className="oh-text">{t("checking")}</p>
+                <ActivityLine />
+              </div>
+            ) : null}
+            {check === "pending" ? <p className="oh-text" role="status">{t("pending")}</p> : null}
+            {mintSaid === null ? null : <RefusalLine start alert>{mintSaid}</RefusalLine>}
+            {signOutSaid === null ? null : <RefusalLine start alert>{signOutSaid}</RefusalLine>}
+          </>
+        ) : undefined}
+        acts={
+          <>
+            {check === "pending" ? <Button kind="two" onPress={checkAgain}>{t("checkAgain")}</Button> : null}
+            {facts.manageUrl && mayLinkOut && check !== "checking"
+              ? page.href !== null
+                ? <AccountPageLink href={page.href} label={t("openPage")} onFollow={page.followed} />
+                : <Button busy={minting} onPress={() => void doMint()}>{lifecycle !== undefined ? t("openAccount") : t("manage")}</Button>
+              : null}
+            <Button kind="quiet" onPress={() => void doSignOut()} disabled={signingOut}>{t("signOut")}</Button>
+          </>
+        }
+      >
+        <Sentence level={1} size="xl">{title}</Sentence>
+      </Page>
     </div>
   );
 }

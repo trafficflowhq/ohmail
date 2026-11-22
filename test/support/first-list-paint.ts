@@ -1,9 +1,12 @@
-import type { Page } from "@playwright/test";
+import type { Frame, Page } from "@playwright/test";
 import type { PlaywrightPerson } from "../journeys/bench/dom-playwright.js";
 import { expect } from "vitest";
+import { mirrorDbName } from "@ohmail/client-engine";
 import type { SyncSnapshotPage } from "@ohmail/wire";
-import type { Bench, Person } from "../journeys/bench/seam.js";
+import type { Account, Bench, Person } from "../journeys/bench/seam.js";
 import { say } from "../journeys/vocabulary/catalogue.js";
+import { PLACES } from "../journeys/vocabulary/places.js";
+import { PEOPLE } from "../journeys/vocabulary/world.js";
 
 type ListPaint = { rows: boolean; waiting: boolean };
 type ObservedWindow = Window & { firstListPaint?: ListPaint; letMirrorOpen?: () => void };
@@ -96,12 +99,48 @@ async function privatePaints(page: Page) {
   });
 }
 
-export async function sharedBrowserPaint(bench: Bench, person: Person, owner: string, subject: string) {
+/** Read just the fixture marker from an already existing browser mirror. */
+async function mirrorHolds(page: Page, name: string, marker: string): Promise<boolean> {
+  return page.evaluate(async ({ name, marker }) => {
+    if (!(await indexedDB.databases()).some((db) => db.name === name)) return false;
+    const request = indexedDB.open(name);
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      request.onupgradeneeded = () => request.transaction!.abort();
+    });
+    try {
+      const read = db.transaction("entities").objectStore("entities").getAll();
+      const records = await new Promise<unknown[]>((resolve, reject) => {
+        read.onsuccess = () => resolve(read.result);
+        read.onerror = () => reject(read.error);
+      });
+      return JSON.stringify(records).includes(marker);
+    } finally {
+      db.close();
+    }
+  }, { name, marker });
+}
+
+export async function sharedBrowserPaint(bench: Bench, person: Person, account: Account, subject: string) {
+  const owner = account.accountId;
   const page = await seedFace(person, owner);
   // The account face contrasts with the device's paper even while the browser session answer is held.
   await page.evaluate(() => localStorage.removeItem("ohmail.face"));
+  await expect.poll(() => mirrorHolds(page, mirrorDbName(owner), subject)).toBe(true);
   const other = await bench.account();
+  const [incoming] = await other.planter.plant({ conversations: [{
+    from: PEOPLE.giulia,
+    subject: "A replacement account's invitation",
+    pile: "ohbox",
+  }] });
+  const hasSessionFamily = (familyId: string) => page.evaluate(
+    (id) => document.cookie.split("; ").includes(`tf_family=${id}`),
+    familyId,
+  );
+  await expect.poll(() => hasSessionFamily(account.familyId), { timeout: 10_000 }).toBe(true);
   await bench.signedInElsewhere(person, other);
+  expect(await hasSessionFamily(other.familyId), "sign-in replaces the previous session family").toBe(true);
   await page.evaluate((account) => { document.cookie = `tf_owner=${account}; Path=/; Secure; SameSite=Strict`; }, owner);
   await recordPrivatePaint(page, subject);
   await page.setExtraHTTPHeaders({ "x-ohmail-first-page-owner": owner });
@@ -123,12 +162,46 @@ export async function sharedBrowserPaint(bench: Bench, person: Person, owner: st
     expect.soft(pending.face).toBe(false);
     expect.soft(pending.rows).toBe(false);
     release();
-    await page.getByRole("link", { name: say("session.signIn", {}, person.lang) }).waitFor();
+    await page.getByRole("link", { name: say("session.signIn", {}, person.lang) }).waitFor({ timeout: 20_000 });
     const settled = await privatePaints(page);
     expect(settled).toMatchObject({ face: false, rows: false });
   } finally {
     release();
   }
+  await page.unroute(/\/api\/auth\/session(?:\?|$)/);
+  await page.setExtraHTTPHeaders({});
+  // Make the device's fallback distinct from the departing account's saved face.
+  await page.evaluate(() => localStorage.setItem("ohmail.face", "paper"));
+  await bench.signedInElsewhere(person, other);
+  await person.front();
+  await person.here("ohbox");
+  await person.see("conversation", { named: `${incoming!.from}: ${incoming!.subject}` });
+  await expect.poll(() => mirrorHolds(page, mirrorDbName(other.accountId), incoming!.subject)).toBe(true);
+  expect(await privatePaints(page)).toMatchObject({ face: false, rows: false });
+  expect(await mirrorHolds(page, mirrorDbName(other.accountId), subject)).toBe(false);
+  expect(await mirrorHolds(page, mirrorDbName(owner), incoming!.subject)).toBe(false);
+}
+
+/** Hold cookie clearing in the pressing tab, after revocation and the local storage sweep. */
+export async function holdSignOutCookieClear(person: Person) {
+  const { page } = person as PlaywrightPerson;
+  let asked = false;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(/\/auth\/refresh\/logout$/, async (route) => {
+    if (route.request().headers()["x-ohmail-clear-logout"] !== "1") return route.fallback();
+    asked = true;
+    await held;
+    await route.fallback();
+  });
+  return { asked: () => asked, release };
+}
+
+/** The pressing tab reaches the front door after sign-out, on either web deployment. */
+export async function signOutReachedFront(person: Person): Promise<void> {
+  const { page } = person as PlaywrightPerson;
+  await page.waitForURL((url) => url.hash === "" && (url.pathname === "/" || url.pathname === PLACES.gate.route),
+    { waitUntil: "domcontentloaded", timeout: 60_000 });
 }
 
 export async function signInPaintWhileLeaving(bench: Bench, person: Person, owner: string) {
@@ -154,10 +227,12 @@ export async function resetOhboxPaint(person: Person, survivor: string, deleted:
   let release!: () => void;
   const held = new Promise<void>((done) => { release = done; });
   let replacing = false;
+  let reloaded = false;
   let expired = false;
+  let observing = false;
   const listName = say("frame.landmark.list", {}, person.lang);
   await page.route(/\/api\/sync\?/, async (route) => {
-    if (expired) return route.continue();
+    if (!reloaded || expired) return route.continue();
     expired = true;
     await row.waitFor();
     await removed.waitFor();
@@ -173,9 +248,11 @@ export async function resetOhboxPaint(person: Person, survivor: string, deleted:
       }
       requestAnimationFrame(frame);
     }, { listName, survivor });
+    observing = true;
     await route.fulfill({ status: 410, json: { error: { code: "cursor_expired" } } });
   });
   await page.route(/\/api\/sync\/snapshot(?:\?|$)/, async (route) => {
+    if (!observing) return route.continue();
     const response = await route.fetch();
     const snapshot = await response.json() as SyncSnapshotPage;
     replacing = true;
@@ -184,9 +261,14 @@ export async function resetOhboxPaint(person: Person, survivor: string, deleted:
       ...snapshot, changes: snapshot.changes.filter((change) => !deleted.messageIds.includes(change.id)),
     } });
   });
+  // The outgoing document may still poll. Its cursor and paint trace are irrelevant to this reset.
+  const onNavigate = (frame: Frame) => {
+    if (frame === page.mainFrame()) reloaded = true;
+  };
+  page.on("framenavigated", onNavigate);
   try {
     await page.reload({ waitUntil: "commit" });
-    await expect.poll(() => replacing).toBe(true);
+    await expect.poll(() => replacing, { timeout: 20_000 }).toBe(true);
     const paint = () => page.evaluate(async () => {
       await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
       return (window as Window & { resetPaint: { missed: boolean; frames: number } }).resetPaint;
@@ -200,6 +282,7 @@ export async function resetOhboxPaint(person: Person, survivor: string, deleted:
     expect(await row.isVisible()).toBe(true);
     expect((await paint()).missed).toBe(false);
   } finally {
+    page.off("framenavigated", onNavigate);
     release();
   }
 }

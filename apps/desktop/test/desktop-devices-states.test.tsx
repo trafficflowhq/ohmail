@@ -181,7 +181,7 @@ describe("every designed state renders — and is captured for the design review
     shell({ hostState: { ...OFF, notice }, tailscale: RUNNING });
     await mount();
     expect(hostEl.textContent).toContain(notice);
-    expect(hostEl.querySelector(".acct-warn[role=alert]")).not.toBeNull();
+    expect([...hostEl.querySelectorAll(".acct-warn[role=alert]")].map((alert) => alert.textContent?.trim())).toContain(notice);
     capture("3a-off-setting-not-saved");
   });
 
@@ -217,7 +217,7 @@ describe("every designed state renders — and is captured for the design review
     });
     await mount();
     await click(hostCopy.addAction!);
-    expect(hostEl.querySelector("svg")).not.toBeNull();
+    expect(hostEl.querySelector(".join-qr svg")).not.toBeNull();
     expect(hostEl.textContent).not.toContain(TOKEN);
     capture("5-on-qr");
   });

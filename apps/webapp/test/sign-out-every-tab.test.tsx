@@ -174,6 +174,12 @@ async function readFirst(el: HTMLElement): Promise<void> {
   expect(el.textContent, "the reader never showed the body").toContain(BODY);
 }
 
+function expectSigningOut(tab: HTMLElement): void {
+  const statuses = within(tab).getAllByRole("status").map((status) => status.textContent);
+  expect(statuses).toContain("Signing out…");
+  expect(showsMail(tab), "the pressing tab painted account mail during sign-out").toBe(false);
+}
+
 /** Anything of the mailbox on this tab's screen. */
 function showsMail(el: HTMLElement, subject = SUBJECT): boolean {
   const text = el.textContent ?? "";
@@ -296,9 +302,8 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
     expect(showsMail(tab1), "tab 1 kept the signed-out account's mail on screen").toBe(false);
     expect(leaves, "tab 1 did not leave for the landing page").toBe(1);
     expect(readAtLeave, "the tab navigated with the mail still in its DOM").toEqual([false]);
-    /* The tab that signed out does not obey its own post: its pane still has its own sentence to
-       say (a wipe another tab blocked), and it navigates itself. */
-    expect(tab0.querySelector(".fr-root"), "tab 0 obeyed its own message").not.toBeNull();
+    // The pressing tab stays to report progress and can still report a blocked browser cleanup.
+    expectSigningOut(tab0);
     reply("204");
     expect(await settle(out)).toBe(true);
     expect(showsMail(tab0), "tab 0 kept its mail after revocation").toBe(false);
@@ -506,7 +511,8 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
         for (let i = 0; i < 200 && shell.logoutCalls() === 0; i += 1) await oneTick();
         expect(shell.logoutCalls()).toBe(1);
         await shell.tick(JAR_WATCH_MS);
-        expect(showsMail(tab)).toBe(true);
+        expectSigningOut(tab);
+        expect(leaves, "the pressing tab left before its session changed").toBe(0);
 
         shell.rememberOwner(replacement);
         document.cookie = `tf_family=${nextFamily}; Path=/`;
@@ -550,7 +556,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     reply("refused");
     expect(await settle(done), "the sign-out never ended").toBe(true);
     expect((await done).serverRefused, "the door's refusal was read as a sign-out").not.toBeNull();
-    expect(tab0.querySelector(".fr-root"), "the pressing tab left").not.toBeNull();
+    expectSigningOut(tab0);
     expect(leaves).toBe(1);
   });
 
@@ -653,7 +659,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     confirm();
     await shell.tick(1_000);
     expect(leaves, "the pressing tab left at its own confirm").toBe(0);
-    expect(tab0.querySelector(".fr-root")).not.toBeNull();
+    expectSigningOut(tab0);
   });
 
   it("CONTROL: the demo is never sent away by a pending sign-out", async () => {
@@ -878,8 +884,8 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(1_000);
     expect(shell.sessionCalls() - asked, "the signing-out tab asked the session door").toBe(0);
-    expect(leaves, "the signing-out tab left before its pane could say how the sign-out ended").toBe(0);
-    expect(tab0.querySelector(".fr-root")).not.toBeNull();
+    expect(leaves, "the signing-out tab left before it could say how the sign-out ended").toBe(0);
+    expectSigningOut(tab0);
   });
 
   /* A sign-out earlier in this page, then a sign-in that mounts the mailbox in the same page (a client-side

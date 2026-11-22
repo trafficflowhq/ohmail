@@ -7,68 +7,38 @@
  * The window never names an address to the shell.
  */
 import { useWindowReport } from "@ohmail/app/frame";
-import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
-import { Button } from "@ohmail/ui";
+import { Dialog } from "@ohmail/ui/base";
 import { MAIL_BODY_COPY as COPY } from "@ohmail/letter-body";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { linkAskOpen, type LinkAsk as HeldPress } from "./native.js";
 
-const TITLE_ID = "link-ask-title";
-const BODY_ID = "link-ask-body";
-
 /** The ask over whichever screen the gate shows. The layer claims the window while it is up. */
 export function LinkAsk({ ask, onClose }: { ask: HeldPress; onClose: () => void }) {
   const report = useWindowReport();
-  const layer = useRef<HTMLDivElement | null>(null);
   useModalGate(true);
-  /* Everything beside the layer, up to the body, is inert while it is up, and the focus goes back
-     where it stood when it closes; it starts on Cancel, the answer that does nothing. */
-  useLayoutEffect(() => {
-    const stood = document.activeElement;
-    const held: Array<[Element, boolean]> = [];
-    for (let at: HTMLElement | null = layer.current; at && at !== document.body; at = at.parentElement) {
-      for (const sib of Array.from(at.parentElement?.children ?? [])) {
-        if (sib === at) continue;
-        held.push([sib, sib.hasAttribute("inert")]);
-        sib.setAttribute("inert", "");
-      }
-    }
-    layer.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    return () => {
-      for (const [el, was] of held) if (!was) el.removeAttribute("inert");
-      if (stood instanceof HTMLElement && stood !== document.body && stood.isConnected) stood.focus();
-    };
-  }, []);
   const host = new URL(ask.url).hostname;
   const open = (): void => {
     onClose();
     linkAskOpen(ask.token).catch(() => report?.(COPY.linkAskGone));
   };
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
-    if (e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    onClose();
-  };
   return (
-    <div
-      ref={layer}
-      className="session-end link-ask"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby={TITLE_ID}
-      aria-describedby={BODY_ID}
-      onKeyDown={onKeyDown}
-    >
-      <div className="gate-card">
-        <h1 id={TITLE_ID}>{COPY.linkAskTitle}</h1>
-        <p id={BODY_ID}>{COPY.linkAskElsewhere} {COPY.linkAskGoes(host)}</p>
-        <p className="link-ask-url">{ask.url}</p>
-        <div className="gate-actions">
-          <Button onClick={onClose}>{COPY.linkAskCancel}</Button>
-          <Button variant="primary" onClick={open}>{COPY.linkAskOpen(host)}</Button>
-        </div>
-      </div>
+    <div className="oh-root">
+      <Dialog
+        open
+        alert
+        inline
+        hot
+        title={COPY.linkAskTitle}
+        line={`${COPY.linkAskElsewhere} ${COPY.linkAskGoes(host)}`}
+        announceLine
+        keysOn="cancel"
+        dismissOnScrim={false}
+        confirm={{ label: COPY.linkAskOpen(host), onPress: open }}
+        cancel={{ label: COPY.linkAskCancel }}
+        onClose={onClose}
+      >
+        <p className="oh-text">{ask.url}</p>
+      </Dialog>
     </div>
   );
 }

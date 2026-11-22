@@ -18,6 +18,20 @@ export const onTouch = (el: Element): boolean =>
 type First = (box: HTMLElement) => HTMLElement | null | undefined;
 type Anchor = () => Element | null | undefined;
 
+function holdBackground(panel: HTMLElement): () => void {
+  const held: Element[] = [];
+  for (let at: HTMLElement | null = panel; at && at !== document.body; at = at.parentElement) {
+    for (const sibling of Array.from(at.parentElement?.children ?? [])) {
+      if (sibling === at || sibling.hasAttribute("inert")) continue;
+      sibling.setAttribute("inert", "");
+      held.push(sibling);
+    }
+  }
+  return () => {
+    for (const sibling of held) sibling.removeAttribute("inert");
+  };
+}
+
 /**
  * Moves the keys to `first(box)` when `open` turns true, and back to `anchor()`, or to what had
  * them, when it turns false or the overlay goes. `notOnTouch`: where a finger is used the keys stay
@@ -29,6 +43,7 @@ export function useOverlayFocus(
   first: First,
   anchor?: Anchor,
   notOnTouch = false,
+  inertBackground = false,
 ): void {
   /* What is read as it opens: the newest of each, without opening again when one is handed in anew. */
   const how = useRef({ first, anchor, notOnTouch });
@@ -42,10 +57,12 @@ export function useOverlayFocus(
     const el = box.current;
     const stays = how.current.notOnTouch && el && onTouch(el);
     if (el && !stays) (how.current.first(el) ?? el).focus({ preventScroll: true });
+    const release = el && inertBackground ? holdBackground(el) : undefined;
     return () => {
+      release?.();
       if (back instanceof HTMLElement && back.isConnected) back.focus({ preventScroll: true });
     };
-  }, [open, box]);
+  }, [open, box, inertBackground]);
 }
 
 /** Tab and Shift+Tab stay inside `box`: past its last stop comes its first. */

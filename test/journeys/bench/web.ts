@@ -23,7 +23,7 @@ import { apiPlanter, fixturesPlanter } from "../vocabulary/world.js";
 import { fenced, PlaywrightPerson, shown } from "./dom-playwright.js";
 import { benchOf, type Account, type Bench, type DoorFault, type Heard, type Setting, type Size } from "./seam.js";
 
-/** The jar as a completed sign-in leaves it for `a` on this bench's own name: its five cookies. */
+/** The jar as a completed sign-in leaves it for `a` on this bench's own name: its six cookies. */
 function signedIn(a: Account) {
   const expires = Math.floor(Date.now() / 1000) + 3600;
   const jar = { domain: "localhost", secure: true, expires } as const;
@@ -33,10 +33,11 @@ function signedIn(a: Account) {
     { ...jar, name: "tf_refresh", value: a.refresh, path: "/auth/refresh", httpOnly: true, sameSite: "Strict" as const },
     { ...jar, name: "tf_resume", value: "1", path: "/", httpOnly: true, sameSite: "Lax" as const },
     { ...jar, name: "tf_owner", value: a.accountId, path: "/", httpOnly: false, sameSite: "Strict" as const },
+    { ...jar, name: "tf_family", value: a.familyId, path: "/", httpOnly: false, sameSite: "Strict" as const },
   ];
 }
 
-export { firstCachedOhboxPaint, resetOhboxPaint, sharedBrowserPaint, signInPaintWhileLeaving } from "../../support/first-list-paint.js";
+export { firstCachedOhboxPaint, holdSignOutCookieClear, resetOhboxPaint, sharedBrowserPaint, signInPaintWhileLeaving, signOutReachedFront } from "../../support/first-list-paint.js";
 export { journey, journeysOf, personWith, signedIn } from "./journey.js";
 export { HOST } from "./seam.js";
 export type { Account, Bench, DoorFault, Found, Guard, Heard, Need, Setting, Spoken } from "./seam.js";

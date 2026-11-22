@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
-import { leaveSignedOutTab, listenLocalSignOut, listenSessionChange, listenSignedOut, postSignedOut, readSessionFamily, thisTabName } from "../../signed-out-signal";
+import { leaveSignedOutTab, listenBrowserSession, listenLocalSignOut, listenSessionChange, listenSignedOut, postSignedOut, readSessionFamily, thisTabName } from "../../signed-out-signal";
 import { retireSessionRenewal } from "../../session-refresh";
 import { blockApiOwner, boundApiOwner } from "../../api-client";
 import { forgetThisTab, forgetUnsentWordsOf, ownsPendingSignOut, signOutPresses } from "../../sign-out";
@@ -48,6 +48,8 @@ type ExitReason = "signOut" | "accountChange";
 export interface SignedOutElsewhere {
   /** The shell is gone and the tab is leaving; render nothing of the mailbox. */
   gone: boolean;
+  /** A press in this tab is finishing. Keep the mailbox hidden and show its progress. */
+  signingOut: boolean;
   /** The browser changed accounts while this tab still held its previous session. */
   accountChanged: boolean;
   /**
@@ -67,6 +69,7 @@ export function useSignedOutElsewhere(demo: boolean, resolveOwner: OwnerResolver
   // Only a pending press from this mount can keep its progress visible.
   const [mounted] = useState(() => ({ self: thisTabName(), presses: signOutPresses() }));
   const pendingPressHere = useCallback(() => ownsPendingSignOut(mounted.self, mounted.presses), [mounted]);
+  const awaitingRevoke = useSyncExternalStore(listenBrowserSession, pendingPressHere, () => false);
 
   /* The account this tab's mailbox was drawn for, as the sweep of its unsent words reads it when the tab leaves. */
   const ownerNow = useRef<string | null>(null);
@@ -251,5 +254,7 @@ export function useSignedOutElsewhere(demo: boolean, resolveOwner: OwnerResolver
     };
   }, [demo, owner, resolveOwner, leave, pendingPressHere, exitForJar, exitReason]);
 
-  return { gone: exitReason !== null, accountChanged: exitReason === "accountChange", confirmed };
+  const signingOut = !demo && (awaitingRevoke ||
+    (exitReason === "signOut" && signOutPresses(mounted.self) > mounted.presses));
+  return { gone: exitReason !== null, signingOut, accountChanged: exitReason === "accountChange", confirmed };
 }

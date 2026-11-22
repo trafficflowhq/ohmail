@@ -8,7 +8,7 @@ export const GUARDS: Guard[] = [
   { title: "Mark all read leaves no conversation in the Ohbox saying unread", rows: [], surfaces: EVERY_WEB, needs: [] },
   { title: "The Ohbox is reached from the rail", rows: [], surfaces: EVERY_WEB, needs: [] },
   { title: "The first Ohbox list frame already shows the browser's cached letter", rows: [], surfaces: WEB, needs: [] },
-  { title: "A shared browser does not paint the previous account's face or mail", rows: [], surfaces: ["W-s"], needs: [], tolerates: [/SyncAbortedError/, /status of 409/] },
+  { title: "A shared browser does not paint the previous account's face or mail", rows: [], surfaces: WEB, needs: [], tolerates: [/SyncAbortedError/, /status of 409/] },
   { title: "A reset keeps the surviving letter on screen and removes a deleted letter", rows: [], surfaces: ["W-s"], needs: [], tolerates: [/status of 410/] },
 ];
 
@@ -43,10 +43,12 @@ journeysOf("ohbox", () => {
     expect(await firstCachedOhboxPaint(person, NEW.subject)).toEqual({ rows: true, waiting: false });
   });
   journey(GUARDS[4]!, async (b) => {
-    const { person, named, account } = await personWith(b, NEW);
+    const account = await b.account();
+    await account.planter.plant({ conversations: [NEW] });
+    const person = await b.person({ account });
     await person.arrive("ohbox");
-    await person.see("conversation", { named });
-    await sharedBrowserPaint(b, person, account!.accountId, NEW.subject);
+    await person.see("conversation", { named: `${NEW.from.name}: ${NEW.subject}` });
+    await sharedBrowserPaint(b, person, account, NEW.subject);
   });
   journey(GUARDS[5]!, async (b) => {
     const account = await b.account();
