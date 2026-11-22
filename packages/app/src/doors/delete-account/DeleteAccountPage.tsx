@@ -201,6 +201,7 @@ function DonePage({
       }
       line={cancelled ? undefined : t("doneBody")}
       note={cancelled ? undefined : t("doneNote")}
+      afterLine={state.retained ? <Note>{state.retained}</Note> : undefined}
       acts={
         <Button size="l" onPress={door.home}>
           {t(door.service === "self" ? "doneHomeSelfHost" : "doneHome")}

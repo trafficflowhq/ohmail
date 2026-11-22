@@ -116,8 +116,7 @@
       "waiting": {
         "glyph": "🕊",
         "title": "No one’s waiting.",
-        "hint": "First-time senders appear here before anything reaches the Ohbox.",
-        "mixedHint": "For the mailboxes ohmail organizes: First-time senders appear here before anything reaches the Ohbox."
+        "hint": "First-time senders appear here before anything reaches the Ohbox."
       },
       "screened": {
         "glyph": "🚪",

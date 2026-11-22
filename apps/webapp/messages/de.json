@@ -949,8 +949,7 @@
       "waiting": {
         "glyph": "🕊",
         "title": "Es wartet niemand.",
-        "hint": "Neue Absender erscheinen hier, bevor irgendetwas in die Ohbox kommt.",
-        "mixedHint": "Bei Postfächern, die ohmail organisiert: Neue Absender erscheinen hier, bevor irgendetwas in die Ohbox kommt."
+        "hint": "Neue Absender erscheinen hier, bevor irgendetwas in die Ohbox kommt."
       },
       "screened": {
         "glyph": "🚪",

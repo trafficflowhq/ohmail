@@ -326,6 +326,71 @@ it("fades the sticky Paper heading only while it covers the letter", async () =>
   }
 }, 20_000);
 
+it.each(["paper", "ohmarchy"])(
+  "covers the scrolled letter across the %s heading",
+  async (face) => {
+    const page = await browser!.newPage({
+      viewport: { width: 1440, height: 900 },
+      reducedMotion: "reduce",
+    });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      await page.goto(`${ORIGIN}/?open=rd-a&read=1&screen=reading&face=${face}`);
+      const letter = page.locator('[data-conv-id="rd-a"][data-body-ready]');
+      await letter.waitFor();
+      await page.evaluate(() => document.fonts.ready);
+      const { leftGap, rightGap, clip, textUnderHead } = await page
+        .locator(".oh-readinghead")
+        .evaluate((head) => {
+          const scroller = head.parentElement!;
+          scroller.scrollTop = 315;
+          const port = scroller.getBoundingClientRect();
+          const box = head.getBoundingClientRect();
+          const left = port.left + scroller.clientLeft;
+          const right = left + scroller.clientWidth;
+          const top = port.top + scroller.clientTop;
+          const walker = document.createTreeWalker(
+            scroller.querySelector('[data-conv-id="rd-a"]')!,
+            NodeFilter.SHOW_TEXT,
+          );
+          const range = document.createRange();
+          let textUnderHead = false;
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!node.textContent?.startsWith("Line ")) continue;
+            range.selectNodeContents(node);
+            textUnderHead ||= [...range.getClientRects()].some(
+              (text) => text.top < box.bottom && text.bottom > top,
+            );
+          }
+          return {
+            leftGap: Math.abs(box.left - left),
+            rightGap: Math.abs(box.right - right),
+            clip: {
+              x: Math.ceil(left),
+              y: Math.ceil(top),
+              width: Math.floor(right) - Math.ceil(left),
+              height: Math.floor(box.bottom) - Math.ceil(top),
+            },
+            textUnderHead,
+          };
+        });
+      expect(leftGap).toBeLessThanOrEqual(1);
+      expect(rightGap).toBeLessThanOrEqual(1);
+      expect(textUnderHead).toBe(true);
+      // Hiding the letter without moving it must change no pixels in the head or above it.
+      const visible = await page.screenshot({ clip });
+      await letter.evaluate((el) => el.style.setProperty("visibility", "hidden"));
+      const hidden = await page.screenshot({ clip });
+      expect(visible.equals(hidden), "the letter paints through the heading or along its edges").toBe(true);
+    } finally {
+      await page.close();
+    }
+  },
+  20_000,
+);
+
 it("aligns the first unread letter when the rest of the thread is short and can still scroll to the last", async () => {
   const { readerStatesPage } = await import("./reader-states.mjs");
   const threadHtml = await readerStatesPage("packages/app/test/states/squares-reader-1-page.tsx");

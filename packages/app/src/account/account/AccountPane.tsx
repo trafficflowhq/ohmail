@@ -72,8 +72,8 @@ function Whole({
     who.at !== "failed"
       ? undefined
       : who.said === ""
-        ? { word: own("notRead") }
-        : { word: own("notRead"), line: who.said };
+        ? { word: own("notRead"), alert: true }
+        : { word: own("notRead"), line: who.said, alert: true };
   const person =
     who.at === "signedIn"
       ? { name: who.displayName?.trim() || who.address, address: who.address }

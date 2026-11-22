@@ -38,9 +38,9 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
     // `.iso`: both verbs take the instant off the same horizon value, at the press (`nowAt()`), from the account's
     // stored hour on the consent row the Ohbox's verbs are handed.
     expect(sliceOfDeclaration(read(MESSAGE_VERBS), "pressResurface"), "the single-message verb")
-      .toMatch(/const when = tomorrowAt\(nowAt\(\), cx\.consent\.resurfaceTime\)\.iso;/);
+      .toMatch(/const when = tomorrowAt\(nowAt\(\), cx\.consent\.resurfaceTime, cx\.zone\)\.iso;/);
     expect(sliceOfDeclaration(read(SELECTION_VERBS), "pileSet"), "the selection verb").toMatch(
-      /const when = action === "resurface" \? tomorrowAt\(nowAt\(\), cx\.consent\.resurfaceTime\)\.iso : null;/,
+      /const when = action === "resurface" \? tomorrowAt\(nowAt\(\), cx\.consent\.resurfaceTime, cx\.zone\)\.iso : null;/,
     );
     // The reader's own quick return books the chooser's own Tomorrow, at the room's hour, minted at the press.
     expect(read(READER_VERBS), "the reader's quick return").toMatch(

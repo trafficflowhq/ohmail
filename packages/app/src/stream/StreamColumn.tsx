@@ -73,7 +73,6 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
     <Sheet
       kind="reading"
       label={t("stream.label")}
-      head={<h2 className="oh-vh">{t("title")}</h2>}
       scroller={attach}
       manualScrollAnchor={shown.length > 0}
       extendTop={!phone}

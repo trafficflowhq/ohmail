@@ -44,6 +44,8 @@ export interface VerbContext {
   readonly demo: boolean;
   /** The place's clock, read at the press. */
   readonly nowAt: () => Date;
+  /** The reader’s zone where the seat supplies its own clock. */
+  readonly zone?: string;
   /** The mirror's tags, for the name a tag verb says. */
   readonly tags: readonly TagDTO[];
   /** The account's own addresses: our own letter teaches no rule. */

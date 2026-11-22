@@ -15,19 +15,9 @@ import {
 } from "./account-harness";
 import { AccountPane, useAccount, usePassword } from "../../../../packages/app/src/account/account/index.js";
 import { useAccountDoor } from "../../app/(product)/mailbox/account-door";
-import { AccountSection } from "../../app/(product)/mailbox/AccountSection";
 import { usePasswordDoor } from "../../app/(product)/mailbox/password-door";
 
-/**
- * THE CALLS OF ONE VISIT, BEFORE AND AFTER. The shipped section and the new pane over the web's filling are each
- * walked through the same visit over the same scripted server: open; sign this browser out; leave. The two ordered
- * lists of method, path and body keys are equal but for ONE declared difference: the shipped section also asked the
- * account's standing ("is there a subscription?") for the erase it drew inline; that question went to the delete
- * page with the erase. Both hand the one sign-out function the same account: the one the session's read named.
- *
- * The one sign-out function is stood in for (its own cases walk the wipe): the stand-in asks the server's sign-out
- * door and records the account it was handed.
- */
+/** One Account visit, from opening to sign-out. The delete page owns the separate subscription read. */
 const wipe = vi.hoisted(() => ({ handed: [] as (string | undefined)[] }));
 vi.mock("../../app/sign-out", async (original) => ({
   ...await original<typeof import("../../app/sign-out")>(),
@@ -81,15 +71,8 @@ async function walk(pane: ReactNode) {
 }
 
 describe("one visit to Settings › Account asks the server the same things, in the same order", () => {
-  it("the shipped section and the new pane, but for the standing the erase asked for", async () => {
-    const before = await walk(<AccountSection />);
-    cleanup();
-    server.restore();
-    server = scripted();
-    wipe.handed = [];
-    tab.loads.length = 0;
-
-    function Anew() {
+  it("reads who is signed in and signs out that account without reading its subscription", async () => {
+    function Account() {
       return (
         <AccountPane
           body="pane"
@@ -99,14 +82,10 @@ describe("one visit to Settings › Account asks the server the same things, in 
         />
       );
     }
-    const after = await walk(<Anew />);
+    const visit = await walk(<Account />);
 
-    expect(after.asked).toEqual([`${SESSION} {}`, `${LOGOUT} {}`]);
-    expect(before.asked.filter((line) => line !== `${ACCESS} {}`)).toEqual(after.asked);
-    expect(before.asked.filter((line) => line === `${ACCESS} {}`)).toHaveLength(1);
-    expect(after.handed).toEqual(before.handed);
-    expect(after.handed).toEqual(["account-under-test"]);
-    expect(after.loads).toEqual(before.loads);
-    expect(after.loads).toEqual(["/"]);
+    expect(visit.asked).toEqual([`${SESSION} {}`, `${LOGOUT} {}`]);
+    expect(visit.handed).toEqual(["account-under-test"]);
+    expect(visit.loads).toEqual(["/"]);
   });
 });

@@ -80,7 +80,7 @@ import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale } from "../../shell/locale";
-/* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`
+/* WHICH BUILD THIS IS, at compile time — the same constant the delete page and `LoginScreen`
    read for the same kind of question. It decides one word of copy below and nothing else. */
 import { SELF_HOST_BUILD } from "../../hello";
 import { StepUpPrompt } from "./StepUpPrompt";
@@ -2847,8 +2847,6 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
             </Button>
             {/* The press removes. On a closed step-up window the account asks for a fresh second
                 factor first, and the removal runs the moment it verifies. */}
-            {/* `primary danger` — the account section's own convention for a destructive
-                confirm (`AccountSection.tsx`), so the two read as one product. */}
             <Button
               variant="primary" className="danger"
               disabled={eraseChosen && eraseTyped.trim() === ""}

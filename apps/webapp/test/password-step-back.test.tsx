@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { deleteAddress, deleteButton } from "./fixtures/delete-account-controls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -146,7 +147,7 @@ beforeEach(() => {
   rig.listed = [];
   rig.mintRefusals = 1;
   rig.pairRefusals = 1;
-  rig.writeRefusals = { "mailboxes.update": 1, "account.erase": 1 };
+  rig.writeRefusals = { "mailboxes.update": 1 };
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -256,7 +257,7 @@ const dto = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
 } as MailboxDTO);
 
 
-const account = en.account as unknown as Record<string, string>;
+const account = en.deleteAccount;
 
 describe("MailboxSection: Cancel during the step-up of an edit", () => {
   async function toTheFactorInFlight(): Promise<HTMLElement> {
@@ -296,13 +297,13 @@ const cancelOf = (el: HTMLElement): HTMLButtonElement => {
   return found[0]!;
 };
 
-describe("AccountSection: Cancel during the step-up of the erase", () => {
+describe("Delete your account: Cancel during the step-up of the erase", () => {
   async function toTheFactorInFlight(): Promise<HTMLElement> {
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    const el = await render(h(AccountSection));
-    await waitFor(() => el.querySelector("#acct-typed") != null, "the facts step");
-    await typeInto(el.querySelector("#acct-typed"), "person@example.test");
-    await submit(el.querySelector("form:has(#acct-typed)"));
+    const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
+    const el = await render(h(DeleteAccountRoute));
+    await waitFor(() => deleteAddress(el) !== null, "the facts step");
+    await typeInto(deleteAddress(el), "person@example.test");
+    await click(deleteButton(el, account.begin)!);
     await factorInFlight(el);
     return el;
   }
@@ -312,14 +313,14 @@ describe("AccountSection: Cancel during the step-up of the erase", () => {
     await click(cancelOf(el));
     await landTheFactor();
     expect(rig.calls, "the parked erase ran after Cancel").not.toContain("account.erase");
-    expect(el.textContent).not.toContain(account.doneTitle);
+    expect(el.textContent).not.toContain(account.doneTitle.replace(/\.$/, ""));
     expect(el.textContent).toContain(account.cancelledNothingErased);
   }, 20000);
 
   it("control: a factor nobody cancelled erases and shows the receipt", async () => {
     const el = await toTheFactorInFlight();
     await landTheFactor();
-    await waitFor(() => (el.textContent ?? "").includes(account.doneTitle!), "the receipt");
+    await waitFor(() => (el.textContent ?? "").includes(account.doneTitle.replace(/\.$/, "")), "the receipt");
     expect(rig.calls).toContain("account.erase");
   }, 20000);
 });
