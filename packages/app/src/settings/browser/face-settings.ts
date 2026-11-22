@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { newFaceEdits, type ApplyFaceAllDevices, type FaceEdits } from "../../mail/ground/boot-face.js";
+import { newFaceEdits, type ApplyFaceAllDevices, type FaceEdits } from "../general/boot-face.js";
 import type { GeneralModel } from "../general/index.js";
 import { useTheme, type FaceName } from "@ohmail/ui/theme";
 import type { ToastFn } from "@ohmail/app-logic/press/report";

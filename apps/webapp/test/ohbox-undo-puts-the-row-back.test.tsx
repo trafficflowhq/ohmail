@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -611,11 +612,12 @@ describe("Undo restores the cursor only for a row its verb took and whose revers
      be held, or it would stand in New the moment anything brought it back. */
   it("the open row's own reversal refused while another's took: no cursor on a row that is not there", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="n1"]')!.click(); });
-    await key("x");
     await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("x");
+    const n1 = c.querySelector<HTMLElement>('[role=option][data-id="n1"]')!;
+    const circle = within(n1.closest<HTMLElement>(".oh-row-slot")!).getByRole("button", { name: messages.ohbox.keyPick });
+    await act(async () => { circle.click(); });
     expect(selectedRow(c), "the premise: the cursor is on w8").toBe("w8");
     expect(heldRow(), "the premise: w8 is read and held").toBe("w8");
     await key("e");

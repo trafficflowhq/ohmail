@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { bindDb, sessions } from "@trafficflow/db";
+import { assertBinding, bindDb, sessions, users } from "@trafficflow/db";
 import { hashToken } from "./crypto.js";
-import type { UnboundDb } from "../context.js";
+import type { ContextDb, UnboundDb } from "../context.js";
 
 /**
  * A session's privilege scope. `'full'` is a completed
@@ -70,4 +70,21 @@ export async function resolveSession(db: UnboundDb, token: string, now: Date): P
     scope: row.scope === "enrollment" ? "enrollment" : "full",
     lastSyncedAt: row.lastSyncedAt,
   };
+}
+
+/**
+ * When the session's user proved the address (`users.email_verified_at`), or null. Read on the
+ * request's handle, which must name the session's account: the account lock shows a user's row
+ * only to its own account, and the look-up above learns the account only from its answer. Asked
+ * by the spend gate, only on the routes an unverified account may not reach.
+ */
+export async function sessionEmailVerifiedAt(
+  db: ContextDb, session: Pick<ResolvedSessionCore, "accountId" | "userId">,
+): Promise<Date | null> {
+  assertBinding(db, session.accountId);
+  const [user] = await db.select({ emailVerifiedAt: users.emailVerifiedAt })
+    .from(users)
+    .where(and(eq(users.id, session.userId), eq(users.accountId, session.accountId)))
+    .limit(1);
+  return user?.emailVerifiedAt ?? null;
 }

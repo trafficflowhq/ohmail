@@ -65,7 +65,8 @@ async function openMailboxes(locale: "en" | "de", options: { filing?: unknown; o
 async function render(locale: "en" | "de"): Promise<HTMLElement> {
   const pane = await openMailboxes(locale);
   return waitFor(() => {
-    const node = pane.querySelector<HTMLElement>(".mbx-selfcheck");
+    const title = (locale === "de" ? de : en).mailboxes.selfCheckTitle;
+    const node = within(pane).getByRole("heading", { name: title }).closest<HTMLElement>(".oh-settingssheet");
     if (!node) throw new Error("the local Mailboxes screen did not render Self Check");
     return node;
   });
@@ -205,7 +206,8 @@ describe("the filings that wait — the desktop's block over the bridge", () => 
   async function renderFilings(onFilings: Reply): Promise<HTMLElement> {
     const pane = await openMailboxes("en", { filing: waiting, onFilings });
     return waitFor(() => {
-      const node = pane.querySelector<HTMLElement>(".mbx-filings");
+      const heading = within(pane).getByRole("heading", { name: /^Waiting to be filed/ });
+      const node = heading.closest<HTMLElement>(".oh-settingssheet");
       if (!node) throw new Error("the local Mailboxes screen did not render pending filings");
       within(node).getByRole("button", { name: en.mailboxFilings.retry });
       return node;
@@ -220,6 +222,9 @@ describe("the filings that wait — the desktop's block over the bridge", () => 
       return url.endsWith("/retry") ? [202, { reset: 2, skipped: 0 }] : [200, { settled: 2, remaining: 0 }];
     }));
     expect(asked[0]).toEqual({ method: "GET", url: "/mailboxes/m1/filings" });
+    const group = within(node).getByRole("group", { name: en.mailboxFilings.waiting });
+    expect(within(group).getByRole("status").textContent).toBe("2 for Screened out");
+    expect(node.textContent).toMatch(/Waiting since [^—.]+/);
     expect(node.textContent).toContain("Why: the folder is not there");
     expect(node.textContent).toContain("They are in Ohbox on your mail server.");
     fireEvent.click(within(node).getByRole("button", { name: "Try again now" }));
@@ -246,7 +251,7 @@ describe("the filings that wait — the desktop's block over the bridge", () => 
   it("nothing waits: no block and no request", async () => {
     const pane = await openMailboxes("en", { onFilings: engineBy(() => [200, filings]) });
     await waitFor(() => within(pane).getByRole("button", { name: en.mailboxes.selfCheckAction }));
-    expect(pane.querySelector(".mbx-filings")).toBeNull();
+    expect(within(pane).queryByRole("heading", { name: /^Waiting to be filed/ })).toBeNull();
     expect(asked).toEqual([]);
   });
 });

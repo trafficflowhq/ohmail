@@ -40,6 +40,10 @@ export interface StepUpDoor {
 
 /** What a place that parks a verb behind the dialog hands it: the same four as the prompt it replaces. */
 export interface StepUpProps {
+  /** Hold the surrounding page while this question stands in its host layer. */
+  inline?: boolean;
+  /** The press that opened this dialog after an asynchronous refusal. */
+  returnFocus?: () => HTMLElement | null;
   /** The factor verified: run the parked verb, once. */
   onVerified(): void;
   /** Cancel, Esc or the scrim: nothing ran. */

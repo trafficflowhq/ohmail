@@ -174,6 +174,7 @@ export function useScreenerLive({
     shownAt,
     decisionVerdict,
     releaseWindow: press.screenerRelease ?? null,
+    drawKeptFirst: at.screener,
   });
   const junk = useJunkHere(
     press,

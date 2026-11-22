@@ -18,6 +18,7 @@ import "./event-card.css";
 
 interface Way {
   label: string;
+  title?: string;
   onPress?: MouseEventHandler<HTMLButtonElement>;
 }
 
@@ -34,7 +35,7 @@ export interface EventCardRow {
   /** A file or a link the event carries: the clip or the arrow, its name, its size. */
   file?: { name: string; size?: string; link?: boolean };
   /** A call: Join, the address under it, and the control that copies the address. */
-  call?: { join: Way; address: string; copy: Way };
+  call?: { join: Way & { href?: string }; address: string; copy?: Way };
   /** Anything else the row holds: faces, a slot, a lock. */
   children?: ReactNode;
   /** The quiet second thing: how the invitees answered, "Sent". */
@@ -176,7 +177,12 @@ export function EventCard(p: EventCardProps) {
           <p key={i} className="oh-text oh-ecard-where">
             {w.text}
             {w.maps ? (
-              <button type="button" className="oh-control oh-ecard-link" onClick={w.maps.onPress}>
+              <button
+                type="button"
+                className="oh-control oh-ecard-link"
+                title={w.maps.title}
+                onClick={w.maps.onPress}
+              >
                 {w.maps.label}
               </button>
             ) : null}
@@ -290,25 +296,33 @@ function CardRow({ row: r }: { row: EventCardRow }) {
         ) : null}
         {r.call ? (
           <>
-            <button
-              type="button"
-              className="oh-control oh-button oh-ecard-join"
-              data-kind="two"
-              data-size="s"
-              onClick={r.call.join.onPress}
-            >
-              <Icon name="video" size={16} className="oh-ecard-join-ico" />
-              <span>{r.call.join.label}</span>
-            </button>
+            {r.call.join.href ? (
+              <Button href={r.call.join.href} outside size="s" icon="video">
+                {r.call.join.label}
+              </Button>
+            ) : (
+              <button
+                type="button"
+                className="oh-control oh-button oh-ecard-join"
+                data-kind="two"
+                data-size="s"
+                onClick={r.call.join.onPress}
+              >
+                <Icon name="video" size={16} className="oh-ecard-join-ico" />
+                <span>{r.call.join.label}</span>
+              </button>
+            )}
             <span className="oh-ecard-address">
               <span className="oh-ecard-note oh-ecard-address-text">{r.call.address}</span>
-              <Button
-                kind="quiet"
-                size="s"
-                icon="copy"
-                label={r.call.copy.label}
-                onPress={r.call.copy.onPress}
-              />
+              {r.call.copy && (
+                <Button
+                  kind="quiet"
+                  size="s"
+                  icon="copy"
+                  label={r.call.copy.label}
+                  onPress={r.call.copy.onPress}
+                />
+              )}
             </span>
           </>
         ) : null}

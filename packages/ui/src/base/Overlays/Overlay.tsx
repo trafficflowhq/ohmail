@@ -27,6 +27,7 @@ export interface OverlayProps {
   place?: "top" | "start";
   /** What takes the keys as it opens. Left out: its first button. */
   first?: (box: HTMLElement) => HTMLElement | null | undefined;
+  returnFocus?: () => HTMLElement | null;
   /** The part's own keys, asked before Esc and Tab. True: the key was taken. */
   onKey?: (e: KeyboardEvent<HTMLDivElement>) => boolean;
   children: ReactNode;
@@ -55,12 +56,13 @@ export function Overlay({
   scrimMotion,
   place,
   first,
+  returnFocus,
   onKey,
   children,
 }: OverlayProps) {
   const ownBox = useRef<HTMLDivElement | null>(null);
   const box = panelRef ?? ownBox;
-  useOverlayFocus(open, box, first ?? firstButton, undefined, false, inertBackground);
+  useOverlayFocus(open, box, first ?? firstButton, returnFocus, false, inertBackground);
   useOverlayEscape(open, box, onClose);
   if (!open && !preview) return null;
 

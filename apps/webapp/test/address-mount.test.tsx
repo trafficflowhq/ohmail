@@ -161,7 +161,7 @@ describe("the shell mounts the address view at its own hash", () => {
     // Two entries: Reads, then the address. This is what a click on an address produces.
     window.history.replaceState(null, "", "#/reads");
     await mountShell();
-    const news = () => screen.queryByRole("heading", { name: "News" });
+    const news = () => screen.queryByRole("heading", { name: "News", level: 1 });
     const direction = () => screen.queryByRole("group", { name: "Direction" });
     await settle(() => news() !== null);
     expect(news()).not.toBeNull();

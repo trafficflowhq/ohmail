@@ -1,5 +1,5 @@
 // @postpush: alone — one case holds ACCESS EXCLUSIVE on `sessions`, which a co-tenant would wait behind.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { and, eq, desc } from "drizzle-orm";
@@ -12,6 +12,14 @@ import {
   AuthService, dbFor, makeTestAuthDeps, hashToken, classifyRefreshFailure, type ServiceContext,
 } from "@trafficflow/services";
 import { statementSeam, type StatementAct, type StatementRun } from "./helpers/statement-seam.js";
+
+// The service binds the request's handle again for a credential's look-up: through a seam, that binds the seam's own handle.
+vi.mock("@trafficflow/db", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@trafficflow/db")>();
+  const { bindThroughSeams } = await import("./helpers/statement-seam.js");
+  return { ...real, bindDb: bindThroughSeams(real.bindDb) };
+});
+
 
 /*
  * A ROTATION IS ONE COMMIT: the claim, the session's checks and the successor land together or

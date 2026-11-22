@@ -12,7 +12,7 @@
   max-inline-size: var(--cal-reading-measure);
 }
 .cal-sr[data-device="phone"] .cal-sr-top {
-  padding-inline: var(--s2);
+  padding: var(--s1) var(--s2) 0;
 }
 .cal-sr-field {
   display: flex;

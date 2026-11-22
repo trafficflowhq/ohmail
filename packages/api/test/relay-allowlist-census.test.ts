@@ -132,7 +132,9 @@ describe("the projection the sidecar reads matches the table", () => {
     // signed-in session's route that reads every id with its account; none signs in, pairs or ends
     // a session; a typed sign-in rides in a body alone, as a mailbox's password does.
     // 210 -> 211 with conditional Discard, the same draft write with a required precondition.
-    expect(RELAY_ALLOWLIST.length).toBe(211);
+    // 211 -> 212 with a receipt's calendar suggestion, dismissed and restored on the account's
+    // server like the calendar's other writes.
+    expect(RELAY_ALLOWLIST.length).toBe(212);
   });
 
   it("every pattern in the projection is a real route", () => {

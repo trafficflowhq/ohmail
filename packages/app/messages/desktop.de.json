@@ -1,5 +1,14 @@
 {
   "host": {
+    "copyOrigin": "Kopieren",
+    "thisComputer": "Dieser Computer",
+    "hostOff": "Aus",
+    "hostServing": "Erreichbar",
+    "hostNotServing": "Nicht erreichbar",
+    "hostStarting": "Startet",
+    "reachAt": "Deine Geräte erreichen ihn unter",
+    "servingDetail": "Solange dieser Computer wach ist.",
+    "lanServingDetail": "Für Apps in deinem Netzwerk, solange dieser Computer wach ist. Falls ein Gerät ihn nicht erreicht, prüfe, ob die Firewall dieses Computers Port {port} zulässt.",
     "title": "Geräte",
     "lead": "Mach diesen Computer zu deinem eigenen Mailserver. Deine anderen Geräte verbinden sich direkt mit ihm — nichts läuft über die Cloud.",
     "story": "Das geht über Tailscale, einen privaten Tunnel zwischen deinen eigenen Geräten. Nichts wird ins Internet geöffnet.",

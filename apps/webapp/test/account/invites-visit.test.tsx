@@ -8,8 +8,9 @@ import { en, json, refusal, serve, settle, type Server } from "./account-harness
 import { qr, watchClipboard, Words } from "./devices-support";
 import { useInvitesDoor } from "../../app/(product)/mailbox/invites-door";
 import { Frame } from "@ohmail/app/frame";
-import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
-import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
+import { MailGround, mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
 import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 
 /**
@@ -88,11 +89,9 @@ const press = async (name: string) => {
 
 async function walk(pane: ReactNode, factorVerified: () => void): Promise<string[]> {
   const { unmount } = render(<Words>{pane}</Words>);
-  await settle();
+  const recipient = await screen.findByRole("textbox", { name: en.invites.mintFor });
   await act(async () => {
-    fireEvent.change(screen.getByRole("textbox", { name: en.invites.mintFor }), {
-      target: { value: "Rahel Beck" },
-    });
+    fireEvent.change(recipient, { target: { value: "Rahel Beck" } });
   });
   await press(en.invites.mintAction);
   await act(async () => factorVerified());
@@ -113,8 +112,8 @@ describe("one visit to Settings › Invites asks the server the same things, in 
       invites: { useDoor: useInvitesDoor, factor, qr },
     });
     const { host } = fakeHost({
-      engine: NO_ENGINE, service: "self", scope: "invites-visit",
-      address: fakeAddress("#/settings/invites"), places: { settings },
+      engine: fakeMail([]).engine, service: "self", scope: "invites-visit",
+      address: fakeAddress("#/settings/invites"), places: { settings }, above: MailGround,
       features: { invites: { name: "invites", render: () => null } },
     });
     const asked = await walk(<Frame host={host} />, () => verify!());

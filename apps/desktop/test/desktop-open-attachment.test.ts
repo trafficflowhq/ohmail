@@ -421,7 +421,7 @@ describe("the reading pane offers the in-app viewer on the types the web preview
   })();
 
   it("MessageFiles' canPreview is exactly isPreviewable(item.mimeType)", () => {
-    // The strip is the reader's `LetterFiles` (today's `MessageFiles`), which every letter of the reading column
+    // The strip is the reader's `LetterFiles`, which every letter of the reading column
     // draws; the letter is held to it. A tile offers the look by its declared type alone (`fileLookOf`, the set
     // `isPreviewable` names) beside the look the host hands: no host's exception.
     const app = resolve(shared, "../../../packages/app/src/reader");

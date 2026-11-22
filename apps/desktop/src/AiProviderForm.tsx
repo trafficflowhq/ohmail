@@ -6,7 +6,7 @@
  * no navigation; everything it needs comes back from the engine, and everything it says comes
  * from the `aiProvider` catalogue. NOT THIS COMPONENT'S TO DECIDE: whether the model works,
  * which models exist, where message content goes — all three come from the engine; the
- * `<select>`s are filled from `probe.models` and nothing else, empty until a test has run.
+ * `<NativeSelect>`s are filled from `probe.models` and nothing else, empty until a test has run.
  */
 
 /*
@@ -22,17 +22,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import {
-  Button,
-  SettingsActions,
-  SettingsChoice,
-  SettingsField,
-  SettingsNote,
-  SettingsRow,
-  SettingsSubhead,
-  SettingsVerdict,
-  type SettingsVerdictState,
-} from "@ohmail/ui";
+import { Button, Field, FieldStack, NativeSelect } from "@ohmail/ui/base";
+import { SettingActs, SettingLine, SettingNote } from "@ohmail/ui/mail";
 
 import { installedModelName } from "@trafficflow/core/model-name";
 
@@ -153,7 +144,7 @@ export function verdictOf(
   now: number,
   /** The provider a write is in flight for, or null. Named so "Asking …" names the right vendor. */
   pending: AiChoice | null,
-): { state: SettingsVerdictState; headline: string; detail?: string; hint?: string; when?: string } {
+): { state: "ok" | "bad" | "wait" | "off"; headline: string; detail?: string; hint?: string; when?: string } {
   if (pending !== null) {
     if (pending === "opencode-go") return { state: "wait", headline: t("goVerifyingConfig") };
     const vendor = pending === "none" ? "" : VENDOR[pending];
@@ -439,7 +430,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   }, [land]);
 
   if (!read) {
-    return <SettingsRow label={t("summaryLabel")} description={t("offDescription")} value="…" />;
+    return <SettingLine label={t("summaryLabel")} description={t("offDescription")} value="…" valueStatus />;
   }
 
   /* NOTHING AT ALL ON A DOOR THAT SERVES NO LOCAL MODEL. `readAiStatus` answers null for a 404,
@@ -448,11 +439,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
      structural guard rather than a rendered state — the same choice `DesktopAutoSuggest` makes,
      and for its reason: a form over a route that does not exist is a control that cannot control. */
   if (!status) {
-    return problem ? (
-      <p className="set-note-inline" role="alert">
-        {problem}
-      </p>
-    ) : null;
+    return problem ? <SettingNote warn>{problem}</SettingNote> : null;
   }
 
   const choice: AiChoice = status.provider ?? "none";
@@ -507,6 +494,13 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
     }
   };
 
+  const providerChoices = {
+    none: { label: t("choiceNone"), note: t("choiceNoneWhy") },
+    anthropic: { label: t("choiceAnthropic"), note: t("choiceAnthropicWhy") },
+    openai: { label: t("choiceOpenai"), note: t("choiceOpenaiWhy") },
+    "opencode-go": { label: t("choiceOpenCodeGo"), note: t("choiceOpenCodeGoWhy") },
+    ollama: { label: t("choiceOllama"), note: ollamaConsequence(status, t) },
+  };
   const verdict = verdictOf(status, t, Date.now(), pending);
   /* `null` where the engine stated no destination. The row then carries no sentence at all. */
   const destination = status.provider ? liveConsequence(status, t) : t("offDescription");
@@ -515,42 +509,37 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
     <>
       {/* THE SUMMARY ROW SAYS WHERE CONTENT GOES ONLY WHERE THE ENGINE SAYS IT. With no provider
           it is the resting sentence; with one it is the engine's answer, and where the engine
-          gave none there is NO description — `SettingsRow` then emits no sentence node and no
+          gave none there is NO description — `SettingLine` then emits no sentence node and no
           `aria-describedby`, so a screen reader is not promised a description either. */}
-      <SettingsRow
+      <SettingLine
         label={t("summaryLabel")}
         {...(destination === null ? {} : { description: destination })}
         value={summaryWord(status, t)}
+        valueStatus
       />
 
-      <p className="set-field-label" style={{ paddingTop: 14 }}>
-        {t("providerLabel")}
-      </p>
-      <SettingsChoice<AiChoice>
-        name="ai-provider"
-        ariaLabel={t("providerLabel")}
-        value={choice}
-        disabled={working}
-        /* THE RADIO DOES NOT MOVE UNTIL THE ENGINE HAS ANSWERED. `choice` is read off the status,
-           so a refused write leaves the control showing the provider that is actually stored —
-           the same "resolve to what the database holds, never to what the click hoped for"
-           contract every other settings control here keeps. It also disposes of the old pane's
-           sharpest edge for free: there is no typed key to carry across a vendor change, because
-           a key is submitted by its own form the moment it is typed. */
-        onChange={(next) => {
-          if (next === choice) return;
-          void run("choice", next, () =>
-            saveAiSettings({ provider: next === "none" ? null : next }),
-          );
-        }}
-        options={[
-          { id: "none", label: t("choiceNone"), description: t("choiceNoneWhy") },
-          { id: "anthropic", label: t("choiceAnthropic"), description: t("choiceAnthropicWhy") },
-          { id: "openai", label: t("choiceOpenai"), description: t("choiceOpenaiWhy") },
-          { id: "opencode-go", label: t("choiceOpenCodeGo"), description: t("choiceOpenCodeGoWhy") },
-          { id: "ollama", label: t("choiceOllama"), description: ollamaConsequence(status, t) },
-        ]}
-      />
+      <SettingLine
+        htmlFor="ai-provider"
+        label={t("providerLabel")}
+        description={providerChoices[choice].note}
+        narrow="under"
+      >
+        <NativeSelect
+          id="ai-provider"
+          value={choice}
+          disabled={working}
+          onChange={(event) => {
+            // The stored choice remains visible until the engine accepts the write.
+            const next = event.currentTarget.value as AiChoice;
+            if (next === choice) return;
+            void run("choice", next, () => saveAiSettings({ provider: next === "none" ? null : next }));
+          }}
+        >
+          {Object.entries(providerChoices).map(([id, { label }]) => (
+            <option key={id} value={id}>{label}</option>
+          ))}
+        </NativeSelect>
+      </SettingLine>
 
       {keyed ? (
         status.canStoreKey ? (
@@ -567,119 +556,104 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
               );
             }}
           >
-            <SettingsField
-              htmlFor="ai-key"
-              label={hasKey ? t("keyStoredLabel") : t("keyLabel")}
-              hint={t("keyHint", { vendor: VENDOR[choice] })}
-            >
-              <div className="set-field-row">
-                <input
-                  id="ai-key"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="set-mono"
-                  placeholder={hasKey ? t("keyStoredPlaceholder") : t("keyPlaceholder")}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  disabled={working}
-                />
-                <Button variant="primary" type="submit" disabled={working || (!apiKey.trim() && !hasKey)}>
+            <FieldStack>
+              <Field
+                id="ai-key"
+                label={hasKey ? t("keyStoredLabel") : t("keyLabel")}
+                hint={t("keyHint", { vendor: VENDOR[choice] })}
+                type="password"
+                placeholder={hasKey ? t("keyStoredPlaceholder") : t("keyPlaceholder")}
+                value={apiKey}
+                onChange={setApiKey}
+                disabled={working}
+              />
+              <SettingActs>
+                <Button kind="two" type="submit" disabled={working || (!apiKey.trim() && !hasKey)}>
                   {choice === "opencode-go"
                     ? apiKey.trim() ? t("goSaveKey") : t("goVerifyStoredKey")
                     : apiKey.trim() || !hasKey ? t("testKey") : t("testStoredKey")}
                 </Button>
-              </div>
-            </SettingsField>
+              </SettingActs>
+            </FieldStack>
           </form>
         ) : (
-          <p className="set-note-inline">
+          <p className="oh-text">
             {choice === "opencode-go" ? t("goKeyCannotStore") : t("keyCannotStore")}
           </p>
         )
       ) : null}
 
       {choice === "ollama" ? (
-        <SettingsActions>
-          <Button variant="primary" disabled={working} onClick={() => void run("test", choice, verifyAiProvider)}>
+        <SettingActs>
+          <Button kind="two" disabled={working} onPress={() => void run("test", choice, verifyAiProvider)}>
             {t("testServer")}
           </Button>
-        </SettingsActions>
+        </SettingActs>
       ) : null}
 
       {/* THE ANSWER TO A PRESS, UNDER THE PRESS THAT ASKED FOR IT. The old pane rendered its
           verdict near the top while the buttons sat at the bottom behind the provider's fields, so
           pressing "Test connection" changed one line above the fold and the control read as dead.
-          It is reported as exactly that. `SettingsVerdict` is a live region, so the outcome also
-          reaches a screen reader without focus leaving the button. */}
+          The live region reports the result without moving focus. */}
       {choice !== "none" ? (
-        <SettingsVerdict
-          state={verdict.state}
-          headline={verdict.headline}
-          {...(verdict.detail === undefined ? {} : { detail: verdict.detail })}
-          {...(verdict.hint === undefined ? {} : { hint: verdict.hint })}
-          {...(verdict.when === undefined ? {} : { when: verdict.when })}
-        />
+        <div id="ai-verdict" role="status" aria-live="polite" aria-busy={verdict.state === "wait" || undefined}>
+          <SettingNote warn={verdict.state === "bad"} silent>
+            {[verdict.headline, verdict.detail, verdict.hint].filter(Boolean).join(" ")}
+          </SettingNote>
+        </div>
       ) : null}
-      {problem ? (
-        <p className="set-note-inline" role="alert">
-          {problem}
-        </p>
-      ) : null}
+      {problem ? <SettingNote warn>{problem}</SettingNote> : null}
 
       {/* THE MODEL LIST IS THE ENDPOINT'S OWN, and there is no other source for it. Empty until a
           test has run, which is honest — nothing has asked it yet — and a name that is not on the
           list cannot be chosen, so a saved model is always one the endpoint said it has. */}
       {listed ? (
         <>
-          <SettingsSubhead>{t("modelsSubhead")}</SettingsSubhead>
-          <div className="set-fields">
-            <SettingsField htmlFor="ai-classify" label={t("modelClassify")} hint={t("modelClassifyHint")}>
-              <select
-                id="ai-classify"
-                value={classifyOn ?? ""}
-                onChange={(e) => {
-                  setClassify(e.target.value);
-                  setSaved(false);
-                }}
-                disabled={working}
-              >
-                <option value="" disabled>
-                  {t("modelChoose")}
+          <SettingLine htmlFor="ai-classify" label={t("modelClassify")} description={t("modelClassifyHint")} narrow="under">
+            <NativeSelect
+              id="ai-classify"
+              value={classifyOn ?? ""}
+              onChange={(e) => {
+                setClassify(e.target.value);
+                setSaved(false);
+              }}
+              disabled={working}
+            >
+              <option value="" disabled>
+                {t("modelChoose")}
+              </option>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {choice === "opencode-go" ? goModelLabel(m, t) : m}
                 </option>
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {choice === "opencode-go" ? goModelLabel(m, t) : m}
-                  </option>
-                ))}
-              </select>
-            </SettingsField>
-            <SettingsField htmlFor="ai-draft" label={t("modelDraft")} hint={t("modelDraftHint")}>
-              <select
-                id="ai-draft"
-                value={draftOn ?? ""}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  setSaved(false);
-                }}
-                disabled={working}
-              >
-                <option value="" disabled>
-                  {t("modelChoose")}
+              ))}
+            </NativeSelect>
+          </SettingLine>
+          <SettingLine htmlFor="ai-draft" label={t("modelDraft")} description={t("modelDraftHint")} narrow="under">
+            <NativeSelect
+              id="ai-draft"
+              value={draftOn ?? ""}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setSaved(false);
+              }}
+              disabled={working}
+            >
+              <option value="" disabled>
+                {t("modelChoose")}
+              </option>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {choice === "opencode-go" ? goModelLabel(m, t) : m}
                 </option>
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {choice === "opencode-go" ? goModelLabel(m, t) : m}
-                  </option>
-                ))}
-              </select>
-            </SettingsField>
-          </div>
-          <SettingsActions>
+              ))}
+            </NativeSelect>
+          </SettingLine>
+          <SettingActs>
             <Button
-              variant="primary"
+              kind="two"
               disabled={working || !dirty || classifyOn === null || draftOn === null}
-              onClick={() =>
+              onPress={() =>
                 void run("save", choice, async () => {
                   const next = await saveAiSettings(
                     modelWrite(choice as AiProviderKind, classify, draft),
@@ -692,18 +666,18 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
               {t("save")}
             </Button>
             {saved ? (
-              <span className="set-note-inline" role="status">
+              <span className="oh-text" role="status">
                 {t("saved")}
               </span>
             ) : null}
-          </SettingsActions>
+          </SettingActs>
         </>
       ) : choice !== "none" && status.probe === null ? (
         /* "Test first — the list comes from Ollama" is true ONLY while nothing has asked it. After
            a probe that came back with no models it is the fourth dead end in the same block: the
            person has just tested, and is told to test. Once a probe has run the verdict above is
            the answer — it names what happened and what to do — so nothing stands here. */
-        <p className="set-note-inline">{t("modelsWait", { vendor: VENDOR[choice] })}</p>
+        <SettingNote>{t("modelsWait", { vendor: VENDOR[choice] })}</SettingNote>
       ) : null}
 
       {/* OFFERED WHENEVER ANYTHING IS STORED — a provider, or EITHER vendor's key. A key outlives
@@ -714,20 +688,18 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           way to be removed at all. It is also what restores a non-default Ollama origin. */}
       {status.provider || status.settings.anthropic.hasKey || status.settings.openai.hasKey
         || status.settings.opencodeGo?.hasKey ? (
-        <SettingsRow
+        <SettingLine
           label={t("remove")}
           description={t("removeWhy")}
-          control={
-            <Button
-              variant="ghost"
-              className="danger"
-              disabled={working}
-              onClick={() => void run("clear", "none", clearAiProvider)}
-            >
-              {t("forget")}
-            </Button>
-          }
-        />
+        >
+          <Button
+            kind="quiet"
+            disabled={working}
+            onPress={() => void run("clear", "none", clearAiProvider)}
+          >
+            {t("forget")}
+          </Button>
+        </SettingLine>
       ) : null}
 
       {/* WRITTEN FOR THIS FORM AND NOT BORROWED FROM THE PANE AROUND IT, because the two are not
@@ -736,9 +708,9 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           where each one GOES: the mailbox password only ever reaches the mail engine on this
           computer, and an API key reaches a third party, which is what the sentence below is
           about. */}
-      {choice === "opencode-go" ? <SettingsNote>{t("goPrivacyBilling")}</SettingsNote> : null}
-      {choice === "opencode-go" ? <SettingsNote>{t("goFreePreviewNote")}</SettingsNote> : null}
-      <SettingsNote>{t("note")}</SettingsNote>
+      {choice === "opencode-go" ? <SettingNote>{t("goPrivacyBilling")}</SettingNote> : null}
+      {choice === "opencode-go" ? <SettingNote>{t("goFreePreviewNote")}</SettingNote> : null}
+      <SettingNote>{t("note")}</SettingNote>
     </>
   );
 }

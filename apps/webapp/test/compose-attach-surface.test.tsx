@@ -37,7 +37,7 @@ import { settleFirstPaint } from "./_first-paint.js";
  *
  * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
  *
- *  · drop the `surfaceMax` argument at either call site (`ComposeView`, `InlineReply`)
+ *  · drop the host ceiling from either shared Write surface
  *    → the 25 MB cases go red (the form promises 3 MB below what the local engine accepts);
  *  · treat a `null` surface as "not declared" inside `composeAttachCap`
  *    → the same cases go red;

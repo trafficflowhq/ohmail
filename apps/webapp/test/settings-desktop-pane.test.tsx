@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import type { ReactNode } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { mailPanes, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { mailPanes, NO_PANE_PARTS, prepareWriting } from "@ohmail/app/mail";
 import { useFrame } from "@ohmail/app/frame";
 import { NONE, type FeatureEntry } from "@ohmail/app/host";
 import { paneOf } from "../../../packages/app/src/settings/facts.js";
@@ -13,7 +13,7 @@ import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-hos
 import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
 import { MailFrame } from "../app/shell/browser-mail";
 import messages from "../messages/en.json";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 interface Sections {
   desktopSection?: { label: string; node: ReactNode };
@@ -70,6 +70,11 @@ function mount({ desktopSection, billingSection, securitySection, accountSection
 let hostElement: HTMLElement;
 const nav = () => screen.getByRole("navigation", { name: messages.settings.navAria });
 const navLabels = () => within(nav()).getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim());
+
+beforeAll(async () => {
+  await prepareWriting();
+  await import("../../../packages/app/src/settings/SettingsReading.js");
+});
 
 afterEach(cleanup);
 

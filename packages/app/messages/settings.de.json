@@ -494,6 +494,7 @@
     "search": "Nach Absender oder Domain suchen",
     "searchLabel": "Regeln durchsuchen",
     "facetLabel": "Regeln zeigen, die einsortieren in",
+    "facetKey": "Sortiert in",
     "facetAll": "Alle",
     "noMatch": "Keine Regel passt.",
     "bulkRevoke": "{count, plural, one {Die passende Regel aufheben} other {Alle # passenden aufheben}}",

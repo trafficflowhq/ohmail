@@ -6,7 +6,8 @@
  */
 import { useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { readSelfCheck } from "@trafficflow/core/diagnostics";
 
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
@@ -36,25 +37,24 @@ export function MailboxSelfCheck({ check }: { check: (mailboxId: string) => Prom
   const rows = (mailboxes ?? []).filter((m) => m.status !== "disabled");
   if (rows.length === 0) return null;
   return (
-    <SettingsSection className="mbx-selfcheck">
-      <SettingsSubhead>{t("selfCheckTitle")}</SettingsSubhead>
+    <SettingsSheet title={t("selfCheckTitle")}>
       {rows.map((m) => {
         const p = press[m.id] ?? { k: "rest" };
         const sentence = selfCheckPressSentence(t, p, waitingOf(m));
         return (
-          <SettingsRow
+          <SettingLine
             key={m.id}
             label={m.displayName || m.address}
             {...(sentence === null ? {} : { description: sentence })}
-            control={(
-              <Button variant="ghost" disabled={p.k === "busy"} onClick={() => { void run(m.id); }}>
-                {p.k === "busy" ? t("selfCheckChecking") : t("selfCheckAction")}
-              </Button>
-            )}
-          />
+            narrow="detail"
+          >
+            <Button kind="quiet" disabled={p.k === "busy"} onPress={() => { void run(m.id); }}>
+              {p.k === "busy" ? t("selfCheckChecking") : t("selfCheckAction")}
+            </Button>
+          </SettingLine>
         );
       })}
-      <SettingsNote icon="shield">{t("selfCheckWhy")}</SettingsNote>
-    </SettingsSection>
+      <SettingNote>{t("selfCheckWhy")}</SettingNote>
+    </SettingsSheet>
   );
 }

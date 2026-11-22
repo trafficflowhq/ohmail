@@ -1,3 +1,4 @@
+import type { MouseEventHandler, ReactNode } from "react";
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
 import { useSaidOnArrival } from "../said-on-arrival.js";
@@ -16,6 +17,12 @@ export interface NoticeAct {
   busy?: boolean;
 }
 
+type NoticeButton = Omit<NoticeAct, "onPress"> & {
+  onPress: MouseEventHandler<HTMLButtonElement>;
+  /** A dismissal is a word even where it is the only answer. */
+  kind?: "quiet";
+};
+
 export interface NoticeProps {
   /** Where the one slot is: the rail's foot, or the bar over a list where no rail stands. */
   place: "rail" | "bar";
@@ -26,13 +33,15 @@ export interface NoticeProps {
   /** Draw a waiting line and put the count below the title. */
   progress?: boolean;
   /** At most one line of detail or a progress count. */
-  line?: string;
+  line?: ReactNode;
   /** Up to two answers: the first a small capsule, the second a word. Left out where nothing can be done: it stands calm. */
-  acts?: readonly [NoticeAct] | readonly [NoticeAct, NoticeAct];
+  acts?: readonly [NoticeButton] | readonly [NoticeButton, NoticeButton];
+  /** Related controls when the notice must keep existing ways to act. */
+  related?: ReactNode;
 }
 
 /** Something needs you. It stands in the one slot, one at a time. */
-export function Notice({ place, title, hot, progress, line, acts }: NoticeProps) {
+export function Notice({ place, title, hot, progress, line, acts, related }: NoticeProps) {
   /* Said when it appears: its words are given to a screen reader once the region stands; its answers at once. */
   const held = useSaidOnArrival(true) ? true : undefined;
   return (
@@ -48,17 +57,17 @@ export function Notice({ place, title, hot, progress, line, acts }: NoticeProps)
               <span className="oh-notice-count">{line}</span>
             </>
           ) : (
-            ` ${line}`
+            <> {line}</>
           ))}
       </p>
       {progress ? <ActivityLine /> : null}
       {acts ? (
         <div className="oh-notice-acts">
-          {acts.map((act, i) => (
+          {acts?.map((act, i) => (
             <Button
               key={act.label}
               size="s"
-              kind={i ? "quiet" : "ink"}
+              kind={act.kind ?? (i ? "quiet" : "ink")}
               onPress={act.onPress}
               disabled={act.disabled}
               busy={act.busy}
@@ -68,6 +77,7 @@ export function Notice({ place, title, hot, progress, line, acts }: NoticeProps)
           ))}
         </div>
       ) : null}
+      {related ? <div className="oh-notice-acts oh-notice-related">{related}</div> : null}
     </div>
   );
 }

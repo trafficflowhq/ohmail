@@ -76,7 +76,7 @@ const openRow = async (host: HTMLElement, id: string): Promise<void> => {
  * (`#/ohbox/m/<id>`); a single letter (no conversation panels) rings nothing.
  */
 const anchored = (host: HTMLElement): string | null => {
-  const id = /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
+  const id = /^#\/ohbox\/[mt]\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
   return lettersShown(host).length > 1 && id !== null && letterShown(host, id) !== null ? id : null;
 };
 /**

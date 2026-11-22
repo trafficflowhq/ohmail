@@ -30,12 +30,12 @@
     box-shadow: var(--oh-switch-knob-ring);
     transition: transform var(--d-knob) var(--e-knob);
   }
-  .oh-switch[aria-checked="true"] {
+  .oh-switch:is([aria-checked="true"], [data-on]) {
     --oh-switch-ring: none;
     --oh-switch-knob-ring: none;
     background: var(--solid);
   }
-  .oh-switch[aria-checked="true"] .oh-switch-knob {
+  .oh-switch:is([aria-checked="true"], [data-on]) .oh-switch-knob {
     background: var(--on-solid);
     transform: translateX(var(--oh-switch-knob));
   }
@@ -64,7 +64,7 @@
     --oh-switch-ring: var(--oh-ring-ctl);
     --oh-switch-knob-ring: var(--oh-ring-ctl);
   }
-  :root[data-face="ohmarchy"] .oh-switch[aria-checked="true"] {
+  :root[data-face="ohmarchy"] .oh-switch:is([aria-checked="true"], [data-on]) {
     --oh-switch-knob-ring: none;
   }
 }

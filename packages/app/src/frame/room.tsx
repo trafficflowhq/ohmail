@@ -30,7 +30,8 @@ import { placeLabelOver, pressWords } from "@ohmail/app-logic/reader";
 import { rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { useText } from "../text/index.js";
-import { NONE, type HostReads } from "../host/index.js";
+import { NONE } from "../host/contract.js";
+import type { HostReads } from "../host/reads.js";
 import { useFrame, useReport } from "./commands.js";
 import {
   factsStore,

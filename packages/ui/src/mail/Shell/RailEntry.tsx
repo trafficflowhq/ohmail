@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { KeyHint } from "../../base/index.js";
 import { tagDot } from "../../base/Primitives/hue.js";
 import { cssPoint } from "../../base/ui-zoom.js";
@@ -65,6 +65,10 @@ export interface RailEntryProps {
    * hit's way. It is drawn, and belongs in `label` where the entry is named for a screen reader.
    */
   hint?: string;
+  /** A status at the far end and its spoken description. */
+  status?: { readonly mark: ReactNode; readonly description?: string };
+  /** A square for a current fold that represents a whole place. */
+  currentMark?: boolean;
   /** Its name for a screen reader where the count belongs to it: "News, 5". */
   label?: string;
   /** The whole name, where the entry may cut it. */
@@ -78,6 +82,7 @@ export interface RailEntryProps {
 /** One place: its sign, its name, its count. */
 export function RailEntry(props: RailEntryProps) {
   const { kind, children, icon, sign, hue, count, keyHint, digit, current, expanded, depth, onPress } = props;
+  const descriptionId = useId();
   const counted = useRef<HTMLSpanElement>(null);
   const before = useRef(count);
 
@@ -118,6 +123,8 @@ export function RailEntry(props: RailEntryProps) {
       data-digit={digit ? "" : undefined}
       data-drop={props.drop}
       aria-current={current ? "page" : undefined}
+      data-current-mark={props.currentMark ? "" : undefined}
+      aria-describedby={props.status?.description ? descriptionId : undefined}
       aria-expanded={folds ? Boolean(expanded) : undefined}
       aria-busy={props.busy ? true : undefined}
       aria-label={props.label}
@@ -158,6 +165,12 @@ export function RailEntry(props: RailEntryProps) {
           <KeyHint shown unsaid>
             {keyHint}
           </KeyHint>
+        </span>
+      ) : null}
+      {props.status?.mark}
+      {props.status?.description ? (
+        <span hidden id={descriptionId}>
+          {props.status.description}
         </span>
       ) : null}
       {count ? (

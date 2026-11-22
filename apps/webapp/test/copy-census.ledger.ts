@@ -64,14 +64,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "apps/webapp/app/components/sender-menu/SenderMenu.tsx": [
     { text: "esc", why: "keycap — the resolve step's and the confirm's step-back hint" },
   ],
-  "apps/webapp/app/shell/InlineReply.tsx": [
-    { text: "esc", why: "keycap — the editor's dismiss hint" },
-    { text: "mod+Enter", why: "chord identifier — the keymap parses it; `mod` resolves per platform" },
-    { text: "mod+shift+Enter", why: "chord identifier — Send + Done's, parsed by the keymap and printed by `chordKeys`" },
-  ],
-  "apps/webapp/app/shell/MessagePane.tsx": [
-    { text: "shift+Backspace", why: "chord identifier — the Trash bar's Restore keycap; the keymap parses it and `chordKeys` prints ⇧⌫, nobody reads this word" },
-  ],
   /**
    * MACHINE TEXT, ALL OF IT. These four files return documents, policies, selectors and wire
    * tokens from functions, and the `return` pass reaches them for the first time. Every row here
@@ -101,9 +93,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "if(f===\"ohmarchy\")try{document.documentElement.dataset.face=\"ohmarchy\"}catch(e){}", why: "the same script, the face stamp" },
     { text: "var l=null;try{l=localStorage.getItem({})}catch(e){}", why: "the same script, the layout read" },
     { text: "if(l===\"zero\")try{document.documentElement.dataset.layout=\"zero\"}catch(e){}})()", why: "the same script, the layout stamp and its close" },
-  ],
-  "apps/webapp/app/shell/ThreadMarks.tsx": [
-    { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },
   ],
   "packages/ui/src/mail/Lists/square-tip.tsx": [
     { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },

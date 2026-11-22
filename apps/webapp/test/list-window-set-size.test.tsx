@@ -208,7 +208,7 @@ describe("a windowed list announces its true size and every row's true position"
   });
 
   it("an Answer Later pile of 600", async () => {
-    const all = range(0, N);
+    const all = range(0, N, { placeDecided: true });
     const host = renderRegistered({ first: "#/triage", letters: all.map((letter) => ({
       ...letter,
       triage: { messageId: letter.id, state: "reply_later", bubbleUpAt: null, setAt: ISO, updatedAt: ISO },
@@ -219,7 +219,7 @@ describe("a windowed list announces its true size and every row's true position"
 
   it("a tag of 600", async () => {
     const tag = { id: "t1", name: "Studio" } as TagDTO;
-    const host = renderRegistered({ first: "#/tag/t1", letters: range(0, N, { labels: ["t1"] }),
+    const host = renderRegistered({ first: "#/tag/t1", letters: range(0, N, { labels: ["t1"], placeDecided: true }),
       more: { "tag:t1": tag },
     });
     const m = { host, scroller: scrollerOf(host, "listbox", "Studio") };

@@ -301,7 +301,7 @@ const PANES: Pane[] = [
       const el = await render(h(AccountSection));
       await waitFor(() => el.querySelector("#acct-typed") != null, "the facts step");
       await typeInto(el.querySelector("#acct-typed"), EMAIL);
-      await submit(el.querySelector("form.acct-confirm"));
+      await submit(el.querySelector("form:has(#acct-typed)"));
       return el;
     },
   },
@@ -413,10 +413,10 @@ describe("each confirm is a step-up on the session this browser holds", () => {
     const el = await render(h(AccountSection));
     await waitFor(() => el.querySelector("#acct-typed") != null, "the facts step");
     await typeInto(el.querySelector("#acct-typed"), "someone-else@example.test");
-    await submit(el.querySelector("form.acct-confirm"));
+    await submit(el.querySelector("form:has(#acct-typed)"));
     expect(called("account.erase"), "a submit past the disabled button erased the account").toHaveLength(0);
     await typeInto(el.querySelector("#acct-typed"), EMAIL);
-    await submit(el.querySelector("form.acct-confirm"));
+    await submit(el.querySelector("form:has(#acct-typed)"));
     await waitFor(() => called("account.erase").length === 1, "CONTROL: the typed address erases");
   }, 20000);
 
@@ -425,7 +425,8 @@ describe("each confirm is a step-up on the session this browser holds", () => {
     const el = await PANES.find((p) => p.verb === "account.erase")!.walk();
     await waitFor(() => prompt(el) != null, "the step-up prompt");
     expect(el.textContent).toContain(acct.factorBody!.replace("{email}", EMAIL));
-    await click(press(el, dev.cancel!));
+    const dialog = el.querySelector<HTMLElement>('[role="dialog"]')!;
+    await click(press(dialog, en.stepUp.cancel));
     expect(el.querySelector<HTMLInputElement>("#acct-typed")?.value, "Cancel threw the typed address away").toBe(EMAIL);
     expect(called("account.erase")).toHaveLength(1);
   }, 20000);

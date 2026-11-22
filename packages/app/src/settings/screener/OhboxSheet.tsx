@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useDraftLeave } from "../use-draft-leave.js";
+import { useDraftLeave } from "../../host/use-draft-leave.js";
 import { Button, Dialog } from "@ohmail/ui/base";
 import { SettingArea, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useLocale, useText } from "../../text/index.js";

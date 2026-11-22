@@ -723,3 +723,25 @@ describe("what was typed survives a trip to another step, the password apart", (
     expect(seen[1]!.read()).toBe(typed);
   });
 });
+
+it("places the plaintext warning between the two kinds of consent", async () => {
+  const { Consents } = await import("../../../src/mailboxes/connect/Consents.js");
+  const view = render(
+    <Consents
+      lines={[
+        { kind: "plain", legs: "imap", on: false },
+        { kind: "certificate", legs: "smtp", on: false, sha256: "sample" },
+      ]}
+      words={(word) => word}
+      tick={() => {}}
+    />,
+  );
+  const plain = view.getByRole("switch", { name: "insecureConsentLabel" });
+  const trust = view.getByRole("switch", { name: "trustCertificateLabelSmtp" });
+  const warning = view.getByText("insecureConsentWarning");
+  expect(plain.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(warning.compareDocumentPosition(trust) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(
+    trust.compareDocumentPosition(view.getByText("trustCertificateNote")) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});

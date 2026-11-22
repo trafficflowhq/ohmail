@@ -3,6 +3,9 @@ import {
   Blank,
   Button,
   ChoiceTiles,
+  CheckLine,
+  CodeText,
+  CodeTile,
   Count,
   CameraSquare,
   Counters,
@@ -25,6 +28,7 @@ import {
   MenuGroup,
   MenuItem,
   MenuRule,
+  NativeSelect,
   Notice,
   NoticeSlot,
   Opening,
@@ -50,6 +54,7 @@ import {
   type SuggestionRow,
 } from "../../../src/base/index.js";
 import type React from "react";
+import pairingCode from "./base-code-tile.json" with { type: "json" };
 import keyTable from "./base-keys.json" with { type: "json" };
 import { force, moving, type KitSubject, type Look } from "../harness.js";
 
@@ -1075,6 +1080,12 @@ const said = (state: string, node: React.ReactNode): KitSubject => ({
 });
 const feedback: KitSubject[] = [
   { key: "Notice/full", place: "block", render: full },
+  {
+    key: "Notice/progress",
+    place: "block",
+    on: "screen",
+    render: (look) => <Notice place={slotPlace(look)} title="First sync" line="3,846 so far" progress />,
+  },
   { key: "Notice/calm", place: "block", render: () => <Notice place="rail" title="Offline since 09:24" /> },
   {
     key: "NoticeSlot/several",
@@ -1424,7 +1435,50 @@ const suggest: KitSubject[] = [
   }),
 ];
 
+const nativeControls: KitSubject[] = [
+  { key: "CodeText/rest", render: () => <CodeText>ABCD EFGH</CodeText> },
+  {
+    key: "CodeTile/rest",
+    place: "block",
+    width: 128,
+    render: () => {
+      const { side, path } = pairingCode;
+      return (
+        <CodeTile>
+          <svg
+            role="img"
+            aria-label="Pairing code"
+            viewBox={`-4 -4 ${side} ${side}`}
+            shapeRendering="crispEdges"
+          >
+            <rect x="-4" y="-4" width={side} height={side} fill="#fff" />
+            <path d={path} fill="#000" />
+          </svg>
+        </CodeTile>
+      );
+    },
+  },
+  {
+    key: "NativeSelect/rest",
+    render: () => (
+      <NativeSelect aria-label="Host mode" defaultValue="network">
+        <option value="network">Same network</option>
+        <option value="off">Off</option>
+      </NativeSelect>
+    ),
+  },
+  {
+    key: "CheckLine/rest",
+    render: () => (
+      <CheckLine id="network-access" checked={true} onChange={() => {}}>
+        Allow same-network access
+      </CheckLine>
+    ),
+  },
+];
+
 export const subjects: KitSubject[] = [
+  ...nativeControls,
   ...overWindow,
   ...feedback,
   ...pages,

@@ -14,6 +14,7 @@ import {
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { screeningReadBack, verdictAction, verdictArgs, verdictKeyOf } from "@ohmail/app-logic/press/press-verdict";
+import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
 import { placeLabel } from "../app/shell/format";
 
 /**
@@ -65,13 +66,26 @@ async function render(rows: EngineMessage[], o: {
   }));
   const reply = (body: unknown) => Response.json(body, { headers: { "X-Ohmail-Account": ACCOUNT } });
   const standing = rule();
-  installScreeningWeb(`#/ohbox/m/${seed}`, (path, query) => {
+  let wireSeq = rows.length + 1;
+  const moves: { id: string; folder: Folder }[] = [];
+  installScreeningWeb(`#/ohbox/m/${seed}`, (path, query, method, init) => {
     if (path === "/api/mailboxes") return reply({ items: mailboxes });
     if (path === "/api/sync") return query.get("types") === "rule"
       ? syncScreeningWeb([{ type: "rule", op: "create", id: standing.id, seq: 1, updatedAt: NOW, entity: standing }], 1)
       : syncScreeningWeb(rows.map((row, index) => ({
         type: "message", op: "create", id: row.id, seq: index + 2, updatedAt: NOW, entity: row,
       })), rows.length + 1);
+    if (path === `/api/rules/${standing.id}` && method === "PATCH") {
+      return Response.json(standing, { headers: { "X-Sync-Seq": String(++wireSeq) } });
+    }
+    const move = /^\/api\/messages\/([^/]+)\/move$/.exec(path);
+    if (move && method === "POST") {
+      const row = rows.find(({ id }) => id === move[1]);
+      if (!row) return new Response(null, { status: 404 });
+      const { folder } = JSON.parse(String(init?.body)) as { folder: Folder };
+      moves.push({ id: row.id, folder });
+      return Response.json({ ...row, folder }, { headers: { "X-Sync-Seq": String(++wireSeq) } });
+    }
     if (path === "/api/screener/stayed") {
       const ids = query.get("ids")?.split(",") ?? [];
       return reply({ stayed: ids.filter((id) => !id.startsWith("in-"))
@@ -91,7 +105,7 @@ async function render(rows: EngineMessage[], o: {
     text: line.querySelector("span")!.textContent!,
     move: within(line).queryByRole("button", { name: /^(Move (them|it) too|Auch verschieben)$/ })?.textContent ?? null,
   }));
-  const back = screeningReadBack(store, seed, undefined, "ohbox", "sender", { consent: CONSENT, now: new Date(NOW), ownAddresses: OWN, retro: true });
+  const back = screeningReadBack(store, seed, undefined, "ohbox", "sender", { consent: CONSENT, now: new Date(NOW), ownAddresses: OWN, retro: true }, { mailbox: "seed" });
   const t = createTranslator({ locale: o.locale ?? "en", messages: messages as never, namespace: "screening" as never }) as unknown as
     (k: string, v?: Record<string, unknown>) => string;
   const v = back!.verdict;
@@ -101,7 +115,7 @@ async function render(rows: EngineMessage[], o: {
   }));
   const scope = within(sheet).queryByRole("radiogroup", { name: messages.screening.scopeAria });
   const chips = [...(scope?.querySelectorAll("small") ?? [])].map((e) => e.textContent!);
-  return { now: sheet.querySelector(".oh-contactcard-line")?.getAttribute("aria-description") ?? null, lines, v, toast, action: verdictAction(v, { scope: "sender", address: ADDR }), chips };
+  return { sheet, moves, now: sheet.querySelector(".oh-contactcard-line")?.getAttribute("aria-description") ?? null, lines, v, toast, action: verdictAction(v, { scope: "sender", address: ADDR }), chips };
 }
 
 describe("H1: one place named with its rows, several named as several", () => {
@@ -165,30 +179,41 @@ describe("L6: a folder place is its mailbox and path", () => {
     ]);
   });
 
-  it("the same path in two mailboxes is two counts, each named with its mailbox's label", async () => {
+  it("a twin path in another mailbox is outside the card count and the toast move", async () => {
     const r = await render([
       ...five,
       msg("a-1", "Fixture", { mailbox: "mb" }),
       msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" }),
       { ...msg("foreign-letter", "Another account's folder"), accountId: "another-account" },
     ], { labels: { mb: "Work", "mb-2": "Home" } });
-    expect(r.now).toBe("7 messages — Ohbox 5 · Fixture (Work) 1 · Fixture (Home) 1");
+    expect(r.now).toBe("6 messages — Ohbox 5 · Fixture 1");
     expect(r.lines.map((l) => l.text)).toEqual([
-      "1 stays in Fixture (Work): filed in another mail app.", "1 stays in Fixture (Home): filed in another mail app.",
+      "1 stays in Fixture: filed in another mail app.",
     ]);
-    expect(r.toast).toBe("5 are in Ohbox · 2 are still in several places.");
+    const toast = "5 are in Ohbox · 1 is still in Fixture.";
+    expect.soft(r.toast).toBe(toast);
+    expect.soft(r.action).toEqual({ kind: "move", ids: ["a-1"] });
+
+    await clickMounted(within(r.sheet).getByRole("radio", { name: "Ohbox" }));
+    await tick(UNDO_MS + 1500);
+    const page = within(document.body);
+    const move = page.getByRole("button", { name: "Move it" });
+    expect(move.closest("[role=status]")?.textContent).toContain(toast);
+    await clickMounted(move);
+    await tick(250);
+    expect(r.moves).toEqual([{ id: "a-1", folder: "INBOX" }]);
   });
 
-  it("in German, the same pattern", async () => {
+  it("in German, the card counts only the clicked mailbox", async () => {
     const r = await render([...five, msg("a-1", "Fixture", { mailbox: "mb" }), msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" })],
       { labels: { mb: "Arbeit", "mb-2": "Privat" }, locale: "de" });
-    expect(r.now).toBe("7 Nachrichten — Ohbox 5 · Fixture (Arbeit) 1 · Fixture (Privat) 1");
+    expect(r.now).toBe("6 Nachrichten — Ohbox 5 · Fixture 1");
   });
 
-  it("a mailbox with no label is never named by its address: only the labelled one is qualified", async () => {
+  it("an unlabelled second mailbox is neither counted nor named by its address", async () => {
     const r = await render([...five, msg("a-1", "Fixture", { mailbox: "mb" }), msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" })],
       { labels: { mb: "Work", "mb-2": null } });
-    expect(r.now).toBe("7 messages — Ohbox 5 · Fixture (Work) 1 · Fixture 1");
+    expect(r.now).toBe("6 messages — Ohbox 5 · Fixture 1");
     expect(r.now).not.toContain("@");
   });
 

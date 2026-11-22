@@ -46,8 +46,9 @@ export function screeningReadBack(
   dest: ScreeningDest,
   scope: ScreeningScope,
   o: { consent: ShellConsentFacts; now: Date; ownAddresses: readonly string[]; firstImportDoneAt?: FirstImports; retro: boolean },
+  options?: { readonly mailbox: "seed" },
 ): { verdict: StayVerdict; at: number; shown: string[] } | null {
-  const s = senderScreening(reader, messageId, address);
+  const s = senderScreening(reader, messageId, address, undefined, undefined, options);
   if (!s) return null;
   const presented = presentationReader(
     reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses, o.firstImportDoneAt)),

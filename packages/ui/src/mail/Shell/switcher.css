@@ -1,6 +1,7 @@
 @layer oh {
   .oh-switcher,
-  .oh-switcher-round {
+  .oh-switcher-round,
+  .oh-switcher-entry {
     /* Each product's own colour, picked from the four the part is handed. */
     --oh-switcher-mail: var(--oh-switcher-mail-pl);
     --oh-switcher-cal: var(--oh-switcher-cal-pl);
@@ -13,32 +14,37 @@
   }
 
   :root[data-scheme="dark"] .oh-switcher,
-  :root[data-scheme="dark"] .oh-switcher-round {
+  :root[data-scheme="dark"] .oh-switcher-round,
+  :root[data-scheme="dark"] .oh-switcher-entry {
     --oh-switcher-mail: var(--oh-switcher-mail-pd);
     --oh-switcher-cal: var(--oh-switcher-cal-pd);
   }
 
   :root[data-face="ohmarchy"] .oh-switcher,
-  :root[data-face="ohmarchy"] .oh-switcher-round {
+  :root[data-face="ohmarchy"] .oh-switcher-round,
+  :root[data-face="ohmarchy"] .oh-switcher-entry {
     --oh-switcher-mail: var(--oh-switcher-mail-ol);
     --oh-switcher-cal: var(--oh-switcher-cal-ol);
   }
 
   :root[data-face="ohmarchy"][data-scheme="dark"] .oh-switcher,
-  :root[data-face="ohmarchy"][data-scheme="dark"] .oh-switcher-round {
+  :root[data-face="ohmarchy"][data-scheme="dark"] .oh-switcher-round,
+  :root[data-face="ohmarchy"][data-scheme="dark"] .oh-switcher-entry {
     --oh-switcher-mail: var(--oh-switcher-mail-od);
     --oh-switcher-cal: var(--oh-switcher-cal-od);
   }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-scheme]) .oh-switcher,
-    :root:not([data-scheme]) .oh-switcher-round {
+    :root:not([data-scheme]) .oh-switcher-round,
+    :root:not([data-scheme]) .oh-switcher-entry {
       --oh-switcher-mail: var(--oh-switcher-mail-pd);
       --oh-switcher-cal: var(--oh-switcher-cal-pd);
     }
 
     :root[data-face="ohmarchy"]:not([data-scheme]) .oh-switcher,
-    :root[data-face="ohmarchy"]:not([data-scheme]) .oh-switcher-round {
+    :root[data-face="ohmarchy"]:not([data-scheme]) .oh-switcher-round,
+    :root[data-face="ohmarchy"]:not([data-scheme]) .oh-switcher-entry {
       --oh-switcher-mail: var(--oh-switcher-mail-od);
       --oh-switcher-cal: var(--oh-switcher-cal-od);
     }
@@ -254,7 +260,22 @@
     box-shadow: 0 0 0 var(--oh-switcher-gap) var(--ground);
   }
 
-  .oh-switcher-wants[data-product="cal"] {
+  .oh-switcher-entry .oh-switcher-wants {
+    position: static;
+    flex: none;
+    width: var(--s2);
+    height: var(--s2);
+    border: var(--oh-hair) solid currentColor;
+    color: var(--oh-switcher-mail);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .oh-switcher-entry .oh-switcher-wants[data-product="cal"] {
+    color: var(--oh-switcher-cal);
+  }
+
+  .oh-switcher-round .oh-switcher-wants[data-product="cal"] {
     background: var(--oh-switcher-cal);
   }
 

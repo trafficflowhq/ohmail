@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { TOLD_DEVICES_PREFIX, routingIntentsKey } from "@ohmail/client-engine";
 
-import { imageQualityKeyFor } from "../../webapp/app/components/image-quality";
+import { imageQualityKeyFor } from "@ohmail/app-logic/write/image-quality";
 import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import {

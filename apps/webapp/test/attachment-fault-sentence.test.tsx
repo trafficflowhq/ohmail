@@ -2,13 +2,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import en from "../messages/en.json";
-import de from "../messages/de.json";
-import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
-import {
-  AttachmentStrip, fileFaultSentence, fileRetryIsOffered,
-  type AttachmentItem, type AttachmentStripProps,
-} from "../app/components/AttachmentStrip";
+import { fileRetryIsOffered } from "@ohmail/app-logic/reader";
+import type { ReaderFile, ReaderFiles } from "../../../packages/app/src/reader/ports";
+import { ReaderFilesFixture } from "./fixtures/reader-files";
 
 /**
  * A FILE THAT COULD NOT BE FETCHED SAYS WHICH SIDE FAILED, in the reader's language, and is a
@@ -29,24 +25,35 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
-  setActiveCatalog(DEFAULT_LOCALE, null);
 });
 
-async function mount(props: AttachmentStripProps): Promise<void> {
+async function mount(item: ReaderFile, onRetry = vi.fn(), locale: "en" | "de" = "en"): Promise<void> {
+  if (root) await act(async () => root!.unmount());
+  host?.remove();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => root!.render(React.createElement(AttachmentStrip, props)));
+  const files: ReaderFiles = {
+    hold: () => () => {},
+    itemsOf: () => ({ state: "ready", items: [item] }),
+    ensure: onRetry,
+    open: () => {},
+    downloadAll: () => {},
+    downloadingAll: () => false,
+    cidImagesOf: () => new Map(),
+    needCidImages: () => {},
+  };
+  await act(async () => root!.render(React.createElement(ReaderFilesFixture, {
+    files, messageId: "message", locale,
+  })));
 }
 
-const failed = (over: Partial<AttachmentItem>): AttachmentItem => ({
+const failed = (over: Partial<ReaderFile>): ReaderFile => ({
   id: "a1", filename: "invoice.pdf", mimeType: "application/pdf", sizeBytes: 1000,
-  state: "failed", error: "the server's English sentence", ...over,
+  inline: false, state: "failed", ...over,
 });
-
-const strip = (it: AttachmentItem, onOpen = vi.fn()): AttachmentStripProps => ({
-  items: { state: "ready", items: [it] }, onOpen, onDownloadAll: () => {}, downloadingAll: false,
-});
+const reason = (): string => host!.querySelector('[role="status"]')!.textContent ?? "";
+const retry = (): HTMLButtonElement | null => host!.querySelector(".oh-file button");
 
 /** [class, code, status, retryable, en, de] — one row per side. */
 const SIDES: [string, string | null, number | null, boolean, string, string][] = [
@@ -65,10 +72,11 @@ const SIDES: [string, string | null, number | null, boolean, string, string][] =
 
 describe("each side that failed has its own sentence, in English and German", () => {
   it.each(SIDES)("%s", async (_cls, code, status, retryable, sayEn, sayDe) => {
-    const it = failed({ code, status, retryable });
-    expect(fileFaultSentence(it)).toBe(sayEn);
-    setActiveCatalog("de", fillFrom(en as never, de as never) as never);
-    expect(fileFaultSentence(it)).toBe(sayDe);
+    const file = failed({ code, status, retryable });
+    await mount(file);
+    expect(reason()).toBe(sayEn);
+    await mount(file, vi.fn(), "de");
+    expect(reason()).toBe(sayDe);
   });
 
   it("the sentences are all different sentences", () => {
@@ -78,57 +86,61 @@ describe("each side that failed has its own sentence, in English and German", ()
 
 describe("Try again is offered where asking again can help, and only there", () => {
   it("a retryable failure is the retry, its state line says so, and a press re-asks", async () => {
-    const onOpen = vi.fn();
-    await mount(strip(failed({ code: "mail_server_unreachable", status: 424, retryable: true }), onOpen));
-    const tile = host!.querySelector<HTMLButtonElement>("button.att-tile")!;
-    expect(tile.textContent).toContain("Your mail server didn't answer — try again");
-    expect(tile.title).toBe("Your mail server didn't answer");
+    const onRetry = vi.fn();
+    await mount(failed({ code: "mail_server_unreachable", status: 424, retryable: true }), onRetry);
+    const tile = retry()!;
+    expect(reason()).toBe("Your mail server didn't answer");
+    expect(tile.textContent).toBe("Try again");
     await act(async () => tile.click());
-    expect(onOpen).toHaveBeenCalledWith("a1");
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).toHaveBeenCalledWith("message", "a1", { retry: true });
   });
 
   it("a refused sign-in is not a button, says no try again, and a press cannot reach onOpen", async () => {
-    const onOpen = vi.fn();
-    await mount(strip(failed({ code: "mail_server_login_refused", status: 424, retryable: false }), onOpen));
+    const onRetry = vi.fn();
+    await mount(failed({ code: "mail_server_login_refused", status: 424, retryable: false }), onRetry);
     expect(host!.querySelector("button")).toBeNull();
-    const tile = host!.querySelector<HTMLDivElement>(".att-tile")!;
+    const tile = host!.querySelector<HTMLDivElement>(".oh-file")!;
     expect(tile.dataset.state).toBe("failed");
     expect(tile.textContent).toContain("Your mail server refused the sign-in");
-    expect(tile.textContent).not.toContain("try again");
+    expect(tile.textContent).not.toMatch(/try again/i);
     await act(async () => tile.click());
-    expect(onOpen).not.toHaveBeenCalled();
+    expect(onRetry).not.toHaveBeenCalled();
   });
 
   it("a message moved since the last sync is the retry: the next sync finds it again", async () => {
-    const onOpen = vi.fn();
-    await mount(strip(failed({ code: "not_found", status: 404, retryable: true }), onOpen));
-    const tile = host!.querySelector<HTMLButtonElement>("button.att-tile")!;
-    expect(tile.textContent).toContain("Not where your mailbox had it — moved or deleted — try again");
+    const onRetry = vi.fn();
+    await mount(failed({ code: "not_found", status: 404, retryable: true }), onRetry);
+    const tile = retry()!;
+    expect(reason()).toBe("Not where your mailbox had it — moved or deleted");
+    expect(tile.textContent).toBe("Try again");
     await act(async () => tile.click());
-    expect(onOpen).toHaveBeenCalledWith("a1");
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).toHaveBeenCalledWith("message", "a1", { retry: true });
   });
 
   it("a dead OAuth sign-in is not a button and names the reconnect", async () => {
-    await mount(strip(failed({ code: "mailbox_reconnect_required", status: 424, retryable: false })));
+    await mount(failed({ code: "mailbox_reconnect_required", status: 424, retryable: false }));
     expect(host!.querySelector("button")).toBeNull();
-    expect(host!.querySelector(".att-tile")!.textContent).toContain("reconnect it in Settings");
+    expect(host!.querySelector(".oh-file")!.textContent).toContain("reconnect it in Settings");
   });
 
   it("a mailbox not signed in here is not a button and names the sign-in", async () => {
-    await mount(strip(failed({ code: "mailbox_not_signed_in", status: 424, retryable: false })));
+    await mount(failed({ code: "mailbox_not_signed_in", status: 424, retryable: false }));
     expect(host!.querySelector("button")).toBeNull();
-    expect(host!.querySelector(".att-tile")!.textContent).toContain("sign in again in Settings");
+    expect(host!.querySelector(".oh-file")!.textContent).toContain("sign in again in Settings");
   });
 
   it("a fault of ours that states it cannot help is not a button", async () => {
-    await mount(strip(failed({ code: "internal", status: 500, retryable: false })));
+    await mount(failed({ code: "internal", status: 500, retryable: false }));
     expect(host!.querySelector("button")).toBeNull();
-    expect(host!.querySelector(".att-tile")!.textContent).not.toContain("try again");
+    expect(host!.querySelector(".oh-file")!.textContent).not.toMatch(/try again/i);
   });
 
   it("a mail server at its limit is the retry, and says it is not serving the mailbox", async () => {
-    await mount(strip(failed({ code: "mail_server_busy", status: 424, retryable: true })));
-    expect(host!.querySelector("button.att-tile")!.textContent).toContain("isn't serving this mailbox right now — try again");
+    await mount(failed({ code: "mail_server_busy", status: 424, retryable: true }));
+    expect(reason()).toContain("isn't serving this mailbox right now");
+    expect(retry()?.textContent).toBe("Try again");
   });
 
   it("a session refusal keeps its retry, as the list's does", () => {
@@ -143,21 +155,18 @@ describe("Try again is offered where asking again can help, and only there", () 
 
 describe("a picture the engine will ask for again says so", () => {
   it.each([
-    ["mailbox_busy", 429, "ohmail already has this mailbox's connections open — trying again shortly", "ohmail hat die Verbindungen zu diesem Postfach schon offen — wird gleich nochmal versucht"],
-    ["mail_server_unreachable", 424, "Your mail server didn't answer — trying again shortly", "Dein Mailserver hat nicht geantwortet — wird gleich nochmal versucht"],
+    ["mailbox_busy", 429, "ohmail already has this mailbox's connections open. Ohmail will try again shortly.", "Ohmail versucht es gleich noch einmal. ohmail hat die Verbindungen zu diesem Postfach schon offen."],
+    ["mail_server_unreachable", 424, "Your mail server didn't answer. Ohmail will try again shortly.", "Ohmail versucht es gleich noch einmal. Dein Mailserver hat nicht geantwortet."],
   ] as const)("%s", async (code, status, sayEn, sayDe) => {
-    await mount(strip(failed({ code, status, retryable: true, reasking: true })));
-    expect(host!.querySelector(".att-state")!.textContent).toBe(sayEn);
-    await act(async () => root!.unmount());
-    host!.remove();
-    root = null;
-    setActiveCatalog("de", fillFrom(en as never, de as never) as never);
-    await mount(strip(failed({ code, status, retryable: true, reasking: true })));
-    expect(host!.querySelector(".att-state")!.textContent).toBe(sayDe);
+    await mount(failed({ code, status, retryable: true, reasking: true }));
+    expect(reason()).toBe(sayEn);
+    await mount(failed({ code, status, retryable: true, reasking: true }), vi.fn(), "de");
+    expect(reason()).toBe(sayDe);
   });
 
   it("control: without the re-ask the line reads as before", async () => {
-    await mount(strip(failed({ code: "mailbox_busy", status: 429, retryable: true })));
-    expect(host!.querySelector(".att-state")!.textContent).toBe("ohmail already has this mailbox's connections open — try again");
+    await mount(failed({ code: "mailbox_busy", status: 429, retryable: true }));
+    expect(reason()).toBe("ohmail already has this mailbox's connections open");
+    expect(retry()?.textContent).toBe("Try again");
   });
 });

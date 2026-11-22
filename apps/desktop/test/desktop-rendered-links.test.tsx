@@ -322,7 +322,7 @@ describe("a message's links are on the shell's list while it is on screen", () =
 });
 
 /**
- * WRITE's EDITOR, as the mail ground makes it (`packages/app/src/mail/write-entry.ts`): the rich editor handed the
+ * WRITE's EDITOR, as the mail ground makes it (`packages/app/src/write/rich-entry.ts`): the rich editor handed the
  * body's link reading. Re-pointed (share reader-1) from today's `RichEditor` and `SignatureBlock`: the draft is the
  * editor writing a letter, the formatted signature the same editor drawn read-only, as Write's signature draws it
  * (`packages/app/src/write/text/Signature.ts`).
@@ -474,10 +474,10 @@ describe("the wiring, from source", () => {
       "apps/desktop/src/main.tsx",
       "apps/webapp/app/components/InvitationNote.tsx",
       ...todays,
-      // Write's editor on the mail ground, handed the body's link reading (today's RichEditor's).
-      "packages/app/src/mail/write-entry.ts",
       // The held-letter unsubscribe panel registers its fallback and refusal links through the same gate.
       "packages/app/src/screener/held/HeldUnsubscribe.tsx",
+      // Write's editor on the mail ground uses the body's link reading.
+      "packages/app/src/write/rich-entry.ts",
       "packages/letter-body/src/BodyText.tsx",
       "packages/letter-body/src/MessageBody.tsx",
     ]);

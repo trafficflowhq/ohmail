@@ -302,7 +302,8 @@
   }
 
   /* The current place carries the square stop in its gutter. */
-  :root[data-face="ohmarchy"] .oh-railentry[data-kind="place"][aria-current="page"]::before {
+  :root[data-face="ohmarchy"]
+    .oh-railentry:is([data-kind="place"], [data-current-mark])[aria-current="page"]::before {
     content: "";
     position: absolute;
     left: 5px;

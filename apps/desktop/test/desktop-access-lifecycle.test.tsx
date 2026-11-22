@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import type { EngineStatus } from "../src/bridge-fetch.js";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
@@ -314,6 +315,8 @@ describe("the window's lift and first paint", () => {
   let accessBody: unknown = REFUSED;
   let accessStatus = 200;
   let accessReads = 0;
+  let engineStatus: EngineStatus | null;
+  const delivered: EngineStatus["state"][] = [];
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 12; i += 1) await act(async () => { await Promise.resolve(); });
   };
@@ -321,6 +324,8 @@ describe("the window's lift and first paint", () => {
     accessBody = REFUSED;
     accessStatus = 200;
     accessReads = 0;
+    engineStatus = null;
+    delivered.length = 0;
     localStorage.clear();
     sessionStorage.clear();
     const encode = (status: number, body: string): Uint8Array => {
@@ -335,8 +340,21 @@ describe("the window's lift and first paint", () => {
     (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
       transformCallback: () => 1,
       invoke: async (command: string, payload?: { url?: string }) => {
+        if (command === "engine_status" && engineStatus !== null) {
+          delivered.push(engineStatus.state);
+          return engineStatus;
+        }
         if (command !== "engine_request") return null;
-        if (payload?.url === "/account/access") { accessReads += 1; return encode(accessStatus, JSON.stringify(accessBody)); }
+        if (payload?.url === "/health") return encode(200, JSON.stringify({ signedIn: true }));
+        if (payload?.url === "/account/access") {
+          accessReads += 1;
+          if (accessBody === null) return new Promise<Uint8Array>(() => {});
+          return encode(accessStatus, JSON.stringify(accessBody));
+        }
+        if (payload?.url?.startsWith("/sync")) return encode(200, JSON.stringify({
+          changes: { creates: [], updates: [], moves: [], deletes: [] },
+          cursor: "1", hasMore: false, serverTime: "2026-01-01T00:00:00.000Z",
+        }));
         return encode(200, "{}");
       },
     };
@@ -449,6 +467,43 @@ describe("the window's lift and first paint", () => {
     seen.length = 0;
     await act(async () => { root.render(h(Probe, { k: null })); });
     expect(seen[0]).toBe("open");
+  });
+
+  it("keeps a refused account locked across an engine restart while access is unanswered", async () => {
+    const { DesktopGate, LIFECYCLE_POLL_MS } = await import("../src/DesktopGate.js");
+    const { bridgeFetch } = await import("../src/bridge-fetch.js");
+    const { FIRST_PAINT_VERDICT_MS } = await import("@ohmail/app-logic/doors/wall-lift");
+    vi.useFakeTimers();
+    const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    const serving: EngineStatus = { state: "serving", mode: "cloud", mailboxId: "mbx-restart", credentialState: "ready" };
+    engineStatus = serving;
+    accessBody = { metered: true };
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en, timeZone: "UTC",
+        children: h(ThemeProvider, { children: h(ToastHost, null, h(DesktopGate, null)) }),
+      }));
+    });
+    await advance(1_000);
+    expect(accessReads, "the account door did not open").toBeGreaterThan(0);
+    accessStatus = 402;
+    accessBody = { error: { code: "subscription_required", details: { reason: "suspended" } } };
+    await act(async () => { expect((await bridgeFetch("/account/access")).status).toBe(402); });
+    expect(host.querySelector("main.oh-page h1")?.textContent).toBe(LOCK.suspendedTitle);
+
+    accessBody = null;
+    const readsBeforeRestart = accessReads;
+    engineStatus = { ...serving, state: "restarting" };
+    await advance(LIFECYCLE_POLL_MS);
+    expect(delivered.at(-1)).toBe("restarting");
+    engineStatus = serving;
+    await advance(1_000);
+    expect(delivered.at(-1)).toBe("serving");
+    await advance(FIRST_PAINT_VERDICT_MS + 1);
+
+    expect(accessReads, "the new engine did not ask for access").toBeGreaterThan(readsBeforeRestart);
+    expect(host.querySelector("main.oh-page h1")?.textContent).toBe(LOCK.suspendedTitle);
+    expect(host.querySelector(".fr-frame")).toBeNull();
   });
 
   it("before a mailbox is named the account is asked at once and on the clock: refused is the lock's facts, offline is unreachable", async () => {

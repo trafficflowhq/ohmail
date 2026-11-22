@@ -47,12 +47,13 @@ describe("the ask well's state", () => {
     expect(confirm().disabled).toBe(true);
   });
 
-  it("working while the purchase runs — the confirm carries the run and says so", () => {
+  it("working while the purchase runs — progress replaces the confirm and says so", () => {
     const { control } = mount({
       phase: "running", size: 50, quote: { senders: 40, credits: 40 },
       notice: "3 of 40 suggested…", progress: { done: 3, total: 40 },
     });
-    expect(dialog().getByRole<HTMLButtonElement>("button", { name: S.running, busy: true }).disabled).toBe(true);
+    expect(dialog().getByRole("status").textContent).toBe("3 of 40 suggested…");
+    expect(dialog().queryByRole("button", { name: /^Suggest for / })).toBeNull();
     expect(dialog().getAllByText("3 of 40 suggested…", { exact: true })).toHaveLength(1);
     expect(dialog().queryByText("40 senders · 40 credits", { exact: true })).toBeNull();
     for (const rung of dialog().queryAllByRole<HTMLButtonElement>("button", { name: /^(?:10|25|50|all 74)$/ })) {

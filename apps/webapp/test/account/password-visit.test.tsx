@@ -18,8 +18,8 @@ import { PasswordSection } from "../../app/(product)/mailbox/PasswordSection";
 
 /** The shipped section's factor prompt, stood in for: the case answers it as the dialog would. */
 const prompt = vi.hoisted(() => ({ verified: null as null | (() => void) }));
-vi.mock("../../app/(product)/mailbox/StepUpPrompt", () => ({
-  StepUpPrompt: (props: { onVerified: () => void }) => {
+vi.mock("../../app/(product)/mailbox/StepUp", () => ({
+  StepUp: (props: { onVerified: () => void }) => {
     prompt.verified = props.onVerified;
     return null;
   },

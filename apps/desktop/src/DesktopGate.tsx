@@ -629,17 +629,17 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * a time, each pane saying its own thing about somebody's account. The bridge raises it once
    * and the whole surface swaps for the lock screen below — mail beside a refusal is the state
    * that prevents. A later request that happens to succeed is not evidence it was lifted; the lock
-   * comes down on the account's own fresh `access: "open"` read (`DesktopAccessLock`'s lift) and on
-   * nothing else. Behind `accountDoor`, because a standalone install has nothing that could refuse.
+   * comes down on the account's own fresh `access: "open"` read (`DesktopAccessLock`'s lift) or
+   * when the window leaves the hosted account. A session recheck keeps the refusal in force.
    */
   const [accessRefused, setAccessRefused] = useState<AccessRefusedFacts | null>(null);
   useEffect(() => {
     if (!accountDoor) {
-      setAccessRefused(null);
+      if (door !== "cloud" || hostedSession !== "unknown") setAccessRefused(null);
       return;
     }
     return onAccessRefused((facts) => setAccessRefused((held) => held ?? facts));
-  }, [accountDoor]);
+  }, [accountDoor, door, hostedSession]);
 
   /**
    * A SERVER SAID THIS APP IS TOO OLD FOR IT, OR THAT IT IS BEING UPDATED — told once to the one

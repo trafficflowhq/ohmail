@@ -25,10 +25,9 @@ import type { OnboardingAi } from "@ohmail/app-logic/doors/onboarding";
 import {
   ApiError, aiSettings, codeOf, consent as consentApi, mailboxes as mailboxApi, messageOf,
 } from "../../api-client";
-import { StepUpPrompt } from "./StepUpPrompt";
+import { StepUp } from "./StepUp";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
-import { probeReasonOf } from "./MailboxSection";
-import { plaintextOfferOf } from "../../shell/probe-refusal";
+import { plaintextOfferOf, probeReasonOf } from "../../shell/probe-refusal";
 import { JOIN_ROUTE, leaveFor } from "../login/continuation";
 import { oauthOutcome } from "./oauth-return";
 
@@ -253,7 +252,7 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
          same prompt Settings uses, then presses once more. */
       stepUp: {
         required: (err: unknown) => codeOf(err) === "step_up_required",
-        prompt: (p) => createElement(StepUpPrompt, p),
+        prompt: (p) => createElement(StepUp, { ...p, inline: true }),
       },
       setupHref: JOIN_ROUTE,
       resume: resumeSetup,

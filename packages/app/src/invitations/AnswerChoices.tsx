@@ -2,7 +2,7 @@ import { AnswerSwitch } from "@ohmail/ui/calendar";
 import type { InvitationAnswer, InvitationRow } from "@ohmail/app-logic/calendar/invitations";
 import { useText } from "../text/index.js";
 
-const ANSWERS: readonly InvitationAnswer[] = ["accepted", "tentative", "declined"];
+export const ANSWERS: readonly InvitationAnswer[] = ["accepted", "tentative", "declined"];
 export const isAnswer = (value: string): value is InvitationAnswer =>
   (ANSWERS as readonly string[]).includes(value);
 

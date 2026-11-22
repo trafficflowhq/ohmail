@@ -22,8 +22,8 @@ import de from "../messages/de.json";
  */
 
 const rig = vi.hoisted(() => ({ onVerified: null as null | (() => void) }));
-vi.mock("../app/(product)/mailbox/StepUpPrompt", () => ({
-  StepUpPrompt: (props: { onVerified: () => void }) => {
+vi.mock("../app/(product)/mailbox/StepUp", () => ({
+  StepUp: (props: { onVerified: () => void }) => {
     rig.onVerified = props.onVerified;
     return null;
   },

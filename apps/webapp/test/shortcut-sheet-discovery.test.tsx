@@ -90,7 +90,7 @@ describe("the strip cannot wrap and cannot push the pane wider", () => {
   });
 
   it("a coarse pointer hides the strips — a keycap on a keyboardless device is a lie", () => {
-    const touch = read("packages/app/src/keys/touch-keys.css");
+    const touch = read("packages/app/src/frame/touch-keys.css");
     const coarse = touch.slice(touch.indexOf("@media (pointer: coarse)"));
     expect(coarse).toContain(".view .list-hints");
     expect(coarse).toContain(".view .stream-hints");

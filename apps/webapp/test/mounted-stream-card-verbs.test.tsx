@@ -58,7 +58,7 @@ async function openReply() {
   const list = within(screen.getByRole("region", { name: "News" }));
   await act(async () => { fireEvent.click(list.getByRole("option", { name: /Issue 20/ })); });
   await act(async () => { fireEvent.click(within(panel()!).getByRole("button", { name: "Reply" })); });
-  return within(card(20).parentElement!).getByRole("textbox", { name: "Reply body" });
+  return within(card(20).parentElement!).findByRole("textbox", { name: "Reply body" });
 }
 
 describe("the mounted stream's verbs", () => {

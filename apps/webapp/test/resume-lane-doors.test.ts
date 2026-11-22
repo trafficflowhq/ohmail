@@ -176,7 +176,8 @@ const DOORS: Record<string, { count: number; why: string }> = {
   "app-logic/session/session-truth.ts": { count: 1, why: "exempt: the fallback when no transport is registered (no `api-client` loaded, the desktop)" },
   "shell/engine-config.ts": { count: 1, why: "exempt: the wake stream; on a return the scheduler dials it after the delta's lead (`afterLead`)" },
   "app-logic/doors/build-watch.ts": { count: 1, why: "exempt: `/version` is the web host's own, off the API base" },
-  "shell/lazy-view.tsx": { count: 1, why: "exempt: a HEAD on the web host's own build chunk (/_next/static/, same origin, off the API base) to tell a replaced build from a dropped connection; it reads no session and nothing waits for it beyond its 5 s timeout" },
+  "chunk-loads.tsx": { count: 1, why: "exempt: a HEAD on the web host's own build chunk (/_next/static/, same origin, off the API base) to tell a replaced build from a dropped connection; it reads no session and nothing waits for it beyond its 5 s timeout" },
+  "settings-handoff-client.ts": { count: 1, why: "exempt: the Settings handoff's check of its short-lived reference (GET /api/auth/session?settingsHandoff=…, same origin): read only, it sets no cookie and never renews a session. The handoff page asks it before Settings mounts, and the sign-in page carrying the reference asks it on load and after a sign-in; a sign-in submit hears it only within its own bound" },
   "session-gate.ts": { count: 1, why: "exempt: server side (the sign-in gate's route)" },
   "manage-handoff.ts": { count: 1, why: "exempt: server side (the manage route's handoff)" },
 };

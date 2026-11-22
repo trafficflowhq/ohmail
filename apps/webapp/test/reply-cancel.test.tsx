@@ -369,9 +369,12 @@ describe("an open reply keeps the keyboard", () => {
   /* SPLIT OUT of the case above, its lines as they stood but the one the studio made void (the subject is always
      drawn, so Escape cannot close it): the subject's Escape hands the keyboard to the reply's text. */
   it("Escape in the subject hands the keyboard to the reply's body", async () => {
-    const surface = await replyWithFile();
+    await replyWithFile();
+    const surface = await replyEditorSurface();
     await intoSubject();
     await keyAtFocus("Escape");
+    // The editor schedules its focus on the next animation frame.
+    await act(async () => new Promise<void>((done) => requestAnimationFrame(() => done())));
     expect(surface.contains(document.activeElement), "Escape did not hand focus to the reply's body").toBe(true);
   });
 

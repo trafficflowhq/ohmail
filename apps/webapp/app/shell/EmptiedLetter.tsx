@@ -5,7 +5,9 @@ import { Button, Spinner } from "@ohmail/ui";
 import type { LiveBodyRefusal, LiveBodyState } from "@ohmail/app-logic/reading/live-body";
 
 /** Where Settings → Storage lives in the shell's routes, on every door. */
-export const STORAGE_PANE_HREF = "#/settings/storage";
+import { STORAGE_PANE_HREF } from "./storage-state";
+
+export { STORAGE_PANE_HREF } from "./storage-state";
 
 const REFUSAL_KEY: Record<LiveBodyRefusal, string> = {
   gone: "liveGone", too_large: "liveTooLarge", busy: "liveBusy", unreachable: "liveUnreachable", failed: "liveFailed",

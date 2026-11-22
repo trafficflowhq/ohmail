@@ -195,13 +195,15 @@ describe("the sign-out CONTROL is wired", () => {
      * the CARDS is what fixes it — a rule inside one panel still reads as two parts of one
      * ceremony, which is what it had before and why it was still wrong.
      */
-    const signOutCard = account.indexOf('className="acct acct-session"');
-    const deleteCard = account.indexOf("<Pane>\n      <h2");
+    const signOutCard = account.indexOf('<SettingsSheet title={t("signOutTitle")}>');
+    const signOutEnd = account.indexOf("</SettingsSheet>", signOutCard);
+    const deleteCard = account.indexOf('<Pane>\n      <Sentence level={2}>{t("title")}</Sentence>');
+    const button = account.indexOf("doSignOut(who.accountId, who.familyId)", signOutCard);
     expect(signOutCard, "the sign-out card must exist").toBeGreaterThan(-1);
     expect(deleteCard, "the delete card must exist").toBeGreaterThan(-1);
-    expect(signOutCard, "sign out must come BEFORE the delete card").toBeLessThan(deleteCard);
-    // …and the button must live in the first card, not the second.
-    expect(account.indexOf("acct-signout-btn")).toBeLessThan(deleteCard);
+    expect(button, "the button must be inside the sign-out card").toBeGreaterThan(signOutCard);
+    expect(button).toBeLessThan(signOutEnd);
+    expect(signOutEnd, "the sign-out card must end before the delete card").toBeLessThan(deleteCard);
   });
 
   it("`This cannot be undone` attaches to DELETION, not to being signed in", () => {

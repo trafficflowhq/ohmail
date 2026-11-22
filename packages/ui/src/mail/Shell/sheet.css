@@ -1,4 +1,8 @@
 @layer oh {
+  :root {
+    --oh-sheet-run-start: 0px;
+  }
+
   .oh-sheet {
     /* Measures of this part that no token carries yet. */
     --oh-sheet-foot-room: calc(104px + var(--oh-sheet-foot-own) - var(--s4));
@@ -139,6 +143,7 @@
   }
 
   .oh-sheet-run {
+    padding-block-start: var(--oh-sheet-run-start);
     display: flex;
     flex-direction: column;
     gap: var(--s4);
@@ -370,6 +375,8 @@
 }
 
 .oh-sheet[data-writing-keyboard] {
+  --write-room: none;
+  --write-top: 0px;
   --oh-sheet-scroll-pad: var(--ringw);
   max-block-size: var(--write-room);
   translate: 0 var(--write-top);

@@ -3,10 +3,10 @@
 /**
  * The wall as the web serves it, in place of the mail: the wall's page over its ceremony (`use-wall-door.ts`), its facts
  * the ones the gate's 402 carried. The account page is minted at the press; deleting now leaves for `/account/delete`,
- * the page of its own; the password change is today's Settings pane, drawn here in place until that pane moves.
+ * the page of its own; the password change stays on this route.
  */
 import { useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button, Page, Sentence } from "@ohmail/ui/base";
 import { WallPage, type WallDoor, type WallHeadline, type WallState, type WallStanding } from "@ohmail/app/doors/wall";
 import type { AccessRefusedFacts } from "../../api-client";
 import { dayStamp } from "../../shell/format";
@@ -73,14 +73,14 @@ export function WallRoute({ facts, onLifted }: { facts: AccessRefusedFacts; onLi
      back a password somebody else knows. */
   if (c.changingPassword) {
     return (
-      <main className="gate">
-        <div className="gate-card wall-card">
-          <div className="wall-erase">
-            <PasswordSection />
-            <Button onClick={() => c.setChangingPassword(false)}>{t("back")}</Button>
-          </div>
-        </div>
-      </main>
+      <WebDoor>
+        <Page
+          material={<PasswordSection />}
+          acts={<Button kind="quiet" onPress={() => c.setChangingPassword(false)}>{t("back")}</Button>}
+        >
+          <Sentence size="xl" end="hot">{t("changePassword")}</Sentence>
+        </Page>
+      </WebDoor>
     );
   }
   const said = c.signOutSaid === null

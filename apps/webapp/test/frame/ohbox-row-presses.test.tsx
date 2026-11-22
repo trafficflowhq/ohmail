@@ -71,7 +71,7 @@ describe.each([1440, 390])("Ohbox row controls at %i pixels wide", (width) => {
   it("picks from the circles, extends across intervening rows, and toggles a picked row", async () => {
     await mount(width, async (shell) => {
       const [first, middle, last] = within(shell).getAllByRole("option");
-      const circle = (row: HTMLElement) => within(row).getByRole("button", {
+      const circle = (row: HTMLElement) => within(row.closest<HTMLElement>(".oh-row-slot")!).getByRole("button", {
         name: messages.ohbox.keyPick,
       });
       const count = (size: number) => within(shell).getByRole("button", { name: new RegExp(`^${size} selected`) });

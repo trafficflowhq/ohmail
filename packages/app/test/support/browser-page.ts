@@ -38,8 +38,12 @@ export const SHEETS = [
 ];
 
 /** The page: the frame's markup under the root's attributes and every sheet, plus what a test adds after them. */
-export function pageOf(drawn: { html: string; root: string }, extra = ""): string {
-  return `<!doctype html><html ${drawn.root} data-face="paper" data-theme="light"><head><style>${SHEETS.map(css).join("\n")}
+export function pageOf(
+  drawn: { html: string; root: string },
+  extra = "",
+  extraSheets: readonly string[] = [],
+): string {
+  return `<!doctype html><html ${drawn.root} data-face="paper" data-theme="light"><head><style>${[...SHEETS, ...extraSheets].map(css).join("\n")}
     html, body, body > div { height: 100%; margin: 0 }${extra}</style></head><body class="today">${drawn.html}</body></html>`;
 }
 

@@ -28,7 +28,7 @@ import { useFrame, useRailFoot, type RailFootModel } from "../../frame/index.js"
 import { NONE } from "../../host/index.js";
 import { PALETTE_CHORD } from "../../palette/index.js";
 import { useText } from "../../text/index.js";
-import { settingsSection } from "../panes.js";
+import { settingsSection } from "../../settings/menu.js";
 
 /** The foot's account line over the account's mailboxes, or null while it is withheld. */
 function useAccountLine(): RailFootModel["account"] {

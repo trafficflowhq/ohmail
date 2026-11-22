@@ -8,7 +8,7 @@ import { useAfterComposerTextTarget } from "@ohmail/ui/mail";
 import { Button } from "@ohmail/ui/base";
 import type { QuotedHistoryControl } from "../text/history-ports.js";
 import { appendHistory, historyIn, originalHistory } from "./quoted-history.js";
-import "./quoted-history.css";
+import "./history-style.css";
 
 function AfterComposerText({ children }: { children: ReactNode }) {
   const target = useAfterComposerTextTarget();

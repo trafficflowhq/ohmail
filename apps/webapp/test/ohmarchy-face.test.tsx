@@ -18,6 +18,7 @@
  * passes while the shell never wires it" (the fixture's own header).
  */
 import { createElement } from "react";
+import messages from "../messages/en.json";
 import { ToastContext } from "@ohmail/ui";
 import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -222,12 +223,12 @@ describe("Settings → General → Look", () => {
     expect(submissions).toEqual(["ohmarchy"]);
     await goTo("ohbox");
     await goTo("settings/general");
-    await click(tile(/^paper\b/));
-    expect(tile(/^paper\b/).getAttribute("aria-pressed")).toBe("true");
+    await click(tile(new RegExp(`^${messages.settings.facePaper}\\b`)));
+    expect(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
     await act(async () => { release(); });
     await tick(10);
     expect(submissions).toEqual(["ohmarchy", "paper"]);
-    expect(tile(/^paper\b/).getAttribute("aria-pressed")).toBe("true");
+    expect(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
     expect(window.localStorage.getItem("ohmail.face.account")).toBe("paper");
   });
 
@@ -260,7 +261,7 @@ describe("Settings → General → Look", () => {
       const tile = (name: RegExp) => within(page).getByRole("button", { name });
       await goTo("settings/general");
       await tick(10);
-      expect(tile(/^paper\b/).getAttribute("aria-pressed")).toBe("true");
+      expect(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
       expect(page.textContent).toContain("Applies on all your devices.");
       await click(tile(/^ohmarchy\b/));
       expect(writes).toEqual([{ themeFace: "ohmarchy" }]);
@@ -268,8 +269,8 @@ describe("Settings → General → Look", () => {
       if (queue) {
         await goTo("ohbox");
         await goTo("settings/general");
-        await click(tile(/^paper\b/));
-        expect(tile(/^paper\b/).getAttribute("aria-pressed")).toBe("true");
+        await click(tile(new RegExp(`^${messages.settings.facePaper}\\b`)));
+        expect(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
       }
       document.cookie = `tf_owner=${nextAccount}; Path=/`;
       window.localStorage.setItem(faceKey, "ohmarchy");
@@ -312,7 +313,7 @@ describe("Settings → General → Look", () => {
       await goTo("settings/general");
       await tick(10);
       const tile = (name: RegExp) => within(page).getByRole("button", { name });
-      expect(tile(/^paper\b/).getAttribute("aria-pressed")).toBe("true");
+      expect(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
       expect(page.textContent).toContain("Applies on all your devices.");
 
       // The browser's other account took the jar and saved its look since this pane last drew.
@@ -324,7 +325,7 @@ describe("Settings → General → Look", () => {
         await click(tile(/^ohmarchy\b/));
         await tick(10);
         expect.soft(stored.mock.calls.filter(([key]) => key === faceKey || key === labelKey || key === "ohmail.face")).toEqual([]);
-        expect.soft(tile(/^paper\b/).getAttribute("aria-pressed")).toBe("true");
+        expect.soft(tile(new RegExp(`^${messages.settings.facePaper}\\b`)).getAttribute("aria-pressed")).toBe("true");
       } finally {
         stored.mockRestore();
       }
@@ -515,7 +516,7 @@ describe("two devices of one account (the web and a paired desktop)", () => {
     expect(desktop.textContent).toContain("Applies on all your devices.");
 
     // The desktop picks paper; the web follows at its next start.
-    await click(within(desktop).getByRole("button", { name: /^paper\b/ }));
+    await click(within(desktop).getByRole("button", { name: new RegExp(`^${messages.settings.facePaper}\\b`) }));
     expect(stored).toBe("paper");
     await openDevice(webStorage);
     let rang = false;

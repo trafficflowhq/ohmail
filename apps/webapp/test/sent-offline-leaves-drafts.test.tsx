@@ -2,7 +2,7 @@
 import { screen, within } from "@testing-library/react";
 import { UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
 import type { EngineDraft, EngineMutation } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { OUTBOX_TYPE } from "@ohmail/client-engine";
 import en from "../messages/en.json";
@@ -49,6 +49,12 @@ const OWNER = "acc-sent-offline";
  * passed over for the copy or rebound, or the copy kept though the row's server copy holds its words
  * → case 38 red.
  */
+
+// Load the shell before the first case starts its reconnect clock.
+beforeAll(async () => {
+  await import("./_mail-shell.js");
+  await import("@ohmail/ui");
+}, 120_000);
 
 beforeEach(() => {
   try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
@@ -134,7 +140,7 @@ async function replyOn(s: DraftShell, id: string, words: string): Promise<void> 
 }
 
 /** Offline: the reply as it stands after each of `pauses`, each left to its pause, then Send. */
-async function offlineReplySent(s: DraftShell, pauses: string[]): Promise<void> {
+async function offlineReplySent(s: DraftShell, pauses: string[], status = en.reply.statusQueued): Promise<void> {
   s.offline.on = true;
   await replyOn(s, "m1", pauses[0]!);
   await waitFor(() => waitingSaves(s) === 1, "the pause's row waiting on the outbox", PAUSE_ROUNDS);
@@ -143,16 +149,11 @@ async function offlineReplySent(s: DraftShell, pauses: string[]): Promise<void> 
     await waitFor(() => waitingSaves(s) === i + 2, `pause ${i + 2} waiting on the outbox`, PAUSE_ROUNDS);
   }
   await act(async () => { replySend(s.el)!.click(); });
-  await waitFor(() => sendLine().includes(en.reply.statusQueued), "Not sent yet");
+  await waitFor(() => sendLine().includes(status), "the reply is waiting to send");
 }
 
 describe("a reply sent while offline", () => {
-  it("keeps a waiting reply and sends a separate deletion once on reconnect", async () => {
-    const subject = "A separate letter to delete";
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2", { subject })]);
-    s.spendSentRow.on = true;
-    await offlineReplySent(s, ["Reply held while offline"]);
-
+  async function sendsReplyAndDeletionOnReconnect(s: DraftShell, subject: string): Promise<void> {
     const row = () => screen.queryByRole("option", { name: new RegExp(subject) });
     await press(row(), "the separate letter");
     const reader = await screen.findByRole("region", { name: "Open message" });
@@ -181,6 +182,31 @@ describe("a reply sent while offline", () => {
     expect(sends(s)).toEqual([expect.objectContaining({ body: "Reply held while offline" })]);
     expect(deletes()).toEqual([{ kind: "message_delete", messageId: "m2" }]);
     expect(deleteWaits()).toBe(false);
+  }
+
+  it("keeps a waiting reply and sends a separate deletion once on reconnect", async () => {
+    const subject = "A separate letter to delete";
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2", { subject })]);
+    s.spendSentRow.on = true;
+    await offlineReplySent(s, ["Reply held while offline"]);
+    await sendsReplyAndDeletionOnReconnect(s, subject);
+  }, 30_000);
+
+  it("sends a waiting reply and separate deletion once when the browser reports it is back online", async () => {
+    const subject = "A separate letter to delete";
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2", { subject })]);
+    s.spendSentRow.on = true;
+    const network = vi.spyOn(navigator, "onLine", "get").mockImplementation(() => !s.offline.on);
+    try {
+      await act(() => {
+        s.offline.on = true;
+        window.dispatchEvent(new Event("offline"));
+      });
+      await offlineReplySent(s, ["Reply held while offline"], en.write.status.offline);
+      await sendsReplyAndDeletionOnReconnect(s, subject);
+    } finally {
+      network.mockRestore();
+    }
   }, 30_000);
 
   it("1 — goes once on reconnect, and Drafts is back to its count", async () => {

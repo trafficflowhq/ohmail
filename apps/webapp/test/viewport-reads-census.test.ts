@@ -12,9 +12,9 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * belongs in viewport px. Comments are blanked first (`source-scan.mjs`); a planted raw read is the
  * positive control.
  */
-/* @reads: apps/webapp/app/shell, apps/webapp/app/views, apps/webapp/app/components, packages/letter-body/src, packages/app-logic/src, packages/app/src/frame/rail-drag.ts, packages/app/src/keys, packages/ui/src */
+/* @reads: apps/webapp/app/shell, apps/webapp/app/components, packages/letter-body/src, packages/app-logic/src, packages/app/src/frame/rail-drag.ts, packages/app/src/keys, packages/ui/src */
 const REPO = join(__dirname, "..", "..", "..");
-const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/components", "packages/letter-body/src", "apps/webapp/app/(product)", "packages/app-logic/src", "packages/app/src/keys", "packages/ui/src"];
+const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/components", "packages/letter-body/src", "apps/webapp/app/(product)", "packages/app-logic/src", "packages/app/src/keys", "packages/ui/src"];
 const RAIL_DRAG = "packages/app/src/frame/rail-drag.ts";
 const RAW = /getBoundingClientRect\s*\(|\.clientX\b|\.clientY\b|\binnerWidth\b|\binnerHeight\b/g;
 

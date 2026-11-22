@@ -89,12 +89,12 @@ async function signedIn(): Promise<void> {
 }
 
 async function prompt(locale: "en" | "de"): Promise<HTMLElement> {
-  const { StepUpPrompt } = await import("../app/(product)/mailbox/StepUpPrompt.js");
-  return mount(locale, h(StepUpPrompt, { onVerified: () => {}, onCancel: () => {}, onDiscarded: () => {} }));
+  const { StepUp } = await import("../app/(product)/mailbox/StepUp.js");
+  return mount(locale, h(StepUp, { onVerified: () => {}, onCancel: () => {}, onDiscarded: () => {} }));
 }
 
 async function submitCode(c: HTMLElement): Promise<void> {
-  const input = c.querySelector<HTMLInputElement>("#stepup-code")!;
+  const input = c.querySelector<HTMLInputElement>('[role="dialog"] input[autocomplete="one-time-code"]')!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "123456");
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -103,13 +103,21 @@ async function submitCode(c: HTMLElement): Promise<void> {
   await settle(30);
 }
 
-const alertOf = (c: HTMLElement): string => c.querySelector('[role="alert"]')?.textContent ?? "";
+const refusalOf = (c: HTMLElement): string =>
+  c.querySelector('[role="dialog"] .oh-field-refusal, [role="dialog"] .oh-refusal')?.textContent ?? "";
+
+function expectFieldRefusal(c: HTMLElement, sentence: string) {
+  const field = c.querySelector('[role="dialog"] input')!;
+  const refusal = c.querySelector<HTMLElement>('[role="dialog"] [role="alert"]')!;
+  expect(refusal?.textContent).toBe(sentence);
+  expect(field.getAttribute("aria-describedby")?.split(" ")).toContain(refusal.id);
+}
 
 describe("the step-up prompt says a server refusal in the reader's language", () => {
   const CASES: Array<[string, Answer, (m: typeof en) => string]> = [
-    ["a wrong code", { status: 401, body: { error: { code: "credential_refused", message: WIRE_401 } } }, (m) => m.devices.stepUpBadCode],
-    ["the slowed sign-in", { status: 429, body: { error: { code: "sign_in_slowed", message: "sign-in slowed" } } }, (m) => m.devices.stepUpSlowed],
-    ["any other refusal", { status: 500, body: { error: { code: "internal", message: "internal error" } } }, (m) => m.devices.stepUpRefused],
+    ["a wrong code", { status: 401, body: { error: { code: "credential_refused", message: WIRE_401 } } }, (m) => m.stepUp.badCode],
+    ["the slowed sign-in", { status: 429, body: { error: { code: "sign_in_slowed", message: "sign-in slowed" } } }, (m) => m.stepUp.slowed],
+    ["any other refusal", { status: 500, body: { error: { code: "internal", message: "internal error" } } }, (m) => m.stepUp.refused],
   ];
   for (const [name, answer, key] of CASES) {
     it(`${name}, in German, never the server's English`, async () => {
@@ -118,7 +126,8 @@ describe("the step-up prompt says a server refusal in the reader's language", ()
       answers["POST /api/auth/step-up/totp"] = answer;
       const c = await prompt("de");
       await submitCode(c);
-      expect(alertOf(c)).toBe(key(de));
+      expect(refusalOf(c)).toBe(key(de));
+      expectFieldRefusal(c, key(de));
       expect(key(de)).not.toBe(key(en));
     });
     it(`control: ${name}, in English, says the English sentence`, async () => {
@@ -127,7 +136,8 @@ describe("the step-up prompt says a server refusal in the reader's language", ()
       answers["POST /api/auth/step-up/totp"] = answer;
       const c = await prompt("en");
       await submitCode(c);
-      expect(alertOf(c)).toBe(key(en));
+      expect(refusalOf(c)).toBe(key(en));
+      expectFieldRefusal(c, key(en));
     });
   }
 
@@ -149,11 +159,11 @@ describe("the step-up prompt says a server refusal in the reader's language", ()
     answers["POST /api/auth/step-up/webauthn/options"] = { status: 200, body: { options: { challenge: "AQID", allowCredentials: [] } } };
     answers["POST /api/auth/step-up/webauthn/verify"] = { status: 401, body: { error: { code: "credential_refused", message: WIRE_401 } } };
     const c = await prompt("de");
-    const press = [...c.querySelectorAll("button")].find((b) => b.textContent === de.devices.stepUpPasskey)!;
+    const press = [...c.querySelectorAll("button")].find((b) => b.querySelector("span")?.textContent === de.stepUp.passkey)!;
     expect(press, "the passkey arm is offered").toBeTruthy();
     await act(async () => { press.click(); });
     await settle(30);
-    expect(alertOf(c)).toBe(de.devices.stepUpBadPasskey);
+    expect(refusalOf(c)).toBe(de.stepUp.badPasskey);
   });
 
   it("control: a code the server takes says nothing", async () => {
@@ -162,7 +172,8 @@ describe("the step-up prompt says a server refusal in the reader's language", ()
     answers["POST /api/auth/step-up/totp"] = { status: 200, body: { ok: true } };
     const c = await prompt("de");
     await submitCode(c);
-    expect(c.querySelector('[role="alert"]')).toBeNull();
+    expect(refusalOf(c)).toBe("");
+    expect(c.querySelector('[role="dialog"] [role="alert"]')).toBeNull();
     expect(calls.some((r) => r.url.includes("/api/auth/step-up/totp")), "the code was sent").toBe(true);
   });
 });
@@ -173,15 +184,15 @@ describe("a recovery code earns the step-up, for an authenticator that is gone",
     body: { user: { accountId: A, email: "a@example.test", twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: false } }, scope: "full" },
   };
   const toggleIn = (c: HTMLElement, m: typeof en): HTMLButtonElement | undefined =>
-    [...c.querySelectorAll("button")].find((b) => b.textContent === m.devices.stepUpRecoveryToggle);
+    [...c.querySelectorAll("button")].find((b) => b.querySelector("span")?.textContent === m.stepUp.useRecovery);
 
   async function recoveryArm(locale: "en" | "de", onVerified: () => void = () => {}): Promise<HTMLElement> {
-    const { StepUpPrompt } = await import("../app/(product)/mailbox/StepUpPrompt.js");
-    const c = await mount(locale, h(StepUpPrompt, { onVerified, onCancel: () => {}, onDiscarded: () => {} }));
+    const { StepUp } = await import("../app/(product)/mailbox/StepUp.js");
+    const c = await mount(locale, h(StepUp, { onVerified, onCancel: () => {}, onDiscarded: () => {} }));
     const toggle = toggleIn(c, locale === "de" ? de : en);
     expect(toggle, "the recovery arm is offered").toBeTruthy();
     await act(async () => { toggle!.click(); });
-    const input = c.querySelector<HTMLInputElement>("#stepup-recovery")!;
+    const input = c.querySelector<HTMLInputElement>('[role="dialog"] input')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, " abcd-efgh-ijkl ");
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -201,7 +212,7 @@ describe("a recovery code earns the step-up, for an authenticator that is gone",
     expect(sent.map((r) => JSON.parse(r.body!))).toEqual([{ code: "abcd-efgh-ijkl" }]);
     expect(calls.some((r) => r.url.includes("/api/auth/step-up/totp")), "the code went to the authenticator's door").toBe(false);
     expect(verified).toBe(1);
-    expect(c.querySelector('[role="alert"]')).toBeNull();
+    expect(refusalOf(c)).toBe("");
   });
 
   it("a refused code, in German, is the recovery code's sentence", async () => {
@@ -209,8 +220,9 @@ describe("a recovery code earns the step-up, for an authenticator that is gone",
     answers["GET /api/auth/session"] = ENROLLED(false);
     answers["POST /api/auth/step-up/recovery-code"] = { status: 401, body: { error: { code: "credential_refused", message: WIRE_401 } } };
     const c = await recoveryArm("de");
-    expect(alertOf(c)).toBe(de.devices.stepUpBadRecoveryCode);
-    expect(de.devices.stepUpBadRecoveryCode).not.toBe(en.devices.stepUpBadRecoveryCode);
+    expect(refusalOf(c)).toBe(de.stepUp.badRecovery);
+    expectFieldRefusal(c, de.stepUp.badRecovery);
+    expect(de.stepUp.badRecovery).not.toBe(en.stepUp.badRecovery);
   });
 
   it("control: an account with no recovery codes is not offered the arm", async () => {
@@ -223,8 +235,8 @@ describe("a recovery code earns the step-up, for an authenticator that is gone",
 
 describe("the Account pane's session read says a refusal in the reader's language", () => {
   async function pane(locale: "en" | "de"): Promise<HTMLElement> {
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    return mount(locale, h(AccountSection));
+    const { LiveAccountPane } = await import("./fixtures/live-account-pane");
+    return mount(locale, h(LiveAccountPane));
   }
 
   it("a lost marker, in German, is the session sentence, not the client's English literal", async () => {

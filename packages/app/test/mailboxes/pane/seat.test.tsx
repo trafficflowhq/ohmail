@@ -804,25 +804,17 @@ describe("the section's notices, in the frame's slot", () => {
       await answered();
       expect(notice.textContent).toContain(M.noticeDismissOffline);
 
-      if (state === "stopped") {
-        fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeOpenMailboxes }));
-        await screen.findByRole("heading", { level: 1, name: settingsEn.settings.mailboxes });
-        await answered();
-        expect(made.address.read()).toBe("#/settings/mailboxes");
-        for (const address of addresses) expect(rowOf(address)).toBeTruthy();
-      } else {
-        fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeCountShow }));
-        const roster = screen.getByRole("dialog");
-        expect(
-          within(roster)
-            .getAllByRole("listitem")
-            .map((item) => item.textContent),
-        ).toEqual(addresses.map((address, index) => `${address} · ${index === 1 ? unknown : holder}`));
-        expect(roster.textContent).toContain(M.noticeDismissOffline);
-        fireEvent.click(within(roster).getByRole("button", { name: "Close" }));
-        expect(screen.queryByRole("dialog")).toBeNull();
-        expect(made.address.read()).toBe("#/ohbox");
-      }
+      fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: M.noticeCountShow }));
+      const roster = screen.getByRole("dialog");
+      expect(
+        within(roster)
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(addresses.map((address, index) => `${address} · ${index === 1 ? unknown : holder}`));
+      expect(roster.textContent).toContain(M.noticeDismissOffline);
+      fireEvent.click(within(roster).getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(made.address.read()).toBe("#/ohbox");
       expect(acknowledge).toHaveBeenCalledTimes(addresses.length);
     },
   );

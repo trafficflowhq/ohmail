@@ -17,6 +17,8 @@ export interface DialogProps {
   alert?: boolean;
   /** Keep the question in its host layer and make the surrounding document inert. */
   inline?: boolean;
+  /** A press that may have lost focus while its answer was pending. */
+  returnFocus?: () => HTMLElement | null;
   /** The question, as a sentence. It ends in the dot. */
   title: string;
   /** Hot while the sentence holds something still to be decided. */
@@ -43,7 +45,7 @@ export interface DialogProps {
    */
   second?: { label: string; onPress: () => void; disabled?: boolean };
   /** The way out. It closes the dialog. */
-  cancel: { label: string; keyHint?: string };
+  cancel: { label: string; keyHint?: string; disabled?: boolean };
   /** Show the answers' keys whatever the face says. */
   keysShown?: boolean;
   /** What the answer needs: a field, the list of what waits. A long one scrolls; the sentence and the answers stay. */
@@ -104,6 +106,7 @@ export function Dialog(props: DialogProps) {
       onClose={onClose}
       dismissOnScrim={dismissOnScrim}
       inertBackground={props.inline}
+      returnFocus={props.returnFocus}
       role={props.alert ? "alertdialog" : "dialog"}
       label={props.alert ? title : undefined}
       labelledBy={props.alert ? undefined : name}
@@ -157,7 +160,13 @@ export function Dialog(props: DialogProps) {
             {second.label}
           </Button>
         ) : null}
-        <Button kind="quiet" onPress={onClose} keyHint={cancel.keyHint} keyShown={keysShown}>
+        <Button
+          kind="quiet"
+          onPress={onClose}
+          disabled={cancel.disabled}
+          keyHint={cancel.keyHint}
+          keyShown={keysShown}
+        >
           {cancel.label}
         </Button>
       </div>

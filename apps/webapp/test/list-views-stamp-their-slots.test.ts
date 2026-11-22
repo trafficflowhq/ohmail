@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
@@ -14,7 +14,6 @@ import ts from "typescript";
  * a list item of its own), or a screen reader counts only the mounted rows.
  */
 
-const VIEWS_DIR = resolve(process.cwd(), "apps/webapp/app/views");
 
 /** Rows rendered whole beside the window in the same component — server pages past the mirror. */
 const UNWINDOWED: readonly { file: string; receiver: string }[] = [];
@@ -127,8 +126,7 @@ function refusals(file: string, r: Reading): string[] {
   return out;
 }
 
-const viewFiles = readdirSync(VIEWS_DIR).filter((f) => f.endsWith(".tsx")).sort();
-const readings = new Map(viewFiles.map((f) => [f, readView(readFileSync(join(VIEWS_DIR, f), "utf8"), f)]));
+const readings = new Map<string, Reading>();
 const rules = "RulesPane.tsx";
 readings.set(rules, readView(readFileSync("packages/app/src/settings/rules/" + rules, "utf8"), rules));
 

@@ -45,8 +45,8 @@ it.each([
     const card = (await item.elementHandle())!;
     const replyButton = stream.getByRole("button", { name: "Reply", exact: true });
     await replyButton.waitFor({ timeout: 3000 });
-    expect(await replyButton.getAttribute("aria-keyshortcuts")).toBe("r");
     await waitForSettledScroll(scroller);
+    await expect.poll(() => replyButton.getAttribute("aria-keyshortcuts")).toBe("r");
     await page.keyboard.press("r");
     const reply = stream.getByRole("textbox", { name: "Reply body" });
     await reply.waitFor({ timeout: 3000 });

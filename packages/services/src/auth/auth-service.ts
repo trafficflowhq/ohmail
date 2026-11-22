@@ -3647,7 +3647,11 @@ export class AuthService extends SessionLifecycle {
         }
       }
       for (let j = 0; j < toDelete.length; j += GRANT_PRUNE_BATCH) {
-        await db.delete(table).where(and(unusedMailboxGrant, inArray(table.state, toDelete.slice(j, j + GRANT_PRUNE_BATCH))));
+        await db.delete(table).where(and(
+          unusedMailboxGrant,
+          inArray(table.accountId, [...new Set(accountsBySession.values())]),
+          inArray(table.state, toDelete.slice(j, j + GRANT_PRUNE_BATCH)),
+        ));
       }
     }
   }

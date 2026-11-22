@@ -1,9 +1,23 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { AGENDA_DAYS, AGENDA_MORE, AgendaView } from "../../src/agenda/index.js";
 import { actLog, at, ev, FIRST_REACH, NO_EDGE, rangeInput, Words } from "../support/range-world.js";
+
+import { listFrame, LIST_WORDS } from "../places/list-seat.js";
+import { letter } from "../reader/support/mail.js";
+import {
+  calendarRecord,
+  connectionRecord,
+  mirror,
+  UPDATED,
+  WORDS as calendarWords,
+} from "../calsetup/world.js";
+import { calendar } from "../../src/calendar/entry.js";
+import { Frame } from "../../src/frame/Frame.js";
+import { TextProvider } from "../../src/text/index.js";
+import agendaEn from "../../messages/agenda.en.json" with { type: "json" };
 
 afterEach(cleanup);
 
@@ -25,6 +39,43 @@ describe("the Agenda", () => {
     expect(headings(container)).toEqual(["Today"]);
     expect(screen.getByText("Nothing today")).toBeTruthy();
   });
+  it("puts the presented Answer Later letters under today and opens a letter in its pile", async () => {
+    const letters = ["Reply to the kiln", "Confirm the firing"].map((subject, index) => {
+      const id = `message-${index}`;
+      return letter(id, {
+        subject,
+        triage: { messageId: id, state: "reply_later", bubbleUpAt: null, setAt: UPDATED, updatedAt: UPDATED },
+      });
+    });
+    const { host, address } = listFrame({ letters, first: "#/cal/week?panel=agenda" });
+    const world = mirror();
+    world.put("calendar", "cal-1", calendarRecord());
+    world.put("calendar_connection", "conn-1", connectionRecord());
+    render(
+      <TextProvider
+        locale="en"
+        messages={{ ...LIST_WORDS, ...calendarWords.en, ...agendaEn }}
+        timeZone="Europe/Zurich"
+      >
+        <Frame
+          host={{
+            ...host,
+            engine: { ...host.engine, store: world.engine.store },
+            capabilities: { ...host.capabilities, products: "both" },
+            features: { ...host.features, calendar },
+            wires: { ...host.wires, calendar: world.port },
+          }}
+        />
+      </TextProvider>,
+    );
+    const today = screen.getByRole("heading", { name: "Today", exact: true }).closest("section")!;
+    const group = within(today).getByRole("region", { name: "Answer Later" });
+    expect(within(group).getAllByRole("button")).toHaveLength(2);
+    fireEvent.click(within(group).getByRole("button", { name: /Reply to the kiln/ }));
+    await act(async () => {});
+    expect(address.read()).toBe("#/triage/m/message-0");
+  });
+
   it("whole days first, then by the hour; a run stands on each of its days", () => {
     const { container } = render(
       <Words>

@@ -141,24 +141,31 @@ export function mountStream(o: {
 }) {
   const base = o.place === "news" ? "#/reads" : "#/receipts";
   const address = fakeAddress(o.open ? `${base}/m/${o.open}` : base);
+  const feed = movable<Fed>(o.input);
+  const Above = ({ children }: { children: ReactNode }) => (
+    <StreamSeat address={address} place={o.place} feed={feed}>
+      {children}
+    </StreamSeat>
+  );
+  const seated = (place: PlaceEntry): PlaceEntry => {
+    const stood = standing(place);
+    return stood.panes.kind === "columns" ? { ...stood, panes: { ...stood.panes, Above } } : stood;
+  };
   const { host } = fakeHost({
     engine: NO_ENGINE,
     service: "self",
     scope: "acct-1",
     places: {
-      ...(o.place === "news" ? { news: standing(newsPlace) } : { receipts: standing(receiptsPlace) }),
+      ...(o.place === "news" ? { news: seated(newsPlace) } : { receipts: seated(receiptsPlace) }),
       ...(o.search ? { search: o.search } : {}),
     },
     window: o.window ?? fakeWindow("desktop"),
     address,
   });
   const lang = o.lang ?? "en";
-  const feed = movable<Fed>(o.input);
   const view = render(
     <TextProvider locale={lang} messages={WORDS[lang]} timeZone="Europe/Zurich">
-      <StreamSeat address={address} place={o.place} feed={feed}>
-        <Frame host={host} />
-      </StreamSeat>
+      <Frame host={host} />
     </TextProvider>,
   );
   /** A new pile, as the engine hands it after a write. */

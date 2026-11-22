@@ -115,7 +115,7 @@ function ContactEventsOn({ person, onClose }: Props) {
 
 export function ContactNewEvent({ person, onClose }: Props) {
   const on = useCalendarFor(person);
-  const create = useNewEvent({ address: person.address, name: person.displayName ?? null });
+  const create = useNewEvent({ guests: [{ address: person.address, name: person.displayName ?? null }] });
   const t = useText("calmail");
   if (!on || !create || !person.address.includes("@")) return null;
   return (

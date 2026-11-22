@@ -128,6 +128,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "PATCH", pattern: "/account/storage" },
   { method: "PATCH", pattern: "/calendar/calendars/:id" },
   { method: "PATCH", pattern: "/calendar/settings" },
+  { method: "PATCH", pattern: "/calendar/suggestions/:id" },
   { method: "PATCH", pattern: "/consent/settings" },
   { method: "PATCH", pattern: "/contacts/:id" },
   { method: "PATCH", pattern: "/folders/:id" },

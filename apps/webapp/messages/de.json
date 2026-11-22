@@ -393,6 +393,15 @@
     "retry": "Nochmal versuchen"
   },
   "host": {
+    "copyOrigin": "Kopieren",
+    "thisComputer": "Dieser Computer",
+    "hostOff": "Aus",
+    "hostServing": "Erreichbar",
+    "hostNotServing": "Nicht erreichbar",
+    "hostStarting": "Startet",
+    "reachAt": "Deine Geräte erreichen ihn unter",
+    "servingDetail": "Solange dieser Computer wach ist.",
+    "lanServingDetail": "Für Apps in deinem Netzwerk, solange dieser Computer wach ist. Falls ein Gerät ihn nicht erreicht, prüfe, ob die Firewall dieses Computers Port {port} zulässt.",
     "title": "Geräte",
     "lead": "Mach diesen Computer zu deinem eigenen Mailserver. Deine anderen Geräte verbinden sich direkt mit ihm — nichts läuft über die Cloud.",
     "story": "Das geht über Tailscale, einen privaten Tunnel zwischen deinen eigenen Geräten. Nichts wird ins Internet geöffnet.",
@@ -1147,12 +1156,7 @@
     "readerMoveRefusedUnknown": "Nichts verschoben — verschoben wird dort, wo die Installation läuft, die dieses Postfach organisiert.",
     "readerMoveRefusedNobody": "Nichts verschoben: Niemand organisiert dieses Postfach. Unter Einstellungen → Postfächer gibt es den Button, um es hier zu organisieren.",
     "moveBarTitle": "Dieser Computer verschiebt keine Mails in diesem Postfach",
-    "moveBarWhy": "{name} organisiert es, deshalb wird dort freigegeben und zurückgeholt. Dieser Computer liest, sucht, markiert als gelesen und sendet. Unter Einstellungen → Postfächer gibt es den Button, um das Postfach stattdessen hier zu organisieren.",
-    "moveBarWhyUnknown": "Freigegeben und zurückgeholt wird dort, wo der Organizer läuft. Dieser Computer liest, sucht, markiert als gelesen und sendet. Unter Einstellungen → Postfächer gibt es den Button, um das Postfach stattdessen hier zu organisieren.",
-    "moveBarWhyNobody": "Niemand organisiert es, deshalb wird nichts freigegeben oder zurückgeholt. Dieser Computer liest, sucht, markiert als gelesen und sendet. Unter Einstellungen → Postfächer gibt es den Button, um das Postfach hier zu organisieren.",
     "readerBarTitle": "Dieser Computer sortiert dieses Postfach nicht",
-    "readerBarWhy": "{name} organisiert es. Lesen, Suchen, als gelesen markieren und Senden gehen hier; wohin Mails gehören, wird dort entschieden, wo der Organizer läuft. Der Button zum Übernehmen ist unter Einstellungen → Postfächer.",
-    "readerBarWhyUnknown": "Ein anderer ohmail-Organizer hat es. Lesen, Suchen, als gelesen markieren und Senden gehen hier; wohin Mails gehören, wird dort entschieden, wo der Organizer läuft. Der Button zum Übernehmen ist unter Einstellungen → Postfächer.",
     "readerBarNoneTitle": "Dieses Postfach wird von nichts organisiert",
     "readerBarNoneWhy": "Keine Installation sortiert es ein, deshalb würde hier nichts ausgeführt. Unter Einstellungen → Postfächer gibt es den Button, um es von diesem Computer aus zu organisieren.",
     "oauthDecideElsewhere": "Bei einem Postfach, das mit OAuth angemeldet ist, können Entscheidungen nur auf der Installation getroffen werden, die es organisiert.",
@@ -1389,7 +1393,6 @@
   "trash": {
     "listMenu": "Liste",
     "emptyTitle": "Nichts gelöscht",
-    "empty": "Was du in ohmail löschst, landet hier und lässt sich zurücklegen.",
     "foot": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
     "footLive": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. Darunter, was im Papierkorb deines Mailservers liegt: nur lesbar, denn hier ist nicht festgehalten, wo diese Mails herkamen. Dein Mailserver entscheidet, wie lange er sie behält.",
     "deletedAt": "Gelöscht {when}",
@@ -2290,6 +2293,7 @@
     "yourMail": "Was mit deinen Mails passiert"
   },
   "reader": {
+    "actions": { "addToCalendar": "Zum Kalender hinzufügen" },
     "gone": "Diese Nachricht wurde anderswo verschoben oder gelöscht.",
     "goneTrash": "Im Papierkorb nachsehen",
     "trashAsk": "In den Papierkorb verschieben",
@@ -3501,6 +3505,7 @@
     "removeReconnect": "Du kannst dieses Postfach später wieder verbinden.",
     "removeConfirm": "Postfach entfernen",
     "removeCancel": "Behalten",
+    "removeCancelKey": "Esc",
     "removeWorking": "Wird entfernt…",
     "factorBodyRemove": "Beim Entfernen eines Postfachs wird das dafür gespeicherte Passwort gelöscht, deshalb verlangt dein Account vorher einen frischen zweiten Faktor.",
     "removeKeepChoice": "Entfernen und die Kopie der E-Mails bei ohmail behalten",
@@ -4529,6 +4534,7 @@
     "search": "Nach Absender oder Domain suchen",
     "searchLabel": "Regeln durchsuchen",
     "facetLabel": "Regeln zeigen, die einsortieren in",
+    "facetKey": "Sortiert in",
     "facetAll": "Alle",
     "noMatch": "Keine Regel passt.",
     "bulkRevoke": "{count, plural, one {Die passende Regel aufheben} other {Alle # passenden aufheben}}",
@@ -4690,7 +4696,7 @@
     "faultOffline": "ohmail war nicht erreichbar — prüf deine Verbindung",
     "faultSignedOut": "Deine Sitzung ist beendet — melde dich neu an",
     "faultRetry": "versuch es nochmal",
-    "faultRetrying": "wird gleich nochmal versucht",
+    "faultRetrying": "Ohmail versucht es gleich noch einmal. {reason}.",
     "tooLarge": "{size} · zu groß, um sie zu holen",
     "listFailed": "Die Dateien dieser Nachricht ließen sich nicht laden.",
     "listOffline": "ohmail war nicht erreichbar — prüf deine Verbindung.",
@@ -4738,7 +4744,7 @@
     "pdfErrorDetail": "Lad es herunter, um es in einer anderen App zu öffnen.",
     "textTruncated": "— Vorschau gekürzt. Zum Weiterlesen herunterladen.",
     "textTruncatedHere": "— Vorschau gekürzt.",
-    "textTooLargeDetail": "Speichere sie stattdessen.",
+    "textTooLargeDetail": "Diese Datei ist zu groß für die Vorschau in ohmail. Lade sie stattdessen herunter.",
     "count": "{index} von {total}",
     "page": "{page} / {total}",
     "prevAttachment": "Vorheriger Anhang",
@@ -5616,6 +5622,7 @@
     "bootLocalEngineOffOrigin": "ohmail sollte das Postfach auf diesem Handy und zugleich einen Server öffnen und hat deshalb keines von beiden geöffnet.",
     "bootMirrorFailed": "Die Kopie deiner Mails auf diesem Handy ließ sich nicht öffnen: {0}",
     "bootNeedsCredential": "Eine Anmeldung und eine Account-ID werden beide gebraucht.",
+    "calendarCopyRemains": "Der Kalender, den dieses Handy kopiert hat, ließ sich noch nicht entfernen. ohmail versucht es beim nächsten Start erneut.",
     "composeEarlierWent": "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
     "composeKept": "In den Entwürfen behalten.",
     "composeKeptChangedElsewhere": "Dieser Entwurf wurde auf einem anderen Gerät geändert. Was du hier geschrieben hast, ist als neuer Entwurf gesichert.",
@@ -6067,6 +6074,9 @@
   },
   "mailboxFilings": {
     "title": "Wartet aufs Einsortieren · {mailbox}",
+    "waiting": "Wartet auf Ablage",
+    "waitingValue": "{count} für {folder}",
+    "waitingSince": "Wartet seit {since}.",
     "group": "{count, plural, one {1 Nachricht wartet} other {# Nachrichten warten}} seit {since} aufs Einsortieren: {folder}",
     "why": "Grund: {reasons}",
     "reasonCounted": "{reason} ({count})",
@@ -6519,6 +6529,7 @@
     "span": "{from}–{to}",
     "count": "{count, number}",
     "top": "Nach oben",
+    "answerLater": "Später antworten",
     "month": "Monat"
   },
   "calsearch": {
@@ -6741,6 +6752,8 @@
     "inviteGuest": "{name} einladen",
     "confirmGuest": "Eine Einladung an {name} senden?",
     "cancelGuest": "Abbrechen",
+    "confirmGuests": "Einladungen an {name} senden?",
+    "sendGuests": "Einladungen senden",
     "sendGuest": "Einladung senden",
     "removeGuest": "Gast entfernen",
     "comingHeading": "Demnächst",
@@ -6759,6 +6772,7 @@
   "calendar": {
     "connect": "Einen Kalender verbinden",
     "actions": {
+      "openLetter": "Brief öffnen",
       "resizeTimeStart": "Beginn verschieben",
       "resizeTimeEnd": "Ende verschieben",
       "resizeStart": "Ersten Tag ändern",
@@ -6826,6 +6840,19 @@
       "keepTheirs": "Andere behalten",
       "discard": "Änderungen verwerfen"
     },
+    "call": {
+      "label": "Anruf",
+      "join": "Teilnehmen",
+      "copy": "Kopieren",
+      "copied": "Kopiert"
+    },
+    "location": {
+      "own": "Deine Orte",
+      "suggestions": "Ortsvorschläge",
+      "credit": "© OpenStreetMap-Mitwirkende",
+      "maps": "In Karte öffnen",
+      "mapsTitle": "Öffnet openstreetmap.org"
+    },
     "create": {
       "endDate": "Enddatum",
       "nextDay": "nächster Tag",
@@ -6856,6 +6883,7 @@
     "placeCount": "{place}, {count}",
     "fromMail": "Aus E-Mails",
     "more": "Mehr",
+    "letters": "Briefe",
     "people": "Personen",
     "atTime": "{day}, {time}",
     "interval": "{first} – {last}",

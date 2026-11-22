@@ -207,7 +207,7 @@ describe("Search pages the store", () => {
     const drawn = chips();
     const read = () => chips().map((li) => li.textContent);
     expect(asked).toEqual(["page", "estimate", "summary"]);
-    expect(text()).toContain("Searched your whole mailbox — about 690 matched");
+    expect(text()).toContain(messages.search.saidAbout.replace("{total}", "690"));
     const before = read();
     // The candidates' counts are no count of the match set: the chips stand without them.
     expect(before.slice(0, 3)).toEqual(["news@axa.example", "portal@insure.example", "claims@axa.example"]);
@@ -236,7 +236,7 @@ describe("Search pages the store", () => {
       : { items: page(0, 50), total: 200, totalExact: false, nextCursor: "c2", ms: 7 }));
     await render(engine, "axa");
     await settle();
-    expect(text()).toMatch(/Searched your whole mailbox — at least 2[,’ ]?000 matched/);
+    expect(text()).toMatch(/At least 2[,’ ]?000 matched in your whole mailbox\./);
     const chips = senderFacets().map((item) => item.textContent);
     expect(chips).toContain("news@axa.example");
     expect(chips.join(" ")).not.toContain("×");
@@ -288,7 +288,7 @@ describe("Search pages the store", () => {
       : { items: [msg("d1", "AXA on the device")], total: 1, nextCursor: null, ms: 62 }));
     await render(engine, "axa");
     await settle();
-    expect(within(host).getByRole("heading", { name: "Results" }).textContent, "the count is said twice").toBe("Results");
+    expect(within(host).getByRole("heading", { name: "Results 1" }).querySelector(".oh-groupheading-count")?.textContent, "the exact count beside Results, with no time").toBe("1");
     expect(text()).toMatch(/Searched your whole mailbox — 1 matched · \d+ ms/);
     // The store's own 62 ms is never the time said: the line states the wait.
     expect(text()).not.toMatch(/\b62 ms/);
@@ -319,7 +319,7 @@ describe("Search pages the store", () => {
       : { items: [msg("d1", "AXA on the device")], total: 1, nextCursor: null, ms: null }));
     await render(engine, "axa");
     await settle();
-    expect(within(host).getByRole("heading", { name: "Results" }).textContent, "the count is said twice").toBe("Results");
+    expect(within(host).getByRole("heading", { name: "Results 1" }).querySelector(".oh-groupheading-count")?.textContent, "the exact count beside Results, with no time").toBe("1");
     const verdict = saidLine("Searched your whole mailbox — 1 matched");
     expect(within(verdict).getByText(/^1 matched · \d+ ms$/).textContent, "the count and the time stand together in one element").toMatch(/^1 matched · \d+ ms$/);
   });

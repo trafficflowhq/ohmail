@@ -2,10 +2,10 @@
 
 import type { ComponentProps, ComponentType, ReactElement } from "react";
 import { LoadFailed as FrameLoadFailed, lazyView as fromFrame } from "@ohmail/app/frame";
-import { BrowserChunkLoads } from "./browser-mail.js";
+import { BrowserChunkLoads } from "../chunk-loads.js";
 import { TextFromIntl } from "./LocaleContext.js";
 
-export { page } from "./browser-mail.js";
+export { BrowserChunkLoads, page } from "../chunk-loads.js";
 export { ViewLoadFailed } from "@ohmail/app/frame";
 
 export function lazyView<T extends ComponentType<any>>(

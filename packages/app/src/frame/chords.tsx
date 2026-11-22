@@ -15,7 +15,7 @@
 import { useMemo, type ReactNode } from "react";
 import { leaveRailAfterGoTo, useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys";
 import { useFrame, usePaletteOffers } from "./commands.js";
-import { NONE } from "../host/index.js";
+import { NONE } from "../host/contract.js";
 import { useTextLookup } from "../text/index.js";
 import {
   RAIL_GROUPS,

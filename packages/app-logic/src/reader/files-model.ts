@@ -57,14 +57,14 @@ export const FAULT_KEY: Readonly<Record<AttachmentFaultClass, string>> = {
 
 /**
  * What helps a file that did not arrive: asking again where that could work, signing in where the session ended,
- * nothing where nothing helps (the file is gone, the server refuses it here).
+ * nothing where nothing helps (the server refuses it here or reports a file gone without offering another try).
  */
 export function faultOf(item: FileOfList): { key: string; way: "retry" | "signIn" | null } {
   const cls = attachmentFaultClass(item.code ?? null, item.status ?? null);
   const way =
     cls === "signed_out"
       ? "signIn"
-      : cls === "gone" || cls === "refused" || item.retryable === false
+      : cls === "refused" || item.retryable === false || (cls === "gone" && item.retryable !== true)
         ? null
         : "retry";
   return { key: FAULT_KEY[cls], way };

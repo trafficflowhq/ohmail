@@ -22,11 +22,13 @@ export async function setCalendarSuggestionDismissed(ctx: ServiceContext, id: st
     if (!source) throw missing();
     const d = dialect(tx);
     await holdCalendarMailbox(tx, d, { accountId: ctx.accountId, mailboxId: source.mailboxId });
+    // scoped-by: `where`, this account's suggestion by its id
     const [row] = await d.forUpdate(tx.select({ state: calSuggestions.state }).from(calSuggestions).where(where));
     if (!row || (row.state !== "open" && row.state !== "dismissed")) throw missing();
     const state = dismissed ? "dismissed" : "open";
     if (row.state === state) return { dismissed, seq: null };
 
+    // scoped-by: `where`, this account's suggestion by its id
     await tx.update(calSuggestions).set({ state, decidedAt: dismissed ? ctx.now() : null }).where(where);
     const [seq] = await recordCalendarChanges(tx, ctx.accountId, [
       { kind: "calendar_suggestion", id, op: dismissed ? "delete" : "create" },

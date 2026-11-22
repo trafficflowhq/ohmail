@@ -107,3 +107,12 @@
     color: var(--hot-ink);
   }
 }
+
+@layer oh {
+  .oh-slot.oh-native-select {
+    appearance: auto;
+    min-width: 0;
+    max-width: 100%;
+    text-overflow: ellipsis;
+  }
+}

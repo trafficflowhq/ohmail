@@ -205,6 +205,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe.each([
+  { route: "reads", region: "News stream", letter: issue },
+  { route: "receipts", region: "Receipts stream", letter: receipt },
+])("$region's first phone frame", ({ route, region, letter }) => {
+  it.each(["cold open", "saved position", "addressed card"])(
+    "keeps the opening cards in place on a %s",
+    (entry) => {
+      laidOutTime();
+      vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+        box(0, VIEW),
+      ] as unknown as DOMRectList);
+      const home = `#/${route}`;
+      const { address } = seat({
+        at: entry === "addressed card" ? `${home}/m/later` : home,
+        phone: true,
+        letters: [letter("first", 10), letter("later", 9), letter("last", 8)],
+      });
+      const cards = () => screen.getByRole("region", { name: region }).querySelectorAll("[data-stream-item]");
+      const arm = () => {
+        nextFrame();
+        act(() => {
+          vi.advanceTimersByTime(1);
+        });
+      };
+      if (entry === "saved position") {
+        const scroller = layOut(region);
+        arm();
+        scroller.scrollTop = ITEM;
+        act(() => address.visit("#/ohbox"));
+        act(() => address.visit(home));
+      }
+      expect(cards()).toHaveLength(entry === "cold open" ? 3 : 0);
+      arm();
+      expect(cards().length).toBeGreaterThan(0);
+    },
+  );
+});
+
 describe("News and Receipts on their own seats, over the mail ground", () => {
   it("eases a News preview open and closed", () => {
     const style = document.createElement("style");

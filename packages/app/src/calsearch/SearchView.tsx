@@ -78,7 +78,7 @@ export function SearchView({ input, acts, query, onQuery, held }: SearchViewProp
   }
   let n = -1;
   return (
-    <div className="cal-sr" data-device={input.device}>
+    <div className="oh-cal-sheet cal-sr" data-device={input.device}>
       <div className="cal-sr-top">
         <label className="cal-sr-field">
           <Icon name="search" size={20} />

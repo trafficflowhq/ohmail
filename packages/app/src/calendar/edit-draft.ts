@@ -1,6 +1,12 @@
-import { addDays, type CalendarEventRecord, type CalendarRecord } from "@ohmail/app-logic/calendar";
+import {
+  addDays,
+  storedTimeOf,
+  type CalendarEventRecord,
+  type CalendarRecord,
+} from "@ohmail/app-logic/calendar";
 import type { CalendarEventFields, CalendarTime } from "@ohmail/wire";
 import { draftTimes, type EventDraft } from "./event-draft.js";
+import type { CalendarEventFace } from "./faces.js";
 
 const dayOf = (time: CalendarTime) =>
   time.value.slice(0, 4) + "-" + time.value.slice(4, 6) + "-" + time.value.slice(6, 8);
@@ -42,6 +48,30 @@ export function draftOfRecord(record: CalendarEventRecord, viewerZone?: string) 
     private: record.private,
   };
   return { draft, timeEditable };
+}
+
+export function draftForDuplicate(
+  record: CalendarEventRecord,
+  occurrence: CalendarEventFace,
+  zone: string,
+): EventDraft {
+  if (occurrence.ref.occurrence === null) {
+    return { ...draftOfRecord(record, zone).draft, invitees: [] };
+  }
+  const { draft } = draftOfRecord(
+    {
+      ...record,
+      start: storedTimeOf(occurrence.start),
+      end: storedTimeOf(occurrence.end),
+    },
+    zone,
+  );
+  return {
+    ...draft,
+    invitees: draft.invitees
+      ?.filter(({ role }) => role === "required" || role === "optional")
+      .map((guest) => ({ ...guest, answer: "none" })),
+  };
 }
 
 function timeLike(value: CalendarTime, original: CalendarTime): CalendarTime {

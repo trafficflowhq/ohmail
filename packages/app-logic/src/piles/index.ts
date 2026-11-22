@@ -18,5 +18,5 @@ export {
   type ReplyRunPorts,
   type ReplyRunState,
 } from "./reply-run.js";
-export { pileOf, usePilesLive, type PilesLiveOwn } from "./live.js";
+export { pileOf, useGroundPiles, usePilesLive, type PilesLiveOwn } from "./live.js";
 export { usePileCount } from "./rail-count.js";

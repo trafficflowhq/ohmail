@@ -52,7 +52,6 @@ export { MonthRail } from "./Lists/MonthRail.js";
 export type { MonthRailEntry, MonthRailProps } from "./Lists/MonthRail.js";
 export { ReadSquares } from "./Lists/ReadSquares.js";
 export type { ReadSquaresProps, SquareKind, SquaresRun } from "./Lists/ReadSquares.js";
-export { SelectionCircle } from "./Lists/SelectionCircle.js";
 export type { CircleSelection } from "./Lists/SelectionCircle.js";
 export { SelectionBar } from "./Lists/SelectionBar.js";
 export type { SelectionBarProps } from "./Lists/SelectionBar.js";

@@ -18,7 +18,7 @@ import { writePlace } from "../write/place.js";
 import { draftsPlaceOn } from "../drafts/place.js";
 import { DraftsList } from "../drafts/DraftsList.js";
 import { DraftsSeat } from "../drafts/Seat.js";
-import { WRITE } from "./write-entry.js";
+import { WRITE } from "../write/rich-entry.js";
 
 /**
  * The seated places by id. An id that is absent is not seated yet: a host answers it with what it mounted before, or

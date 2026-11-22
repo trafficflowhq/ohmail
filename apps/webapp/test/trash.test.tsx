@@ -133,8 +133,10 @@ async function mount(p: TrashPage, catalogue: typeof en = en, locale: "en" | "de
 
 describe("the Trash view", () => {
   it("carries the SCOPE sentence whether or not there are rows", async () => {
+    // Keep the registered case name. The empty scope copy now consists of the title alone.
     const empty = await mount(page({ exhausted: true }));
-    expect(empty.textContent).toContain(en.trash.foot);
+    expect(empty.textContent).toContain(en.trash.emptyTitle);
+    expect(empty.textContent).not.toContain(en.trash.foot);
     if (root) await act(() => root!.unmount());
     root = null; host?.remove(); host = null;
     const full = await mount(page({ items: [row("m1")] as never }));
@@ -152,8 +154,8 @@ describe("the Trash view", () => {
 
   it("renders in GERMAN from the same keys", async () => {
     const el = await mount(page({ exhausted: true }), de as unknown as typeof en, "de");
-    expect.soft(el.textContent).toContain(de.trash.empty);
-    expect(el.textContent).toContain(de.trash.foot);
+    expect(el.textContent).toContain(de.trash.emptyTitle);
+    expect(el.textContent).not.toContain(de.trash.foot);
   });
 });
 

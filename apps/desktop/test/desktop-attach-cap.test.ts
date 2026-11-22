@@ -6,7 +6,7 @@ import {
   composeAttachBudgetFor, composeAttachCap, composeAttachCapBinding,
   COMPOSE_ATTACH_MAX_TOTAL_BYTES, COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,
-} from "../../webapp/app/components/ComposeAttach";
+} from "@ohmail/client-engine";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { CLOUD_URL } from "../src/doors.js";
 import {

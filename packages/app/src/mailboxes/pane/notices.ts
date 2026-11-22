@@ -6,7 +6,7 @@ import {
 } from "@ohmail/app-logic/mailboxes/pane/notices";
 import { useFrame, type FrameNotice } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
-import { settingsSection } from "../../mail/panes.js";
+import { settingsSection } from "../../settings/menu.js";
 import { useText, type Text } from "../../text/index.js";
 import type { PaneMailState } from "./pane.js";
 

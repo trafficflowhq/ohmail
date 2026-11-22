@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useTheme } from "@ohmail/ui/theme";
 import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
-import { useAccountLook } from "../../mail/ground/boot-face.js";
+import { useAccountLook } from "../general/boot-face.js";
 import { readSubjectDisplay, writeSubjectDisplay } from "../../reader/subject-display.js";
 import type { PaneBodyProps } from "../index.js";
 import { GeneralPane, type GeneralModel } from "../general/index.js";

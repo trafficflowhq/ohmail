@@ -494,6 +494,7 @@
     "search": "Search by sender or domain",
     "searchLabel": "Search rules",
     "facetLabel": "Show rules that file into",
+    "facetKey": "Files into",
     "facetAll": "All",
     "noMatch": "No rules match.",
     "bulkRevoke": "Revoke {count, plural, one {the matching rule} other {all # matching}}",

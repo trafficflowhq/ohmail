@@ -57,9 +57,9 @@ it("opens the full list from a grouped notice and keeps only the mailbox whose d
   expect(page.queryAllByRole("status").some((el) => el.textContent?.includes(changed[0]!.address))).toBe(true);
 }, 30_000);
 
-it("offers the real Mailboxes roster from grouped organizer notices", async () => {
+it("offers the real Mailboxes roster from a single-mailbox organizer notice", async () => {
   const { el } = await mountShell("#/ohbox", [], [], {
-    roster: changed,
+    roster: [changed[0]!, ...changed.slice(1).map((row) => ({ ...row, organizerEventSeenAt: eventAt }))],
     mailboxNotices: { organizerNotice: async () => {} },
   });
   const page = within(el);

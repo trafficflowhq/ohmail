@@ -19,5 +19,5 @@ export {
   useAccountLook,
   type ApplyFaceAllDevices,
   type FaceEdits,
-} from "./ground/boot-face.js";
-export { MailRichEditor, prepareWriting } from "./write-entry.js";
+} from "../settings/general/boot-face.js";
+export { MailRichEditor, prepareWriting } from "../write/rich-entry.js";

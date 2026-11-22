@@ -247,7 +247,7 @@ async function wheelStream(to: number): Promise<void> {
     await act(async () => { setStreamScroll(el, at); });
     await act(async () => { vi.advanceTimersByTime(20); });
   }
-  // The measure runs inside the scroll handler's rAF; let it land (but stay under the 2s dwell).
+  // The measure runs inside the scroll handler's rAF; let it land within the dwell.
   await act(async () => { vi.advanceTimersByTime(40); });
 }
 
@@ -362,7 +362,7 @@ function readable(): void {
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   inner = true;
 }
-/** A rest past the rule's 0.7s. */
+/** A rest past the read dwell. */
 const rest = async (ms = 800): Promise<void> => { await act(async () => { vi.advanceTimersByTime(ms); }); };
 
 /* ── the guards ────────────────────────────────────────────────────────────────────────── */
@@ -528,8 +528,10 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     const doc = frame.contentDocument!;
     const End = () => new (doc.defaultView as typeof window).KeyboardEvent("keydown", { key: "End", bubbles: true });
     await act(async () => { doc.body.dispatchEvent(End()); });
+    let lastScrollAt = performance.now();
     for (const top of [222, 888, 2220, 4070, 5550, 6660, 7178, 7400]) {
       await act(async () => { setStreamScroll(el, top); });
+      lastScrollAt = performance.now();
       await act(async () => { vi.advanceTimersByTime(16); });
     }
     // Frame by frame: the stream mounts the end window once the flight has rested two frames.
@@ -537,12 +539,17 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     shift = { from: 37, by: -28 };
     await act(async () => { vi.advanceTimersByTime(20); });
     expect(scrollTops.get(el), "control: the stream's anchoring took it off the end").toBe(7372);
-    await act(async () => { vi.advanceTimersByTime(LANDING_QUIET_MS - 100); });
-    // r36 shows only its foot.
-    expect(marked, "rested while the stream was correcting itself").toEqual(["r37"]);
-    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    await rest(lastScrollAt + LANDING_QUIET_MS - performance.now());
+    expect(marked, "landing starts the read dwell").toEqual([]);
+    await rest(400);
+    expect(curs, "the cursor follows the landing during the dwell").toEqual(["r37"]);
+    await rest(199);
+    expect(marked, "the landed letter has not rested for 600 ms").toEqual([]);
+    await rest(1);
+    // r36 shows only its foot. The rest marks r37 before the longer text hold.
     expect({ curs, marked }).toEqual({ curs: ["r37"], marked: ["r37"] });
     await rest();
+    expect(marked).not.toContain("r36");
     await leave();
     expect(commits).toEqual([{ upToId: "r36", messageIds: ["r37", "r38", "r39"] }]);
   }
@@ -551,10 +558,11 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     vi.stubGlobal("IntersectionObserver", DeliveringIO);
     await mountReadsLive(FORTY, null);
     const el = streamEl();
-    await wheelStream(150); // the cursor settles on r1, its foot still below the line: its 2s dwell starts
+    await wheelStream(150); // the cursor settles on r1, its foot still below the line, so its dwell starts
     expect(marked, "control: the band marked r0, not r1").toEqual(["r0"]);
     marked = [];
-    await act(async () => { vi.advanceTimersByTime(1800); });
+    await rest(440);
+    expect(marked, "the 600 ms dwell is still due").toEqual([]);
     await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
     for (const top of [222, 888, 2220, 4070, 5550, 6660, 7178, 7400]) {
       await act(async () => { setStreamScroll(el, top); });
@@ -1092,14 +1100,14 @@ describe("the read rule over every card on screen, after the reader's own scroll
     expect(marked).toEqual(["r2", "r3", "r4"]);
   });
 
-  it("the card a wheel settles on, its first lines on screen, is read by its dwell after 2s", async () => {
+  it("the card a wheel settles on, its first lines on screen, is read by its dwell after 0.6s", async () => {
     readable();
     await mountReadsLive(FORTY, null, { full: false }); // snippet cards: the rule reads none of them live
     await wheelStream(150);
     expect(marked, "control: the band took r0; the cursor is on r1, its foot below the band").toEqual(["r0"]);
-    await rest(1700);
+    await rest(400);
     expect(marked, "before the dwell").toEqual(["r0"]);
-    await rest(500);
+    await rest(300);
     expect(marked).toEqual(["r0", "r1"]);
   });
 

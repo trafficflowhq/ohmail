@@ -7,7 +7,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSection } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 
 import { ApiError } from "../api-client";
 import { PILE_KEY_OF_FOLDER } from "./decision-copy";
@@ -52,7 +53,7 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
   const [read, setRead] = useState<Read>({ k: "loading" });
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note>(null);
-  const heading = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const focusedFor = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -104,59 +105,55 @@ function MailboxFilingsBlock({ mailbox: m, api, onPressed }: {
   const time = (iso: string): string => clock(new Date(iso), activeFormatZone());
 
   return (
-    <SettingsSection className="mbx-filings">
-      <div className="set-sub" role="heading" aria-level={3} tabIndex={-1} ref={heading}>
-        {t("title", { mailbox: name })}
-      </div>
+    <SettingsSheet title={t("title", { mailbox: name })} headRef={heading}>
       {read.k === "unread" && f ? (
-        <SettingsRow label={t("unread", { count: f.due + f.deferred })} />
+        <SettingLine label={t("unread", { count: f.due + f.deferred })} />
       ) : null}
       {read.k === "read" ? read.groups.map((g) => {
         const reasons = g.reasons.length === 1
           ? reasonWords(g.reasons[0]!.reason)
           : g.reasons.map((r) => t("reasonCounted", { reason: reasonWords(r.reason), count: r.count })).join(", ");
-        const lines = [
-          t("why", { reasons }),
+        const value = [
+          t("waitingValue", { count: g.count, folder: folderName(g.folder) }),
           g.nextAttemptAt ? t("next", { at: time(g.nextAttemptAt) }) : null,
+        ].filter(Boolean).join(" · ");
+        const lines = [
+          t("waitingSince", { since: g.since ? waterlineStamp(g.since, new Date(), activeFormatLocale()) : "—" }),
+          t("why", { reasons }),
           g.at ? t("at", { count: g.count, at: folderName(g.at) }) : null,
           g.deletes > 0 ? t(g.deletes >= g.count ? "deletesAll" : "deletesSome", { count: g.deletes }) : null,
         ].filter((x): x is string => x !== null);
         return (
-          <SettingsRow
+          <SettingLine
             key={g.folder}
-            label={t("group", {
-              count: g.count, folder: folderName(g.folder),
-              since: g.since ? waterlineStamp(g.since, new Date(), activeFormatLocale()) : "—",
-            })}
-            description={(
-              <>
-                {lines.join(" ")}
-                <span className="mbx-actions">
-                  <Button
-                    variant="ghost" className="mbx-btn" disabled={busy}
-                    onClick={() => { void pressed(async () => ({ k: "retried", count: (await api.retry(m.id, g.folder)).reset })); }}
-                  >
-                    {t("retry")}
-                  </Button>
-                  {g.count > g.deletes ? (
-                    <Button
-                      variant="ghost" className="mbx-btn" disabled={busy || g.through === null}
-                      onClick={() => {
-                        void pressed(async () => ({ k: "left", count: (await api.leave(m.id, g.folder, g.through!)).settled }));
-                      }}
-                    >
-                      {t("leave")}
-                    </Button>
-                  ) : null}
-                </span>
-              </>
-            )}
-          />
+            label={t("waiting")}
+            value={value}
+            valueStatus
+            description={lines.join(" ")}
+            narrow="under"
+          >
+            <Button
+              kind="quiet" size="s" disabled={busy}
+              onPress={() => { void pressed(async () => ({ k: "retried", count: (await api.retry(m.id, g.folder)).reset })); }}
+            >
+              {t("retry")}
+            </Button>
+            {g.count > g.deletes ? (
+              <Button
+                kind="quiet" size="s" disabled={busy || g.through === null}
+                onPress={() => {
+                  void pressed(async () => ({ k: "left", count: (await api.leave(m.id, g.folder, g.through!)).settled }));
+                }}
+              >
+                {t("leave")}
+              </Button>
+            ) : null}
+          </SettingLine>
         );
       }) : null}
-      <p className="set-note-inline" role="status">
+      <p className="oh-text" role="status">
         {note === null ? null : note.k === "retried" || note.k === "left" ? t(note.k, { count: note.count }) : t(note.k)}
       </p>
-    </SettingsSection>
+    </SettingsSheet>
   );
 }

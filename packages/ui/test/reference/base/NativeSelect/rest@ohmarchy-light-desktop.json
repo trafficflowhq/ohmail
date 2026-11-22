@@ -1,0 +1,74 @@
+{
+  "component": "NativeSelect",
+  "state": "rest",
+  "look": "ohmarchy-light-desktop",
+  "place": "cell",
+  "target": [25, 26.4688, 124.375, 21.0625],
+  "clip": [25, 26, 125, 22],
+  "studioCommit": null,
+  "kitCommit": "fb49d823f4631edece85985237308d4a814e0e44",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(32, 94, 166)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    {
+      "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 1px inset",
+      "boxDecorationBreak": "clone",
+      "appearance": "auto",
+      "colorScheme": "light",
+      "borderRadius": "5.2px"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "combobox",
+      "name": "Host mode",
+      "box": [0, 0, 124.4, 21.1],
+      "drawn": {
+        "color": "rgb(32, 94, 166)",
+        "backgroundColor": "oklch(0.169616 0.00167262 none / 0.08)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "lineHeight": "normal",
+        "letterSpacing": "normal",
+        "borderRadius": "5.2px",
+        "paddingTop": "1.04px",
+        "paddingRight": "5.2px",
+        "paddingBottom": "1.04px",
+        "paddingLeft": "5.2px",
+        "borderColor": "rgb(32, 94, 166)"
+      },
+      "text": [{ "said": "Same network", "type": 0, "shown": true }],
+      "surfaces": [{ "box": [0, 0, 124.4, 21.1], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

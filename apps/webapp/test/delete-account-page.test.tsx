@@ -428,10 +428,10 @@ describe("the page and Settings › Account say the same outcome", () => {
     const c = await mountIn(h(AccountSection));
     await waitFor(() => c.querySelector("#acct-typed") != null, "the pane's facts");
     await type(c.querySelector<HTMLInputElement>("#acct-typed")!, EMAIL);
-    await submit(c.querySelector("form.acct-confirm")!);
-    await waitFor(() => c.querySelector("#stepup-code") != null, "the pane's prompt");
-    await type(c.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
-    await submit(c.querySelector("#stepup-code")!.closest("form")!);
+    await submit(c.querySelector("form:has(#acct-typed)")!);
+    await waitFor(() => c.querySelector('[role="dialog"] input[autocomplete="one-time-code"]') != null, "the pane's prompt");
+    await type(c.querySelector<HTMLInputElement>('[role="dialog"] input[autocomplete="one-time-code"]')!, "123456");
+    await submit(c.querySelector('[role="dialog"] input[autocomplete="one-time-code"]')!.closest("form")!);
     return c;
   }
   async function throughThePage(): Promise<HTMLElement> {

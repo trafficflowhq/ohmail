@@ -8,7 +8,7 @@ import { build, type Plugin } from "esbuild";
  *
  * TipTap and ProseMirror are the heaviest thing the mail client compiles, and nobody sees them at
  * first paint: the composer, the inline reply, the Reply Run and the two signature surfaces are
- * each opened by a press. `RichEditorLazy.tsx` is the one door to them, and with it in place the
+ * each opened by a press. the shared Write editor entry is the one door to them, and with it in place the
  * `/mailbox` route's first load measured 560 kB → 434 kB.
  *
  * ── MEASURED ON A BUILD'S OWN MANIFEST, NEVER ON THE SOURCE ─────────────────────────────────

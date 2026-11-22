@@ -25,7 +25,7 @@ import { purgeSiteCache } from "../../../session-refresh";
 import { useRefusalSentence } from "../../refusal-sentence";
 import { isOwnerAbsent, useSettledOwner, type Settled } from "../../approve/settle-owner";
 import { gatedRefusal } from "../../mailbox/gated-refusal";
-import { useManageOffer } from "../../mailbox/SubscriptionSection";
+import { useManageOffer } from "../../mailbox/use-manage-offer";
 
 /** `factor`: the press asked the second factor and the erase waits on it. */
 export type Stage = "facts" | "factor" | "erasing" | "done";

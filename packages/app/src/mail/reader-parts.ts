@@ -14,7 +14,7 @@ import { useMemo } from "react";
 import { useDoors } from "@ohmail/app-logic/reader/doors";
 import type { ReaderEntry } from "../host/index.js";
 import { readerEntryFrom, type ReaderBody, type ReaderParts } from "../reader/index.js";
-import { WRITE } from "./write-entry.js";
+import { WRITE } from "../write/rich-entry.js";
 
 /**
  * What a host supplies beside the mail ground: text and invitation presentation, a file preview, and the clipboard.

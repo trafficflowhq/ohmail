@@ -26,6 +26,9 @@
     transform-origin: var(--x-pop-origin);
     animation: oh-ecard-pop var(--d-pop) var(--e-pop) both;
   }
+  .oh-ecard[data-side] {
+    --x-pop: var(--x-tie);
+  }
   @keyframes oh-ecard-pop {
     from {
       transform: var(--x-pop);
@@ -374,8 +377,14 @@
       opacity: 0;
     }
   }
-  :root[data-rm="1"] .oh-ecard[data-frame="sheet"] {
-    animation: oh-ecard-fade var(--d-fade) var(--e-std) both;
+  :root[data-rm="1"] .oh-ecard:not([data-frame="inline"], [data-still]) {
+    animation: oh-ecard-fade var(--d-reduced) var(--e-std) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-ecard:not([data-frame="inline"], [data-still]) {
+      animation: oh-ecard-fade var(--d-reduced) var(--e-std) both;
+      animation-duration: var(--d-reduced) !important;
+    }
   }
   .oh-ecard[data-frame="sheet"][data-still] {
     animation: none;

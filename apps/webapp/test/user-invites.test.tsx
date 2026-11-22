@@ -28,7 +28,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { fireEvent, getByRole, queryByRole, within } from "@testing-library/react";
+import { findByRole, fireEvent, getByRole, queryByRole, within } from "@testing-library/react";
 import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
 import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import {
@@ -180,7 +180,7 @@ const button = (c: HTMLElement, name: string) => getByRole(c, "button", { name }
 describe("useUserInvites — the negotiated half of the gate (the compiled half is `user-invites-managed.test.tsx`)", () => {
   /** A probe that renders the hook's answer, so the DOM is the assertion surface. */
   async function mountProbe(demo = false): Promise<HTMLElement> {
-    const { useUserInvites } = await import("../app/(product)/mailbox/InvitesSection.js");
+    const { useUserInvites } = await import("../app/(product)/mailbox/use-user-invites.js");
     function Probe() {
       return h("output", null, useUserInvites(demo) ? "invites:on" : "invites:off");
     }
@@ -201,12 +201,15 @@ describe("useUserInvites — the negotiated half of the gate (the compiled half 
    */
   it("a demo page issues no /hello at all", async () => {
     answers["GET /api/hello"] = HELLO(true);
+    const { writingReady } = await import("../app/shell/browser-mail");
+    await writingReady;
     const { DemoShell } = await import("../app/(product)/demo/DemoShell.js");
-    history.replaceState(null, "", "#/settings");
     const c = await mountNode(h(DemoShell, {
       serverDemo: true, says: { service: "self", sendCeiling: "strict" },
     }));
-    expect(settingsMenu(c).queryByRole("button", { name: "Invites" })).toBeNull();
+    await click(getByRole(c, "button", { name: messages.settings.title }));
+    const menu = await findByRole(c, "navigation", { name: messages.settings.navAria });
+    expect(within(menu).queryByRole("button", { name: "Invites" })).toBeNull();
     expect(calls.filter((x) => x.url.includes("/hello")), "the demo reached the network").toEqual([]);
   });
 

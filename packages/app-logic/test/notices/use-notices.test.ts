@@ -955,6 +955,7 @@ describe("the one caller rings the calendar's alerts", () => {
         eventId: "ev-weekly",
         label: { as: "title", text: "Catalogue weekly" },
         at: TWO,
+        startMs: START,
         allDay: false,
         leadMin: 10,
         acts: [],

@@ -36,7 +36,7 @@ const css = (rel: string): string =>
 const stream = (): string => css("../../../packages/ui/src/composites/stream.css");
 const toast = (): string => css("../../../packages/ui/src/primitives/toast.css");
 const app = (): string => css("../app/app.css");
-const touchKeys = (): string => css("../../../packages/app/src/keys/touch-keys.css");
+const touchKeys = (): string => css("../../../packages/app/src/frame/touch-keys.css");
 
 /** The rule whose selector begins a line — the base rule, never a scoped override. */
 const ruleFor = (src: string, selector: string): string => {

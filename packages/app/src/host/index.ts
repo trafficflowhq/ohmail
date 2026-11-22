@@ -1,5 +1,5 @@
 /** The host contract and the supplies a shell can build from its own transports. */
-export { mailboxRosterOver } from "../mailboxes/pane/roster-wire.js";
+export { mailboxRosterOver } from "./roster-wire.js";
 export { connectWireOver } from "../mailboxes/connect/from-thrown.js";
 export { NONE } from "./contract.js";
 export type { HostContract, None } from "./contract.js";

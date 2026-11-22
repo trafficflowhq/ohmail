@@ -92,7 +92,9 @@ export interface KitReference extends Scene {
   /** The part's box in the window it was drawn in, and the part of the window the picture shows. */
   target: Box;
   clip: Box;
-  studioCommit: string;
+  /** The sheet revision, or null for a product-owned reference. */
+  studioCommit: string | null;
+  kitCommit?: string;
 }
 
 export type Box = [x: number, y: number, width: number, height: number];

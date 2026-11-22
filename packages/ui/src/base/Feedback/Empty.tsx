@@ -8,6 +8,8 @@ import "./empty.css";
 export interface EmptyProps {
   /** What the place says, once. It ends in the dot. */
   label: string;
+  /** One detail under the label. */
+  line?: string;
   /** Hot while something waits. */
   hot?: boolean;
   /** The product's mark over the label, as its letters: only on the welcome and where everything is decided. */
@@ -25,7 +27,7 @@ export interface EmptyProps {
 }
 
 /** A place with nothing in it says so, once: a label, a label and one button, or the mark with a label. */
-export function Empty({ label, hot, mark, act }: EmptyProps) {
+export function Empty({ label, line, hot, mark, act }: EmptyProps) {
   return (
     <div className="oh-empty">
       {mark ? <Mark hot={hot}>{mark}</Mark> : null}
@@ -39,6 +41,7 @@ export function Empty({ label, hot, mark, act }: EmptyProps) {
           <EndDot kind={hot ? "hot" : "ink"}>{label}</EndDot>
         )}
       </p>
+      {line ? <p className="oh-text oh-empty-line">{line}</p> : null}
       {act ? (
         <div className="oh-empty-acts">
           {act.href !== undefined ? (

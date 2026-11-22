@@ -95,12 +95,7 @@ export function TrashList({ plan }: PaneProps) {
           {t("liveRetry")}
         </Button>
       ) : null}
-      {model.deletedEmpty ? (
-        <>
-          <Empty label={t("emptyTitle")} />
-          <p className="trash-detail">{t("empty")}</p>
-        </>
-      ) : null}
+      {model.deletedEmpty ? <Empty label={t("emptyTitle")} /> : null}
       {page.available && page.loading && page.items.length === 0 ? (
         <div role="status" aria-busy="true" />
       ) : null}
@@ -109,7 +104,7 @@ export function TrashList({ plan }: PaneProps) {
           {page.loading ? t("liveOlderLoading") : t("liveOlder")}
         </Button>
       ) : null}
-      {page.available && !page.loading && page.error === null ? (
+      {page.available && !model.deletedEmpty && !page.loading && page.error === null ? (
         <p className="trash-detail">{t(model.live.shown ? "footLive" : "foot")}</p>
       ) : null}
       {model.live.shown ? <LiveSection model={model} t={t} contact={contact} /> : null}

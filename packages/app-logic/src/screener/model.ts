@@ -47,6 +47,8 @@ export interface ScreenerModelInput {
   readonly decisionVerdict: DecisionVerdict | null;
   /** Where Allow, Not spam and back to Waiting hold their rule change for the undo window; null offers no Undo. */
   readonly releaseWindow: ScreenerReleaseWindow | null;
+  /** The frame opened on Screener itself, where the stored queue should draw immediately. */
+  readonly drawKeptFirst?: boolean;
 }
 
 export function useScreenerModel(input: ScreenerModelInput): ScreenerState {
@@ -66,5 +68,6 @@ export function useScreenerModel(input: ScreenerModelInput): ScreenerState {
     input.releaseWindow ?? undefined,
     input.decisionVerdict ?? undefined,
     input.mirrorAccount,
+    input.drawKeptFirst,
   );
 }

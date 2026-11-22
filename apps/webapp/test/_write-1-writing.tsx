@@ -4,7 +4,7 @@
  * `writingOf` and drawn by Write's own parts (`@ohmail/app/write`), exactly as `packages/app/src/mail/ground/
  * WritingMount.tsx` does it: the send machine's words as the ground hands them (`_write-1-send-text.ts`), the keys'
  * registry as the frame stands it (`KeymapContext` over `useKeymapStore`), Write's rich editor of the ground's
- * entry (`mail/write-entry.ts`). `write/writing-world.tsx` is the same world
+ * entry (`write/rich-entry.ts`). `write/writing-world.tsx` is the same world
  * over today's composer words and today's KeymapProvider, which leave with the switch.
  *
  * A case may hand the send machine's state for the open reply (`replySend`), and the row a reply holds
@@ -36,7 +36,7 @@ import { writeBesideOf, writingOf } from "@ohmail/app-logic/writing/writing-of";
 import { TextProvider } from "@ohmail/app/text";
 import { WriteAbove, type WriteBeside } from "@ohmail/app/write";
 import { ActionPanel } from "@ohmail/ui/mail";
-import { WRITE } from "../../../packages/app/src/mail/write-entry.js";
+import { WRITE } from "../../../packages/app/src/write/rich-entry.js";
 import { COMPOSER_WORDS, GROUND_CATALOGUE } from "./_write-1-send-text.js";
 import { act, engineOver, NOW, ROSTER, storeWith, type DraftShell } from "./_draft-shell.js";
 
