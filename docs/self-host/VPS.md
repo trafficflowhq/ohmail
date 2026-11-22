@@ -343,6 +343,8 @@ backup on the same disk dies with the disk.
 
 ## 10. Updates
 
+For the one-time update from 1.x to 2.0, [back up your database](BACKUP.md) before following the update steps below.
+
 The compose file pulls the release it came with, so updating is taking the
 newer file and its images:
 

@@ -78,6 +78,15 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.13" date="2026-11-17">
+      <description>
+        <ul>
+          <li>The Screener's offer answers on a large account</li>
+          <li>A letter your mail server accepts late is recorded as sent</li>
+          <li>A send waits for a busy server instead of failing</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.12" date="2026-11-14">
       <description>
         <ul>
@@ -108,13 +117,6 @@
       <description>
         <ul>
           <li>Cloud keeps a closed account closed while the billing service does not answer</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.8" date="2026-11-10">
-      <description>
-        <ul>
-          <li>A full mailbox now says it is full</li>
         </ul>
       </description>
     </release>
