@@ -21,6 +21,1439 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.0] — 2026-11-23
+
+### Search within a person's mail
+
+Type in “In this mail” to filter the letters in the selected direction. Clear the field to see all the letters in that direction again.
+
+### New app icons for ohmail and ohcal
+
+The ohmail icon brings the 2.0 lettering and bright full stop to the launcher, Dock and browser. The ohcal phone icon uses stacked lettering to distinguish it from ohmail at small sizes.
+
+### Saved appearance and list resizing on the web
+
+The web app opens in your saved look and color scheme. You can resize the list again by dragging its divider at the new edge, including after reloading. The same divider fix also applies on desktop.
+
+### Attachment list retries keep their place
+
+The reader explains connection, timeout, and session failures when it cannot list a message's files. A retry keeps the control and its focus while the request runs. Permanent refusals carry the explanation alone.
+
+### Embedded pictures and sender reviews explain what happens next
+
+When a mail server fails to deliver an embedded picture, the reader keeps the reason visible while ohmail waits to try again.
+
+The sent-mail review opened from Settings explains which mail moves before you apply its rules.
+
+The sender card includes the message count in its placement description for screen readers.
+
+Bulk Delete and Screening confirmations start keyboard focus on Cancel in the Ohbox.
+
+### Automatic Screener suggestions and live draft progress on Cloud
+
+The Screener prepares suggestions for waiting senders as mail arrives, within your account's AI settings and credits. You can still request suggestions from the Screener.
+
+On Cloud web, the composer shows your AI draft as it is written. The draft uses ordinary line breaks, and you can switch back to your original text after it arrives.
+
+### Reader shows when the Away responder answered
+
+The original message names the automatic reply and its time. Screen readers can hear the full date and time on narrow screens too.
+
+### Away names the piles it answers
+
+Show which piles get Away replies and keep the notice in sync with Settings without a duplicate startup read.
+
+### Away’s reply-pile help follows the current theme
+
+The help beside the reply-pile setting uses the active theme’s colours and keyboard focus ring.
+
+### Ohbox shows when the Away responder is on
+
+The notice says which mail gets a reply and how often. It links to Away settings and updates when a save is confirmed.
+It hides if the latest read fails and returns after a confirmed reading.
+
+### Away settings use the app's time zone and language
+
+The calendar, saved end time, and end-date labels all use the same time zone. Saved links from earlier versions open the Away responder directly.
+
+### Away Settings reads independently of the notice
+
+Opening Away Settings can show the responder even while the background notice is still waiting for its first reply. A late reply cannot replace a more recent save.
+
+### Keep notification changes in order across browser tabs
+
+When you change notification settings in two browser tabs, the browser completes the changes in order so an earlier turn-off cannot remove a later registration.
+
+### Notification removal still works when the browser's own check fails
+
+Turning off notifications or signing out on the web still removes this browser's saved notification setting from the server, even when the browser cannot find the helper that shows its notifications.
+
+### Web tabs close private views when the browser session changes
+
+Signing out or switching sessions closes the previous mailbox in other tabs and ends any Microsoft mailbox sign-in in progress there. The browser checks that server replies belong to the account that asked for them before updating its local copy.
+
+### Calendar alerts on the web and desktop
+
+Calendar alerts start switched off. Where a calendar is connected to notifications, the web can show an alert while an ohmail tab is open in the background. The desktop app can ring while its window is minimized or hidden.
+
+An alert says when the event starts. Private events appear as Busy. Other events appear as Event unless you choose to show titles. Signing out or switching accounts withdraws the old account’s alerts. A moved or cancelled event, a declined invitation, or a removed alarm no longer rings at its old time.
+
+### Easier calendar search and mailbox setup
+
+Type a date in Calendar Search to see that day’s events and open the day. Other IMAP has a dedicated sign-in step with server settings behind Host and ports. A full-mailbox warning can open Mailboxes, and Desktop Settings shows the connection and mail engine state.
+
+### Calendar events are easier to tell apart
+
+All-day events have a tinted chip with a fine border. Calendars without a server colour get a colour from the calendar palette, carried through to their event cards and search results. Day and Week open at 06:00 with a default hours range ending at 22:00, and keep any saved range.
+
+In Year and the mini month, dates sit in the centre of multi-day event bands.
+
+### Calendar availability
+
+Calendars shared for availability send occupied times and recurring dates without event titles, locations, people or reminders, including when an older event still has those details stored.
+
+### Calendar recognizes a cancellation after a lost reply
+
+When a CalDAV server changes an event but its reply is lost, Calendar can confirm the cancellation from the updated event. It checks the provider without sending the cancellation again.
+
+### Calendar cards and pickers are clearer
+
+The connection between a calendar event and its open card blends into the card. The calendar picker names each calendar's provider, and the guest picker offers people you already know. When you can edit a repeating event, the scope question names the event and its repeat. For unavailable recurring edits the card explains why.
+
+Week and Day events can be moved while another event is selected. Pressing an empty part of the calendar clears the selection, and the calendar uses the new design's shorter labels and confirmations.
+
+### Calendar and Away date pickers follow the current theme
+
+The date picker in Calendar and Away settings uses the same colours as the rest of the app.
+
+### Edit an event in Calendar
+
+Edit a personal event from its card. Closing the card sends the changed fields and keeps refused edits available.
+
+### Edit your ohmail Cloud calendar on desktop
+
+Open ohcal beside Mail to create, edit, move and delete events, answer invitations and propose new times.
+
+The place field keeps what you type and stays quiet when external suggestions are switched off.
+
+### Move and delete events in the calendar
+
+Drag an event or use Shift and the arrow keys to move it in time. From an open event, you can delete it or move it to a writable calendar on the same Google connection.
+
+Calendar moves explain when event details have to stay with their original calendar. If a move is still under way, the card shows its progress. If a move leaves an extra copy, the card tells you. Keeping the original time after a guest proposes a change asks before replying.
+
+### See the calendar an event belongs to
+
+Open events show their calendar, with a lock for view-only calendars. The bridge between a timed event and its open card matches the event's fill, and the event's resize edges stay clear of extra marks.
+
+Tab to either resize edge and use the Up and Down arrow keys to change the event's time.
+
+### Create and resize calendar events
+
+Calendar event creation opens from an empty Day or Week slot and uses a writable calendar when preferences are unavailable. The event editor follows the calendar design, and timed events resize from either edge with dragging or the keyboard.
+
+New event uses today in your time zone when no day is selected, even across midnight.
+
+Calendar editors now explain repeated or skipped clock times and let you edit guests and alerts. Inviting people asks for confirmation before sending.
+
+### Save, cancel and resize calendar events
+
+Calendar event edits now have Save and Cancel. Undo brings back discarded edits and new-event drafts. Resize either end of an all-day event, and set the end date of a timed event from its next-day cue.
+
+### Large calendars finish their first sync
+
+Calendar events continue loading after the first page when you sync from ohmail Cloud or your own server.
+
+### Confirm an update to Calendar guests
+
+When you edit an event you organize, Calendar names the guests before you send the update. Cancelling keeps your draft open.
+
+### Answer an invitation from its event card
+
+Choose Yes, Maybe or No on an invitation opened in Calendar, including from Mail. You can change your answer on the same card.
+
+### Answer calendar invitations from the reader
+
+See the time, place and any overlap on the invitation card, then answer from the same letter. Open the event in Calendar, pick where an unfiled invitation goes, and see the former time when an organizer sends an update.
+
+### Calendar navigation and settings
+
+Calendar has a full sidebar, reachable settings, and shortcuts for changing dates and views. On phones it opens in Agenda. Scroll through adjacent months and change the hours in view from Day or Week.
+
+### Create an event in Calendar
+
+Choose New event, set a title, date and time, and add it to a writable calendar. A refused change keeps your draft in the form.
+
+Closing the new event window returns to the Calendar view that opened it. Back then returns to the previous page.
+
+### Open calendar events from browser notifications
+
+Tap a calendar notification to open its event in the browser tab that showed it, when that tab is still signed in to the same account.
+
+### Choose which calendar notifications appear on this device
+
+The Notifications pane on web and desktop shows the calendar notification kinds the device can deliver. You can turn reminders on or off and choose whether notifications show event titles. Mail and Calendar notification choices are saved per account on each device. Browser notifications from a closed window only open the Ohbox while their sign-in is current.
+
+### Open your calendar in ohcal on the phone
+
+The ohcal app opens in Agenda or your preferred calendar view. Pair with ohmail Cloud or your own server, then connect an iCloud or CalDAV calendar through the setup. Use the Calendar settings to manage accounts and views. If ohmail is installed, the Mail button opens it.
+
+### Private calendar widgets and reminders on the phone
+
+ohcal has four home-screen widgets that display the date. A widget shortcut opens its selected
+occurrence in the signed-in calendar after the app checks that the occurrence is still available.
+Calendar reminders say “Calendar” without event details. Sign-out and calendar access changes clear
+old reminders and invalidate older widget shortcuts. (phone)
+
+### The web sidebar offers Calendar before setup
+
+On a server that offers Calendar, the Mail and Calendar switch in the sidebar opens the Calendar side. If you have no calendar account, its week offers a button to connect one.
+
+### Calendar changes resume on reconnect and Quarantine moves ask again after upgrade
+
+Calendar changes queued on the web resume when the connection returns. Undoing an event deletion also cancels it in other tabs. A Quarantine move that was still queued at upgrade needs a fresh confirmation of the current preview.
+
+### Calendar reminders open the right occurrence
+
+On web and desktop, a reminder for a repeating event opens the occurrence it refers to.
+
+### Calendar sign-in errors match the connection
+
+When a calendar sign-in is refused, setup now shows guidance for the chosen calendar service.
+
+### Propose a new time in Calendar
+
+Move or resize an event you’re invited to, or propose a new time from its card. The organizer can accept the proposal or keep the scheduled time.
+
+### Calendar view and From mail refinements
+
+Calendar opens the phone Day view at the chosen hour, keeps the current-time line clear of events, and shows calendar visibility controls on an unfolded phone. From mail keeps its list visible behind the phone sheet and aligns actions beside desktop results.
+
+### Calendar Year stays readable at larger text sizes
+
+On narrow phone screens, Calendar Year stacks months in one column so day numbers fit inside each month.
+
+### Your Ohbox opens in your saved appearance
+
+The web app opens in your saved appearance and shows locally saved Ohbox messages as soon as the list appears.
+
+### The certificate trust note shows its fingerprint on its own line
+
+On desktop and web, when a mail server on this computer serves its own certificate, the trust consent
+now reads as the new design draws it: a note with an info sign, and each certificate's fingerprint standing
+whole on its own line under the line that asks for it, instead of glued into the trust line. Ticking
+and unticking trust works exactly as before.
+
+### Select mail with one press on its circle
+
+Press a message's circle to see the selection actions as soon as one message is selected. Press the last selected circle again or use Escape to leave selection mode. News and Receipts also offer selection circles on their phone cards.
+
+### Clearer sync notices
+
+Mailbox and calendar notices show a shorter status while keeping the details and recovery actions available.
+
+### Cloud sign-up and device sign-in work with row security enabled
+
+New Cloud users can register and verify their email. Desktop users can connect through browser approval or a typed code, and phones can pair by code or hand sign-in to the companion app.
+
+### Cloud sign-in and signup use each client's connection
+
+The web, desktop and mobile apps now use the client's address for sign-in and signup limits. People on separate connections no longer share a limit because their requests pass through the same Cloud proxy.
+
+### Clearer Cloud setup and a visible Undo for Park
+
+You can sign in after confirming your email even if the first confirmation reply was lost.
+Cloud asks you to choose a plan when you have none, and checks your current plan when you
+connect or re-enable a mailbox. Park shows Undo as soon as the letter moves.
+
+### Storage offers are visible again in Cloud Settings
+
+The Mailboxes line keeps its last value when a refresh fails.
+
+### Clearer subjects in short windows
+
+The compact subject heading uses the reading column’s display type and keeps a solid ground while messages scroll underneath. The full heading also covers the letter to its lower edge.
+
+### Format your letters with paragraph styles, code blocks and dividers
+
+Added paragraph styles, a dedicated code block control, and dividers to the message composer.
+
+### Bulk filing follows the letters you confirmed
+
+On Web and Desktop, Mark all spam and Move to Junk act on the mail shown when you confirmed. The Screener warns before a bulk action can send unsubscribe requests. Requests go out with the confirmed action. Later mail follows the filing rule. Choosing everyone at a sender’s domain files the domain rule, and editing a link in Write keeps the selected text.
+
+### Sender cards bring mail and calendar actions together
+
+The web sender card shows where mail is now, where it goes, and which rules apply. Open the same card to write, see all mail, make a subject rule, or find upcoming events when Calendar is on.
+
+### Unselected messages keep their contact circles
+
+When you select messages, picked messages show a check. The other messages keep their contact initials and colours.
+
+Keyboard navigation uses a quieter focus ring across message rows, thread squares, the rail and menus. Focus changes immediately when reduced motion is on.
+
+### Conversation squares align with the message list
+
+On desktop, the conversation squares rail starts level with the top of the message list in Paper and Ohmarchy.
+On a narrow split view, the squares move into the subject heading so the letters keep the full width of the reader.
+
+### Conversation squares show their details on a readable card
+
+The sender and time shown by a conversation square now have a solid background and stay beside the square when you enlarge the text.
+
+### Settings and the editor load when opened
+
+The mail frame loads Settings and writing tools on demand. A view whose files fail to arrive offers a retry. If the server has already moved to a newer version, the view offers to reload.
+
+### Account settings open from the desktop
+
+When you’re signed in to ohmail Cloud on the desktop, open Account in Settings to manage your account in your browser.
+
+### Desktop settings and Storage use the new controls
+
+About, Subscription and account access on desktop use the new design, as does the confirmation before opening a marked link. Storage settings use the new sheets, meter and table on desktop and web.
+
+### Configure the Away responder on desktop
+
+Away settings now open in the desktop window and use the same controls as the web app. The pane shows where replies are sent from.
+
+### Connect a calendar from desktop Settings
+
+Calendar accounts in ohcal now offers a connection when the list is empty. Connect to iCloud, another CalDAV server or a calendar subscription from the desktop. Where your server offers Google Calendar or Microsoft Outlook, finish signing in in your browser.
+
+### Calendar reminders reach the desktop notification center
+
+A signed-in desktop app can schedule reminders from its synced calendar. It withdraws pending reminders when notifications are turned off. In the browser, turning off notifications for a departing account leaves the next account’s registration alone.
+
+### Open Devices from desktop Settings
+
+The desktop Devices action opens the Devices section in the browser.
+
+### The web app remembers dismissing its desktop download notice
+
+Open the desktop download from the signed-in web app, or dismiss the notice to keep it out of the way when you return.
+
+### The refused-account page fills the desktop window
+
+When a hosted account is refused, the desktop app keeps the account message and its available actions on a full-window page. The page stays up while the engine restarts and checks the session again.
+
+### Desktop Screener settings use the current controls
+
+The Desktop Screener uses the same controls and setting sheets as the rest of the app.
+
+### Open Security from desktop Settings
+
+When the desktop is signed in to ohmail, Settings can open the account’s Security page in your browser.
+
+### Mail settings are back in the desktop app
+
+Open Settings to manage your Screener, rules, signatures, away reply, and notification preferences. The paired browser also shows its text-size setting and explains where unsubscribe requests are sent from.
+
+### Desktop Settings shows the sections available for your connection
+
+Settings on desktop shows the sections supported by your installation and account. Signed-in desktop users can reach Account, Security, and Devices.
+
+### Connect a mailbox during desktop setup
+
+On a standalone desktop install, setup lets you test the incoming and outgoing mail servers and connect the mailbox. Adding another mailbox keeps the first one connected.
+
+### The desktop's menu bar, tray and update dialogs follow the app's language
+
+The menu bar, host mode's tray icon, the update item and its dialogs, and the question after the window
+stopped twice are drawn by the system rather than by ohmail's window, and were always in English. They now
+come in English or German, the language chosen in the app, from the next start after it was chosen. The
+system's own items in the menu bar, such as Copy and Paste, are named in German too. English reads as
+before.
+
+### Discard explained when a draft changed elsewhere
+
+- When a draft changes on another device, Write explains Discard above the action buttons so they stay visible in narrow columns.
+- The notice that recovered words are in Drafts stays visible longer when returning to Compose.
+
+### Write shows when a draft is kept
+
+The letter shows the draft save note while autosave is available. If a save is refused, the letter says so.
+
+### Drafts opens beside the letter you are writing
+
+Open Drafts to return to a saved letter, cancel a scheduled send, or review a send whose delivery could not be confirmed. The same list stays beside Write in the two-column layout.
+
+### Edit an occurrence that changed separately
+
+You can open or drag an edited occurrence of a repeating event and choose whether to change that occurrence, the following events, or the series. The scope question explains what happens to the occurrence’s other changes.
+
+### Edit quoted history while writing
+
+You can edit or trim quoted history when replying or forwarding, and restore the original while you write.
+
+### Clearer Cloud AI consent and account notices
+
+Cloud setup explains what suggestions and drafts send before you turn AI on. The web app keeps the organizing deadline visible if the account page cannot open.
+
+### First sync progress is easier to read
+
+The first sync notice shows how much mail has arrived on its own line. A subtle progress line stays still when reduced motion is enabled.
+
+### Floating cards keep their surface and type
+
+Conversation previews, date pickers, information cards, toasts and interrupting dialogs use the intended background and text in the web app.
+
+### Refine mail controls on phones and foldables
+
+The compact navigation slides in from the left and keeps its dock buttons round. Swipe a thread left to mark it read or right to mark it unread. Write keeps Send above the on-screen keyboard, Screener sections have more breathing room, and list dates stay together.
+
+### All folders remembers the branches you open
+
+Open branches reappear when you return to All folders on the same device. Each account keeps its own choices.
+
+### Folder headings count each email address once
+
+The All folders tree groups folders from older mailbox copies under their shared email address. Folders from a removed mailbox with a different address keep their own heading.
+
+### General settings follow the oh look
+
+The default look is now called oh, and the subject choices show how a conversation will appear. The General settings match the rest of the app more closely.
+
+### Clearer German folder confirmations in the Screener
+
+German confirmations for sorting by subject or message text name the destination separately, so the sentence reads naturally with any folder name.
+
+### Held letters can show their original colours
+
+In the Screener, a formatted letter can switch between its original colours and the dark view.
+
+### A held letter shows its send status
+
+When you reopen a letter whose send is in progress or could not be confirmed, Write gives the send status priority over the reminder about an unfinished draft.
+
+### Held sends use the same answer across mail views
+
+Drafts, Write and Reply use “It was sent” for confirming that a message arrived. The button records the answer without sending the message again.
+
+### Clearer answer for an uncertain send
+
+The web and desktop editors use the same answer as Drafts when you confirm that a message was sent.
+
+### Uncertain sends offer the same two answers in Drafts, Write, and Reply
+
+Send again recovers the draft for editing. It was sent records the confirmation without sending another copy.
+
+### Adjust the reader in General Settings
+
+General Settings now brings together language, appearance, text size, picture quality and what happens after a mail action. On hosts that support fetching remote pictures, it also shows the account's confirmed image and tracking-pixel choices.
+
+### Open Screener settings from the mail frame
+
+Change Ohbox preferences, manage automatic suggestions, and review automatically filed mail.
+
+### Invalid links show the correct address
+
+When an invalid link opens the Ohbox, the address bar now shows the Ohbox link. The correction takes no extra Back step.
+
+### Junk draws the prepared page on the first press
+
+The provider’s Junk results and mail still held in Quarantine appear together when you open Junk from the Screener.
+
+### Drafts keeps edits saved during Discard's Undo window
+
+If another editor saves a newer version during the Undo window, the draft stays in the list and ohmail tells you it was kept. Drafts also keeps the draft if the connected server cannot check the version before discarding it.
+
+### Mail changes keep moving in large Cloud mailboxes
+
+The Screener and History finish sooner in large accounts, and busy reads no longer hold up marking mail, saving drafts, or sending.
+
+### Conversations open on the latest message
+
+Messages run from oldest to newest, and opening a conversation takes you to the latest message. Use the message squares to jump back to earlier replies.
+
+### The Link dialog starts in the address field
+
+When you open Link while writing, you can type the address straight away. Screen readers announce Link as a dialog opener.
+
+### Hear your position in more mail lists
+
+Screen readers announce the row position and total in History, Tags and Answer Later.
+
+### See your new event as you drag
+
+In Day and Week, the calendar draws the new event while you drag across an empty time slot.
+Release to open the editor with those times, or press Escape to cancel the drag.
+
+### Open Calendar from Mail
+
+On the web, accounts served by a Calendar-capable server can switch between their mail and calendar. Pick an event in the week to read its details. The product switch remembers where you were, and the browser’s Back button retraces your steps.
+
+### Mailbox names follow the current Reader style
+
+Reader and stream lists show the delivery mailbox as plain text, with the same name and hover text.
+
+### Mail uses the same entry motion as Calendar
+
+The mail columns ease into place when you open Mail or return from Calendar. Reduced motion keeps the columns still.
+
+### Mail keeps your layout, conversation circles and reply feedback
+
+On the web, the mail frame again follows the saved Zero layout at the widths where it applies. The keyboard shortcut, shortcut help and command palette follow the current window.
+
+News and Receipts show your latest in-place reply on the list row. Conversation circles show the other senders on the mail lists you have open. When a move with a routing rule is fading out, you can still undo the mail move and see whether the rule was already applied.
+
+When another browser tab changes accounts, the departing tab says “Signed out” after closing its mailbox.
+
+### Mail views follow the Studio layout
+
+Phone navigation stays visible in closed feeds. The reader keeps conversation controls in view and brings the reply editor above its action bar. History groups conversations available in the reader, and Receipts shows explicit totals when available.
+
+### More actions in mail list menus
+
+See when mail was last checked in Ohbox, History and Triage. Pull new mail from the list menu in History, Triage or Trash. Open Screening, Move or Delete directly from an Ohbox row. Direct links to a Triage pile let you choose which letter to read.
+
+### Read and restore mail from the new lists
+
+Folders and a person's mail open in the new mail frame. Trash keeps deleted letters available for Restore and gives you time to undo a restore. After you restore the open letter, the reader closes and the selection stays on a nearby letter if one remains.
+
+### Mail moves into place
+
+Rows settle into place when mail is filed or restored, the next sender arrives after a Screener decision, and News previews ease open and closed. A letter slides over the list on a phone, and reports finish with a settling full stop. Motion follows the device's reduced-motion setting.
+
+### Drag mail onto a sidebar pile
+
+Drag an Ohbox letter onto Answer Later, Parked, or Resurface to file it without opening it.
+
+### Today's events in Ohbox
+
+When the Ohbox reading column is empty, you can open one of today's upcoming Calendar events and return to Mail with Back.
+
+### Mailbox connection results clear when you edit the form
+
+Changing a mailbox setting clears the previous test result or connection refusal. If the old test or refusal arrives after the edit, the form keeps showing the settings you just entered.
+
+### Clearer mailbox sync notices
+
+The web and desktop apps keep the mailbox name and recovery details readable when a mailbox is full or its server asks ohmail to wait.
+
+### Mail stays available while ohmail opens
+
+The desktop app opens mail and drafts from its local engine even when the computer is offline. The browser shows the new opening screen and offers Reload if it cannot open the mailbox.
+
+### Menus keep keyboard focus as the window widens
+
+If the focused action moves out of an open menu, the keyboard goes to the next available action. If the menu empties, it closes and returns focus to its button. The notice about older copies of your sign-in keeps the password advice inside Details.
+
+### Signing out ends unfinished Microsoft mailbox sign-ins
+
+On self-hosted servers, signing out cancels Microsoft mailbox sign-ins that were still in progress in that session. Start a new Microsoft sign-in after signing back in.
+
+### Open News and Receipts from the mail rail
+
+News and Receipts now open in the shared mail frame on web, desktop and the paired browser. See what is new in each place and pick up where you stopped. Open a card to read its full message, reply or preview attachments.
+
+### The News filing suggestion uses the current controls
+
+The News filing suggestion uses the same buttons as the rest of the app. You can still approve its suggestion or correct it.
+
+### Calmer notices and Calendar matches in Search
+
+Standing notices have balanced padding, and the drawn ohmail full stop replaces the typed one. The Screener explains when automatic filing fails and will retry on its next visit. With Calendar enabled, Mail Search shows matching events already on the device and opens the same search in Calendar.
+
+Arrow keys highlight the open mail row with its fill in Paper and a thin inset line in Ohmarchy. A closed row gets a thin inset line when it has keyboard focus.
+
+### Select mail rows from their avatars
+
+Press an avatar to select or deselect its row. Hold Shift and press another avatar to include the rows between. The selection bar shows the actions for that list. The sender's name or printed address opens the contact card.
+
+### Open a calendar event from its desktop reminder
+
+Tap a calendar reminder on Linux or Windows to see the event in the desktop calendar. A reminder from a previous sign-in leaves the current account in place.
+
+### Open new mail from its notification
+
+When one new unread letter can be identified, tapping the notification opens it. A batch or a browser wake without a letter opens the Ohbox. The desktop mail action is available on Linux and Windows.
+
+### Calendar setup is optional
+
+Set up Calendar during your first run or skip it in one press. If your iCloud mailbox is already connected, Calendar can use its saved app-specific password after you verify your sign-in. Removing that mailbox leaves its calendar connection in Calendar settings. A revoked password asks you to sign in again.
+
+The first CalDAV sync can continue across pages when the provider redirects from its calendar home to a numbered host.
+
+### Dismissal errors stay with the organizer change they describe
+
+If you cannot dismiss an organizer notice, the reason stays visible while the change it describes is still on screen.
+
+When several mailboxes change organizers, the notice names the first three and their organizers and counts the rest. The Mailboxes button opens the full list where it is available.
+
+### Open Mailboxes from a grouped organizer notice
+
+A grouped notice links to Mailboxes when the roster is available. On other hosts, open the full list before dismissing a truncated group. A refused dismissal leaves the affected mailbox visible with the reason.
+
+### Connect Outlook from Mailboxes Settings on the web
+
+Self-hosted servers with Microsoft device sign-in enabled can connect an Outlook mailbox using a code. Return to Mailboxes after reloading the tab to continue the sign-in.
+
+### Outlook device sign-in ends when you sign out
+
+On self-hosted servers, only the session that opened an Outlook device sign-in can finish it. Start a new Outlook sign-in if you sign out or the countdown reaches zero before it finishes.
+
+### Paired browsers show all their Settings sections
+
+Notifications, Rules, Tags and Signatures are available again when you open ohmail in a browser paired to your desktop.
+
+### Reset your password by mail
+
+Choose **Forgot your password?** on the web or in the desktop app to request a reset link for your ohmail account. Setting a new password signs out every device. Your second factor still applies when you sign in again.
+
+ohmail sends you a security notice after a reset or a password change in Settings.
+
+### Choose which events to edit
+
+Choose whether an edit to a supported personal, all-day calendar series changes one event, this and following events, or all events.
+
+### Mail opens in the phone web app
+
+The phone web app shows your Ohbox, drafts and Settings. Open a letter to read or reply. Settings includes New mail and, on a standalone phone, Your name.
+
+### Phone wake settings follow the active pairing
+
+The New mail status updates when you switch between paired servers. The phone discards a queued wake registration for the pairing you left and refreshes the options if a wake service was removed.
+
+### Paper mail views on iOS and Android
+
+Ohbox and mail lists use sender initials, clearer typography, and Paper’s light and dark surfaces. Conversations keep their message squares in the header on phones. News and Receipts use cards, and the phone’s dock, new mail editor, and pile switcher follow the same design.
+
+More opens over the current list and the Ohbox switches to Calendar. Reply from the conversation, work through Answer Later with Reply Run, narrow search by sender, recipient and other facets, and apply suggestions from the Screener. Drafts lists scheduled sends above unsent drafts. The phone bundles the Paper typefaces and supports emoji, basic text formatting and draft generation on paired accounts that offer it.
+
+### A Servers page on the phone
+
+Open Servers to see which mailbox is connected, switch between pairings, or add a server or computer. The page shows when sync stops and asks before removing a mailbox with unsent drafts or settings stored only on this phone.
+
+### Mailboxes and About on the phone
+
+Settings shows who organizes each mailbox and asks before handing one back. About reports what the phone measured about backups and lets you write and share a diagnostic file. Android Back waits for your choice before discarding unsaved Settings edits.
+
+### News and History keep sender details readable
+
+On narrow News cards, the sender's name and address have their own lines. History rechecks whether an address fits when the text size or row width changes. Short address names stay visible in the News byline at larger text sizes.
+
+### The mails ohmail sends have a new look, light and dark
+
+Every mail ohmail sends you, from the address confirmation to the storage notices, is drawn in the new design:
+the name at the top, one sheet, at most one button, and a dark version for mail apps set to dark. The words
+are shorter and plainer, and German mails say Konto. Nothing in them is fetched from the internet, as before.
+
+On your own server, the page shown to anyone arriving from an address other than the server's own, and the Umbrel launcher's two
+pages, are drawn the same way, as plain pages that fetch nothing. The server now refuses to start, with one
+sentence, when `OHMAIL_ORIGIN` holds anything other than an address starting with `http://` or `https://`.
+
+The first-run setup lines your server prints to its log read more plainly; they keep their shape, so the
+guides' search commands and any script that reads the setup token still find them.
+
+### A calendar's connection can be removed while the calendar is off, and its stored sign-in opens for that connection alone
+
+More of the server's side of connecting a calendar in ohmail 2.0; there is still no screen for it. A connection can now be removed while the account's calendar is switched off: a switch that is off no longer keeps a stored sign-in on the server against a person's wish, and the server still names the connections it holds so that they can be listed and removed. Everything else about a calendar stays refused while it is off. The desktop app and the phone reach all of this through the account's server, as they add a mailbox; what is typed there goes to the server once and is kept nowhere on the way. A stored sign-in is now sealed for its own account and connection, and a sealed sign-in found on any other connection opens for nobody: that connection asks for its sign-in again. A calendar server's password is sealed together with the server it was typed for, and is sent to that server alone. When a subscription's address is typed again, the calendar is read from the beginning under the new address. Which calendar new events go to is kept in one place, the calendar settings.
+
+### A calendar can be connected, on a server that keeps one
+
+The server's side of connecting a calendar in ohmail 2.0: iCloud with the Apple Account and an app password, any other CalDAV server by its address, and a subscription by its address. There is no screen for it yet. What a person types is sealed on the server before it is stored and is never shown again; of a subscription's address only the host is kept in the clear. Connecting asks nothing of the calendar's provider: the organizer tries the sign-in afterwards, and the connection then says how that went. A connection can be removed with everything it brought, asked to check its provider now (once a minute), and signed in again with a new password or address. A server never reads a calendar at an address on its own network unless whoever runs it allows that with `OHCAL_ALLOW_PRIVATE=1`, on the server and the organizer both; ohmail Cloud never does. The desktop app and the phone ask it of the account's server too, as they add a mailbox. Google and Microsoft calendars stay off: `OHCAL_CONNECT_GOOGLE` and `OHCAL_CONNECT_MICROSOFT` are reserved for them, and any value other than `1` or `0` refuses the server's start.
+
+### An invitation can be answered by mail
+
+When a letter carries a meeting invitation, ohmail now keeps which event it is about, which occurrence and revision, what it asks (an invitation, an answer, a cancellation, a counter-proposal), when the event starts, who organizes it, which of your addresses was invited and the answer you gave. It is read once, when the letter arrives, from the invitation's calendar part; nothing else of the calendar part is stored. Letters that arrived before this version get the same, a few at a time, read again from your mail server without changing anything there. Every app (desktop, web, phone, Cloud and your own server) receives it with the letter.
+
+Accepting, tentatively accepting or declining an invitation sends one reply to its organizer alone, from the address the invitation was sent to, as a calendar reply (iTIP) that names the event, the occurrence and your answer. The reply is in your Sent folder and in the conversation. Pressing the same answer twice, or on two devices at once, sends it once; changing your answer sends a new reply. Every app answers the same way, on Cloud, on your own server, and on a desktop or phone that keeps its own mail, and answers work with the calendar switched off: an invitation and its answer are mail.
+
+Nothing is sent without your press. An invitation forwarded to you or sent to another of your addresses, one its organizer cancelled afterwards or replaced with a newer version, and one answered meanwhile on another device are refused with a reason, and nothing is sent; an invitation that comes again after a cancellation can be answered. A calendar part that is malformed or larger than an invitation ever is leaves its letter exactly as it was.
+
+Answering an invitation, here or in another mail program, no longer counts its organizer as someone you wrote to: declining an invitation from a stranger does not let their next letters past the Screener.
+
+### A calendar server's password goes to that server, and to a host the server itself names
+
+More of the organizer's side of calendars in ohmail 2.0; there is still no screen. The password of a CalDAV calendar (at iCloud, the Apple Account and its app password) is sent to the server it was typed for, on the port it was typed with (typed without TLS: also that address over TLS), and to a second host only where that server itself names it while the calendar is being read: as the place its service lives, or as the place it keeps the person's calendars. An address the organizer stored earlier no longer decides where the password goes. A provider that keeps calendars on a second host of its own, as iCloud does, is read and written as before; the organizer asks the typed server where the calendars are each time it reads the calendar and follows what it answers. A stored calendar on a host the server does not name is not asked there: its connection says that it could not be read, keeps what it has, and is tried again a day later.
+
+### A calendar's store, behind a switch that is off by default
+
+The groundwork for the calendar in ohmail 2.0: where a server keeps a person's calendars, events and invitations, how they reach the web, the desktop and a phone through the same sync as mail, and how they leave again. A server keeps a calendar only when its operator sets `OHMAIL_CALENDAR=1`, and an account then switches its own calendar on (there is no screen for it yet); until both are on, the web, the desktop and the phone are sent nothing of a calendar and behave exactly as before. A device that is sent the calendar first loads its events from a year back to two years ahead. When an account is erased, or a mailbox is removed and erased, its calendar data goes with it; the account's export carries the calendar's settings and connections, never an event, a password or a token. A phone that organizes on its own keeps no calendar in 2.0.
+
+### The calendar's sync, built behind the switch that is still off
+
+The organizer of ohmail 2.0 can now keep a person's calendars from Google, a CalDAV server, Microsoft and a subscription by address in step with the store, on its own clock and beside the mail, never in its way: a first reading is written in small steps, so a large calendar never holds a letter you send meanwhile, and a reading cut short by a restart goes on without losing or doubling anything. A sign-in that is no longer accepted stops and waits for you rather than asking again and again. Nothing is on yet: with `OHMAIL_CALENDAR` unset, which is every installation today, the organizer starts no calendar work and behaves exactly as before. Microsoft's calendar is built and tested against a test server only; it stays off until it has been tried with Microsoft itself.
+
+### Repeating events written, still behind the switch that is off
+
+The 2.0 calendar can now write a repeating event where its kind of repeat was first written at that very server, read back from the server's own working-out of its days, and found to name the same days the calendar does: every repeat a person can make (daily, every few days, on weekdays, weekly, every two weeks on chosen days, monthly by date or by weekday, yearly), with an end date, with a number of times or with no end, as times of day or as whole days. Today that proof stands for the project's own test server alone; no other CalDAV server (iCloud among them), and neither Google nor Microsoft, writes a repeating event until its own proof stands. You can change a whole series or remove it, put a repeat on an event, change, cancel or answer one day of a series, and change a day and the days after it, which ends the series before that day and makes the rest a series of its own; each writes only what you named, and nothing else of the event moves. A new time for a series that ends on a date keeps its last day. The days from one on keep everything the series had (its reminders, categories, attachments, the days you had cancelled, however they were cancelled) and its organizer, and ask its invitees again; a day you had changed on its own is not carried into them. Nothing of such a change is sent where the series of its own cannot be made: the series is not ended either. Where such a change was cut off after the series was ended (the server's answer lost, the calendar's background work stopped or ran out of time just then, or the series of its own refused), trying it again finishes it, a week later too, and also where the same days were pressed twice or on two devices; a change the server refused outright makes nothing twice when it is tried again after someone else ended the series there. It is finished too where the server refused a later try of it outright after an earlier one had gone through unheard. A change that never got through makes nothing twice either when it is tried again more than a week after a later change of the same days went through: before, those days could be made a second time, or a removal shown as done while its days stayed. A change the server answered by asking you to sign in again is sent anew as if never tried: before, it could take an end someone else made in between for its own, and make those days twice. Where the series was given those days back since (a new repeat, here or in another program), trying the change again makes nothing twice: it is refused, to be made again on what the calendar shows. While such a change is half done, no other change that ends or re-shapes that series is taken: it is tried again, or let go, first. The series is not removed whole under such a change either: the removal is not taken while the change's first part is not done, and not sent while the change stands refused, whichever part of it and whatever the reason (a change refused because the calendar changed in between is let go first); it goes once the change is made or let go. A change whose background work was cut off in the middle is not let go until the server has been asked again. A removal pressed before a change of the same series gave those days a series of their own is refused, to be made again on what the calendar shows; before, it was shown as done while the days stayed. A new repeat for a whole series pressed before another change ended that series is refused the same way; before, it gave the series those days back, twice where they had been made a series of their own. A day's cancel that went through unheard is shown as done once it is tried again, also where the series has since been ended before that day: the series leaves that day out itself. A change too old to send is looked up at the server and never sent late. Where another program changed the same days while a change here had not gone through, those days may stand twice, and one of the two is removed by hand. A series with a day changed for the days after it too, or one that leaves days out by a rule of its own, is not split. An event someone else organizes takes only your answer, and so does every event whose text does not show it yours: one whose organizer the calendar cannot tell for one of your own addresses, one whose organizer line it cannot read with certainty, and one with no organizer that has an invitee it cannot tell by address. Where an event has invitees, a change or a removal of it is written only at a server that tells them itself, your own reminders aside. A repeat one of whose own days falls into the hour a clock change skips is not written. On a series at a time of day that does not exist on the night the clocks go forward (02:30 in Zurich, on the last Sunday of March), that night's day is not changed, cancelled or split, and the series' time is not moved where its end falls on such a night: the calendar and the server may disagree on where that day is. Nothing is on yet: with `OHMAIL_CALENDAR` unset, which is every installation today, no write is taken or sent.
+
+### The calendar's writes, built behind the switch that is still off
+
+The 2.0 calendar can now take what you do to an event (make one, change it, delete it, move it between two of your Google calendars, answer an invitation) and carry it to Google, a CalDAV server or Microsoft. Each press is recorded once, however often it arrives, and the organizer sends it in the order you made it, under a name that makes a second arrival the same event rather than a second one. A change is only ever written onto the copy you made it on: if the event was changed elsewhere meanwhile, nothing is overwritten and the event says so; you can make your change again on the new copy, or let it go. Invitees always hear of a change the calendar sends. Nothing is on yet: with `OHMAIL_CALENDAR` unset, which is every installation today, no write is taken or sent. A move between calendars outside Google is not written yet. Microsoft's calendar is built and tested against a test server only, and stays off until it has been tried with Microsoft itself.
+
+### A transaction that loses its database connection writes nothing more
+
+On ohmail Cloud and on your own server, when the database connection under a transaction closed while the
+transaction was still at work (the database closes a connection whose transaction sat idle too long, for
+one), the caller was told the connection was gone, but the work could go on writing on a new connection to the
+database: alone, outside any transaction, or inside a transaction someone else had just begun there, which
+it could then commit early or roll back. Such a statement is now refused before it is written, and nothing
+of the lost transaction stands. A statement sent on a transaction after it has ended is refused the same
+way, and so is one sent while the transaction's own commit or rollback is still on its way to the database:
+such a statement was written after it, alone, and stood even when the transaction was rolled back.
+
+### Your own server waits less on its database
+
+On a server you run yourself, the message list, a letter and its body, a search page and marking a letter
+read each wait less on the server's database. Every transaction a signed-in request opens
+now names its account at its start: the groundwork for the database itself keeping one account's rows from
+another's.
+
+### The database moves to its 2.0 shape in one step, or not at all
+
+ohmail 2.0 changes how its database is laid out: every row names the account it belongs to, the old search index goes where nothing is found by it alone, and the calendar gets its tables. A store that 1.0 made is moved the first time 2.0 opens it, in a single transaction. Before anything is changed the store is checked against what 1.0.11 leaves behind; afterwards every table is counted, every account is compared with what it had, and every stored password is opened under the install's own key. If any of that fails, or the app is closed half way, nothing was changed and the next start begins again.
+
+On your own server: the server moves the database itself at its first start on 2.0, before it serves. A table that is yours and not one of ohmail's is reported in the log and left alone, unless it uses a name 2.0 needs, in which case the server stops before changing anything and says which. It stops the same way, and names it, for an index that is not valid or a constraint that was never validated on one of ohmail's own tables; an index that an interrupted setup of ohmail's own left behind is dropped and built again without you. Take a dump before you upgrade.
+
+`pnpm db:setup:prod` on a database that still has the 1.0 layout now refuses unless it is told what the database is, with `--store server` or `--store cloud`. It holds no key, so it moves only a database that stores no password; a server moves its own.
+
+On a phone, everything an update owes is applied together, so an update that is interrupted leaves the store as it was.
+
+### The desktop keeps a copy of your mail store when it updates to 2.0
+
+The first start of 2.0 on a desktop that organizes mail on its own takes a whole copy of the store
+1.0 left before it changes anything, and only then updates the store. If the disk has too little
+room for the copy and the update, the start says how much is needed and changes nothing: free some
+room and start again. If the update is refused with nothing of it applied, the store stays as 1.0
+left it and the copy is removed again; a copy the disk will not let go of then is removed by the
+next start of 2.0, before it takes its own. The copy leaves by itself at the first start after the
+updated store has synced every mailbox you are signed in to, and at once when you sign out, remove
+a mailbox or take a paired device back.
+
+A desktop paired to ohmail Cloud or to your own server does not update its copy of the account's
+mail in place: it sets the old one aside whole and fills a new one from the server. You stay signed
+in, and changes the window had queued are still sent. The old copy leaves at the start after the
+first screens of mail are back, and at once if the account, its session or one of its mailboxes is
+removed on the server.
+
+### The pages before the app, the account wall and deleting the account in the new design
+
+On the web, the page that stands while ohmail renews your sign-in, says the server could not be reached, or asks you to
+sign in again (with the reason) is drawn in the new design, and so are the page for an address that does not exist and
+the page shown when the app runs with no server. So are, on your own server, the page that makes its first account from the
+setup token and the page a household invite link opens, and, on ohmail Cloud, the page you come back to after paying.
+So is the page the confirmation mail opens: it still asks for your password, so the link alone confirms nothing. They
+say and do what they did before.
+
+The sign-in and sign-up pages are in the new design too, and sign in and set an account up as before. Their ways out
+(to sign up, to the demo, back to ohmail, to the account page where the plan is taken) are links again, which a
+browser can open in a new tab. Pressing Continue on the sign-in with the email or the password left empty marks that
+blank instead of sending anything, and the password is gone from its field the moment the server has answered.
+
+The confirmation, the household invite and the server's first account ask in one sentence with blanks to fill
+("Confirm my email address with password …", "I'm …, at …, with a password of …"), the way the new design asks;
+pressing the button with a blank left empty marks that blank instead of sending anything.
+
+The three pages a computer's sign-in passes through (confirming a computer, signing the Mac app in, and the one-use
+code for the desktop app) are in the new design too, and the second factor they ask again is one dialog, the same on
+each. An account that is not active sees the new wall: why and since when, that the mailbox is untouched, and every
+way out. Deleting the account now has a page of its own at `/account/delete`, reached from the wall: it says what is
+erased and what is kept before anything is typed, and asks the second factor on every press. Settings › Account keeps
+its own delete for now. The pages that take or show a credential keep their strict headers however their address is
+spelled.
+
+The confirming page names the computer that asks, and the app's sign-in names the app and the account in its own
+sentence; the time left counts down in minutes and seconds. The wall's way back is its main button, with its ways out
+beside it, which answer the pointer and a press and look off while they are; the delete page asks for your address in
+its sentence, whole even where it is long (a step smaller where its line could not hold it), with what is erased and
+kept beside it; the server setup shows where its token is read, with a Copy for the command. Pressing Esc while the
+second factor is being checked now cancels it, and whatever it was asked for (the erase, a computer's sign-in) does
+not run. Its code field opens a phone's number pad again.
+
+### Pasted text keeps its lines and can be edited like typed text
+
+Text pasted into a message now comes in as lines, the way it does in Slack: every line break is a line break,
+an empty line stays an empty line, and nothing is turned into a paragraph you could not type yourself. Lines that
+start with "- ", "* " or "1. " become a list, and a list item's wrapped line joins its item. Text copied from a
+web page, a mail or a document keeps its bold, italic, links, lists, quotes and code, with its paragraphs as lines.
+A draft saved with paragraphs opens with them as lines, every word and format kept. On the web, the desktop app and
+the page a desktop serves to a phone.
+
+### A reply draft is no longer charged in a mailbox that cannot hold it
+
+Asking for a reply draft to a letter whose mailbox is disconnected now says so before any AI credit is
+used. Before, the credit was spent, the draft could not be stored, and every retry was refused the same
+way. On Cloud.
+
+### Underlined text stays underlined when a letter is sent
+
+Underline in a letter's text, typed or pasted, now goes out as underline in the formatted part,
+and its words stay in the plain-text part. A forward keeps the underline in the quoted letter.
+
+### The new design's typefaces load with it
+
+Every page drawn in the new design, on the web, in the desktop app, on the page a paired phone opens and in
+the phone app, now loads the design's own typefaces: Hanken Grotesk, Bricolage Grotesque and JetBrains Mono.
+Until now these pages drew their words in a fallback face. The faces ship with the app and are never fetched
+from the internet; a browser loads only the ones a page shows.
+
+### The app stands in a new frame: one rail, one notice at a time
+
+The web app, the desktop app and the page a desktop serves to a phone now share one frame around the mail: the rail
+of places with Compose and Pull new mail at its foot, one place for notices (the most pressing stands in front, the
+others wait behind "N more"), and the connection's state said in one sentence (offline says since when this device's copy last synced), with why a mailbox is blocked or a filing waits. On a phone's width
+the places sit in a dock at the foot. The lists and the reading pane are unchanged; they move into the new design
+place by place.
+
+### A list in a letter you write stands on the text's own lines
+
+Where you write (a new letter, a reply, a signature), a list after an empty line now starts exactly one
+empty line under the text, and the text after it starts one empty line under the list. A list right after a
+line starts on the next line, and its items stand one line apart, like the lines of the text. Before, a list
+brought extra room over it, under it and between its items. What you read is drawn as before. On the
+desktop, on the web and on the phone's page.
+
+### Switching mailboxes on the desktop keeps each mailbox's drafts and Screener decisions to itself
+
+On the desktop app (and the page it serves to a paired device), a letter, a reply, a send and a Screener
+decision now stay with the mailbox they were made in when you switch mailboxes before they settle. A new
+letter typed in the two seconds before a switch no longer blocks the next mailbox's first draft from saving
+until a reload, and a Screener decision whose Undo window was still open at the switch is no longer sent a
+second time on your next visit.
+
+### On the web, a letter's pictures wait for the server's first word
+
+On the web, a letter's remote pictures, its Show images button and the two picture settings in Settings now
+appear once the server has said that it fetches pictures. A server that says it fetches none shows no picture
+control at all, rather than one that could load nothing. When the page could not get that word as it loaded, it
+asks again after half a minute, or sooner once the connection is back, up to three times.
+
+### Connecting a mailbox during sign-up, in the new design
+
+On the web, the step of the sign-up that connects your mailbox is drawn in the new design, on ohmail Cloud and on your
+own server. It asks what it asked and connects as before: the address first, which picks your provider where it can;
+the provider's own note and links; the password, and for another provider its two servers. A refusal is still said
+where you pressed, in the same words, and nothing you typed is lost.
+
+Three things changed for you. When the second factor is asked again before the mailbox connects, it is the same
+dialog as everywhere else, and Cancel leaves everything you typed. "Do this later" and the mail to support are buttons
+now. And where you type the same server for incoming and outgoing mail and it offers no encryption on your own
+network, the consent to connect anyway is one line for that server, where it was one line for each direction.
+
+Two things are stricter. The page a provider's sign-in returns to no longer tells any other address where you came
+from. And the password you type stays in its field alone until the press that sends it: it is gone from the page the
+moment the mailbox is connected, and whenever its field is no longer shown.
+
+### A letter can be moved into any of your own folders
+
+Besides the Imbox and ohmail's own piles, a letter can now be moved into any folder of your own that its mailbox has, at any depth. ohmail never creates a folder for it: a folder that is gone by the time the move is carried out leaves the letter where it was. Sent, Trash, Junk and the folders ohmail keeps for itself are not taken as destinations, and a folder that is being renamed or deleted is taken again once that is done.
+
+When another install organizes the mailbox, the move is sent to it and waits until it has been carried out, as moves already do. That install checks the folder against its own list of the mailbox's folders first; when it does not have the folder, the letter stays put and you are told why. An install still on ohmail 1.0 cannot carry such a move out, so ohmail names the machine to update instead of sending it.
+
+Undo puts a letter you moved out of one of your folders back into it. Where that folder is no longer listed, or is being renamed or deleted, no Undo is offered rather than one that would fail.
+
+On the desktop app, restoring a letter from Trash that had been in one of your own folders, once its deletion had reached the mail server, no longer leaves the app waiting with no answer.
+
+### Notifications for waiting senders, with no sender and no subject
+
+On the web and the desktop app, ohmail now tells you when new senders wait in the Screener, besides
+new mail. Each has its own switch in Settings, Notifications, and a switch is shown only for what the
+app on that device can show.
+
+A notification never names who a message is from or what its subject is, on any app, so the switch
+"Show who it is from and the subject" is gone. On the desktop the app writes the notice's words itself,
+in the language its menus speak.
+
+### Mail notices on Android, a notice when a device joins your account, never with a sender or a subject
+
+On Android, ohmail now tells you of new mail and of new senders waiting in the Screener while the app is
+open behind another app, in the phone's language, and never with who a message is from or what its
+subject is. When the app is closed, its "New mail" notice is drawn only for the account you are signed in
+to, and none is drawn at all until the app has been opened once after this update. Signing out, or switching to another
+account, takes the notices shown for the account you left with it.
+
+A device paired to your account, or a desktop app signed in to it, is announced on your other devices: at
+once where ohmail is open behind another window, else the next time ohmail is open and not in front. So is a device signed out
+from the Devices list. This holds on the web, on Android and in the desktop app, signed in to a server or
+paired with phones. The notice says that a device joined or left and never a device's name. A device that
+signs itself out is not announced.
+
+On Android, the phone is registered for being woken while closed only while notifications and new mail are
+both switched on for it; with either off the wake registration is removed from your server and from the
+wake service, and it comes back when both are on.
+
+The notice that stays up while an Android phone organizes its own mailbox no longer shows the mailbox's
+address. The iPhone shows no mail notice. (phone, web, desktop, Cloud, your own server)
+
+### A calendar's provider can tell a server that a calendar changed
+
+The server's side of provider notices in ohmail 2.0, for a server that keeps a calendar. Where whoever runs it names a public address (`OHCAL_NOTICE_ORIGIN`, on the server and the organizer both), the organizer asks Google, and Microsoft where its calendars are served, to call that address when a calendar changes, and the calendar is then read at once instead of at its next poll. Polling stays underneath: a notice only shortens the wait, and a server without the setting polls as before. The server reads nothing of an event from a notice. A notice names a channel by an id and a word only that channel knows, of which the server keeps a digest; the server then reads that channel's own calendar and nothing else, whatever else the call says. Every call to the two routes is answered the same way, whether it named a channel or not. A channel lives a week at the most and is replaced by a new one, with a new id and a new word, a day before it ends.
+
+### The Ohbox in the new design
+
+The Ohbox is drawn anew on the web and in the desktop app: its three groups, rows that name several senders by
+first name and offer Done on every unread conversation, a selection bar that counts the rows picked, Pull new mail
+and Mark all read in the list's own menu, and a line at the end of the list that leads to History. A
+conversation's circles are everybody in it, you among them; the open conversation's row carries its squares with
+the reader's place, and a press on one scrolls the letter into view; a long conversation shows a run of its
+squares. The head says when nothing organizes a mailbox, and the delete question says where the letters go. Older mail is
+reached through History; the Ohbox no longer loads it at its end. What the Ohbox does is unchanged: rows stand in
+the order mail arrived, a letter read in ohmail files at the top of Earlier, and nothing turns read that was not on
+screen.
+
+### A phone that organizes its own mailbox keeps a copy of it before the update changes it
+
+On a phone that organizes a mailbox itself, the first start after the update that changes the mailbox's
+store copies the store beside itself first, checks the copy against the store and only then lets the update
+change anything. If the phone has too little free space for the copy, or the copy does not check out, the
+mailbox is not opened and nothing in it is changed, and the app says which of the two it was. Stop and
+remove deletes the copy with the mailbox. (phone)
+
+### Swipe a row and pull the Ohbox down on a touch screen
+
+On a phone's or a tablet's browser, a row of the Ohbox swiped to the right is Done (Mark unread on a read
+row), and swiped to the left goes to Later, each with its Undo. The finger has to travel clearly sideways
+before the row moves, so a scroll stays a scroll. Pulling the list down at its top checks for new mail, as
+Pull new mail does. The row's menu keeps both verbs.
+
+### Requests made for a letter or a device go only to the address they were checked against
+
+ohmail fetches a few addresses that a letter or a device names: a remote picture, a one-click unsubscribe,
+a new-mail wake for your phone. It checks each address before it connects, and connects only to the
+address it checked. A connection left open by an earlier request to the same name could still carry a
+later request to the earlier one's address, which the later request's own check had never seen. On ohmail
+Cloud, your own server and the desktop app, every such request now opens its own connection and closes it
+when it is done.
+
+When a picture's server answers with something that is no web answer at all, or with a certificate chain
+that cannot be verified, the picture shows as one that could not be loaded, as it did before, and ohmail
+Cloud and your own server no longer count it as a fault of their own.
+
+### A remote picture or an unsubscribe no longer hangs on a server that switches protocols
+
+A server named in a letter could answer by switching to another protocol, and ohmail then waited on it
+for good: the picture never loaded and held its request open until ohmail Cloud or the browser gave up,
+and a one-click unsubscribe turned with no answer. On ohmail Cloud, your own server and the desktop app
+both now give up at once: the picture shows as one that could not be loaded, and the unsubscribe says the
+list could not take the request, so you can try again. On ohmail Cloud and your own server, the same
+answer from one device's notification server no longer holds up the new-mail wakes of your other devices.
+
+### A preview build of the desktop app runs beside an installed ohmail
+
+The Linux desktop app can be built as a preview of the next major version
+(`npm run app:build:engine -- --distribution preview`). A preview is a different app to the system: it keeps its
+own data and log folders and its own key, so it never opens or changes an installed ohmail's mail. It says
+"Preview build" and its commit in a corner of every screen and in Settings → About, does not update itself, does
+not offer to become the mail app, does not serve other devices, and signs in only to a server on the same
+computer or on your tailnet. It is an AppImage only, and Linux only for now.
+
+### The page that asks before a link opens has a new look
+
+On the web, a link whose text names a different site still opens a page of its own before it goes anywhere.
+That page is now a card in the new design: where the link goes, its whole address, and one button with an
+arrow that opens it. It still loads nothing and opens nothing until you press the button.
+
+### A search by recipient reads a key each letter carries
+
+In ohmail 2.0 every letter carries the key a search by recipient looks for: its account and each To and Cc
+address, in lower case. The database writes it when the letter is stored and whenever its recipients change, and
+nothing else can. A search by To, or by an address on either side, reads that key from the letter instead of
+working it out letter by letter, and a search by filters alone looks through as many letters at a time whatever
+it filters by, so old letters to someone show up in fewer steps.
+
+On your own server, the move to 2.0 at its first start writes the letters' table once more to store the key:
+about ten seconds for 400,000 letters on a fast workstation, and about 160 bytes a letter. If the search index 1.0
+keeps is missing or was renamed, the server stops before it changes anything and names it: start 1.0 once more,
+which builds the index again, then start 2.0. On a phone nothing is
+rewritten, and a search by filters alone looks through as many letters at a time there too.
+
+### The Screener is drawn in the new design
+
+The Screener is rebuilt on the new design's parts: its three sections with their counts, one row per first-time
+sender, and the sender you open beside the list as one sentence, where the place their mail goes is a word you
+press, with their held letters under it, opened on the newest as before, and the five places in the panel. The place
+menu, a right click on a row and the sender's card decide the same way, and so does the place at the end of each row:
+one press takes its suggestion, and where it would also send an unsubscribe request the row says so and asks first;
+the arrow beside it chooses another place. What it does is unchanged: a decision can still be undone before it leaves,
+opening a sender marks nothing read, a waiting sender's pictures stay blocked until you ask for them, Mark all spam
+still asks first, and the letters a mail provider failed are still decided one by one. New: Screen out and Spam on a
+sender whose mail offers a one-click unsubscribe now ask before the request is sent, since a sent request cannot be
+taken back. With Use folders on, the third section is your mail
+server's own Junk folder, as before: who filed each letter, Search Junk, Show older, Not junk and Not junk, always
+allow. Mail held behind a decision you already made, and letters filed to Spam for claiming to be a company, are
+offered under the head as before, and a letter of a sender you screened out still offers Unsubscribe.
+
+### Search no longer stops at an empty page while older mail still matches
+
+A search that asks your whole mailbox reads it a part at a time. When a part held no match, the list
+stayed empty, or stopped growing, although older mail matched. It now asks the next part at once and
+keeps searching, up to five empty parts in a row; past that, with matches on screen, scrolling to the
+end of the list looks further. Nothing is called "nothing matched" before the search reached the end.
+On the web and the phone.
+
+### Your own server and ohmail Cloud run one API program
+
+The API was wired twice, once for a self-hosted server and once for ohmail Cloud. It is one program
+now, built from its settings; what Cloud does differently is one list. Nothing in a self-hosted
+server's `.env` changes name or meaning. [One API program](docs/one-server.md) lists every setting
+with its default.
+
+On your own server:
+
+- While the database is too busy to take a request, live updates, the sign-in redirect and
+  attachment downloads now answer "try again" (503), where they answered a server error (500).
+- The older three-variable object storage block is also read without `TF_STORAGE_KIND`. A storage
+  or mail block that is only half set stops the server at start and names the variable, as before.
+- A setting that only ohmail Cloud reads, set beside `OHMAIL_ORIGIN`, stops the server at start and
+  names it, where it was ignored. There are eight, such as `TF_PUBLIC_SIGNUP` and `TF_ADMIN_SECRET`;
+  none is in the bundled `.env.example`.
+- The server can expire old sessions and finish queued unsubscribes on its own clock; nothing did
+  either on a self-hosted server. The setting is `TF_API_CLOCKS=1` with `TF_ALERT_SECRET`. It is
+  off by default, and the bundled compose file does not pass it yet.
+
+### A send or a folder change is picked up at once on ohmail Cloud and your own server
+
+After you send a letter, or create, rename or delete a folder, the organizer on ohmail Cloud or on your own
+server used to notice within three seconds. It now hears the change as it is saved and acts at once; the
+three-second check stays underneath. The desktop and phone apps, which organize on the device, are unchanged.
+
+### Underline in the editor
+
+The editor underlines with Ctrl+U (Cmd+U on a Mac) on the web and the desktop, and the letter goes
+out with it. The toolbar is unchanged.
+
+### Reliable Reader actions and web navigation
+
+Open More on a conversation to delete it, with Undo available to bring it back. On the web, the rail responds while the theme changes, and the live mail connection waits for an in-progress sign-in renewal before opening.
+
+### Conversation controls and sender warnings work again
+
+The Ohbox and Reader show sender identity warnings. Conversation squares respond to keyboard navigation and show message details on touch and hold. The reading action names how many unread messages it marks, and the reader uses the arrival time when a message is dated later than it arrived.
+
+The Screening shortcut opens the current sender's options and returns focus when closed. In Ohmarchy, the focus ring follows the keyboard into the rail. On the web, the subject rule sheet can explain when an older organizer needs an update to accept the change.
+
+### Clearer recipient lines and sender filing notices
+
+The reading header separates To and Cc again. On the web, when a sender rule leaves some letters where they were, the filing notice can offer to move those letters too.
+
+### Preview attachments and act on contacts in the reader
+
+Open a PDF, picture or text attachment in Quick Look, or use Download to save it. Attachments added to a draft or reply can be checked before sending. A contact card can copy the address, open the address view, start a message or set where that person's mail goes.
+
+### Meeting invitations show the event above the letter
+
+The Reader and expanded News cards show each event once. The calendar file stays available to save. When Outlook sends a link in place of the event, the Reader explains how to receive calendar files instead.
+
+### Reader shortcuts and stream cards follow the active letter
+
+Reader controls show shortcuts where the keyboard can use them. Closing the addressed card in News or Receipts clears its address while leaving other open cards in place. A self-hosted desktop no longer offers the managed Account page.
+
+### Paper lets the open letter scroll to the window edge
+
+On a desktop-width window, the Paper reading column reaches the top edge as you scroll through a letter.
+
+### Show images uses the current mailbox account
+
+Changing accounts or switching the connection while a Show images request is pending keeps the previous reply from changing which pictures the open letter can show.
+
+### The Reader names the tag it put on or took off
+
+After a tag change succeeds, the Reader names the tag and offers Undo.
+
+### Opening a whole thread starts at the first unread message
+
+If every message is read, the thread opens at the top. Choosing a specific message opens at that message. The sticky Paper heading fades into the letter. On narrow screens the message squares sit at the end of the reader bar, and the current square is announced to screen readers.
+
+### News and Receipts reopen at the top when switching between them
+
+An Ohbox detour keeps your reading position. Revisiting a stream reuses its blocked-content notices. Mark all read is available while it has unread mail or a seen line to advance.
+
+In the Screener, a sender's preview shows each held letter's attachments. On the web, the Away responder notice and startup share the same status read.
+
+Sender cards say who organizes the mailbox. Subject-rule dialogs say when nobody does.
+
+### Dismiss calendar suggestions on receipts
+
+Dismiss a calendar suggestion on a receipt to hide it across your signed-in devices. Undo brings the suggestion back.
+
+### Narrow receipt previews keep the sender and amount legible
+
+Receipts keep the sender's name readable on narrow cards by giving the date its own line. The folded subject and amount stay beside each other without overlapping.
+
+### Composer recipient chips keep addresses readable
+
+Leaving a recipient field finishes the entry and shows any address error. Recipient chips show international domains in readable form and shorten long addresses without hiding the domain or making two recipients look identical.
+
+### Drafts can recover a later unconfirmed send of the same letter
+
+If an attempt still needs your answer after you try again, Drafts clears that attempt’s record when the server confirms your answer. An earlier answer arriving late leaves the newer attempt held.
+If the draft was already marked sent on another device, Send again leaves it closed.
+
+### You can reply again as soon as the previous reply is confirmed
+
+After a reply is confirmed, you can immediately write another reply to the same message. A reply whose delivery is still uncertain stays held.
+
+### Closing a new message returns the keyboard to its row
+
+When you start a new message from a row in the Ohbox, closing it puts the keyboard back on that message. If the message has gone in the meantime, the keyboard lands on a nearby row or the list.
+
+### Find a declined settings copy in Web Settings
+
+After choosing Not now on a saved settings offer, you can import the copy or replace it from Settings → Mailboxes.
+
+### Saved mailbox settings use the current controls
+
+The saved-settings panel uses the current buttons and keeps the import or replacement result beside the action.
+
+### Scheduled replies keep their recipient and label in view
+
+When enlarged text leaves little room in the Drafts list, a long Cancel send button wraps so the recipient and Reply label stay readable.
+
+### Scheduled send dates stay visible at larger text sizes
+
+In Drafts, the scheduled send date can wrap onto a second line when it needs more space.
+
+### Keep Screener progress visible through the last sender
+
+When you apply suggestions to the whole Waiting list, the Screener shows progress until the summary appears.
+
+### The Screener says when unsubscribe depends on the sender
+
+When a one-click unsubscribe request depends on what the sender offers, the Screener asks you to Continue. It names the request on the confirmation button when a confirmed letter already offers one-click unsubscribe.
+
+### Quieter Screener prompts
+
+The Screener explains one-click unsubscribe the first time you confirm it on an account. Later confirmations are shorter. Suggest again shows how many senders need a new suggestion and tells you when everyone is up to date. If the mail covered by a quote changes before you confirm, the Screener asks you to check the quote again.
+
+### Screener reports the confirmed unsubscribe request
+
+After confirming a screen-out or spam decision that can send a one-click unsubscribe request, the report keeps that information even when the sender has already left Waiting.
+
+### Screener waits for its copy before counting mail
+
+Screened out and Spam totals appear after the device has caught up on the mail it is still owed.
+
+### The Screener shows when a decision fails
+
+Screened out and Spam mark changes that could not be saved. A decided sender leaves the Waiting list as the next one comes up.
+
+### The Screener restores controls for held mail
+
+Held letters explain blocked tracking, load pictures for the selected letter after you choose to show them, and put calendar invitations above the message. The sender card shows identity warnings and lets you choose whether a rule applies to earlier mail. The waiting list explains when it covers the whole folder.
+
+### Screener sender rows announce whether mail has been read
+
+The Screener opens a sender’s three newest letters first and brings in older letters as you scroll up. If a letter fails to load, Retry shows when the new request is in progress.
+
+Long addresses wrap in the Rules confirmation. In the message editor, opening Link puts the cursor in the address field and announces whether the dialog is open.
+
+### The Screener keeps the keyboard cursor in view
+
+Keep the selected sender in view when walking the Screened out and Spam lists with the keyboard.
+
+### Screener progress follows the current theme
+
+Progress for suggesting and applying decisions uses the Screener’s own colours. The live status still announces the count.
+
+### The Screener announces each sender’s place in the queue
+
+Screen readers hear one queue count and the position of each waiting or pending sender, even in long queues.
+
+### Screener releases take effect for the next letter
+
+When you release a sender from Screened out or Spam in the web app, the next letter follows the new rule as soon as the release is confirmed. Undo restores the previous rule and moves the released letters back.
+
+### The Screener checks permission before asking AI
+
+Turning automatic suggestions off stops unattended Screener requests. You can still press Suggest when AI is available to your account. If permission is withdrawn while a request is waiting to go out, ohmail drops the work and returns any credits it took for it.
+
+Turning off managed AI or disabling a workflow also stops its queued model requests.
+
+### A simpler Screener
+
+Removed the general unsubscribe explanation from the Screener toolbar. The decision confirmation still shows when it will send an unsubscribe request.
+
+Mail still held in Screener for senders you already decided about is filed automatically. An unsuccessful filing still shows a failure notice.
+
+Screener keeps its section counts and tools on a compact header. On touch screens, suggestions are available in the list menu beside Apply.
+
+Each section now has its own list title and menu. The Spam button uses the shorter label, and detected Spam shows its source when available. Sender details and rule sheets use the new design's shorter wording.
+
+### The Screener tooltip names what is waiting
+
+The navigation tooltip says how many first-time senders are waiting to be screened.
+
+### Screening a selection counts every letter it will move
+
+The confirmation includes other eligible mail from the selected senders. Letters pinned for Resurface keep their pins.
+
+### News and Receipts respect your screening window
+
+Older letters stay in their piles. When the screening note appears for newer mail, choose Not now to hide it until the count grows.
+
+### The Screening result restores follow-up actions
+
+Restore the action beside the Screening result when matching letters stayed elsewhere or an address-specific subject rule kept them there.
+
+### The Screener explains when it shows the whole folder
+
+The waiting list says when the organizing device has yet to share its screening settings or runs a version that cannot share them. The notice updates as the settings arrive.
+
+### Search says how much mail it covered
+
+Search reports how much of the mailbox it searched, what it found and how long the answer took. Long tag and triage lists draw the rows around the visible area. Mark all read tells screen readers which messages the action will clear, and Forward announces Shift+F.
+
+### Search starts with people and filters
+
+Search shows frequent contacts before you type when your store supports person search. Choose a contact, a place or the attachment filter to search straight away. The resting screen shows the mailbox's message count when the store supplies it.
+
+### Search shows the confirmed count beside Results
+
+An exact result count appears beside Results. Search still explains estimates, lower bounds, and partial mailbox coverage. A search with no matches shows its empty state.
+
+### Search shows folder counts across your mailboxes
+
+Open Place in Search to see the folders your account can search, including mail beyond this device’s copy. The menu shows counts from this device while the account’s counts load.
+
+### Find tags from the message menu
+
+Search for tags in the same menu from the reader, a stream card, a message row or a selection. Coloured dots identify tags, and a dot after the name shows what is already applied. Where creation is available, type a new name to create and apply it.
+
+### Search highlights the letter it opens in the Ohbox
+
+When you open an Ohbox result from Search, its row moves into view and briefly highlights. With reduced motion, the highlight stays still until you move to another letter.
+
+### Read Search results beside the list
+
+- Open and read Search results beside the list, or return to the same results with Back on a phone. The search stays where you left it while you read and act on a message. If an action removes the open message from the results, Search previews the next match or returns to the list.
+
+### Calendar on your own server
+
+The self-hosted stack now enables the calendar, including calendars on your own network when you choose to allow them.
+
+### Undo partial filing after Send + Done
+
+If the reply was sent and filing stops partway through, the app says both and offers Undo for the filing changes that succeeded.
+A filing change that succeeds after reconnecting gets an Undo action when it is confirmed.
+
+### Clearer send failure
+
+When a send fails, the web and desktop editors make the outcome and the next step clearer.
+
+### Open Mailboxes when sending needs sign-in
+
+When sending fails because the mailbox is not signed in, the web and desktop editors offer a direct way to Mailboxes.
+
+### Clearer mail server retry
+
+When the mail server cannot be reached during a send, the web and desktop editors say when to send the saved draft again.
+
+### Sender and subject rule sheets follow the active theme
+
+The screening menus and rule editor use the current surface, text and focus colours.
+
+### Simpler Settings and mailbox setup
+
+Settings uses compact controls for your look, Screener, rules, tags, folders and signatures. Help can copy diagnostics and the support address, and Cloud Subscription shows the current trial and available billing offers.
+
+Mailbox setup starts with the provider choice and shows the folder map and import window together before you agree.
+
+### Desktop AI and mailbox checks use the new settings design
+
+Desktop shows model test results, model choices, mailbox checks and connection consents with the new settings controls. The Web subscription button uses the new design too.
+
+### Walk through Settings with the arrow keys
+
+From the rail, use Right to enter Settings, then Up and Down to move through the menu. Right moves into the
+section and Escape or Left takes you back. Arrow keys still move the caret when you are typing in a field.
+
+### Fix Settings handoff, mail booking and desktop sign-out
+
+Settings links can open after the browser refreshes an expired session. Booking a letter for tomorrow uses the Ohbox time zone. Desktop sign-out checks with the server even while the session is being re-read and says when the session may still appear in Devices.
+
+### See more in the Settings menu
+
+Settings shows saved choices and status from the information already available on this device.
+
+### Settings for mail previews, Calendar summaries and draft replies
+
+Account on the web shows your profile name when you have one. You can turn off Draft reply for your account and see the AI balance in Settings when the billing service supplies it.
+
+You can choose to show the sender and subject for a single new Ohbox message identified on your device. The browser and desktop can show a daily agenda from their local Calendar copy.
+
+### Verification opens above Settings
+
+Verification for device, account, password and storage changes opens in a dialog. Desktop pairing and mailbox actions use the same controls as the rest of Settings.
+
+### Setup actions fit the page at larger text sizes
+
+The setup action row follows the width of the step, and longer button labels can wrap on a phone.
+
+### Use the keyboard through mailbox setup
+
+While setup checks who organizes the mailbox, Enter keeps you on the current step. When the check finishes,
+Continue takes focus. On the screening window step, the current choice takes focus so you can adjust it with
+the arrow keys and confirm with Enter.
+
+### Setup shows your progress within each phase
+
+When a setup phase has several screens, the count beside the dots shows which screen you are on. Screen readers announce it with the phase.
+
+### Mail lists and Settings behave more consistently
+
+News and Receipts build previews as they come into view. The Screener explains why senders are still arriving and draws decided senders as read. Organizer notices share one slot, with other notices available from its menu.
+
+Search says when more results are on the way. The Ohbox settings field keeps its localized hint, a connection test names the server field to check, and the Devices list refreshes after pairing. On desktop, the Away notice and Settings share their first read.
+
+### The sidebar account line stays clear
+
+Long account details now fit beside the command and theme controls in the desktop sidebar.
+
+### Sidebar counts stay clear after clicking a place
+
+Numbered shortcuts appear when you focus the sidebar with the keyboard. Clicking a place leaves only the mailbox counts visible beside its name on the paper theme.
+
+### Account explains when sign-out leaves mail on this browser
+
+On the web, the tab closes the mailbox as soon as the session ends. If the browser cannot finish removing the local copy, the account page says what happened. When another tab is holding the copy open, close it and retry from the warning.
+
+### An interrupted web sign-out can finish cleaning the browser
+
+When the browser still knows which session ended, ohmail can remove its local mail and cookies on the next visit. A normal sign-out finishes clearing its cache before opening the next page.
+
+### Removing a signature can be undone
+
+In Write and Reply, Remove takes the signature off the letter as before, and the report now says "Signature removed" with Undo. Undo puts the signature back exactly as it was written, including its formatting.
+
+### Sign-up continues to recovery codes after the first factor
+
+After setting up your authenticator or passkey, sign-up continues to your recovery codes with the session the server just opened for you.
+
+### Mail keeps your place when you return from Calendar
+
+An open conversation stays at the same reading position when you switch back from Calendar.
+
+### Scrolled letters stay behind the subject header
+
+The desktop reader keeps the letter covered from edge to edge as you scroll, so the subject and sender stay clear.
+
+### Keep scrolled mail below the subject
+
+The subject header now covers the top of the desktop reader in both threads and single letters.
+
+### Stream actions stay with the addressed letter
+
+In News and Receipts, scrolling after choosing a letter keeps the shared action panel on that letter.
+
+Stream letters stay unread when the action panel covers the first lines needed to mark them read.
+
+When scrolling stops, the two-second read rule applies to the letter where the cursor rests.
+
+Delete and Backspace act on a scroll-selected letter once it settles above the shared panel.
+
+Tabbing into an expanded stream card directs the shared actions to that card.
+
+A shown preview can be marked read once its full text has arrived and the reader dwells on it.
+
+### Reply in place and keep your place in the Screener
+
+Press R to answer the addressed letter in News or Receipts while its card is visible. In a narrow window, keyboard replies and forwards stay in the stream too. The Screener keeps the sender heading in view and follows the selected row as you walk the list with the keyboard.
+
+### News and Receipts keep their actions in view
+
+The reading column keeps its action bar visible as you browse and collapse cards. Each card has its own menu beside the timestamp, and Back to top appears once you have scrolled down.
+
+Receipts links to older mail from the list and shows the same latest time in both columns. News and Receipts use shorter list and screening copy.
+
+### News shows which mailbox received a message
+
+When an account has several mailboxes, News names the receiving mailbox on both the row and the card.
+
+A message moved out of Junk is asked for again when its text becomes available to fetch. If it stays unavailable, the open card reports the failure.
+
+### The stream stops explaining itself
+
+The News stream no longer prints a sentence at the foot of the list about how an item turns read, nor the line "No older unread items." at the end of the pile. The rule stays in the Settings help page, where it was already written. Web and desktop.
+
+### Links open News and Receipts letters in place
+
+On web and desktop, a direct link opens the full letter while keeping its unread status.
+
+### News and Receipts keep previews responsive
+
+A short snippet still offers Expand when the full message is missing. News shows the full text when it arrives in the background, and unrelated mailbox updates leave the other cards alone. A receipt moved out of Junk asks for its full text once when it can be downloaded again.
+
+### News and Receipts keep reading progress when you leave
+
+Wheel and keyboard scrolling, including keys pressed inside a letter, now keep the read progress for the letters you actually saw. Jumping through a stream leaves the skipped letters unread.
+
+### Streams announce their reply shortcuts
+
+News and Receipts announce the assigned Reply and Forward shortcuts while the action bar is open. The shortcut still waits for the selected card to settle in view before opening its editor.
+
+### Screen readers announce unread letters in News and Receipts
+
+An unread letter is announced as unread when you reach its row in News or Receipts.
+
+### Choose where message subjects appear
+
+Choose between one conversation heading and the original subject on every message in Settings → General.
+
+### See what an existing subject rule moved
+
+When you file matching messages for an existing rule, the report shows how many moved. It also tells you when a move fails or has to wait.
+
+### Open a subject rule from a letter’s sender card
+
+The card opens the rule for that letter’s sender and subject. If nothing organizes the mailbox, the sheet explains why the rule cannot file mail there.
+
+### Support drafts use the composer’s controls for diagnostics
+
+The Remove and Add back buttons in the diagnostics strip now match the rest of the new composer.
+
+### Choose whether to include diagnostics in a support draft
+
+When Help & contact opens a draft, you can remove the diagnostics or add them back before sending. Your own text and formatting stay in place.
+
+### The tag picker uses the same filter field as other menus
+
+The filter takes focus when you open the picker. Enter still applies the matching tag or creates the name you typed.
+
+### Tags says when no letter is open
+
+When the open tag groups have no unread mail, the Tags overview shows “Nothing open” in the reading column.
+
+### Choose where the latest message appears
+
+In Settings, under Messages, choose whether conversations start with the latest message at the bottom or at the top.
+
+On the phone apps conversations always show the latest at the bottom. The choice is in web and desktop Settings.
+
+### Distinguish sent replies and unread mail in thread squares
+
+Sent replies stay hollow, unread received mail uses the accent colour, and the current message keeps its ring. Hovering a square shows its sender, date and preview on a popover styled for the selected face.
+
+### Resize timed events from their top and bottom edges
+
+The resize handle spans the width of each timed event, so you can drag either edge from the middle of the event.
+
+### Today highlights its date in Calendar
+
+Press Today in Month, Week or Day to bring the current date into view and highlight it. If you use reduced motion, the date gets a still outline.
+
+### Touch navigation on phones and foldables
+
+Swipe right to open the navigation drawer from mail, Settings or Calendar on phones and foldables. Swipe a long thread's squares to move through its messages.
+
+### Open Answer Later, Parked and Resurface from the mail rail
+
+Open each pile directly from the mail rail on web, desktop and the paired browser. Start a Reply Run from Answer Later to work through the pile one letter at a time.
+
+### Unsaved changes show which action is under way
+
+When you retry or discard an unsaved change, that action shows it is busy until it finishes.
+
+### The web sign-in page explains why your previous sign-in ended
+
+When ohmail sends you back to sign in, the page says why your previous sign-in ended. Tabs opened just after sign-out can show the same explanation.
+
+### Web sign-out shows progress while the browser forgets the account
+
+The web app hides mail and shows that sign-out is still in progress while it revokes the session and removes the browser’s copy. A tab from a previous account stops syncing when the browser switches accounts. You can start a letter or reply from the loaded Ohbox while offline without the mailbox reporting repeated connection failures.
+
 ## [1.0.13] — 2026-11-17
 
 ### The Screener's offer answers on a large account
@@ -17600,7 +19033,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.13...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.0
 [1.0.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.13
 [1.0.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.12
 [1.0.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.11
