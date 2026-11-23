@@ -6402,7 +6402,7 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
 /// The table is also why the addresses live HERE rather than in the frontend: the bundle is
 /// asserted to name no host at all, which is the claim the whole preview artifact rests on.
 #[cfg(feature = "local-engine")]
-const LINKS: [(&str, &str); 13] = [
+const LINKS: [(&str, &str); 14] = [
     ("account", "https://ohmail.app/mailbox#/settings"),
     ("security", "https://ohmail.app/mailbox#/settings"),
     ("billing", "https://ohmail.app/mailbox#/settings"),
