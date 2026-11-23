@@ -336,7 +336,7 @@ export interface EngineAdapter {
    * A derivation the server does over the caller's own Ohbox against their own rules and
    * contacts, asked rather than mirrored for `heldReleases`' reason: the deciding fact is the
    * ARRIVAL GATE's answer, which `/sync` carries no vocabulary for. Given a `pile`, the same
-   * question of News or Receipts, at any age: that pile's note. `after` is an earlier answer's
+   * question inside the account's screening window gives the News or Receipts note. `after` is an earlier answer's
    * `next`: the read goes on from there.
    */
   unscreened?(pile?: UnscreenedPileWire, after?: string): Promise<UnscreenedWire>;

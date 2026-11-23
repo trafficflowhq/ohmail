@@ -53,8 +53,7 @@ async function mount(place: "reads" | "receipts", reply: () => Response) {
   const path = `/api/screener/unscreened?pile=${place === "reads" ? "news" : "receipts"}`;
   await vi.waitFor(() => expect(calls).toContainEqual({ method: "GET", path }));
   const note = () => frame.queryAllByRole("note").find(
-    (item) => item.textContent?.includes("senders you never let in")
-      || item.textContent?.includes("a sender you never let in"),
+    (item) => item.textContent?.includes("you haven't screened yet"),
   );
   return { calls, note };
 }
@@ -83,14 +82,14 @@ describe("the note on News and Receipts", () => {
   it("Receipts asks its own pile, one letter in the singular, and a floor says 'at least'", async () => {
     const receipts = await mount("receipts", answer("receipts", 1));
     expect(receipts.calls).toContainEqual({ method: "GET", path: "/api/screener/unscreened?pile=receipts" });
-    expect(receipts.note()?.textContent).toContain("1 letter here was never let in");
-    expect(receipts.note()?.textContent).toContain("They are from senders you never let in.");
+    expect(receipts.note()?.textContent).toContain("1 letter in Receipts comes from a sender you haven't screened yet");
+    expect(receipts.note()?.textContent).toContain("Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.");
     await teardownConfirmEnv();
     installed = false;
 
     const news = await mount("reads", answer("news", 40, false));
-    expect(news.note()?.textContent).toContain("At least 40 letters here were never let in");
-    expect(news.note()?.textContent).toContain("They are from senders you never let in.");
+    expect(news.note()?.textContent).toContain("At least 40 letters in News come from senders you haven't screened yet");
+    expect(news.note()?.textContent).toContain("Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.");
   });
 
   it("draws nothing at zero, on a failed read, or from a server that does not say the pile back", async () => {
@@ -124,7 +123,7 @@ describe("the note on News and Receipts", () => {
         fetchBody: async () => null,
       },
     });
-    const hook = renderHook(() => usePileNote(engine, "news", true, () => {}));
+    const hook = renderHook(() => usePileNote(engine, "news", true, () => {}, null));
     try {
       await act(async () => {});
       expect(hook.result.current).toBeNull();

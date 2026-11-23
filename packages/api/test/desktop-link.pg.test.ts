@@ -170,7 +170,7 @@ describe.skipIf(!PG_UP)("the desktop handoff code is single-use against real Pos
   const claimWith = (db: Db, body: unknown, ip: string = freshIp()): Promise<Response> =>
     app.handle(new Request("http://localhost/auth/desktop-claim", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-vercel-forwarded-for": ip },
+      headers: { "content-type": "application/json", "x-forwarded-for": ip },
       body: JSON.stringify(body),
     }), depsOn(db));
 

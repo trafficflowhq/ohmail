@@ -1,7 +1,7 @@
 import { asc, isNull, sql } from "drizzle-orm";
-import { type Tx } from "@trafficflow/db";
+import { bindingOf, type Tx } from "@trafficflow/db";
 import { waitlist } from "@trafficflow/db/cloud";
-import { bridgeTx, type Db } from "./context.js";
+import { bridgeTx, keyedCredentialDb, type Db } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { reserveIpSlot } from "./ip-throttle.js";
 import type { ThrottleKeys } from "./auth/throttle-keys.js";
@@ -159,7 +159,9 @@ export class WaitlistService {
       );
     }
 
-    await asTx(ctx.db).insert(waitlist)
+    const accountId = bindingOf(ctx.db)?.account ?? "";
+    const keyed = keyedCredentialDb({ db: ctx.db, accountId }, email);
+    await asTx(keyed).insert(waitlist)
       .values({ email, tier, source, createdAt: now, updatedAt: now })
       .onConflictDoUpdate({
         target: waitlist.email,

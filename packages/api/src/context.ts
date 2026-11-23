@@ -3,32 +3,17 @@ import type { SessionLifecycle } from "@trafficflow/services/auth";
 import { hashToken, type BoundDb, type ServiceContext, type UnboundDb } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 
-/**
- * The header the platform writes, and only that one. `x-vercel-forwarded-for` is genuinely
- * unforgeable from outside: the edge overwrites every `x-vercel-*` header on every request.
- * `x-real-ip` used to be here and does not belong: it is an ordinary header with no platform
- * reservation, so any deployment without a proxy that sets it hands every caller a
- * `curl -H 'x-real-ip: …'` switch for minting a fresh rate-limit bucket per request. A
- * deployment behind a different proxy adds its own header here, in code, with the same
- * argument written down.
- */
-const TRUSTED_IP_HEADERS = ["x-vercel-forwarded-for"] as const;
-
 const hopsOf = (raw: string | null): string[] =>
   (raw ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 
 /**
- * The client IP, from a header the client cannot choose: (1) `x-vercel-forwarded-for`
- * (TRUSTED_IP_HEADERS), else (2) the LAST hop of `x-forwarded-for`, the only entry a client cannot
- * prepend to. A chain that leaves a proxy as that hop keys every visitor to ONE address — one
- * lockout, one signup limit, one audit address for the deployment, which is an outage, never a safe
- * direction; the self-host adapter's walk (`forwardFor`, `http-host.ts`) strips that hop and logs
- * when it could not. `""` means unknown, never an identity: an unknown client is limited by what needs
- * none (the email-bound invite row, the per-recipient mail limiter). Exported for the spoofing tests.
+ * Vercel owns its forwarding header on its own runtime. The Node adapter strips that
+ * namespace and writes the authenticated web address or the trusted proxy walk's result
+ * into the last hop of x-forwarded-for. An empty value means the client is unknown.
  */
 export function clientIp(req: Request): string {
-  for (const name of TRUSTED_IP_HEADERS) {
-    const hop = hopsOf(req.headers.get(name))[0];
+  if (process.env.VERCEL === "1") {
+    const hop = hopsOf(req.headers.get("x-vercel-forwarded-for"))[0];
     if (hop) return hop;
   }
   const hops = hopsOf(req.headers.get("x-forwarded-for"));

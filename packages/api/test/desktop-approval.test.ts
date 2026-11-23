@@ -36,7 +36,7 @@ async function ask(
   deps: ApiDeps, body: Record<string, unknown>, ip = IP,
 ): Promise<Response> {
   return H(req("POST", "/auth/desktop-approval", {
-    headers: { "x-vercel-forwarded-for": ip }, body: JSON.stringify(body),
+    headers: { "x-forwarded-for": ip }, body: JSON.stringify(body),
   }), deps);
 }
 
@@ -52,7 +52,7 @@ async function request(deps: ApiDeps, label = "studio-mac"): Promise<{ id: strin
 
 const claim = (deps: ApiDeps, body: Record<string, unknown>, ip = IP): Promise<Response> =>
   H(req("POST", "/auth/desktop-approval/claim", {
-    headers: { "x-vercel-forwarded-for": ip }, body: JSON.stringify(body),
+    headers: { "x-forwarded-for": ip }, body: JSON.stringify(body),
   }), deps);
 
 const confirm = (deps: ApiDeps, id: string, token: string): Promise<Response> =>
@@ -126,7 +126,7 @@ describe("the page reads what it is about to confirm", () => {
     const me = await signedIn({ db });
     const readFrom = async (ip: string): Promise<Record<string, unknown>> => {
       const res = await H(req("GET", `/auth/desktop-approval/${id}`, {
-        bearer: me.token, headers: { "x-vercel-forwarded-for": ip },
+        bearer: me.token, headers: { "x-forwarded-for": ip },
       }), deps);
       expect(res.status).toBe(200);
       return (await res.json()) as Record<string, unknown>;
@@ -146,7 +146,7 @@ describe("the page reads what it is about to confirm", () => {
     const { approvalId } = (await asked.json()) as { approvalId: string };
     const me = await signedIn({ db });
     const readFrom = async (ip: string) => ((await (await H(req("GET", `/auth/desktop-approval/${approvalId}`, {
-      bearer: me.token, headers: { "x-vercel-forwarded-for": ip },
+      bearer: me.token, headers: { "x-forwarded-for": ip },
     }), deps)).json()) as { network: string }).network;
     expect(await readFrom(IP)).toBe("different");
     expect(await readFrom("2001:db8:aa:2::5"), "another /64 under the same /48").toBe("different");
@@ -353,7 +353,7 @@ describe("a desktop signed in from the browser keeps the browser's factor time",
       expect(minted.status, await minted.clone().text()).toBe(200);
       const { code: linkCode } = (await minted.json()) as { code: string };
       return tokensOf(await H(req("POST", "/auth/desktop-claim", {
-        headers: { "x-vercel-forwarded-for": IP }, body: JSON.stringify({ code: linkCode }),
+        headers: { "x-forwarded-for": IP }, body: JSON.stringify({ code: linkCode }),
       }), deps));
     };
     const approvalHop = async (bearer: string): Promise<string> => {

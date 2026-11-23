@@ -775,10 +775,12 @@ export class MessageService {
   ): Promise<{ total: number; months: TimelineMonth[]; undated: number }> {
     const d = dialect(ctx.db);
     const zone = opts.zone ?? "UTC";
+    const locked = d.name === "pg" && (await d.exec(ctx.db, sql`
+      select pg_catalog.row_security_active('messages')`))[0]?.[0] === true;
     // scoped-by: the statement pins m.account_id = ctx.accountId
     // The newest row of each month by ONE probe of the History index per month (a month's rows
     // at its newest instant, highest id first) — a second pass over the account doubled the read.
-    const groups = await d.exec(ctx.db, sql`
+    const groups = locked ? await this.lockedMonths(ctx, zone) : await d.exec(ctx.db, sql`
       select g.c, g.d,
         (select n.id from messages n
           where ${ownedMessages(ctx.accountId, "n")} and ${keyOf(d, "n")} = g.d and not ${undatedIn("n")}
@@ -794,11 +796,46 @@ export class MessageService {
     for (const r of groups) {
       if (r[1] === null || r[1] === undefined) { undated = Number(r[0] ?? 0); continue; }
       const date = instantText(r[1]);
-      months.push({ month: date.slice(0, 7), count: Number(r[0] ?? 0), first: { date, id: String(r[2]) } });
+      months.push({ month: r[3] === undefined ? date.slice(0, 7) : String(r[3]),
+        count: Number(r[0] ?? 0), first: { date, id: String(r[2]) } });
     }
-    if (zone !== "UTC" && months.length > 0) months.splice(0, months.length, ...await this.zonedMonths(ctx, months, zone));
+    if (!locked && zone !== "UTC" && months.length > 0) {
+      months.splice(0, months.length, ...await this.zonedMonths(ctx, months, zone));
+    }
     months.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
     return { total: months.reduce((n, m) => n + m.count, 0) + undated, months, undated };
+  }
+
+  /** The account policy hides the arrival expression from index conditions. Group and choose
+   * each month's newest row in one pass over the account. */
+  private async lockedMonths(ctx: ServiceContext, zone: string): Promise<unknown[][]> {
+    const d = dialect(ctx.db);
+    const at = datedKey(d, "m");
+    let normalized = "UTC";
+    try {
+      normalized = /^[+-]/.test(zone) ? new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone : zone;
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+    }
+    const read = (zoneName: string) => {
+      const timeZone = /^[+-]/.test(zoneName) ? sql`${zoneName}::interval` : sql`${zoneName}::text`;
+      // scoped-by: ownedMessages pins the account and excludes deleted rows.
+      return d.exec(ctx.db, sql`
+        select distinct on (bucket) ${d.castInt(sql`count(*) over (partition by bucket)`)} as c,
+          instant as d, id, to_char(bucket, 'YYYY-MM') as month
+        from (
+          select m.id, ${at} as instant, date_trunc('month', ${at} at time zone ${timeZone}) as bucket
+          from messages m where ${ownedMessages(ctx.accountId, "m")}
+        ) dated
+        order by bucket, instant desc nulls last, id desc`);
+    };
+    try {
+      return await read(normalized);
+    } catch (error) {
+      const failure = error as { code?: string; cause?: { code?: string } } | null;
+      if (normalized === "UTC" || (failure?.code ?? failure?.cause?.code) !== "22023") throw error;
+      return read("UTC");
+    }
   }
 
   /**

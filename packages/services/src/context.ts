@@ -52,7 +52,9 @@ export function dbFor(db: Db, accountId: string): BoundDb {
 }
 
 /** A credential lookup carries the presented key for one indexed read. */
-export function keyedCredentialDb(ctx: ServiceContext, key: string | null): ContextDb {
+export function keyedCredentialDb(
+  ctx: Pick<ServiceContext, "accountId" | "credentialDb"> & { db: Db }, key: string | null,
+): ContextDb {
   if (ctx.credentialDb !== undefined) return bindDb(ctx.credentialDb, { account: null, key });
   return ctx.accountId === ""
     ? bindDb(ctx.db, { account: null, key })

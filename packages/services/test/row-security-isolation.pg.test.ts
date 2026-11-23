@@ -19,6 +19,7 @@ import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATOR_ROLE, PG_MAJORS, ownServersAvailable, ruleVerbs, startLockGround, type LockGround,
 } from "@trafficflow/db/testing";
 import { UNWRITTEN_TABLES } from "../../db/test/_unwritten-tables.js";
+import { generateToken, hashToken, makeAuthService, makeTestAuthDeps, mintAppHandoff, mintPairingToken, redeemAppHandoff, redeemDevicePair, type ServiceContext } from "@trafficflow/services";
 import { reapStaleWebSessions } from "../src/auth/session-reaper.js";
 import { seedFullAccount, type Db, type SeededAccount } from "./helpers/erasure-fixture.js";
 
@@ -647,6 +648,36 @@ for (const major of PG_MAJORS) {
           expect(scans.some((n) => /account_id/.test(`${n["Index Cond"] ?? ""}${n["Recheck Cond"] ?? ""}`)), `${name}: the account names the index`).toBe(true);
         }
       }
+    }, CASE_MS);
+
+    it("redeems a phone pairing under the API role without spending it for another account", async () => {
+      const unbound = bindDb(api.db, { account: null });
+      const ctx: ServiceContext = { db: unbound, accountId: "", userId: null, now: () => new Date(), requestId: randomUUID() };
+      const mint = await mintPairingToken({ ...ctx, db: bindDb(api.db, { account: B.accountId }), accountId: B.accountId, userId: B.userId }, {
+        grant: "device-pair", label: "Phone",
+      });
+      const auth = makeAuthService(makeTestAuthDeps());
+      const input = { token: mint.token, kind: "mobile-ios" } as const;
+      const other = { ...ctx, db: bindDb(api.db, { account: A.accountId }), accountId: A.accountId, userId: A.userId };
+      await expect(redeemDevicePair(other, auth, input)).rejects.toMatchObject({ code: "session_conflict" });
+      const accountsReported: string[] = [];
+      await expect(redeemDevicePair({ ...ctx, noteCredentialAccount: id => accountsReported.push(id) }, auth, input))
+        .resolves.toMatchObject({ tokens: { accessToken: expect.any(String), refreshToken: expect.any(String) } });
+      expect(accountsReported).toEqual([B.accountId]);
+      await expect(redeemDevicePair(ctx, auth, input)).rejects.toMatchObject({ code: "pairing_invalid" });
+    }, CASE_MS);
+
+    it("hands the signed-in account from mail to calendar under the API role", async () => {
+      const ctx: ServiceContext = { db: bindDb(api.db, { account: null }), accountId: "", userId: null, now: () => new Date(), requestId: randomUUID() };
+      const account = { ...ctx, db: bindDb(api.db, { account: B.accountId }), accountId: B.accountId, userId: B.userId };
+      const auth = makeAuthService(makeTestAuthDeps());
+      const mint = await mintPairingToken(account, { grant: "device-pair", label: "Phone" });
+      const phone = await redeemDevicePair(ctx, auth, { token: mint.token, kind: "mobile-ios" });
+      const verifier = generateToken();
+      const handoff = await mintAppHandoff(ctx, auth, { renewed: phone.tokens.refreshToken, challenge: hashToken(verifier), target: "ohcal" });
+      const input = { token: handoff.token, kind: "mobile-ios" } as const;
+      await expect(redeemAppHandoff(ctx, auth, { ...input, verifier: generateToken() })).rejects.toMatchObject({ code: "pairing_invalid" });
+      await expect(redeemAppHandoff(ctx, auth, { ...input, verifier })).resolves.toMatchObject({ tokens: { accessToken: expect.any(String) } });
     }, CASE_MS);
   });
 }

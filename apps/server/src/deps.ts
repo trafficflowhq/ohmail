@@ -101,9 +101,9 @@ export interface DoorInput {
 /** The database as the program holds it: one owned pool, or the module-cached pooled handle. */
 export interface DbPort {
   /** The handle a request runs on. */
-  request(): Db;
+  request(write?: boolean): Db;
   /** The same pool behind the session doors' short wait to begin (`withSessionAcquireCeiling`). */
-  session(): Db;
+  session(write?: boolean): Db;
   /** A handle that waits `ms` at most to begin: for a write made after something already failed. */
   brief(ms: number): Db;
   /** `/health`'s question whether a NEW connection is admitted, where a pooler can refuse one. */
@@ -138,8 +138,8 @@ export function ownedDbPort(db: Db): DbPort {
 const freshProbes = new Map<string, () => Promise<FreshConnectReading>>();
 
 /**
- * The pooled handle. `makePooledDb` is module-cached per connection string, so every call here is
- * the same pool and nothing is held: a ceiling is a property of the HANDLE, and costs no connection.
+ * Managed reads and writes have separate pools on the same URL and runtime role.
+ * The session ceiling applies to whichever pool the request uses.
  */
 export function pooledDbPort(url: string): DbPort {
   let probe = freshProbes.get(url);
@@ -148,8 +148,10 @@ export function pooledDbPort(url: string): DbPort {
     freshProbes.set(url, probe);
   }
   return {
-    request: () => makePooledDb(url),
-    session: () => makePooledDb(url, { acquireTimeoutMs: SESSION_ACQUIRE_TIMEOUT_MS }),
+    request: (write) => makePooledDb(url, write ? { purpose: "write" } : {}),
+    session: (write) => makePooledDb(url, {
+      ...(write ? { purpose: "write" } : {}), acquireTimeoutMs: SESSION_ACQUIRE_TIMEOUT_MS,
+    }),
     // A FRESH handle with a short ceiling: the branch answering `503 db_busy` is the one whose
     // handle just refused an acquire, and an abandoned write must not queue in front of the next request.
     brief: (ms) => makePooledDb(url, { acquireTimeoutMs: ms }),
@@ -970,14 +972,16 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
   // leaves this module. `withSession` binds it to the session's account, once; a route without a
   // session keeps it as it is. The session doors' handle is minted the same way, its shorter wait
   // applied to the pool's handle first: a ceiling is put under a binding, never over one.
-  const db = bindDb(rt.db.request(), { account: null });
+  // Select the pool before the session lookup, which must also be able to begin a write request.
+  const write = req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS";
+  const db = bindDb(rt.db.request(write), { account: null });
   const metered = chosen.metering !== "never";
   const staff = chosen.staffDoor === "blind-role" ? cfg.staff : null;
   /** The request's handle as it stands when a port below is used: bound to the session's account by then. */
   const requestDb = (): Tx => deps.db as unknown as Tx;
   const deps: ApiDeps = {
     db,
-    sessionDb: () => bindDb(rt.db.session(), { account: null }),
+    sessionDb: () => bindDb(rt.db.session(write), { account: null }),
     now: () => new Date(),
     requestId: "",                 // `withRequestId` assigns one
     session: null,                 // `withSession` resolves it

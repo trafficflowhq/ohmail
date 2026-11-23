@@ -309,7 +309,7 @@ function StreamHead({ model, dock }: { model: StreamModel; dock: boolean }) {
           </>
         }
       />
-      {pileNote ? <PileNote offer={pileNote} /> : null}
+      {pileNote ? <PileNote offer={pileNote} pileLabel={t("title")} /> : null}
     </>
   );
 }

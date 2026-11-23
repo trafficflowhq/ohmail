@@ -331,7 +331,7 @@ export const ZONE_CASE_SOURCE = `/((?:${ZONE_CASED.map((p) => anyCase(p.slice(1)
 
 /** The subset the middleware matcher must carry, and nothing else. */
 export const EDGE_PATHS = Object.freeze([
-  ...new Set([...OWN_ROUTES.filter((r) => r.edge).map((r) => r.path), ...ZONE_PATHS]),
+  ...new Set([...OWN_ROUTES.filter((r) => r.edge).map((r) => r.path), ...ZONE_PATHS, `${API_BASE}/:path*`]),
 ]);
 
 /**

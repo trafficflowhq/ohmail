@@ -12,13 +12,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type Refusal } from "../src/refusal";
 import { refuse, sayRefusal } from "../src/refusal";
 import { View } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
 import {
   discardAdmission, parsePairLink, pendingPairOrigin, type PairAdmission,
 } from "../src/net/pairing";
 import { Field } from "../src/ui/Field";
+import { clearPairingLinkRequest, pairingLinkRequested } from "../src/ui/manual-pair-mode";
 import { Button, Txt } from "../src/ui/base";
 import { PairConfirm } from "../src/ui/PairConfirm";
 import { OnboardingPage, OnboardingTag, useOnboardingLook, useOnboardingButton } from "../src/ui/OnboardingPage";
@@ -48,8 +49,8 @@ function ConnectBody() {
   useLocale();
   const conn = useConnection();
   const { palette } = useOnboardingLook();
-  const { method } = useLocalSearchParams<{ method?: string }>();
-  const [byLink, setByLink] = useState(method === "link");
+  const [byLink, setByLink] = useState(pairingLinkRequested);
+  useEffect(clearPairingLinkRequest, []);
   // The picker's "enter a pairing token" step carries the address it already negotiated — through
   // a value held in THIS process, never a route parameter. The app registers the `ohmail` scheme
   // as a browsable deep link, so a route parameter here would let any web page choose the server

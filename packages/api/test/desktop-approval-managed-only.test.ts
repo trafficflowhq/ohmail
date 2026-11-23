@@ -77,14 +77,14 @@ describe("the browser approval of a desktop sign-in is the hosted service's alon
     const app = createApp(apiRoutes);
     const H = (r: Request): Promise<Response> => app.handle(r, { ...deps, session: null, idempotency: null });
     const asked = await H(req("POST", "/auth/desktop-approval", {
-      headers: { "x-vercel-forwarded-for": "198.51.100.9" },
+      headers: { "x-forwarded-for": "198.51.100.9" },
       body: JSON.stringify({ challenge: challenge(), kind: "desktop-linux", label: "studio-mac" }),
     }));
     expect(asked.status, await asked.clone().text()).toBe(200);
     const { approvalId } = (await asked.json()) as { approvalId: string };
     const me = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
     const read = await H(req("GET", `/auth/desktop-approval/${approvalId}`, {
-      bearer: me.token, headers: { "x-vercel-forwarded-for": "192.0.2.44" },
+      bearer: me.token, headers: { "x-forwarded-for": "192.0.2.44" },
     }));
     expect(read.status).toBe(200);
     expect(((await read.json()) as { network?: string }).network).toBe("different");

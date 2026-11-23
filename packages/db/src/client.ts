@@ -7,7 +7,7 @@ import { brandDialect } from "./dialect/index.js";
 import { withPgSocket } from "./pg-socket.js";
 import { pgTlsOptions } from "./pg-tls.js";
 import { registerReadFlight } from "./read-flight.js";
-import { HANDLE_TABLE, type HandleCell, type HandleRole } from "./handle-table.js";
+import { HANDLE_TABLE, POOLED_WRITE_MAX_CONNECTIONS, type HandleCell, type HandleRole } from "./handle-table.js";
 import {
   BINDER_SQL, BindingFailedError, bindingOf, refuseBinding, registerBindingDoor, registerTxDoor,
   type BindingValues,
@@ -1238,24 +1238,25 @@ export function makePooledDb(
    *
    * A PARAMETER rather than a `process.env` read, for the reason `AdminConfig.readTimeoutMs`
    * already gives one package over: a guard for this ceiling has to watch a caller actually be
-   * refused, and it cannot spend the production duration doing it. Production passes nothing.
+   * refused, and it cannot spend the production duration doing it.
    * The ceiling is a property of the HANDLE, not of the pool, so two callers may hold different
    * ones over the same module-cached connection. `max` narrows the pool for a guard that needs
-   * one connection.
+   * one connection. Managed write requests use their own pool on the same URL and role.
    */
-  opts: { role?: Exclude<HandleRole, "worker">; acquireTimeoutMs?: number; max?: number } = {},
+  opts: { role?: Exclude<HandleRole, "worker">; acquireTimeoutMs?: number; max?: number; purpose?: "write" } = {},
 ): PostgresJsDatabase<typeof schema> {
   const role = opts.role ?? "api";
   const cell = HANDLE_TABLE[role].pooler;
   const ceiling = opts.acquireTimeoutMs ?? cell.waitMs;
-  const key = JSON.stringify([url, ceiling, role]);
+  const poolKey = JSON.stringify([url, opts.purpose]);
+  const key = JSON.stringify([poolKey, ceiling, role]);
   const known = handles.get(key);
   if (known) return known;
-  let pooled = pools.get(url);
+  let pooled = pools.get(poolKey);
   if (!pooled) {
-    // `max` is read when this URL's pool is FIRST built; a later handle over it shares that pool.
-    pooled = openPool(url, cell, opts.max ?? cell.max);
-    pools.set(url, pooled);
+    const max = opts.purpose === "write" ? POOLED_WRITE_MAX_CONNECTIONS : opts.max ?? cell.max;
+    pooled = openPool(url, cell, max);
+    pools.set(poolKey, pooled);
   }
   const handle = dress(pooled, cell, ceiling, role);
   handles.set(key, handle);

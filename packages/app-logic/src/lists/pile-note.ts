@@ -3,11 +3,13 @@
 /**
  * THE NOTE ON NEWS AND RECEIPTS: how many letters in the pile came from senders nobody let in, and
  * the press that sends them to the Screener (owner report 2026-11-02). Asked of the door each time
- * the pile is shown and after a press, never kept: the deciding fact is the arrival gate's answer,
+ * the pile is shown and after a press: the deciding fact is the arrival gate's answer,
  * as for the Ohbox's offer. Absent while unanswered, at zero, on a failed read and on a door with
  * no such route. Nothing moves without the press, and the press writes intents only.
  */
 
+import { usePersistedChoice } from "../storage/persisted-ui.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 import type { MailboxFacts } from "../mail-state/mail-state.js";
 import type { UnscreenedPileWire } from "@ohmail/wire";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
@@ -18,6 +20,7 @@ export interface PileNoteOffer {
   atLeast: boolean;
   screening: boolean;
   screen: () => void;
+  dismiss: () => void;
 }
 
 /** The currently shown pile's offer, supplied by the account-scoped mail ground. */
@@ -32,9 +35,26 @@ export interface PileNoteDoor {
 /** What a press says afterwards: the count the server screened, none, or a failure. */
 export type PileNoteSaid = { kind: "moved"; count: number } | { kind: "none" } | { kind: "failed" };
 
+export const isPileNoteCount = (raw: string): raw is `${number}` => /^(0|[1-9]\d*)$/.test(raw) && Number.isSafeInteger(Number(raw));
+
+/** Keep a dismissal only until the count grows from the latest lower count. */
+export function usePileNoteDismissal(
+  total: number | undefined,
+  dismissed: `${number}` | null,
+  keep: (count: `${number}`) => void,
+): (() => void) | null {
+  useEffect(() => {
+    if (total !== undefined && dismissed !== null && total < Number(dismissed)) keep(`${total}`);
+  }, [total, dismissed, keep]);
+  if (total === undefined || dismissed === null || total <= Number(dismissed)) return null;
+  return () => keep(`${total}`);
+}
+
 export function usePileNote(
-  door: PileNoteDoor, pile: UnscreenedPileWire, shown: boolean, say: (said: PileNoteSaid) => void,
+  door: PileNoteDoor, pile: UnscreenedPileWire, shown: boolean, say: (said: PileNoteSaid) => void, scope: StorageScope,
 ): PileNoteOffer | null {
+  const dismissKey = scope === null ? null : `ohmail.ui.pileNote.notNow.${pile}.${scopeSuffix(scope)}`;
+  const [dismissedCount, setDismissedCount] = usePersistedChoice(dismissKey, isPileNoteCount, "0");
   const [answer, setAnswer] = useState<{ total: number; atLeast: boolean } | null>(null);
   const [screening, setScreening] = useState(false);
   const alive = useRef(true);
@@ -84,8 +104,15 @@ export function usePileNote(
       });
   };
 
-  if (answer === null || answer.total <= 0) return null;
-  return { count: answer.total, atLeast: answer.atLeast, screening, screen };
+  const dismiss = usePileNoteDismissal(answer?.total, dismissedCount, setDismissedCount);
+  if (answer === null || dismiss === null) return null;
+  return {
+    count: answer.total,
+    atLeast: answer.atLeast,
+    screening,
+    screen,
+    dismiss,
+  };
 }
 
 /** Name a shared, known organizer. A pile can cover more than one mailbox. */

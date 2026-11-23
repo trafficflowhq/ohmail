@@ -72,7 +72,7 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-/** The real route table behind a socket, with the one header the hosted edge writes (the client's address). */
+/** The real route table behind a socket, with the client address the API host supplies. */
 async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
@@ -84,7 +84,7 @@ async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (Array.isArray(v)) for (const x of v) headers.append(k, x);
     else if (v !== undefined) headers.set(k, v);
   }
-  headers.set("x-vercel-forwarded-for", "203.0.113.7");
+  headers.set("x-forwarded-for", "203.0.113.7");
   const body = method === "GET" || method === "HEAD" || chunks.length === 0 ? undefined : Buffer.concat(chunks);
   const answer = await app.handle(new Request(url, { method, headers, body }), { ...world.deps, session: null, idempotency: null });
   const code = answer.status >= 400

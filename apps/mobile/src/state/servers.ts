@@ -61,6 +61,11 @@ export interface SecureKV {
   remove(key: string): Promise<void>;
 }
 
+/** Encode an account's server and id into one keystore-safe key suffix. */
+export function secureOwnerSuffix(owner: string): string {
+  return owner.replace(/[^A-Za-z0-9.-]/gu, (ch) => `_${ch.codePointAt(0)!.toString(16)}_`);
+}
+
 /** One pairing. `refreshToken: null` = the pairing ended (a refusal); re-pair to fill it. */
 export interface ServerProfile {
   id: string;

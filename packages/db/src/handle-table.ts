@@ -109,11 +109,13 @@ export const SESSION_ACQUIRE_TIMEOUT_MS = 5_000;
  * Connections one warm serverless instance holds on the pooled URL. Fluid compute serves several
  * requests from one instance, and at `max: 1` every second request queued behind the first: the
  * `db_busy` the session doors answered. Four, bounded: the transaction-mode pooler multiplexes the
- * server side, and the client connections it admits are instances × 4. A fifth concurrent
- * statement still pipelines behind a busy connection and meets the acquire ceiling. The named
- * hole in `client.ts#PooledQuery` widens with it: up to four heads per instance can wait at the pooler.
+ * server side, and client connections are bounded by instances x (4 + write reserve). A fifth
+ * concurrent read still pipelines behind a busy connection and meets the acquire ceiling.
  */
 export const POOLED_MAX_CONNECTIONS = 4;
+
+/** Managed API write connections, with room for session refresh during another write. */
+export const POOLED_WRITE_MAX_CONNECTIONS = 2;
 
 /**
  * How long, in seconds, a pooled connection may sit idle before the client closes it. Inside the

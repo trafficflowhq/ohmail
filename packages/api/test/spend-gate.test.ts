@@ -1373,7 +1373,7 @@ describe("the gate, over HTTP, on every route it governs", () => {
       expect(res.status, `${method} ${path}`).not.toBe(403);
     }
     const resend = await H(req("POST", "/auth/verify-email/resend", {
-      bearer: s.token, headers: { "x-vercel-forwarded-for": "198.51.100.7" }, body: "{}",
+      bearer: s.token, headers: { "x-forwarded-for": "198.51.100.7" }, body: "{}",
     }), deps);
     expect(resend.status).toBe(200);
 

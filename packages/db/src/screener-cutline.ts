@@ -190,6 +190,18 @@ function andNotGone(d: Dialect, mailboxExpr: SQL, gone: readonly string[]): SQL 
 export function senderIsActiveSql(
   d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet, gone: readonly string[],
 ): SQL {
+  const sender = sql`and lower(mc.from_address) = ${senderExpr}`;
+  return sql`exists (select 1 ${activeSenderRowsSql(d, accountId, set, gone, sender)})`;
+}
+
+/** One set of active senders, for a queue read where RLS prevents a per-sender index seek. */
+export function activeSenderKeysSql(d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[]): SQL {
+  return sql`select distinct lower(mc.from_address) as sender ${activeSenderRowsSql(d, accountId, set, gone)}`;
+}
+
+function activeSenderRowsSql(
+  d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], sender: SQL = sql``,
+): SQL {
   const folders = sql`(${sql.join(CUTLINE_PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
   const at = cutlineInstant({ date: sql`mc.date`, arrivedAt: sql`mc.created_at` });
   const activeAt = (c: ResolvedCutline): SQL => activeSenderExpr(d, c, {
@@ -203,14 +215,12 @@ export function senderIsActiveSql(
   // 0157's index under a generic plan and on the device store, where the planner never merges it.
   const window = "one" in split && split.one.baselined && !split.one.allTime
     ? sql` and ${at} >= ${d.ts(split.one.cutoff)}` : sql``;
-  return sql`exists (
-    select 1 from messages mc
+  return sql`from messages mc
       join folder_state fsc on fsc.message_id = mc.id
      where mc.account_id = ${d.castUuid(accountId)}
-       and lower(mc.from_address) = ${senderExpr}${window}${andNotGone(d, sql`mc.mailbox_id`, gone)}
+       ${sender}${window}${andNotGone(d, sql`mc.mailbox_id`, gone)}
        and ${active}
-       and fsc.desired_folder in ${folders}
-  )`;
+       and fsc.desired_folder in ${folders}`;
 }
 
 /**
@@ -400,19 +410,35 @@ export function senderHasHeldClaimSql(
   d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date | CutlineSet, screening: readonly string[],
   gone: readonly string[],
 ): SQL {
+  const sender = sql`and lower(hm.from_address) = ${senderExpr}`;
+  return sql`exists (select 1 ${heldClaimRowsSql(d, accountId, senderExpr, cutoff, screening, gone, sender)})`;
+}
+
+/** All senders with a waiting claim, found through the held-folder index once per page. */
+export function heldClaimKeysSql(
+  d: Dialect, accountId: string, cutoff: CutlineSet, screening: readonly string[], gone: readonly string[],
+): SQL {
+  const sender = sql`lower(hm.from_address)`;
+  const held = sql`and hf.desired_folder = ${CUTLINE_GATE_FOLDER} and hm.deleted_at is null
+    and ${heldForIdentitySql({ senderCheck: sql`hm.sender_check`, unconfirmed: sql`hm.unconfirmed_hold` })}`;
+  return sql`select distinct ${sender} as sender ${heldClaimRowsSql(d, accountId, sender, cutoff, screening, gone, held)}`;
+}
+
+function heldClaimRowsSql(
+  d: Dialect, accountId: string, fromAddress: SQL, cutoff: Date | CutlineSet,
+  screening: readonly string[], gone: readonly string[], extra: SQL,
+): SQL {
   const waits = heldClaimWaitsSql(d, accountId, {
     folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
     by: sql`hm.sender_check_by`, date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
-    recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`, sender: senderExpr, auth: sql`hm.auth_verdict`,
+    recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`, sender: fromAddress, auth: sql`hm.auth_verdict`,
     brand: sql`hm.sender_check_brand`, unconfirmed: sql`hm.unconfirmed_hold`,
   }, cutoff, screening);
-  return sql`exists (
-    select 1 from messages hm
+  return sql`from messages hm
       join folder_state hf on hf.message_id = hm.id
      where hm.account_id = ${d.castUuid(accountId)}
-       and lower(hm.from_address) = ${senderExpr}${andNotGone(d, sql`hm.mailbox_id`, gone)}
-       and ${waits}
-  )`;
+       ${extra}${andNotGone(d, sql`hm.mailbox_id`, gone)}
+       and ${waits}`;
 }
 
 /**

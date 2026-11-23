@@ -19,8 +19,8 @@
     },
     {
       "id": "the-token-lookups",
-      "account": "None: the look-up is bound to nothing and keyed by the digest of the token the request presented.",
-      "reason": "A session's look-up and an erased account's bearer run before any account is known; each is one read of its own.",
+      "account": "None for a look-up, keyed by the digest of the presented token or by the address being registered. At sign-up, the id the transaction generated for the new account. For a desktop approval's confirm and deny, the session's account, with the approval id's digest as key.",
+      "reason": "Credential and address look-ups name an exact row before ownership is known. The signup transaction binds the account it creates. Confirm and deny bind the pending approval by digest while keeping the signed-in account.",
       "files": ["packages/services/src/auth/resolve-session.ts", "packages/services/src/auth/auth-service.ts"]
     },
     {

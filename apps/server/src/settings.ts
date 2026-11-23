@@ -121,6 +121,8 @@ export interface Settings {
   msDevice: MicrosoftDeviceClient | null;
   network: {
     port: number; trustedProxies: readonly string[]; externalDoor: ExternalDoor;
+    webClientIpSecret: string | null;
+    clientIpHeader: "x-real-ip" | null;
     probeAllowPrivate: boolean; pushAllowPrivate: boolean;
   };
   push: { vapidPublicKey: string | null };
@@ -474,6 +476,14 @@ function loadClocks(
 
 export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): Settings {
   const managed = managedBy(env);
+  const webClientIpSecret = managed ? env.TF_WEB_CLIENT_IP_SECRET?.trim() ?? null : null;
+  if (webClientIpSecret !== null && webClientIpSecret.length < 32) {
+    throw new Error("TF_WEB_CLIENT_IP_SECRET must be at least 32 characters");
+  }
+  const clientIpHeader = managed ? env.TF_CLIENT_IP_HEADER : undefined;
+  if (clientIpHeader !== undefined && clientIpHeader !== "x-real-ip") {
+    throw new Error("TF_CLIENT_IP_HEADER must be x-real-ip");
+  }
   // Everything below that differs between the two services asks a line of the list, never the lead.
   const chosen = chosenFor(managed);
   const environment = environmentOf(env, door.environmentFallback);
@@ -551,6 +561,8 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
     network: {
       port,
       trustedProxies: loadTrustedProxies(env),
+      webClientIpSecret,
+      clientIpHeader: clientIpHeader ?? null,
       externalDoor: loadTlsTerminator(env),
       // A self-hosted server's two switches. The managed service never dials a private address,
       // whatever its environment holds: both read false there.

@@ -35,7 +35,7 @@ export const desktopApprovalRoutes: Route[] = [
     pattern: "/auth/desktop-approval/claim",
     relay: false,  /* carries the hosted hand-off verifier */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    options: { public: true, credentialSubject: true, credentialLookup: true },
     handler: async (req, deps) => {
       const body = await readBody<{ approvalId?: unknown; verifier?: unknown; kind?: unknown; previousSession?: unknown }>(req);
       // `/auth/desktop-claim`'s carrier: the install's previous family, or nothing.

@@ -122,7 +122,7 @@ describe("each pile's note on senders nobody let in", () => {
       engine: createEngine(false, { NEXT_PUBLIC_API_BASE: "/api" }),
     });
     const note = () => within(el).queryAllByRole("note").find((n) =>
-      n.textContent?.includes("never let in"),
+      n.textContent?.includes("you haven't screened yet"),
     ) ?? null;
     await live.tick(30_000);
     expect(asks).toEqual([]);
@@ -131,13 +131,13 @@ describe("each pile's note on senders nobody let in", () => {
     await live.goTo("reads");
     await live.tick(1_000);
     expect(asks).toEqual(["news"]);
-    expect(note()?.querySelector("b")?.textContent).toBe("2 letters here were never let in");
-    expect(note()?.textContent).toContain("They are from senders you never let in.");
+    expect(note()?.querySelector("b")?.textContent).toBe("2 letters in News come from senders you haven't screened yet");
+    expect(note()?.textContent).toContain("Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.");
     await live.goTo("receipts");
     await live.tick(1_000);
     expect(asks).toEqual(["news", "receipts"]);
-    expect(note()?.querySelector("b")?.textContent).toBe("1 letter here was never let in");
-    expect(note()?.textContent).toContain("They are from senders you never let in.");
+    expect(note()?.querySelector("b")?.textContent).toBe("1 letter in Receipts comes from a sender you haven't screened yet");
+    expect(note()?.textContent).toContain("Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.");
     expect(writes).toEqual([]);
 
     await live.act(async () => { within(note()!).getByRole("button", { name: /screen 1/i }).click(); });
@@ -146,8 +146,8 @@ describe("each pile's note on senders nobody let in", () => {
     expect(note(), "the note outlived the press it answered").toBeNull();
     await live.goTo("reads");
     await live.tick(1_000);
-    expect(note()?.querySelector("b")?.textContent).toBe("2 letters here were never let in");
-    expect(note()?.textContent).toContain("They are from senders you never let in.");
+    expect(note()?.querySelector("b")?.textContent).toBe("2 letters in News come from senders you haven't screened yet");
+    expect(note()?.textContent).toContain("Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.");
     expect(writes).toEqual(["receipts"]);
   });
 });

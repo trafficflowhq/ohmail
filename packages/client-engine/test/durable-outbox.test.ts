@@ -1,5 +1,5 @@
 import type { EngineDraft, EngineMessage, EngineMutation } from "@ohmail/wire";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
   CursorExpiredError,
@@ -577,6 +577,42 @@ describe("durable outbox — kill-restart (fake-indexeddb, the webapp store)", (
 });
 
 describe("durable outbox — the boot replay cannot hold the sync hostage", () => {
+  it("drains after ten seconds while a restored write waits for its 36-second answer", async () => {
+    const factory = new IDBFactory();
+    const first = wire(new FixturesAdapter());
+    const store = new IndexedDbMirrorStore({ owner: "slow-replay", factory });
+    const original = new OhmailEngine({ adapter: first.adapter, store, now: () => DEMO_NOW });
+    await original.start();
+    first.setFailMutate(() => RETRYABLE());
+    const pending = await original.mutate({ kind: "mark_seen", messageIds: ["giulia"], unread: false });
+    store.close();
+
+    const second = wire(new FixturesAdapter());
+    const release = second.gateNextMutate();
+    const restoredStore = new IndexedDbMirrorStore({ owner: "slow-replay", factory });
+    const restored = new OhmailEngine({ adapter: second.adapter, store: restoredStore, now: () => DEMO_NOW });
+    await restored.hydrate();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const drain = restored.syncOnce();
+    const answer = setTimeout(release, 36_000);
+    try {
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(second.calls.slice(0, 2)).toEqual([
+        { op: "mutate", kind: "mark_seen", key: pending.key }, { op: "sync" },
+      ]);
+      await drain;
+      expect(outboxRows(restoredStore)).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(25_999);
+      expect(second.calls.filter(({ op }) => op === "mutate")).toHaveLength(1);
+    } finally {
+      clearTimeout(answer);
+      release();
+      await drain;
+      vi.useRealTimers();
+      restoredStore.close();
+    }
+  });
+
   it("one hung restored request stops being awaited at the deadline, and the drain still runs", async () => {
     const factory = new IDBFactory();
     const w1 = wire(new FixturesAdapter());

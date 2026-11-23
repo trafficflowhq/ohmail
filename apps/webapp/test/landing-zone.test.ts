@@ -549,15 +549,18 @@ describe("armed: a zone path in other capitals is a 308 to the zone's own spelli
 
   it("the matcher runs the middleware for every variant and no other path, read in either case", async () => {
     const at = await edgeRuns();
-    const controls = [...CONTROLS, "/api", "/auth/refresh", "/_next/static/x.js", "/a.b"];
+    const apiPaths = ["/api", "/API/sync"];
+    const controls = [...CONTROLS.filter((p) => !apiPaths.includes(p)), "/auth/refresh", "/_next/static/x.js", "/a.b"];
+    for (const p of apiPaths) expect(at(p), p).toBe(true);
     for (const [variant] of VARIANTS) expect(at(variant), variant).toBe(true);
     for (const p of controls) expect(at(p), p).toBe(false);
     const { config } = await import("../middleware.js");
     expect(config.matcher).toContainEqual({ source: ZONE_CASE_SOURCE });
     const [caseArm] = (await nextMatcher()).info.getMiddlewareMatchers([{ source: ZONE_CASE_SOURCE }], {});
-    for (const p of [...VARIANTS.flat(), ...controls]) {
+    for (const p of [...VARIANTS.flat(), ...controls, ...apiPaths]) {
       expect(new RegExp(caseArm!.regexp, "i").test(p), p).toBe(new RegExp(caseArm!.regexp).test(p));
     }
+    for (const p of apiPaths) expect(new RegExp(caseArm!.regexp).test(p), p).toBe(false);
   });
 
   it("THE ROW: every zone path in capitals, or its first letter flipped, gets no policy here and a 308 to it", async () => {

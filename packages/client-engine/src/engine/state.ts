@@ -23,7 +23,7 @@ import type { AttachmentItem, AttachmentsOutcome } from "./attachment-items.js";
 import type { KeptAsNewDraft, MutationResult, PendingMutation } from "./mutation-views.js";
 import {
   defaultEngineLocks, DRAIN_REQUEST_CEILING_MS, type EngineLocks, type EngineOptions, OUTBOX_HOLD_CEILING_MS,
-  OUTBOX_REPLAY_DEADLINE_MS,
+  OUTBOX_MUTATE_DEADLINE_MS, OUTBOX_REPLAY_DEADLINE_MS,
 } from "./options.js";
 import {
   type AbandonedMutation, isPersistedOutboxEntry, NO_QUEUED, NO_WAITING, type PersistedOutboxEntry,
@@ -149,6 +149,7 @@ export abstract class EngineState {
   protected replacingMirror = false;
   /** See {@link OUTBOX_REPLAY_DEADLINE_MS}; overridable only through the test seam. */
   protected readonly replayDeadlineMs: number;
+  protected readonly mutateDeadlineMs: number;
   /** See {@link OUTBOX_HOLD_CEILING_MS} and {@link DRAIN_REQUEST_CEILING_MS}; overridable only through the seams. */
   protected readonly holdCeilingMs: number;
   protected readonly drainCeilingMs: number;
@@ -690,10 +691,13 @@ export abstract class EngineState {
     this.syncLimit = opts.syncLimit;
     this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.replayDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_REPLAY_DEADLINE_MS;
+    this.mutateDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_MUTATE_DEADLINE_MS;
     const positive = (ms: number | undefined, fallback: number): number =>
       typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? ms : fallback;
     // Never below the deadline it follows: a send's ceiling lets go of a hold, which exists only from there.
-    this.holdCeilingMs = Math.max(positive(opts.outboxHoldCeilingMs, OUTBOX_HOLD_CEILING_MS), this.replayDeadlineMs);
+    this.holdCeilingMs = Math.max(
+      positive(opts.outboxHoldCeilingMs, OUTBOX_HOLD_CEILING_MS), this.replayDeadlineMs, this.mutateDeadlineMs,
+    );
     this.drainCeilingMs = positive(opts.drainRequestCeilingMs, DRAIN_REQUEST_CEILING_MS);
     this.autoReplayOn = opts.outboxAutoReplay !== false;
     this.transportIsUnreachable = opts.outboxTransportIsUnreachable === true;

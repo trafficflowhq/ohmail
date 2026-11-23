@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { clientIp, serviceContext } from "../src/context.js";
 import { makeDeps, req } from "./helpers.js";
 
@@ -17,11 +17,16 @@ import { makeDeps, req } from "./helpers.js";
 const ip = (headers: Record<string, string>): string => clientIp(req("GET", "/x", { headers }));
 
 describe("clientIp (trusted-hop only)", () => {
+  beforeEach(() => vi.stubEnv("VERCEL", undefined));
+  afterEach(() => vi.unstubAllEnvs());
+
   it("prefers x-vercel-forwarded-for, which the platform overwrites on every request", () => {
+    vi.stubEnv("VERCEL", "1");
     expect(ip({ "x-vercel-forwarded-for": "203.0.113.7" })).toBe("203.0.113.7");
   });
 
   it("IGNORES a spoofed first hop of x-forwarded-for when the trusted header is present", () => {
+    vi.stubEnv("VERCEL", "1");
     // The whole attack, in one request: the client prepends its own value and Vercel appends the
     // truth. Trusting the first hop reads the lie.
     expect(ip({
@@ -55,11 +60,10 @@ describe("clientIp (trusted-hop only)", () => {
     expect(ip({ "x-real-ip": "203.0.113.9" })).toBe("");
   });
 
-  it("a spoofed x-vercel-forwarded-for cannot be distinguished — which is why only the PLATFORM sets it", () => {
-    // Documenting the trust boundary rather than pretending to enforce it in-process: Vercel
-    // replaces `x-vercel-*` on ingress, so a client-sent value never survives. Behind any other
-    // proxy this header must be stripped at the edge — the test states the requirement.
-    expect(ip({ "x-vercel-forwarded-for": "1.2.3.4" })).toBe("1.2.3.4");
+  it("ignores an unverified Vercel address on other hosts", () => {
+    const edge = { "x-vercel-forwarded-for": "192.0.2.15" };
+    expect(ip({ ...edge, "x-forwarded-for": "203.0.113.7" }) === "203.0.113.7").toBe(true);
+    expect(ip(edge) === "").toBe(true);
   });
 
   it("no forwarding headers at all → empty string, never a fabricated address", () => {
