@@ -89,6 +89,6 @@ it("General applies appearance to all devices when private storage is isolated",
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   await tick(0);
-  await press(page.getByRole("button", { name: "Apply on all devices" }));
+  await press(page.getByRole("button", { name: "All devices", pressed: false }));
   expect(patches()).toEqual([{ themeFace: "ohmarchy" }]);
 }, 30_000);

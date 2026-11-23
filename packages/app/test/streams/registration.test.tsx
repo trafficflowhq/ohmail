@@ -59,7 +59,7 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
     expect(within(nav).getByText("News")).toBeTruthy();
     const list = screen.getByRole("region", { name: "News" });
     expect(within(list).getByText("2 new since you were here")).toBeTruthy();
-    expect(within(list).getByText("Seen up to here")).toBeTruthy();
+    expect(within(list).getByRole("heading", { name: "Seen up to here" })).toBeTruthy();
     expect(within(list).getByText("Issue 39")).toBeTruthy();
     const stream = screen.getByRole("region", { name: "News stream" });
     expect(within(stream).getByText("The words of n1.")).toBeTruthy();
@@ -322,7 +322,7 @@ describe("News, Receipts and the piles, each registered with the frame", () => {
 
   it("speaks German on every place", () => {
     mountStream({ place: "news", input: streamInput(LETTERS, said(), { fresh: 2 }), lang: "de" });
-    expect(screen.getAllByText("Bis hierher gesehen")).toHaveLength(2);
+    expect(screen.getAllByRole("heading", { name: "Bis hierher gesehen" })).toHaveLength(2);
     expect(screen.getByText("2 neue seit deinem letzten Besuch")).toBeTruthy();
     cleanup();
     mountPiles({ piles: pilesOf({ replyLater: [LETTERS[0]!] }), letters: LETTERS, lang: "de" });

@@ -86,7 +86,7 @@ async function mount(
     el, asked, organizedWith, press, flush, render,
     heading: st.heading,
     countLine: () => {
-      const counters = step()?.querySelectorAll(".oh-counters-row");
+      const counters = step()?.querySelectorAll("[role=status] .oh-counters-row");
       if (counters?.length) {
         return [...counters].map((row) =>
           [row.querySelector("dt")?.textContent, row.querySelector("dd")?.textContent].join(" ").trim()
@@ -106,10 +106,9 @@ const EIGHTEEN = { letters: 18, senders: 3, total: 18, complete: true, mirrored:
 describe("How far back names what agreeing screens", () => {
   it("names the count for the chosen window, and the press carries it", async () => {
     const s = await mount(NOBODY, () => EIGHTEEN);
-    await s.press(t.continue);
     expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.flush();
-    expect(s.countLine()).toBe("18 messages · 3 senders");
+    expect(s.countLine()).toBe("18 messages · 3 senders · — in History");
     expect(s.asked.at(-1)).toEqual({ dormancyDays: 365, scope: "window" });
     await s.press(t.agree);
     expect(s.organizedWith).toHaveLength(1);
@@ -121,29 +120,25 @@ describe("How far back names what agreeing screens", () => {
     const s = await mount(NOBODY, (sc) => (sc.scope === "all_time"
       ? { letters, senders: 41, total: letters, complete: true, mirrored: true }
       : EIGHTEEN));
-    await s.press(t.continue);
     await s.choose(t.winAll);
     expect(s.asked.at(-1)).toEqual({ scope: "all_time" });
-    expect(s.countLine()).toBe(`${letters.toLocaleString("en-US")} messages · 41 senders`);
+    expect(s.countLine()).toBe(`${letters.toLocaleString("en-US")} messages · 41 senders · — in History`);
   });
 
   it("a walk that stopped at its bound says more than", async () => {
     const s = await mount(NOBODY, () => ({ letters: 5000, senders: 22, total: 5000, complete: false, mirrored: true }));
-    await s.press(t.continue);
     await s.flush();
     expect(s.countLine()).toBe("More than 5,000 letters from at least 22 senders you have not decided about will wait in the Screener.");
   });
 
   it("says when nothing in the window waits for a decision", async () => {
     const s = await mount(NOBODY, () => ({ letters: 0, senders: 0, total: 0, complete: true, mirrored: true }));
-    await s.press(t.continue);
     await s.flush();
-    expect(s.countLine()).toBe("0 messages · 0 senders");
+    expect(s.countLine()).toBe("0 messages · 0 senders · — in History");
   });
 
   it("while the first import still reads the mailbox it says so, never \"nothing\", and the press still carries the count", async () => {
     const s = await mount(NOBODY, () => ({ letters: 0, senders: 0, total: 0, complete: true, mirrored: false }));
-    await s.press(t.continue);
     await s.flush();
     expect(s.countLine()).toBe(t.agreeCountReading);
     expect(s.countLine()).not.toBe(t.agreeCountNone);
@@ -158,13 +153,12 @@ describe("How far back names what agreeing screens", () => {
       const s = await mount(NOBODY, () => (++reads === 1
         ? { letters: 5, senders: 2, total: 5, complete: true, mirrored: false }
         : { ...EIGHTEEN }));
-      await s.press(t.continue);
       await s.flush();
       expect(reads).toBe(1);
       await act(async () => { vi.advanceTimersByTime(5_000); });
       await s.flush();
       expect(reads, "the count so far was not read again").toBe(2);
-      expect(s.countLine()).toBe("18 messages · 3 senders");
+      expect(s.countLine()).toBe("18 messages · 3 senders · — in History");
       await act(async () => { vi.advanceTimersByTime(20_000); });
       await s.flush();
       expect(reads, "a whole count is read again").toBe(2);
@@ -189,7 +183,6 @@ describe("How far back names what agreeing screens", () => {
         }, 1_000));
       };
       const s = await mount(NOBODY, null, { raw: slow });
-      await s.press(t.continue);
       await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
       expect(reads).toBe(1);
       await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
@@ -204,7 +197,6 @@ describe("How far back names what agreeing screens", () => {
 
   it("a count so far names itself so", async () => {
     const s = await mount(NOBODY, () => ({ letters: 5, senders: 2, total: 5, complete: true, mirrored: false }));
-    await s.press(t.continue);
     await s.flush();
     expect(s.countLine()).toBe(
       "ohmail is still reading this window. So far 5 letters from 2 senders you have not decided about would wait in the "
@@ -214,7 +206,6 @@ describe("How far back names what agreeing screens", () => {
 
   it("CONTROL — a door with no count names none, and the press asks for no screening of older mail", async () => {
     const s = await mount(NOBODY, null);
-    await s.press(t.continue);
     expect(s.countLine()).toBe("");
     await s.press(t.agree);
     expect(s.organizedWith[0]).not.toHaveProperty("screenBacklog");
@@ -224,7 +215,6 @@ describe("How far back names what agreeing screens", () => {
     const s = await mount(LIVE, () => EIGHTEEN);
     expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.choose(t.elsewhereChoiceHere);
-    await s.press(t.continue);
     await s.press(t.continue);
     expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.flush();
@@ -257,7 +247,6 @@ describe("the import's lost connection is said in plain words", () => {
 
   it("the window step says it is reconnecting while the server cannot be reached", async () => {
     const s = await mount({ ...NOBODY, unreachable: true }, () => COUNT);
-    await s.press(t.continue);
     await s.flush();
     expect(s.el.textContent).toContain(t.pullReconnecting);
     await s.render(NOBODY);

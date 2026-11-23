@@ -125,7 +125,7 @@ describe("the editable Ohbox bar", () => {
     // The words are the box's VALUE, editable — not merely its placeholder.
     expect(textarea().value).toBe(DEFAULT_BAR);
     // And an untouched prefill is not a pending change: Save stays disabled.
-    expect(buttonNamed(messages.settings.screening.save)!.disabled).toBe(true);
+    expect(buttonNamed(messages.settings.screening.save)).toBeUndefined();
     // Nothing has been written just by opening the pane.
     expect(patchBodies).toHaveLength(0);
   });
@@ -134,13 +134,12 @@ describe("the editable Ohbox bar", () => {
     stored.ohboxBar = "Only my clients and my kids' school.";
     await mount();
     expect(textarea().value).toBe("Only my clients and my kids' school.");
-    expect(buttonNamed(messages.settings.screening.save)!.disabled).toBe(true);
+    expect(buttonNamed(messages.settings.screening.save)).toBeUndefined();
   });
 
   it("arms Save once the text differs from the effective value, and writes the edited words", async () => {
     await mount();
-    const save = buttonNamed(messages.settings.screening.save)!;
-    expect(save.disabled).toBe(true);
+    expect(buttonNamed(messages.settings.screening.save)).toBeUndefined();
 
     await typeInto(textarea(), "Keep the mail from real people, and every receipt.");
     expect(buttonNamed(messages.settings.screening.save)!.disabled).toBe(false);
@@ -178,16 +177,16 @@ describe("the impersonation filing switch", () => {
     name: messages.settings.screening.impersonationTitle,
   }) ?? undefined;
 
-  it("shows the stored value, writes only its own key, and says what off means", async () => {
+  it("names the Spam action, shows the stored value and writes only its own key", async () => {
     stored.impersonationFiling = true;
     await mount();
     expect(sw()!.getAttribute("aria-checked")).toBe("true");
-    expect(host!.textContent).toContain(messages.settings.screening.impersonationOn);
+    expect(within(host!).getByRole("switch", { name: "File impersonations to Spam", checked: true })).toBe(sw());
     await act(async () => { sw()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await flush();
     expect(patchBodies).toEqual([{ impersonationFiling: false }]);
     expect(sw()!.getAttribute("aria-checked")).toBe("false");
-    expect(host!.textContent).toContain(messages.settings.screening.impersonationOff);
+    expect(within(host!).getByRole("switch", { name: "File impersonations to Spam", checked: false })).toBe(sw());
   });
 
   it("is absent against a server that does not send it", async () => {

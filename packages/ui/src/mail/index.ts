@@ -127,7 +127,7 @@ export { RuleLine } from "./Settings/RuleLine.js";
 export type { RuleLineProps } from "./Settings/RuleLine.js";
 export { SettingFilter } from "./Settings/SettingFilter.js";
 export type { SettingFilterProps } from "./Settings/SettingFilter.js";
-export { SettingLine, SettingTable } from "./Settings/SettingLine.js";
+export { SettingLine } from "./Settings/SettingLine.js";
 export type { SettingLineProps } from "./Settings/SettingLine.js";
 export { FigureLine } from "./Settings/FigureLine.js";
 export type { FigureLineProps } from "./Settings/FigureLine.js";

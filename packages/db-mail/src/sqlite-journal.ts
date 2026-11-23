@@ -847,5 +847,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"account_settings\" ADD COLUMN \"draft_replies\" integer NOT NULL DEFAULT 1;"
     ]
+  },
+  {
+    "name": "0219_hosted_invitation_details.sql",
+    "statements": [
+      "ALTER TABLE \"message_invitations\" ADD COLUMN \"hosted_details\" text;"
+    ]
   }
 ] as const;

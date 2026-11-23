@@ -147,9 +147,12 @@ async function switchNote(locale: Locale, fromComputer: boolean): Promise<string
   const el = await mount(locale, "#/settings/screener", node);
   const title = CATALOGUES[locale].settings.autoUnsub.title;
   await tick(100);
-  expect(within(el).getByRole("switch", { name: title })).toBeTruthy();
+  const setting = within(el).getByRole("group", { name: title });
+  expect(within(setting).getByRole("switch", { name: title })).toBeTruthy();
   if (fromComputer) expect(desktopPipe?.asked).toContain("GET /consent");
-  return departureNote(el, locale);
+  const details = CATALOGUES[locale].settingsScreener.details.replace("{title}", title);
+  await act(async () => { within(setting).getByRole("button", { name: details }).click(); });
+  return departureNote(within(document.body).getByRole("dialog", { name: details }), locale);
 }
 
 const HELD: EngineMessage = {

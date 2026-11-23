@@ -113,8 +113,8 @@ afterEach(async () => {
   setActiveCatalog("en", null);
 });
 
-/** The note under the auto-unsubscribe switch, once the gate has routed to the Screener pane. */
-async function screenerNote(status: EngineStatus, locale: Locale): Promise<string> {
+/** Open the auto-unsubscribe details from the mounted Screener pane. */
+async function screenerDetails(status: EngineStatus, locale: Locale): Promise<HTMLElement> {
   fakeShell(status);
   if (locale === "de") setActiveCatalog("de", de as never);
   window.location.hash = "#/settings/screener";
@@ -140,29 +140,33 @@ async function screenerNote(status: EngineStatus, locale: Locale): Promise<strin
     if (Date.now() - t0 > 15_000) throw new Error("The Screener Settings pane has no automatic unsubscribe switch");
     await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
   }
-  const note = row()!.nextElementSibling?.nextElementSibling;
-  expect(note?.tagName, "the switch's note is not under its row").toBe("P");
-  return note!.textContent ?? "";
+  const details = CATALOGUES[locale].settingsScreener.details.replace("{title}", words.autoUnsub.title);
+  await act(async () => {
+    within(row()!).getByRole("button", { name: details }).click();
+  });
+  return within(document.body).getByRole("dialog", { name: details });
 }
 
 describe("the Screener pane says where a screen-out's unsubscribe leaves from", () => {
   for (const locale of ["en", "de"] as const) {
     it(`the standalone door names this computer, never our servers (${locale})`, { timeout: 30_000 }, async () => {
-      const note = await screenerNote(LOCAL, locale);
-      expect(note, `${locale}: the standalone door says the request goes from our servers`).not.toMatch(SERVERS);
-      expect(note, `${locale}: the standalone door does not name the computer`).toMatch(COMPUTER[locale]);
+      const details = await screenerDetails(LOCAL, locale);
+      expect(within(details).getByText(CATALOGUES[locale].settings.autoUnsub.microcopyComputer)).toBeTruthy();
+      expect(details.textContent, `${locale}: the standalone door says the request goes from our servers`).not.toMatch(SERVERS);
+      expect(details.textContent, `${locale}: the standalone door does not name the computer`).toMatch(COMPUTER[locale]);
     });
   }
 
   it("a paired window names the computer too: the host's engine sends it", { timeout: 30_000 }, async () => {
-    const note = await screenerNote(PAIRED, "en");
-    expect(note).not.toMatch(SERVERS);
-    expect(note).toMatch(COMPUTER.en);
+    const details = await screenerDetails(PAIRED, "en");
+    expect(within(details).getByText(en.settings.autoUnsub.microcopyComputer)).toBeTruthy();
+    expect(details.textContent).not.toMatch(SERVERS);
+    expect(details.textContent).toMatch(COMPUTER.en);
   });
 
   it("CONTROL: the Cloud door keeps the server sentence, which is true there", { timeout: 30_000 }, async () => {
-    const note = await screenerNote(MANAGED, "en");
-    expect(note).toBe(en.settings.autoUnsub.microcopy);
-    expect(note).toMatch(SERVERS);
+    const details = await screenerDetails(MANAGED, "en");
+    expect(within(details).getByText(en.settings.autoUnsub.microcopy)).toBeTruthy();
+    expect(details.textContent).toMatch(SERVERS);
   });
 });

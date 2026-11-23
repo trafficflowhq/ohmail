@@ -74,7 +74,7 @@ afterEach(async () => {
 });
 
 /** The wizard at its mailbox step, the password refused for `tile` (the Microsoft one by its app-password link). */
-async function refusedOn(tile: "Microsoft 365" | "Gmail") {
+async function refusedOn(tile: string) {
   vi.resetModules();
   process.env.NEXT_PUBLIC_API_BASE = "/api";
   delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
@@ -121,7 +121,7 @@ async function refusedOn(tile: "Microsoft 365" | "Gmail") {
 
 describe("a password refused on the Microsoft tile", () => {
   it("where the sign-in runs: the sign-in sentence and the button, not the app-password advice", async () => {
-    const ui = await refusedOn("Microsoft 365");
+    const ui = await refusedOn(en.providerPicker.microsoftShort);
     expect(ui.refusal()).toBe(en.join.mailboxMicrosoftRefused);
     expect(ui.host.textContent).not.toContain(en.mailboxes.probe_auth);
     expect(ui.button(en.mailboxes.oauthContinue), "the sign-in sits beside the refusal").toBeTruthy();
@@ -133,7 +133,7 @@ describe("a password refused on the Microsoft tile", () => {
 
   it("where it does not: the refusal is Microsoft's app-password sentence, with no button", async () => {
     available = false;
-    const ui = await refusedOn("Microsoft 365");
+    const ui = await refusedOn(en.providerPicker.microsoftShort);
     expect(ui.refusal()).toBe(en.mailboxes.probe_auth_microsoft);
     expect(ui.button(en.mailboxes.oauthContinue)).toBeNull();
   });

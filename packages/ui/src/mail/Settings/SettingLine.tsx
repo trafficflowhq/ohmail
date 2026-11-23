@@ -156,7 +156,7 @@ export function SettingLine(props: SettingLineProps) {
   );
 }
 
-/** Read-only SettingLine rows with labels and values on two shared tracks. */
-export function SettingTable({ children }: { children: ReactNode }) {
+/** Read-only settings rows with labels and values on two shared tracks. */
+SettingLine.Table = function SettingTable({ children }: { children: ReactNode }) {
   return <div className="oh-settingtable">{children}</div>;
-}
+};

@@ -119,7 +119,7 @@ describe("no visit yet in this browser: a read letter filed on top", () => {
     await mirror.putLocal("view_meta", waterlineIdOf("reads"), { newestSeenId: staged.id, at: at(11, 50) });
     const { mail } = seat({ at: "#/reads", mirror });
     const list = count("News", "Nothing new since you were here");
-    expect(list.getAllByText("Seen up to here")).toHaveLength(1);
+    expect(list.getAllByRole("heading", { name: /^Seen up to here(?: |$)/ })).toHaveLength(1);
     expect(mail.mutations).toEqual([]);
   });
 });

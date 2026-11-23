@@ -747,10 +747,13 @@ describe("the reader wires it", () => {
     expect(reader).toMatch(/openedBodyFinal\(m, \{ framed, final: frameFinalFor === m\.id \}\)/);
     expect(reader).toMatch(/<MailBodyFrame[\s\S]{0,200}onFinal=/);
   });
-  it("in the Ohbox's time order the reader draws older members above the opened message and opens at it, until the person's first drag or square", () => {
-    expect(reader).toMatch(/const \{ above, below \} = readerGroups\(m, inOhbox\);/);
+  it("the reader draws members in time order and lands on its opening target until the person's first drag or square", () => {
+    expect(reader).toMatch(/const \{ above, below \} = readerGroups\(m\);/);
     expect(reader).toMatch(/\{above\.map\(\(h\) => memberPanel\(h, "above"\)\)\}[\s\S]*seen\.offset\("opened"[\s\S]*\{below\.map\(\(h\) => memberPanel\(h, "below"\)\)\}/);
-    expect(reader).toMatch(/anchorFacts\.current = \(\) => \(facts\.current\.inOhbox && aboveCount\.current > 0 \? seen\.topOf\(id\) : null\);/);
+    expect(reader).toContain("opening.current.target = selectMember ? id : newestId;");
+    expect(reader).toContain("shouldLand.current = railItems.length > 0 && railItems[0]?.id !== openingId;");
+    expect(reader).toContain("const top = shouldLand.current ? seen.topOf(opening.current.target ?? id) : null;");
+    expect(reader).toContain("target: () => openTarget(),");
     expect(reader).toMatch(/holding: !hasPaneScroll\(scrollKey\) \|\| place\.current !== null,/);
     expect(reader, "the oldest member is not flashed before the anchor places the opened one").toMatch(/opacity: unplaced \? 0 : 1/);
     expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.pin\(null\); markHold\.drop\(\); \}\}/);

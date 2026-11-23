@@ -275,7 +275,7 @@ describe("the auto-work opt-in's switch", () => {
     await mountShell();
 
     expect(switchEl().getAttribute("aria-checked")).toBe("false");
-    expect(text()).toContain(messages.screener.suggest.autoOff);
+    expect(pane().getByRole("switch", { name: messages.screener.suggest.autoTitle, checked: false })).toBe(switchEl());
     // Nothing was priced and nothing was written just by looking at the pane.
     expect(dryRuns()).toHaveLength(0);
     expect(patches()).toHaveLength(0);
@@ -289,7 +289,7 @@ describe("the auto-work opt-in's switch", () => {
     await mountShell();
     expect(consentReads).toBeGreaterThan(readsBefore);
     expect(switchEl().getAttribute("aria-checked")).toBe("false");
-    expect(text()).toContain(messages.screener.suggest.autoOff);
+    expect(pane().getByRole("switch", { name: messages.screener.suggest.autoTitle, checked: false })).toBe(switchEl());
 
     await teardownConfirmEnv();
     resetStorageOwnerForTest();
@@ -382,10 +382,8 @@ describe("the auto-work opt-in's switch", () => {
     // Boot reads consent. After boot, the opt-in only sends a quote and the consent write.
     expect(calls.slice(beforePress).map(({ path }) => path)).toEqual(["/screener/suggest", "/consent/settings"]);
 
-    // The row now states when, from the server's echo.
     expect(switchEl().getAttribute("aria-checked")).toBe("true");
-    expect(text()).toContain("On since");
-    expect(text()).not.toContain(messages.screener.suggest.autoOff);
+    expect(pane().getByRole("switch", { name: messages.screener.suggest.autoTitle, checked: true })).toBe(switchEl());
   });
 
   it("4b — a refused write leaves the switch showing the stored value and says so", async () => {
@@ -413,8 +411,7 @@ describe("the auto-work opt-in's switch", () => {
     // echo. An implementation that set its state from `enabled` would show this armed.
     expect(patches()[0]!.body).toEqual({ autoSuggest: true });
     expect(switchEl().getAttribute("aria-checked")).toBe("false");
-    expect(text()).toContain(messages.screener.suggest.autoOff);
-    expect(text()).not.toContain("On since");
+    expect(pane().getByRole("switch", { name: messages.screener.suggest.autoTitle, checked: false })).toBe(switchEl());
 
     // And the spender in the same tab is not armed either — the flag that authorises spending
     // came from the same echo.

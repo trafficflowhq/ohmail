@@ -385,7 +385,7 @@ describe("the pairing link, made once", () => {
     await press(en.devices.addAction);
     expect(server.on(MINT).map((sent) => sent.body)).toEqual([{ grant: "device-pair", label: "Ben" }]);
     expect(scanned()).toBe(LINK);
-    expect((document.body.textContent ?? "").split(LINK)).toHaveLength(1);
+    expect(screen.getAllByText(LINK, { exact: true })).toHaveLength(1);
     expect(said(en.devices.copied)).toBe(false);
     await press(en.devices.copyLink);
     expect(clipboard.written).toEqual([LINK]);
@@ -408,7 +408,7 @@ describe("the pairing link, made once", () => {
     await opened();
     await press(en.devices.addAction);
     expect(scanned()).toBe(LINK);
-    expect(said(LINK)).toBe(false);
+    expect(screen.getAllByText(LINK, { exact: true })).toHaveLength(1);
     expect(foundIn(SECRETS, server, written.lines)).toEqual([]);
     await press(en.devices.copyLink);
     expect(foundIn(SECRETS, server, written.lines)).toEqual([]);

@@ -17,7 +17,7 @@ import { NONE, type ReaderEntry } from "../../src/host/index.js";
 import { TextProvider } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress } from "../support/fake-window.js";
-import { ListMeetingContext, type ListMeeting } from "@ohmail/app-logic/reading";
+import { ListMeetingContext, PresentedMirrorContext, type ListMeeting } from "@ohmail/app-logic/reading";
 import { readerEntry, readerEntryFrom, readingScrollerIn, type ReaderParts } from "../../src/reader/index.js";
 import {
   bodyDouble,
@@ -333,14 +333,16 @@ describe("the reader in the frame", () => {
     };
     function Stream() {
       return (
-        <ListMeetingContext.Provider value={meeting}>
-          <section aria-label="first">
-            <entry.Actions messageId="m1" />
-          </section>
-          <section aria-label="second">
-            <entry.Actions messageId="m2" />
-          </section>
-        </ListMeetingContext.Provider>
+        <PresentedMirrorContext.Provider value={mail.engine.read()}>
+          <ListMeetingContext.Provider value={meeting}>
+            <section aria-label="first">
+              <entry.Actions messageId="m1" />
+            </section>
+            <section aria-label="second">
+              <entry.Actions messageId="m2" />
+            </section>
+          </ListMeetingContext.Provider>
+        </PresentedMirrorContext.Provider>
       );
     }
     /* No room is on where the host hands nothing above the panes and no reader: the place draws the panel itself. */

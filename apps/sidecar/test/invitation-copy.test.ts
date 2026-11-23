@@ -56,6 +56,8 @@ const page = (changes: SyncChange[], cursor: string): SyncResponse => ({
 const EMPTY_SNAPSHOT: SnapshotResponse = { asOfSeq: 99, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } };
 
 const INVITATION: MessageInvitationDTO = {
+  calendarEventId: "33333333-3333-5333-8333-333333333333",
+  previous: { start: "20261124T100000Z", startsAt: "2026-11-24T10:00:00.000Z" },
   method: "REQUEST", uid: "kickoff-17@studio.example", recurrenceId: "", sequence: 2, start: "20261201T100000Z",
   startsAt: "2026-12-01T10:00:00.000Z", organizer: "tobias@studio.example", invitedAddress: OWN, answer: null, answeredAt: null,
 };

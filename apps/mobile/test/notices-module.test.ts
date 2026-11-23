@@ -2,12 +2,12 @@
  * THE NOTICES' NATIVE MODULE ON ANDROID, read as the Kotlin it is built from: no Kotlin runs in this suite, and only
  * a phone shows a notice drawn or closed. What is held here is what the code says:
  *
- *  · the module is built for Android alone (nothing is posted on the iPhone), and answers the port's two functions;
+ *  · the module is built for Android alone (nothing is posted on the iPhone), and exposes only the port's count, preview and pairing commands;
  *  · the file that says which pairing is signed in is spelled once, by the gate, and one store reads and writes it,
  *    the way the wake's renderer reads it;
  *  · keeping a pairing, or none, takes back what is shown for any other pairing, and nothing is ever closed wholesale;
- *  · the poster asks for whom before anything else, and nothing it is handed reaches a notice's words, a channel's
- *    name or a log: it only chooses among the module's own sentences, which are the catalogue's, in both languages;
+ *  · the poster checks the pairing before posting. Count notices use catalogue sentences, and opted-in preview
+ *    text may appear only in the private notification. No caller input names a channel or enters a log;
  *  · nothing is logged, printed or sent.
  *
  * The store and the take-back's choice also ran on a JVM in the change that made them, and the poster was compiled
@@ -139,10 +139,10 @@ describe("what the module answers, and what the poster is handed", () => {
   /** What the poster is handed: the port's own names. */
   const HANDED = ["instance", "kind", "count", "change", "device"];
 
-  it("answers the port's two functions with the port's parameters, and nothing else: no event, no constant", () => {
+  it("answers the count and preview commands with their port parameters and declares no events or constants", () => {
     expect(module.match(/\bName\("[^"]*"\)/g)).toEqual(['Name("OhmailNotices")']);
     expect([...module.matchAll(/\b(?:Async)?Function\("(\w+)"\)/g)].map((m) => m[0])).toEqual([
-      'AsyncFunction("setLive")', 'AsyncFunction("post")',
+      'AsyncFunction("setLive")', 'AsyncFunction("postDetails")', 'AsyncFunction("post")',
     ]);
     expect(module).not.toMatch(/\b(?:Events|Constants|Property|Prop|View|OnCreate|OnDestroy|OnNewIntent|OnActivity\w*)\s*[({]/);
     expect(lines(block(module, 'AsyncFunction("setLive")'))[0]).toBe('AsyncFunction("setLive") { instance: String? ->');
@@ -152,6 +152,15 @@ describe("what the module answers, and what the poster is handed", () => {
     // The same lists, as the page's side of the port types them.
     expectTypeOf<Parameters<NoticesNative["setLive"]>>().toEqualTypeOf<[string | null]>();
     expectTypeOf<Parameters<NoticesNative["post"]>>().toEqualTypeOf<[string, string, number, string | null, string | null]>();
+    expectTypeOf<Parameters<NonNullable<NoticesNative["postDetails"]>>>().toEqualTypeOf<[string, string, string]>();
+    expect(lines(block(module, 'AsyncFunction("postDetails")'))).toEqual([
+      'AsyncFunction("postDetails") { instance: String, sender: String, subject: String ->',
+      "val ctx = context ?: return@AsyncFunction false",
+      "if (sender.length !in 1..160 || subject.length !in 1..160 ||",
+      "sender.any { it.isISOControl() } || subject.any { it.isISOControl() }) return@AsyncFunction false",
+      'NoticePoster.post(ctx, instance, "ohbox", 1, null, null, sender, subject)',
+      "}",
+    ]);
     expect(lines(block(module, 'AsyncFunction("post")'))).toEqual([
       'AsyncFunction("post") { instance: String, kind: String, count: Int, change: String?, device: String? ->',
       "val ctx = context ?: return@AsyncFunction false",
@@ -162,13 +171,18 @@ describe("what the module answers, and what the poster is handed", () => {
 
   it("asks for whom before anything else, and posts once, after that, tagged with the pairing", () => {
     const body = lines(post);
-    expect(body[0]).toBe("fun post(context: Context, instance: String, kind: String, count: Int, change: String?, device: String?): Boolean {");
-    expect(body[1]).toBe("if (!LiveInstanceGate.mayDraw(LiveInstanceStore.kept(context), instance)) return false");
+    expect(body.slice(0, 5)).toEqual([
+      "fun post(",
+      "context: Context, instance: String, kind: String, count: Int, change: String?, device: String?,",
+      "sender: String? = null, subject: String? = null,",
+      "): Boolean {",
+      "if (!LiveInstanceGate.mayDraw(LiveInstanceStore.kept(context), instance)) return false",
+    ]);
     expect(poster.split(".notify(").length - 1).toBe(1);
     expect(post.indexOf(".notify(")).toBeGreaterThan(post.indexOf("LiveInstanceGate.mayDraw("));
     // The pairing reaches the gate and the notice's tag, and nothing a person reads.
     expect(poster.split("\n").filter((l) => /\binstance\b/.test(l)).map((l) => l.trim())).toEqual([
-      body[0], body[1], "manager.notify(instance, words.id, builder.build())",
+      body[1], body[4], "manager.notify(instance, words.id, builder.build())",
     ]);
   });
 
@@ -176,9 +190,13 @@ describe("what the module answers, and what the poster is handed", () => {
     const calls = argumentsOf(poster, /\bsetContent\w*|\bsetTicker|\bsetSubText|\bsetStyle|\bsetGroup|\bNotificationChannel|\bLog\.\w+/);
     expect(calls.length).toBeGreaterThanOrEqual(4);
     for (const said of calls) for (const name of HANDED) expect(new RegExp(`\\b${name}\\b`).test(said), `${name} in (${said})`).toBe(false);
+    // Only the unlocked notification's title and body may take the opted-in preview.
+    expect(calls.filter((said) => /\b(sender|subject)\b/.test(said))).toEqual([
+      "sender ?: words.title", "subject ?: words.body",
+    ]);
     // No sentence is made in code: no string template and no glued string anywhere in the poster.
     expect(poster).not.toMatch(/"[^"\n]*\$|"\s*\+|\+\s*"|String\.format|\.format\(/);
-    // Every word is a resource of this module, chosen by the closed values; the kinds are the bridge's three.
+    // The default words are resources selected by the bridge's three closed kinds.
     expect(poster).toMatch(/getQuantityString\(R\.plurals\./);
     expect(armsOf(poster, "when (kind) {")).toEqual(["ohbox", "screener", "pairing"]);
     expect(poster).not.toMatch(/"scheduled"/);

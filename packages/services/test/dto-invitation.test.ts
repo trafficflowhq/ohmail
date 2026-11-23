@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { accounts, mailboxes, messageInvitations } from "@trafficflow/db";
+import { accounts, invitationCalendarId, mailboxes, messageInvitations } from "@trafficflow/db";
 import { materializeMessage, materializeMessages } from "../src/dto/materialize.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
@@ -13,14 +13,15 @@ describe("MessageDTO.invitation", () => {
   it("carries the row's identity, start, organizer, invitee and answer, the instants as ISO text", async () => {
     const { db, accountId, mailboxId } = await makeCtx();
     const id = await seedMessage(db, accountId, mailboxId, { from: "tobias@studio.example" });
-    await db.insert(messageInvitations).values({
+    const [invitation] = await db.insert(messageInvitations).values({
       accountId, messageId: id, mailboxId, uid: "kickoff-17@studio.example", recurrenceId: "1796119200000", sequence: 2,
       method: "REQUEST", startRaw: "20261201T100000Z", startsAt: new Date("2026-12-01T10:00:00Z"),
       organizer: "tobias@studio.example", invitedAddress: "Mila@Lichtgrat.example",
       answer: "tentative", answeredAt: new Date("2026-11-11T09:00:00Z"),
-    });
+    }).returning();
     const dto = (await materializeMessages(db, accountId, [id])).get(id);
     expect(dto?.invitation).toEqual({
+      calendarEventId: invitationCalendarId(invitation!),
       method: "REQUEST", uid: "kickoff-17@studio.example", recurrenceId: "1796119200000", sequence: 2,
       start: "20261201T100000Z", startsAt: "2026-12-01T10:00:00.000Z", organizer: "tobias@studio.example",
       invitedAddress: "Mila@Lichtgrat.example", answer: "tentative", answeredAt: "2026-11-11T09:00:00.000Z",
@@ -33,10 +34,11 @@ describe("MessageDTO.invitation", () => {
     const { db, accountId, mailboxId } = await makeCtx();
     const plain = await seedMessage(db, accountId, mailboxId, {});
     const bare = await seedMessage(db, accountId, mailboxId, {});
-    await db.insert(messageInvitations).values({ accountId, messageId: bare, mailboxId, uid: "x@y.example", method: "CANCEL" });
+    const [cancellation] = await db.insert(messageInvitations).values({ accountId, messageId: bare, mailboxId, uid: "x@y.example", method: "CANCEL" }).returning();
     const dtos = await materializeMessages(db, accountId, [plain, bare]);
     expect("invitation" in dtos.get(plain)!).toBe(false);
     expect(dtos.get(bare)?.invitation).toEqual({
+      calendarEventId: invitationCalendarId(cancellation!),
       method: "CANCEL", uid: "x@y.example", recurrenceId: "", sequence: 0, start: null, startsAt: null, organizer: null,
       invitedAddress: null, answer: null, answeredAt: null,
     });

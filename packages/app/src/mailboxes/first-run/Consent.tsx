@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from "react";
 import { Button, Counters, Dot, Page, Sentence } from "@ohmail/ui/base";
-import { SettingLine, SettingNote, SettingTable } from "@ohmail/ui/mail";
+import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { DoorSheet } from "../../doors/stage/DoorSheet.js";
 import { Next, StepForm, stepTop, type StepProps } from "./parts.js";
 import type { Say } from "./words.js";
@@ -40,7 +40,7 @@ export function FolderMap({ say, history }: { say: Say; history: boolean }): Rea
         rows={[{ figure: String(folders.length), words: say("onboarding.mapNewFolders"), end: "none" }]}
       />
       <DoorSheet kind="facts">
-        <SettingTable>
+        <SettingLine.Table>
           <SettingLine dense icon="ohbox" label={say("onboarding.mapInbox")} />
           <SettingLine dense sub label={say("screener.pileOhbox")} value={say("onboarding.mapOhbox")} />
           {history ? (
@@ -51,7 +51,7 @@ export function FolderMap({ say, history }: { say: Say; history: boolean }): Rea
             <SettingLine key={value} dense sub lead={<Dot kind="hot" />} label={label} value={say(value)} />
           ))}
           <SettingLine label={say("onboarding.mapOther")} value={say("onboarding.mapUnchanged")} />
-        </SettingTable>
+        </SettingLine.Table>
         <SettingNote>{say("onboarding.mapShared")}</SettingNote>
         {history ? <SettingNote>{say("onboarding.consentHistory")}</SettingNote> : null}
       </DoorSheet>

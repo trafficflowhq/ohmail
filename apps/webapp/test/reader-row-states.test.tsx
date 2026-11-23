@@ -74,6 +74,7 @@ import { mountStage } from "./_first-run-stage.js";
  */
 
 const t = O;
+const organizeTitle = t.organizeLast.replace("<window></window>", t.windowYear).replace(/\.$/, "");
 const tm = M;
 
 /** State (a): a consent-less reader, and nothing anywhere has recorded a holder. */
@@ -292,7 +293,7 @@ async function onElsewhere(): Promise<Harness> {
   await s.pick("here");
   await s.press(t.continue);
   expect(s.heading(), "'Organize here instead' did not reach the consent statement")
-    .toBe(t.mapTitle);
+    .toBe(organizeTitle);
   await s.press(t.back);
   expect(s.heading(), "Back did not park the cursor on the claim question").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   return s;
@@ -423,7 +424,7 @@ describe("SURFACE 2 — the claim question's banner", () => {
     await s.move(NOBODY);
     expect(s.heading(), "a screen about another install stood over a mailbox nothing organizes")
       .not.toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
-    expect(s.heading(), "the run lost its place instead of moving on").toBe(t.mapTitle);
+    expect(s.heading(), "the run lost its place instead of moving on").toBe(organizeTitle);
     expect(s.text(), "the lead about a second install survived the install")
       .not.toContain("This mailbox already has an organizer. Two installs never organize one mailbox at once.");
     expect(s.text(), "a relationship with an install that does not exist")
@@ -456,7 +457,7 @@ describe("SURFACE 2 — the claim question's banner", () => {
     expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.pick("here");
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.mapTitle);
+    expect(s.heading()).toBe(organizeTitle);
     await s.press(t.back);
     expect(s.heading(), "the walk did not park the cursor on the claim question")
       .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());

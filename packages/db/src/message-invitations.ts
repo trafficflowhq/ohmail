@@ -28,6 +28,7 @@ export const INVITATION_ADDRESS_MAX_CHARS = 254;
 const SEQUENCE_MAX = 2 ** 31 - 1;
 const METHODS: ReadonlySet<string> = new Set<InvitationMethod>(["REQUEST", "REPLY", "CANCEL", "COUNTER", "DECLINECOUNTER"]);
 const ANSWERS: ReadonlySet<string> = new Set<InvitationAnswer>(["accepted", "tentative", "declined"]);
+const EVENT_ID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const START_SHAPE = /^\d{8}(?:T\d{6}Z?)?$/;
 
 /** What the ingest read off one letter's calendar part (core's `LetterInvitation`), and whose it is. */
@@ -336,11 +337,20 @@ export async function putInvitationCopy(tx: Tx, of: InvitationCopyOf, field: Mes
     await tx.delete(messageInvitations).where(mine);
     return;
   }
-  await tx.insert(messageInvitations).values({ accountId: of.accountId, messageId: of.messageId, mailboxId: of.mailboxId, ...row })
-    .onConflictDoUpdate({ target: [messageInvitations.accountId, messageInvitations.messageId], set: { mailboxId: of.mailboxId, ...row } });
+  const hostedDetails: Pick<MessageInvitationDTO, "calendarEventId" | "previous"> = {};
+  const eventId = field?.calendarEventId;
+  if (typeof eventId === "string" && EVENT_ID.test(eventId)) hostedDetails.calendarEventId = eventId;
+  const previous = field?.previous;
+  if (previous != null && (previous.start === null ||
+      (typeof previous.start === "string" && START_SHAPE.test(previous.start)))) {
+    const startsAt = instant(previous.startsAt);
+    if (instantInDomain(startsAt)) hostedDetails.previous = { start: previous.start, startsAt: startsAt?.toISOString() ?? null };
+  }
+  const copy = { mailboxId: of.mailboxId, ...row, hostedDetails };
+  await tx.insert(messageInvitations).values({ accountId: of.accountId, messageId: of.messageId, ...copy })
+    .onConflictDoUpdate({ target: [messageInvitations.accountId, messageInvitations.messageId], set: copy });
 }
 
-/** The wire's field from a stored row: the row's own values, the instants as ISO text. */
 /** One personal calendar copy across revisions from the same organizer to the same mailbox. */
 export function invitationCalendarId(row: Pick<typeof messageInvitations.$inferSelect,
   "accountId" | "mailboxId" | "uid" | "recurrenceId" | "organizer">): string {
@@ -350,11 +360,13 @@ export function invitationCalendarId(row: Pick<typeof messageInvitations.$inferS
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+/** The wire field from a stored row, with the original calendar details on a Cloud copy. */
 export function invitationFieldOf(row: typeof messageInvitations.$inferSelect): MessageInvitationDTO | undefined {
   if (!METHODS.has(row.method)) return undefined;
   return {
     method: row.method as InvitationMethod,
-    ...((row.method === "REQUEST" || row.method === "CANCEL") && { calendarEventId: invitationCalendarId(row) }),
+    ...(row.hostedDetails ?? ((row.method === "REQUEST" || row.method === "CANCEL")
+      ? { calendarEventId: invitationCalendarId(row) } : {})),
     ...(row.proposal ? { proposal: row.proposal } : {}),
     uid: row.uid,
     recurrenceId: row.recurrenceId,

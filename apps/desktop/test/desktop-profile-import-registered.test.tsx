@@ -18,8 +18,8 @@ import { profileImportPath } from "../src/local-profile-import.js";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 let drawnCalendar: CalendarPort | typeof NONE = NONE;
-vi.mock("@ohmail/app/frame", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@ohmail/app/frame")>();
+vi.mock("@ohmail/app/frame", async () => {
+  const actual = await vi.importActual<typeof import("@ohmail/app/frame")>("@ohmail/app/frame");
   return {
     ...actual,
     Frame: (props: Parameters<typeof actual.Frame>[0]) => {

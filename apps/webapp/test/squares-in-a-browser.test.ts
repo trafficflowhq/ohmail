@@ -65,6 +65,28 @@ const squaresOf = (page: Page) => page.getByRole("group", { name: /^\d+ messages
  * The squares as drawn: each one's slot and face, whether it stands (a slot outside the run is folded to nothing) and
  * whether it is the reader's; the two counts; the capsule; the letters; the reading column's scroller.
  */
+async function showLetter(page: Page, index: number) {
+  const layout = await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>("[data-reading-scroll]")!;
+    const top = scroller.getBoundingClientRect().top;
+    const tops = [...scroller.querySelectorAll("[data-conv-id]")].map(
+      (letter) => letter.getBoundingClientRect().top - top + scroller.scrollTop,
+    );
+    return { tops, max: scroller.scrollHeight - scroller.clientHeight, view: scroller.clientHeight };
+  });
+  const last = layout.tops.length - 1;
+  const walk = threadWalk({ ...layout, opened: last });
+  const offset = index === 0 ? 0 : index === last ? layout.max
+    : Math.round((walk.scrollFor(index) + walk.scrollFor(index + 1)) / 2);
+  await page.evaluate((scrollTop) => {
+    document.querySelector<HTMLElement>("[data-reading-scroll]")!.scrollTop = scrollTop;
+  }, offset);
+  await expect.poll(async () => (await read(page)).squares.findIndex((square) => square.here)).toBe(index);
+  await expect.poll(() => squaresOf(page).evaluate((group) =>
+    group.getAnimations({ subtree: true }).some((animation) => animation.playState === "running"),
+  )).toBe(false);
+}
+
 async function read(page: Page) {
   const group = await squaresOf(page).elementHandle();
   return group!.evaluate((g: Element) => {
@@ -157,6 +179,7 @@ describe("the column of squares stands beside the letters, over none", () => {
   it("the squares stand still while the letters scroll, and stay beside them", async () => {
     const { page } = await open("n=8&open=0", 1440, 900);
     try {
+      await showLetter(page, 0);
       const before = await read(page);
       await page.evaluate(() => {
         document.querySelector<HTMLElement>("[data-reading-scroll]")!.scrollTop += 600;
@@ -248,6 +271,7 @@ describe("a long conversation's squares: a run, whole squares, +N and the taper"
       for (const at of [0, 3, Math.floor(n / 3), Math.floor(n / 2), n - 4, n - 1]) {
         const { page } = await open(`${query}&open=${at}&face=${face}&scheme=${scheme}`, width, height);
         try {
+          await showLetter(page, at);
           const r = await read(page);
           const here = r.squares.findIndex((s) => s.here);
           const shown = r.squares.filter((s) => s.stands).map((s) => s.index);
@@ -314,6 +338,7 @@ describe("a press on a square", () => {
       for (const motion of ["reduce", "no-preference"] as const) {
         const { page } = await open(query, width, height, motion);
         try {
+          await showLetter(page, line === "the column" ? 40 : 20);
           await page.waitForTimeout(300); // the first run's step
           const r = await read(page);
           const full = Math.max(...r.squares.filter((s) => s.stands).map((s) => s.face.width));

@@ -1,4 +1,4 @@
-//! How the allocator of the ENGINE the shell spawns is set: its arena cap and its mmap threshold.
+//! Memory settings for the Linux engine process.
 //!
 //! glibc gives a contending thread its own arena — the main one on the brk heap, each other one a
 //! 64 MiB mmap'd region. Measured on the Omarchy guest, capping them in the WEBVIEW's process is a
@@ -7,7 +7,8 @@
 //! for the ENGINE CHILD ONLY, on the command that spawns it, never for this process and never
 //! process-wide — a cap the renderer pays for and does not benefit from is a cost with no return.
 //!
-//! Linux only: no other platform's allocator reads it.
+//! The engine child also gets one JavaScript-engine setting that collects sooner while its heap grows, so a large
+//! import's freed pages are returned instead of held. Linux only: no other platform reads either.
 
 use std::process::Command;
 
@@ -36,7 +37,7 @@ pub const ENGINE_MMAP_THRESHOLD: Option<&str> = Some("32768");
 /// The variable glibc reads for it, trailing underscore included. Named once, here.
 pub const MMAP_THRESHOLD_VAR: &str = "MALLOC_MMAP_THRESHOLD_";
 
-/// Put the cap and the threshold on the engine's command, where there is one to put.
+/// Configure the engine command before appending the script path.
 ///
 /// On the command and not in this process's environment: glibc reads the variables when a
 /// process starts, so a child spawned with them gets them, and nothing else does.
@@ -48,6 +49,10 @@ pub fn apply_to_engine(command: &mut Command) {
         if let Some(value) = ENGINE_MMAP_THRESHOLD {
             command.env(MMAP_THRESHOLD_VAR, value);
         }
+        // A first import allocates short-lived objects faster than the JavaScript engine's default heap growth
+        // triggers collection. Freed pages can stay resident in the engine's heap pool until an idle
+        // collection releases them. Collect sooner so the pool grows less during import.
+        command.arg("--heap-growing-percent=15");
     }
 }
 

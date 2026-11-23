@@ -55,7 +55,6 @@ async function atTheAiStep(door: "cloud" | "selfhost", selfhostAi?: boolean) {
     expect(button, `no button labelled ${label}`).toBeTruthy();
     await act(async () => { button!.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
   };
-  await press(t.continue);
   await press(t.agree);
   expect((el.querySelector("h1")?.textContent ?? "").trim()).toContain(t.aiSay.split("<on>")[0]!.trim());
   const slot = el.querySelector<HTMLButtonElement>('.oh-page-say [aria-haspopup="menu"]');

@@ -2,15 +2,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { replyMemberId } from "../src/ui/reader-marks";
 
 /**
- * REPLY AND FORWARD ANSWER THE SAME MESSAGE. The reader's verbs act on the member it opened —
- * a conversation's latest unread message, else the newest one somebody else wrote — and Forward
- * takes that one resolver rather than a second rule of its own. Asserted over the syntax tree
- * (no React Native renderer here): the reader mounts ONE composer for every reply mode, handed
- * its own message, and inside it the reply send and the forward send name the same member.
+ * The reader uses one composer. Forward uses the viewed member. Reply and Reply All keep their
+ * resolved member from the time the composer opens. Both sends use the handed member.
  */
-
 const SRC = readFileSync(fileURLToPath(new URL("../src/ui/MessageActions.tsx", import.meta.url)), "utf8");
 
 function parse(source: string): ts.SourceFile {
@@ -52,8 +49,8 @@ function forwardOpensFor(source: string): string | null {
   return /const id = ([\w.!]+);/.exec(body)?.[1] ?? null;
 }
 
-describe("Reply and Forward resolve the same member", () => {
-  it("the reply and forward sends name one member", () => {
+describe("Reply and Forward keep their composer target", () => {
+  it("both sends name the member handed to the composer", () => {
     const reply = targetsOf(SRC, "sendReply");
     const forward = targetsOf(SRC, "sendForward");
     expect(reply.length, "the census found the reply send").toBeGreaterThan(0);
@@ -61,13 +58,41 @@ describe("Reply and Forward resolve the same member", () => {
     expect(new Set([...reply, ...forward])).toEqual(new Set(["m!.id"]));
   });
 
-  it("one composer serves every reply mode, handed the reader's own message", () => {
+  it("one composer forwards the viewed member and keeps the reply target when opened", () => {
     const mounts = mountsOf(SRC);
     const reader = mounts.filter((x) => x.mode === "{open.compose}");
     expect(reader, "one mount for reply, reply all and forward").toHaveLength(1);
-    expect(reader[0]!.m).toBe("{m}");
-    // Forward reads its id off the same `m` the reply presses open the composer over.
+    expect(reader[0]!.m).toBe('{open.compose === "forward" ? m : replyTarget.current}');
     expect(forwardOpensFor(SRC)).toBe("m.id");
+    expect(SRC).toMatch(/const openReply = \(all: boolean\) => \{\s+const replyTo = availableReply\.current;\s+replyTarget\.current = replyTo;\s+setOpen\(replyOpen\(a\.keptReply\(replyTo\.id\), all \? "replyAll" : "reply"\)\);/);
+  });
+
+  const incoming = (id: string) => ({ id, subject: "Conversation", time: "09:00", body: "Hello", seen: true });
+  const sent = { ...incoming("sent"), mine: true as const, seen: false };
+  const opened = {
+    id: "opened",
+    from: { name: "Lee", address: "" },
+    unread: false,
+    earlier: [
+      incoming("earliest"),
+      { ...incoming("latest"), later: true as const },
+      { ...sent, later: true as const },
+    ],
+  };
+
+  it("Reply and Reply All target the explicitly selected member", () => {
+    expect(replyMemberId(opened, true)).toBe("opened");
+  });
+
+  it("without a selection, the newest incoming member wins even after a sent reply", () => {
+    expect(replyMemberId(opened, false)).toBe("latest");
+    expect(replyMemberId({ ...opened, earlier: [incoming("earliest"), { ...sent, later: true }] }, false)).toBe("opened");
+    expect(replyMemberId({ ...opened, ownMail: true, earlier: [incoming("earliest")] }, false)).toBe("earliest");
+  });
+
+  it("without an incoming letter, Reply and Reply All target the open sent letter", () => {
+    expect(replyMemberId({ ...opened, ownMail: true, earlier: [sent] }, false)).toBe("opened");
+    expect(replyMemberId({ ...opened, ownMail: true, earlier: [] }, false)).toBe("opened");
   });
 
   it("a forward that resolves a member of its own reads as the refusal it is", () => {

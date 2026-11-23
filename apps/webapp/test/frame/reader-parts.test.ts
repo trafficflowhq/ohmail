@@ -11,7 +11,7 @@
  * hands it: the Ohbox's own place, the reader's column beside its list, the reader the shell's (`todaysReader`), fed
  * by the composition above the panes (its one file door and one picture door, its one look, its one composer's
  * Reply, the presented mirror its lists read). A reply is written inside its thread and leaves once with the letter it answers; a forward carries its files;
- * the account's stored resurface hour is offered and a changed one kept; an invitation's note stands over its letter;
+ * the account's stored resurface hour is offered and a changed one kept; an invitation's note follows its letter;
  * and no letter asks for a picture by itself while the account's word on pictures is not known: over the web's proxy
  * and over a host's own picture door (the desktop's), for a designed letter and for a prose one.
  */
@@ -402,7 +402,7 @@ describe("the account's resurface hour", () => {
 });
 
 describe("what today's reader says of an invitation", () => {
-  it("the note stands over the letter that carries one, outside its text, and says nothing over another", async () => {
+  it("the note follows the letter that carries one, outside its text, and appears only for that letter", async () => {
     sized(1440, 900);
     const thread = { threadId: "t-i" };
     await seat({
@@ -417,7 +417,7 @@ describe("what today's reader says of an invitation", () => {
     const note = within(first!).getByText(messages.body.invitationWithoutEvent);
     expect(note.closest("[data-read-body]"), "the note is not inside the letter's text").toBeNull();
     const text = first!.querySelector("[data-read-body]")!;
-    expect(note.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING, "the text follows the note").toBeTruthy();
+    expect(text.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING, "the note follows the text").toBeTruthy();
     expect(within(second!).queryByText(messages.body.invitationWithoutEvent)).toBeNull();
   }, 30_000);
 

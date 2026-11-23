@@ -185,13 +185,13 @@ describe("what the pane lists", () => {
 });
 
 describe("the link, shown once", () => {
-  it("shows the named QR and scan instructions without printing the link", () => {
+  it("shows the named QR, scan instructions and one link for manual entry", () => {
     drawn(STATES.pair.model);
     expect(screen.getByRole("heading", { name: "Ben" })).toBeTruthy();
     expect(line(dev("scanWith")).textContent).toContain(dev("scanApp"));
     expect(pictured).toEqual([{ value: LINK, label: dev("qrAria") }]);
-    expect(seen(dev("typedEntry"))).toBe(false);
-    expect((document.body.textContent ?? "").split(LINK)).toHaveLength(1);
+    expect(seen(dev("typedEntry"))).toBe(true);
+    expect((document.body.textContent ?? "").split(LINK)).toHaveLength(2);
     expect(seen(dev("onceUntil", { time: "09:29" }))).toBe(true);
     expect(button(dev("addAction"))).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
@@ -409,7 +409,7 @@ describe("the pane over its door", () => {
     });
     await pressed(dev("addAction"));
     expect(door.calls()).toEqual(["read", "groupsWebSessions", "add:Ben", "read"]);
-    expect(seen(LINK)).toBe(false);
+    expect(screen.getAllByText(LINK)).toHaveLength(1);
     await pressed(dev("mintedDone"));
     expect(document.body.innerHTML.includes(PART)).toBe(false);
     expect((screen.getByRole("textbox", { name: dev("whoseDevice") }) as HTMLInputElement).value).toBe("");

@@ -1401,6 +1401,13 @@
       "when": 1795372343503,
       "tag": "0218_account_settings_draft_replies",
       "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "7",
+      "when": 1795399641582,
+      "tag": "0219_hosted_invitation_details",
+      "breakpoints": true
     }
   ]
 }

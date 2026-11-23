@@ -489,8 +489,8 @@ describe("the hosted door's auto-suggest opt-in, over the bridge", () => {
        hold — including the dormancy window and the remote-image opt-out. */
     expect(write?.body).toEqual({ autoSuggest: true });
 
-    // The switch now reads the account's own timestamp, taken from the write's echo.
-    expect(el.textContent).toContain("On since");
+    // The switch now reflects the account’s stored answer from the write.
+    expect(optInSwitch().getAttribute("aria-checked")).toBe("true");
     expect(autoSuggestAt).toBe(STORED_AT);
     expect(asked.filter((a) => a.url === "/screener/suggest").map((a) => a.body?.dryRun)).toEqual([true]);
   });
@@ -514,17 +514,18 @@ describe("the hosted door's auto-suggest opt-in, over the bridge", () => {
 
     expect(asked.some((a) => a.url === CONSENT_SETTINGS_PATH), "the write never left").toBe(true);
     expect(autoSuggestAt, "the scripted account was supposed to decline").toBeNull();
-    expect(el.textContent, "the row claims the account is authorised when it is not")
-      .not.toContain("On since");
-    expect(el.textContent).toContain("New senders wait in the Screener");
+    expect(optInSwitch().getAttribute("aria-checked"), "the row claims the account is authorised when it is not")
+      .toBe("false");
   });
 
   it("turning it OFF writes straight through — no confirm in front of the brake", async () => {
     autoSuggestAt = STORED_AT;
     await mountHostedOptIn();
-    expect(el.textContent).toContain("On since");
+    expect(optInSwitch().getAttribute("aria-checked")).toBe("true");
 
     await click(optInSwitch());
+    expect(optInSwitch().getAttribute("aria-checked")).toBe("false");
+    expect(within(el).queryByRole("button", { name: "Get a quote" })).toBeNull();
     expect(asked.find((a) => a.url === CONSENT_SETTINGS_PATH)?.body).toEqual({ autoSuggest: false });
     // Nothing was priced: revoking an authorisation costs nothing and asks nothing.
     expect(wire()).not.toContain("POST /screener/suggest");

@@ -177,6 +177,14 @@ describe("Settings → Screener: the window and its mode", () => {
 
   /* ── THE CLAIM, IN BOTH LOCALES ────────────────────────────────────────────────────────── */
 
+  async function details(host: HTMLElement, locale: "en" | "de") {
+    const key = (locale === "de" ? screenerDe : screenerEn).settingsScreener.details;
+    const title = (locale === "de" ? de : en).settings.dormancy.title;
+    const label = key.replace("{title}", title);
+    await act(async () => { getByRole(host, "button", { name: label }).click(); });
+    return getByRole(document.body, "dialog", { name: label }).textContent ?? "";
+  }
+
   const MOVES_CLAIMS = [
     /moves your mail/i, /move your mail/i, /verschiebt deine post/i, /deine post wird verschoben/i,
   ];
@@ -185,9 +193,11 @@ describe("Settings → Screener: the window and its mode", () => {
     for (const [locale, msgs] of [["en", en], ["de", de]] as const) {
       for (const scope of ["window", "all_time"] as const) {
         const { host, root } = await mount({ days: 90, scope, messages: msgs as never, locale });
-        const text = host.textContent ?? "";
+        const pane = host.textContent ?? "";
+        const text = await details(host, locale);
         for (const claim of MOVES_CLAIMS) {
-          expect(text, `${locale}/${scope} made a moves-your-mail claim`).not.toMatch(claim);
+          expect(pane, `${locale}/${scope} pane made a moves-your-mail claim`).not.toMatch(claim);
+          expect(text, `${locale}/${scope} dialog made a moves-your-mail claim`).not.toMatch(claim);
         }
         // …and it says the true thing instead: the mail stays until a decision.
         expect(text.length).toBeGreaterThan(40);
@@ -202,7 +212,7 @@ describe("Settings → Screener: the window and its mode", () => {
       ["de", de, /Historie/, /gelesen oder ungelesen/, /Ungelesenes wird immer angezeigt/i],
     ] as const) {
       const { host, root } = await mount({ days: 60, scope: "window", messages: msgs as never, locale });
-      const text = host.textContent ?? "";
+      const text = await details(host, locale);
       expect(text, locale).toMatch(history);
       expect(text, locale).toMatch(readOrUnread);
       expect(text, locale).not.toMatch(unreadShows);
@@ -215,7 +225,7 @@ describe("Settings → Screener: the window and its mode", () => {
       const { host, root } = await mount({
         days: 90, scope: "all_time", messages: msgs as never, locale,
       });
-      const text = host.textContent ?? "";
+      const text = await details(host, locale);
       const wider = (msgs as typeof en).settings.dormancy.microcopyWider;
       const allTime = (msgs as typeof en).settings.dormancy.microcopyAllTime;
       expect(wider, `${locale} has no widening note`).toBeTruthy();
@@ -245,7 +255,7 @@ describe("Settings → Screener: the window and its mode", () => {
    */
   it("puts the mode rung in the same group, and states it the same way", async () => {
     const { host, root } = await mount({ days: 90, scope: "window" });
-    const group = host.querySelector("[role='group']");
+    const group = getByRole(host, "group", { name: en.settings.dormancy.ariaLabel });
     expect(group).toBeTruthy();
     const inside = [...group!.querySelectorAll("button")].map((n) => (n.textContent ?? "").trim());
     expect(inside).toContain("All time");

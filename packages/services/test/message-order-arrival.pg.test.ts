@@ -44,8 +44,12 @@ const ctx = (): ServiceContext => ({
 
 /** The one statement a read issued that walks the arrival order — the page's own keyset select. */
 function pageStatement(from: number): { query: string; params: unknown[] } {
-  const hits = logged.slice(from).filter((l) => /"messages"\."arrived_at"/.test(l.query) && /order by/i.test(l.query) && /limit/i.test(l.query));
-  expect(hits, "the read issued no arrival-ordered page statement").toHaveLength(1);
+  const hits = logged.slice(from).filter(({ query }) => {
+    // Materializing the selected letters can also order and limit a subquery for an earlier invitation.
+    const finalOrder = query.slice(query.toLowerCase().lastIndexOf("order by "));
+    return /"messages"\."arrived_at"/.test(finalOrder) && / limit \$\d+$/i.test(finalOrder);
+  });
+  expect(hits, "the read must issue one arrival-ordered page statement").toHaveLength(1);
   return hits[0]!;
 }
 

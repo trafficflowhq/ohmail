@@ -108,14 +108,19 @@ vi.mock("../src/theme", () => ({
   }),
 }));
 
-const world = vi.hoisted(() => ({ mail: null as any, glanced: [] as string[][], files: [] as string[] }));
+const world = vi.hoisted(() => ({
+  mail: null as any,
+  otherMail: new Map<string, { id: string }>(),
+  glanced: [] as string[][],
+  files: [] as string[],
+}));
 vi.mock("../src/state/world", () => ({
   useBodyStamp: () => 0,
   useFilesStamp: () => 0,
   useWorldToast: () => ({ say: () => undefined }),
   useWorld: () => ({
     worldKey: 1,
-    message: (id: string) => (world.mail && world.mail.id === id ? world.mail : undefined),
+    message: (id: string) => (world.mail?.id === id ? world.mail : world.otherMail.get(id)),
     actions: {
       openMessage: () => undefined,
       releaseAttachments: () => undefined,
@@ -149,8 +154,17 @@ vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/MailBodyFrame", () => ({ MailBodyFrame: () => null }));
 vi.mock("../src/ui/AttachmentPreview", () => ({ AttachmentPreview: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
-const verbs = vi.hoisted(() => ({ mode: "compact" as "compact" | "bar" | "rail" }));
-vi.mock("../src/ui/MessageActions", () => ({ MessageActions: () => null, useReaderVerbMode: () => verbs.mode }));
+const verbs = vi.hoisted(() => ({
+  mode: "compact" as "compact" | "bar" | "rail",
+  targets: null as { forward: string; reply: string | null } | null,
+}));
+vi.mock("../src/ui/MessageActions", () => ({
+  MessageActions: ({ m, replyTo }: { m: { id: string }; replyTo?: { id: string } | null }) => {
+    verbs.targets = { forward: m.id, reply: replyTo === undefined ? m.id : replyTo?.id ?? null };
+    return null;
+  },
+  useReaderVerbMode: () => verbs.mode,
+}));
 vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}) }));
 vi.mock("../src/ui/reader-verbs", () => ({ readerVerbMode: () => "compact" }));
 vi.mock("../src/ui/scaffold/plan", () => ({ scaffoldPlan: () => ({}) }));
@@ -211,7 +225,7 @@ function views(root: Element) {
 
 const memberOf = (id: string, sender: string) =>
   ({ id, subject: "Q3 plan", time: "09:00", body: `body of ${id}`, seen: false, ready: true as const, sender });
-const mailOf = (id: string, earlier: (ReturnType<typeof memberOf> & { later?: boolean })[]) => ({
+const mailOf = (id: string, earlier: (ReturnType<typeof memberOf> & { later?: boolean; mine?: true })[]) => ({
   id, unread: true, ownMail: false, from: { name: "Ben", address: "ben@fake.test" }, subject: "Q3 plan", time: "10:00",
   body: `body of ${id}`, bodyState: "full", html: null, place: "ohbox", earlier,
 });
@@ -223,6 +237,8 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date"] });
   native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = []; native.stuck = false;
   verbs.mode = "compact";
+  verbs.targets = null;
+  world.otherMail.clear();
   world.glanced = [];
   world.files = [];
   nav.focused = true;
@@ -236,13 +252,46 @@ afterEach(() => {
   root = null;
   vi.useRealTimers();
 });
-const mountReader = (id: string) => {
+const mountReader = (id: string, selectMember = false) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = client.createRoot(host);
-  act(() => root!.render(h(MessageReader, { id })));
+  act(() => root!.render(h(MessageReader, { id, selectMember })));
   return host;
 };
+
+describe("the reader's reply and forward targets", () => {
+  beforeEach(() => {
+    world.mail = mailOf("opened", [
+      { ...memberOf("incoming", "Lee"), later: true },
+      { ...memberOf("sent", "Me"), later: true, mine: true },
+    ]);
+    world.otherMail.set("incoming", { id: "incoming" });
+    world.otherMail.set("sent", { id: "sent" });
+  });
+
+  it("an explicitly selected letter is offered to both actions", () => {
+    mountReader("opened", true);
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "opened" });
+  });
+
+  it("opening the conversation replies to the latest incoming letter and keeps the viewed forward target", () => {
+    mountReader("opened");
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "incoming" });
+  });
+
+  it("uses the open letter when the newer target is unavailable", () => {
+    world.otherMail.delete("incoming");
+    mountReader("opened");
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "opened" });
+  });
+
+  it("opening your own letter still offers Reply to that letter", () => {
+    world.mail = { ...mailOf("opened", []), ownMail: true };
+    mountReader("opened");
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "opened" });
+  });
+});
 
 type Slop = { top: number; bottom: number; left: number; right: number };
 /** The rail's "+N" at one edge: the squares it hides there (0 where it shows none). */

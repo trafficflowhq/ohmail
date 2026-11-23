@@ -178,14 +178,14 @@ describe("the reading pane: everything else stays as it was", () => {
 });
 
 describe("the other body surfaces say the same", () => {
-  it("a conversation panel: the stub line above .pm-body, with the link", () => {
+  it("a conversation panel: the invitation link follows the body, outside its text", () => {
     const el = mount(msg("card"), { text: STUB }, { surface: "card" });
     expect(el.textContent).toContain(EN.invitationOwaLink);
     expect(settingLink(el)?.getAttribute("href")).toBe(HREF);
     const mail = el.querySelector("[data-read-body]")!;
     const note = el.querySelector("[role=note]")!;
     expect(mail.textContent).not.toContain(EN.invitationOwaLink);
-    expect(note.compareDocumentPosition(mail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mail.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("a conversation panel keeps the generic line for the header fact", () => {
