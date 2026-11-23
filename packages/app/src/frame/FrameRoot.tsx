@@ -40,7 +40,7 @@ export function FrameRoot({
     const stampsAccent =
       attributes["data-product"] === "cal" &&
       root.dataset.accent === undefined &&
-      root.dataset.face === "paper";
+      root.dataset.face !== "ohmarchy";
     if (stampsAccent) {
       root.dataset.accent = design.productAccent.cal;
     }

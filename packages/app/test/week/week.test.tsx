@@ -50,6 +50,24 @@ describe("the week", () => {
     ]);
   });
 
+  it("leaves Saturday and Sunday out of the week grid when weekends are hidden", () => {
+    mountView(WeekView, {
+      anchor: date(2026, 11, 18),
+      settings: { ...SETTINGS, weekStart: 5, weekends: false },
+    });
+    expect(
+      screen
+        .getAllByRole("button", { name: /November \d+, 2026$/ })
+        .map((head) => head.getAttribute("aria-label")),
+    ).toEqual([
+      "Monday, November 16, 2026",
+      "Tuesday, November 17, 2026",
+      "Wednesday, November 18, 2026",
+      "Thursday, November 19, 2026",
+      "Friday, November 20, 2026",
+    ]);
+  });
+
   it("an event across the change of hour sits on its wall-clock hours on the 25-hour day", () => {
     mountView(WeekView, {
       anchor: date(2026, 10, 25),

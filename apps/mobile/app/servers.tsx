@@ -1,3 +1,4 @@
+import { onboardingType } from "../src/theme/type";
 /**
  * The Servers screen — the pairings this phone holds, and the door chooser
  * for adding one. The pairings half is this file's own: switch, forget, and
@@ -23,9 +24,11 @@ import { isPairEnded } from "../src/net/session-death";
 import { gateFor } from "../src/state/gate";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
-import { Button, Panel, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
+import { Button, Panel, Screen, Scroller, Section, Tap, TapRow, Txt, useTopPad } from "../src/ui/base";
 import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { Doors } from "../src/ui/Doors";
+import { Icon } from "../src/ui/Icon";
+import { OnboardingTitle, useOnboardingLook } from "../src/ui/OnboardingPage";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
@@ -45,6 +48,9 @@ function ServersBody({ inPane }: { inPane: boolean }) {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
+  const { palette } = useOnboardingLook();
+  const state = conn.state;
+  const ended = (state.k === "refused" || state.k === "ended") && isPairEnded(state.reason);
   /** What a forget could not take back. Held HERE — see the note beside where it renders. */
   const [forgetFailure, setForgetFailure] = useState<Refusal | null>(null);
 
@@ -91,28 +97,39 @@ function ServersBody({ inPane }: { inPane: boolean }) {
   }, [held, focused]);
 
   return (
-    <Screen>
+    <Screen style={ended ? { backgroundColor: palette.stage } : undefined}>
       {inPane ? null : <Stack.Screen options={{ gestureEnabled: !held }} />}
-      {/* The page carries its own heading, so the bar carries only the way back. */}
-      {inPane ? <PaneTop /> : <DetailBar back={ownBack ? () => void leave() : undefined} />}
+      {inPane ? <PaneTop /> : ended ? (
+        <RecoveryBack opensMailbox={held && reopen !== null} onPress={() => void leave()} />
+      ) : <DetailBar back={ownBack ? () => void leave() : undefined} />}
       <Scroller bounded avoidKeyboard>
-        <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
-          <Txt variant="h1">{Copy.serversTitle}</Txt>
-          <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>
-            {Copy.serversNote}
-          </Txt>
-        </View>
+        {ended ? (
+          <View style={{ paddingTop: 12, paddingBottom: 30 }}>
+            <OnboardingTitle text={Copy.serversTitle} compact />
+          </View>
+        ) : (
+          <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
+            <Txt variant="h1">{Copy.serversTitle}</Txt>
+            <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>{Copy.serversNote}</Txt>
+          </View>
+        )}
 
         <StatusPanel />
 
         {conn.profiles.length > 0 ? (
-          <Panel style={{ marginTop: 14, paddingBottom: 12 }}>
-            <Section style={{ paddingTop: 16 }}>{Copy.serversProfiles}</Section>
+          <Panel style={{ marginTop: 16, paddingBottom: 12, ...(ended ? { backgroundColor: palette.sheet, boxShadow: [] } : {}) }}>
+            {ended ? (
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20 }}>
+                <Txt variant="settingsLabel">{Copy.phoneServersPaired}</Txt>
+                <Txt variant="caption" tone="ink2">{conn.profiles.length}</Txt>
+              </View>
+            ) : <Section style={{ paddingTop: 16 }}>{Copy.serversProfiles}</Section>}
             {conn.profiles.map((p) => (
               <ProfileRow
                 key={p.id}
                 profile={p}
                 active={p.id === conn.activeId}
+                recovery={ended}
                 onForgetFailed={setForgetFailure}
               />
             ))}
@@ -122,8 +139,10 @@ function ServersBody({ inPane }: { inPane: boolean }) {
                 cannot follow. Decided by the ROWS rather than by the live session: the note is
                 about every row under it. */}
             <View style={{ paddingHorizontal: 20, paddingTop: 6 }}>
-              <Txt variant="hint" tone="ink3">
-                {conn.profiles.every(organizesHere) ? Copy.serversForgetNoteHere : Copy.serversForgetNote}
+              <Txt variant={ended ? "body" : "hint"} tone={ended ? "ink2" : "ink3"}>
+                {conn.profiles.some(organizesHere)
+                  ? conn.profiles.every(organizesHere) ? Copy.serversForgetNoteHere : Copy.serversForgetNote
+                  : ended ? Copy.phoneServersForget : Copy.serversForgetNote}
               </Txt>
             </View>
           </Panel>
@@ -149,6 +168,7 @@ function ServersBody({ inPane }: { inPane: boolean }) {
 
         <View style={{ marginTop: 14 }}>
           <Doors
+            recovery={ended}
             onScan={() => router.push("/scan")}
             onTypeToken={() => router.push("/connect")}
             onStandalone={() => router.push("/standalone")}
@@ -159,10 +179,27 @@ function ServersBody({ inPane }: { inPane: boolean }) {
   );
 }
 
+function RecoveryBack({ opensMailbox, onPress }: { opensMailbox: boolean; onPress: () => void }) {
+  const { palette } = useOnboardingLook();
+  const top = useTopPad(8);
+  const label = opensMailbox ? Copy.ohbox : Copy.back;
+  return (
+    <View style={{ paddingTop: top, paddingHorizontal: 12, paddingBottom: 8, alignItems: "flex-start" }}>
+      <Tap accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{
+        minHeight: 40, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 4,
+        borderRadius: 999, borderWidth: 1, borderColor: palette["ctl-ring"], backgroundColor: palette.sheet,
+      }}>
+        <Icon name="back" size={16} color={palette.ink} />
+        <Txt variant="settingsLabel" style={{ color: palette.ink }}>{label}</Txt>
+      </Tap>
+    </View>
+  );
+}
 
 /** The connection's own words: live numbers, a boot in progress, a refusal, a death. */
 function StatusPanel() {
   const conn = useConnection();
+  const { palette } = useOnboardingLook();
   const s = conn.state;
   if (s.k === "starting" || s.k === "idle") {
     return conn.profiles.length === 0 ? (
@@ -174,6 +211,26 @@ function StatusPanel() {
         </View>
       </Panel>
     ) : null;
+  }
+  if ((s.k === "refused" || s.k === "ended") && isPairEnded(s.reason)) {
+    return (
+      <Panel style={{ padding: 20, gap: 16, backgroundColor: palette["sheet-new"] }}>
+        <Txt variant="settingsLabel" style={{ color: palette.ink, ...onboardingType.label }}>
+          {Copy.connectRefusedTitle}<Txt style={{ color: palette.hot, ...onboardingType.dot }}>●</Txt>
+        </Txt>
+        <View style={{ flexDirection: "row", gap: 8 }} accessibilityRole="alert">
+          <Icon name="info" color={palette.ink2} size={18} />
+          <Txt variant="body" style={{ flex: 1, color: palette.ink2, ...onboardingType.body }}>
+            {sayRefusal(s.reason)}
+          </Txt>
+        </View>
+        <Button
+          label={Copy.pairAgain}
+          onPress={() => router.push("/scan")}
+          style={{ minHeight: 44, alignSelf: "flex-start", backgroundColor: palette.sheet }}
+        />
+      </Panel>
+    );
   }
   return (
     <Panel style={{ paddingVertical: 16 }}>
@@ -189,11 +246,6 @@ function StatusPanel() {
             <Txt variant="settingsLabel" tone="accent">{Copy.connectRefusedTitle}</Txt>
             <Txt variant="hint" tone="ink2">{sayRefusal(s.reason)}</Txt>
           </>
-        ) : null}
-        {/* A SENTENCE WITH A REMEDY NEEDS THE VERB IN REACH. The row below re-pairs on a press,
-            which a person scrolling past this panel never learns; the same verb stands here. */}
-        {(s.k === "refused" || s.k === "ended") && isPairEnded(s.reason) ? (
-          <Button label={Copy.pairAgain} onPress={() => router.push("/scan")} />
         ) : null}
         {s.k === "live" ? <LiveFacts /> : null}
       </View>
@@ -242,9 +294,10 @@ function LiveFacts() {
   );
 }
 
-function ProfileRow({ profile, active, onForgetFailed }: {
+function ProfileRow({ profile, active, recovery, onForgetFailed }: {
   profile: ServerProfile;
   active: boolean;
+  recovery: boolean;
   /** Raised to the SCREEN, because a partial forget removes this very row. See its note there. */
   onForgetFailed: (reason: Refusal | null) => void;
 }) {
@@ -298,7 +351,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
   return (
     <View style={{ marginHorizontal: 8 }}>
       <TapRow
-        selected={active}
+        selected={active && !recovery}
         onPress={() => {
           // A row whose credential is gone re-pairs (one scan); a live one switches. BY ID:
           // this rendered row may be stale (a rotation may have landed since), and the
@@ -308,23 +361,25 @@ function ProfileRow({ profile, active, onForgetFailed }: {
         }}
         accessibilityRole="button"
         accessibilityLabel={Copy.ariaLabelDetail(here ? Copy.standaloneName : profile.origin, profile.flavor)}
-        style={{ paddingHorizontal: 12, paddingVertical: 10, gap: 2 }}
+        style={{ paddingHorizontal: 12, paddingVertical: 10, gap: recovery ? 8 : 2 }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          {active ? (
+          {recovery ? <Icon name={here ? "phone" : "computer"} size={18} color={t.c.ink2} /> : active ? (
             <View style={{ width: 7, height: 7, borderRadius: t.radius.dot, backgroundColor: t.c.accent }} />
           ) : null}
-          <Txt variant="navLabel" numberOfLines={1} style={{ flexShrink: 1 }}>
+          <Txt variant={recovery ? "settingsLabel" : "navLabel"} numberOfLines={1} style={{ flexShrink: 1 }}>
             {here ? Copy.standaloneName : profile.origin}
           </Txt>
           <View style={{ flex: 1 }} />
-          <Txt variant="caption" tone="ink3">{profile.flavor}</Txt>
+          {recovery && needsPair ? null : <Txt variant="caption" tone="ink3">{profile.flavor}</Txt>}
         </View>
-        <Txt variant="caption" tone="ink3" numberOfLines={1}>
+        <Txt variant={recovery ? "body" : "caption"} tone={recovery ? "ink2" : "ink3"}
+          numberOfLines={recovery ? undefined : 1} style={recovery ? { marginLeft: 26 } : undefined}
+        >
           {here ? Copy.serversOrganizedHere : needsPair ? Copy.pairEnded : profile.accountId}
         </Txt>
       </TapRow>
-      <View style={{ flexDirection: "row", paddingHorizontal: 12, paddingBottom: 6 }}>
+      <View style={{ flexDirection: recovery ? "row-reverse" : "row", paddingHorizontal: 12, paddingBottom: 6 }}>
         {/* ONE VERB, AND IT READS AS WHAT IT DOES. Forgetting a pairing removes a credential;
             forgetting this one stops the engine on this phone and hands the mailbox back — see
             `connection.tsx`'s forget arm, which does all three before the row goes. */}

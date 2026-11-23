@@ -50,6 +50,12 @@ describe("which drafts the phone edits", () => {
     ]);
   });
 
+  it("opens formatting the native composer can preserve", () => {
+    const html = "<p>See the <strong>draft</strong></p>";
+    const row = { ...draftRow({ body: "See the draft" }), html };
+    expect(draftEditOf(row)?.html).toBe(html);
+  });
+
   it.each([
     ["a Cc on a reply", { inReplyToMessageId: "m-1", cc: [{ name: null, address: "c@fake.test" }] }],
     ["a Bcc on a forward", { forwardOfMessageId: "m-1", bcc: [{ name: null, address: "b@fake.test" }] }],
@@ -133,7 +139,8 @@ describe("a draft opened here is one row from the first keystroke to the send", 
 
   it("the sheet is seeded from the row, saves into it as it goes, and keeps what is on screen on close", () => {
     expect(SHEET).toContain("const [draftId, setDraftId] = useState<string | null>(draft?.id ?? null);");
-    expect(SHEET).toContain("const [body, setBody] = useState(draft?.body ?? prefill?.body ?? \"\");");
+    expect(SHEET).toContain('const seed = draft?.body ?? prefill?.body ?? "";');
+    expect(SHEET).toContain("return { body: seed, runs: draft?.html ? runsOf(seed, draft.html) : null };");
     expect(SHEET).toContain("mode: m !== null ? mode : \"new\", messageId: m?.id ?? null,");
     expect(SHEET).toContain("mailboxId, to: m === null || addressed ? keptRecipients(to) : [], ...(m === null || fresh ? copiesToKeep(copies) : {}),");
     expect(SHEET).toContain("}, DRAFT_AUTOSAVE_MS);");

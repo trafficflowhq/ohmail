@@ -106,9 +106,9 @@ export function fakePhoneDoor(
     hand: (typed) => answer("hand", typed, answers.hand),
     pair: (ticket) => answer("pair", ticket, answers.pair, { ticket }),
     dismiss: (ticket) => void asked.push({ kind: "dismiss", ask: { ticket } }),
-    connect: (ask): ReactNode => {
+    connect: (ask, page): ReactNode => {
       connects.push(ask);
-      return (
+      return page(
         <button
           type="button"
           onClick={() =>
@@ -116,7 +116,8 @@ export function fakePhoneDoor(
           }
         >
           the connect form
-        </button>
+        </button>,
+        null,
       );
     },
     go: (to) => void asked.push({ kind: "go", ask: to }),

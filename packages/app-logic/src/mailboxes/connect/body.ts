@@ -133,14 +133,16 @@ export function inputOf(
   preset: ProviderPreset,
   pass: Secret,
   claims: Claims,
+  separatePorts = false,
 ): ConnectInput {
   const address = typed.address.trim();
   const user = typed.user.trim() || address;
   // A name that cannot be stored never reaches a body: the press refuses it first.
   const name = senderNameOf(typed.displayName ?? "");
-  const block = (of: Leg, field: string) =>
+  const block = (of: Leg, field: string, port: string) =>
     Object.freeze({
       ...serverOf(field, preset, of),
+      ...(separatePorts && preset.manual && port.trim() ? { port: Number(port) } : {}),
       user,
       pass,
       ...(claims[of].allowInsecure ? { allowInsecure: true as const } : {}),
@@ -149,8 +151,8 @@ export function inputOf(
   return Object.freeze({
     provider: preset.id,
     address,
-    imap: block("imap", typed.imapHost),
-    smtp: block("smtp", typed.smtpHost),
+    imap: block("imap", typed.imapHost, typed.imapPort),
+    smtp: block("smtp", typed.smtpHost, typed.smtpPort),
     ...(typeof name === "string" ? { displayName: name } : {}),
   });
 }
@@ -181,9 +183,18 @@ export function patchOf(typed: ConnectTyped, pass: Secret, claims: Claims): Conn
  * EACH SERVER AS A PRESS NAMES IT, for the consents: the field whole, trimmed and lower-cased, its port included.
  * An edit that types no host names the stored one. A consent given for one name is none for another.
  */
-export function sentOf(typed: ConnectTyped, preset: ProviderPreset | null): Record<Leg, string> {
+export function sentOf(
+  typed: ConnectTyped,
+  preset: ProviderPreset | null,
+  separatePorts = false,
+): Record<Leg, string> {
   const name = (field: string, port: string, of: Leg): string => {
-    if (preset !== null) return (preset.manual ? field : preset[of].host).trim().toLowerCase();
+    if (preset !== null) {
+      const ordinary = (preset.manual ? field : preset[of].host).trim().toLowerCase();
+      if (!separatePorts || !preset.manual || !ordinary || !port.trim()) return ordinary;
+      const { host } = splitHostPort(ordinary);
+      return `${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port.trim()}`;
+    }
     const host = field.trim().toLowerCase() || "stored";
     return port.trim() === "" ? host : `${host}:${port.trim()}`;
   };

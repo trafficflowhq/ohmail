@@ -1,6 +1,6 @@
 /**
  * The fourth door — what this phone is as the organizer, then the mailbox's
- * credentials. Two steps in this order, and the first cannot be skipped: the
+ * credentials. The limitations come first and cannot be skipped: the
  * limitations are read before any password field exists. Continue means the
  * cost was shown; "Choose differently" returns to the chooser with nothing
  * typed. Every decision on both steps lives in `src/ui/standalone-form.ts` —
@@ -11,6 +11,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Linking, Platform, TextInput, View } from "react-native";
 import { router } from "expo-router";
+import type { ProviderPreset } from "@ohmail/app-logic/mailboxes/connect/providers";
 import { Copy } from "../src/copy";
 import { refuse, sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
@@ -19,14 +20,14 @@ import {
   armConsentPress, holdStandaloneDoor, releaseStandaloneLaunch, sayOrganizerRestricted,
   standaloneLaunchGeneration, takeStandaloneLaunch,
 } from "../src/engine/organizer-session";
-import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
+import { PHONE_CLAIM_NAME, openStandaloneMailbox, standaloneAvailable } from "../src/engine/standalone-door";
 import { networkNow } from "../src/net/network-door";
 import { useConnection } from "../src/net/connection";
-import { useTheme } from "../src/theme";
-import { Button, Panel, Rule, Screen, Scroller, Tap, Txt } from "../src/ui/base";
-import { DetailBar } from "../src/ui/chrome";
+import { onboardingType } from "../src/theme/type";
+import { Button, Tap, Txt } from "../src/ui/base";
+import { OnboardingButton, OnboardingPage, OnboardingTag, OnboardingTitle, useOnboardingLook, useOnboardingButton } from "../src/ui/OnboardingPage";
 import { Field } from "../src/ui/Field";
-import { Segmented } from "../src/ui/Segmented";
+import { StandaloneProvider } from "../src/ui/StandaloneProvider";
 import { NotifyPermission } from "../src/ui/NotifyPermission";
 import { useNotifyPermission } from "../src/ui/useNotifyPermission";
 import {
@@ -65,56 +66,88 @@ function StandaloneBody() {
      for the next navigation — every other pushed screen does the same. */
   useLocale();
   const [step, setStep] = useState<StandaloneStep>("limits");
+  const [choice, setChoice] = useState<{ preset: ProviderPreset; address: string } | null>(null);
+  if (step === "limits") return <Limitations onGo={() => setStep("provider")} />;
+  if (step === "credentials" && choice !== null) {
+    return <Credentials {...choice} back={() => setStep("provider")} />;
+  }
   return (
-    <Screen>
-      <DetailBar title={Copy.doorPhone} />
-      {step === "limits" ? (
-        <Limitations onGo={() => setStep("credentials")} />
-      ) : (
-        <Credentials />
-      )}
-    </Screen>
+    <StandaloneProvider
+      back={() => setStep("limits")}
+      later={() => router.canGoBack() ? router.back() : router.replace("/welcome")}
+      choose={(preset, address) => {
+        setChoice({ preset, address });
+        setStep("credentials");
+      }}
+    />
   );
 }
 
-/** Step one. The three ruled sentences, then the confirm and the way back out. */
 function Limitations({ onGo }: { onGo: () => void }) {
-  const t = useTheme();
-  const lines = limitationLines(Platform.OS);
-  return (
-    <Scroller bounded avoidKeyboard>
-      <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 14 }}>
-        {/* THE HEADING IS THE FOCUS TARGET (`focusTargetFor("limits")`), because this step is a
-            read: a reader who lands mid-list has skipped the sentence that decides. */}
-        <Txt variant="h1" accessibilityRole="header" accessible>
-          {Copy.phoneStandaloneTitle}
-        </Txt>
-      </View>
-      <Panel style={{ paddingTop: 4, paddingBottom: 16 }}>
-        {lines.map((line, i) => (
-          <View key={line}>
-            {i > 0 ? <Rule inset={20} /> : null}
-            {/* Rows with hairlines rather than bullet glyphs — the panel's own idiom, and without
-                a `TapRow` wash they read as a list instead of as settings rows. */}
-            <View style={{ paddingHorizontal: 20, paddingVertical: 10 }}>
-              <Txt variant="body">{line}</Txt>
-            </View>
+  const { palette } = useOnboardingLook();
+  const [showFolders, setShowFolders] = useState(false);
+  const back = () => router.canGoBack() ? router.back() : router.replace("/welcome");
+  const terms = (
+    <OnboardingPage
+      showUnsaved
+      back={back}
+      actions={
+        <>
+          <OnboardingButton label={Copy.phoneStandaloneGo} onPress={onGo} />
+          <OnboardingButton label={Copy.phoneStandaloneBack} kind="quiet" onPress={back} />
+        </>
+      }
+    >
+      <OnboardingTitle text={Copy.phoneStandaloneTitle} compact />
+      <View style={{ marginTop: 16, padding: 20, borderRadius: 20, gap: 8, backgroundColor: palette.sheet }}>
+        {limitationLines(Platform.OS).map((line) => (
+          <View key={line} style={{ flexDirection: "row", gap: 8 }}>
+            <Txt accessible={false} style={{ color: palette.ink, ...onboardingType.body }}>•</Txt>
+            <Txt style={{ color: palette.ink, ...onboardingType.body, flex: 1 }}>{line}</Txt>
           </View>
         ))}
-      </Panel>
-      <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 12 }}>
-        <Button label={Copy.phoneStandaloneGo} variant="solid" onPress={onGo} />
-        {/* Deliberately a second way back, beside the bar's. After three lines the exit belongs
-            next to the verb, not at the top of the screen. */}
-        <Button
-          label={Copy.phoneStandaloneBack}
-          variant="quiet"
-          onPress={() => router.back()}
-          style={{ marginBottom: 24 }}
-        />
       </View>
-      <View style={{ height: t.space.paneXCompact }} />
-    </Scroller>
+      <View style={{ marginTop: 12, gap: 8 }}>
+        <OnboardingTag label={Copy.phoneFoldersTitle} large expanded={showFolders} onPress={() => setShowFolders(!showFolders)} />
+        {showFolders ? <FolderGuide /> : null}
+      </View>
+    </OnboardingPage>
+  );
+  if (!standaloneAvailable({ startEngine: phoneEngineStart() })) {
+    return (
+      <OnboardingPage back={back}
+        actions={<OnboardingButton label={Copy.phoneStandaloneBack} onPress={back} />}
+      >
+        <OnboardingTitle text={Copy.phoneStandaloneTitle} compact />
+        <Txt variant="body" accessibilityRole="alert" style={{ color: palette.ink, marginTop: 12 }}>
+          {Copy.standaloneNoEngine}
+        </Txt>
+      </OnboardingPage>
+    );
+  }
+  return terms;
+}
+
+function FolderGuide() {
+  const { palette } = useOnboardingLook();
+  const folders = [
+    ["ohmail/Screener", Copy.phoneFoldersScreener],
+    ["ohmail/News", Copy.phoneFoldersNews],
+    ["ohmail/Receipts", Copy.phoneFoldersReceipts],
+    ["ohmail/Screened", Copy.phoneFoldersScreened],
+    ["ohmail/Quarantine", Copy.phoneFoldersQuarantine],
+  ] as const;
+  return (
+    <View style={{ backgroundColor: palette.sheet, borderRadius: 20, padding: 16, gap: 12 }}>
+      <Txt variant="body" style={{ color: palette.ink }}>{Copy.phoneFoldersInbox}</Txt>
+      {folders.map(([name, note]) => (
+        <View key={name} style={{ gap: 2 }}>
+          <Txt variant="settingsLabel" style={{ color: palette.ink }}>{name}</Txt>
+          <Txt variant="body" style={{ color: palette.ink2 }}>{note}</Txt>
+        </View>
+      ))}
+      <Txt variant="body" style={{ color: palette.ink2 }}>{Copy.phoneFoldersOther}</Txt>
+    </View>
   );
 }
 
@@ -122,9 +155,10 @@ function Limitations({ onGo }: { onGo: () => void }) {
 type Phase = { k: "idle" } | { k: "opening" } | { k: "failed"; reason: Refusal };
 
 /** Step two. Address, password, and the server settings behind a disclosure. */
-function Credentials() {
+function Credentials({ preset, address: pickedAddress, back }: { preset: ProviderPreset; address: string; back: () => void }) {
   const conn = useConnection();
-  const [fields, setFields] = useState<StandaloneFields>(EMPTY_STANDALONE);
+  const { palette } = useOnboardingLook();
+  const [fields, setFields] = useState<StandaloneFields>(() => withAddress(EMPTY_STANDALONE, pickedAddress, preset.id));
   const [revealed, setRevealed] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [phase, setPhase] = useState<Phase>({ k: "idle" });
@@ -133,6 +167,7 @@ function Credentials() {
 
   const start = phoneEngineStart();
   const ready = mayConnect(fields) && phase.k !== "opening";
+  const onboardingButton = useOnboardingButton();
   /* The provider's App Password note, from the typed address or incoming host; null for every other mailbox. */
   const note = appPasswordNote(fields);
   /* THE NOTIFICATION ASK, held here so the sheet renders over this screen — see the call below
@@ -268,20 +303,38 @@ function Credentials() {
   };
 
   return (
-    <Scroller bounded avoidKeyboard>
-      <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 }}>
-        <Txt variant="h1" accessibilityRole="header">
-          {Copy.phoneStandaloneFormTitle}
-        </Txt>
-        <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
-          {Copy.phoneStandaloneFormLead}
-        </Txt>
-      </View>
-      <Panel style={{ paddingBottom: 16 }}>
+    <OnboardingPage
+      showUnsaved
+      back={() => { if (phase.k !== "opening") back(); }}
+      actions={
+        <Button appearance={onboardingButton}
+          label={phase.k === "opening" ? Copy.phoneStandaloneConnecting : Copy.phoneStandaloneConnect}
+          disabled={!ready}
+          onPress={() => void connect()}
+        />
+      }
+    >
+      <View style={{ gap: 12, marginTop: preset.manual ? 0 : -12 }}>
+        {preset.manual ? null : (
+          <Tap accessibilityRole="button" accessibilityLabel={Copy.phoneMailboxProvider(preset.label)}
+            accessibilityHint={Copy.phoneStandaloneAdvanced}
+            accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced((shown) => !shown)}
+          >
+            <Txt style={{ color: palette.ink, fontWeight: "700", paddingBottom: 6 }}>
+              {Copy.phoneMailboxProvider(preset.label)}
+            </Txt>
+          </Tap>
+        )}
         <Field
           value={fields.address}
-          onChange={(v) => setFields((cur) => withAddress(cur, v))}
+          onChange={(v) => setFields((cur) => withAddress(cur, v, preset.id))}
           label={Copy.phoneStandaloneAddress}
+          sentence={{
+            before: Copy.phoneMailboxIAm,
+            placeholder: Copy.phoneMailboxEmailBlank,
+            compact: preset.manual,
+            after: Copy.phoneMailboxWith,
+          }}
           inputRef={address}
           input={{
             keyboardType: "email-address",
@@ -293,7 +346,13 @@ function Credentials() {
         <Field
           value={fields.password}
           onChange={(v) => setFields((cur) => ({ ...cur, password: v }))}
-          label={Copy.phoneStandalonePassword}
+          label={preset.appPassword ? Copy.phoneStandaloneAppPassword : Copy.phoneStandalonePassword}
+          sentence={{
+            before: preset.appPassword ? Copy.phoneStandaloneAppPasswordClause : Copy.phoneMailboxPassword,
+            placeholder: preset.appPassword ? Copy.phoneMailboxAppCodeHint : Copy.phoneMailboxEntryHint,
+            compact: preset.manual,
+            end: "hot",
+          }}
           inputRef={password}
           secret
           revealed={revealed}
@@ -315,7 +374,12 @@ function Credentials() {
           value={fields.name ?? ""}
           onChange={(v) => setFields((cur) => ({ ...cur, name: v }))}
           label={Copy.phoneStandaloneName}
-          hint={Copy.phoneStandaloneNameHint}
+          sentence={{
+            before: Copy.phoneMailboxSeenAs,
+            placeholder: Copy.phoneMailboxNameBlank,
+            compact: true,
+            end: "ink",
+          }}
           input={{
             autoComplete: "name",
             textContentType: "name",
@@ -326,89 +390,15 @@ function Credentials() {
             },
           }}
         />
-        {/* A provider that takes only an App Password says so here, before the first press. */}
-        {note !== null ? (
-          <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
-            <Txt variant="caption" tone="ink2">{note.text}</Txt>
-            <ProviderLinks links={note.links} />
-          </View>
-        ) : null}
-
-        {/* ── SERVER SETTINGS, PRE-FILLED FROM THE ADDRESS ────────────────────────────────────
-            A disclosure rather than a nine-field form: behind a recognised domain these are facts
-            this app knows, and behind an unrecognised one the person opens it and types them. */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
-          <Tap
-            onPress={() => setAdvanced((v) => !v)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: advanced }}
-            accessibilityLabel={Copy.phoneStandaloneAdvanced}
-            style={{ paddingVertical: 8 }}
-          >
-            <Txt variant="settingsLabel" tone="accent">
-              {Copy.phoneStandaloneAdvanced}
-            </Txt>
-          </Tap>
-        </View>
-        {advanced ? (
-          <View>
-            <Field
-              value={fields.imapHost}
-              onChange={(v) => setFields((cur) => setTyped(cur, "imapHost", v))}
-              label={Copy.phoneStandaloneImapHost}
-              {...wears("imapHost")}
-              input={{ keyboardType: "url" }}
-            />
-            <Field
-              value={fields.imapPort}
-              onChange={(v) => setFields((cur) => setImapPort(cur, v))}
-              label={Copy.phoneStandaloneImapPort}
-              {...wears("imapPort")}
-              /* SELECTED ON FOCUS, so typing a port replaces the prefilled one (465 over 587 was 587465). */
-              input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
-            />
-            <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-              <Txt variant="sectionLabel" tone="ink3" style={{ paddingBottom: 4 }}>
-                {Copy.phoneStandaloneImapTls}
-              </Txt>
-              <Segmented<"on" | "off">
-                segments={[
-                  { value: "on", label: Copy.switchOn },
-                  { value: "off", label: Copy.switchOff },
-                ]}
-                value={fields.imapTls ? "on" : "off"}
-                onChange={(v) => setFields((cur) => setImapTls(cur, v === "on"))}
-              />
-              <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
-                {Copy.phoneStandaloneImapTlsHint}
-              </Txt>
-            </View>
-            <Field
-              value={fields.smtpHost}
-              onChange={(v) => setFields((cur) => setTyped(cur, "smtpHost", v))}
-              label={Copy.phoneStandaloneSmtpHost}
-              {...wears("smtpHost")}
-              input={{ keyboardType: "url" }}
-            />
-            <Field
-              value={fields.smtpPort}
-              onChange={(v) => setFields((cur) => setTyped(cur, "smtpPort", v))}
-              label={Copy.phoneStandaloneSmtpPort}
-              {...wears("smtpPort")}
-              input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
-            />
-          </View>
-        ) : null}
-
+        <Txt variant="caption" tone="ink2">{Copy.phoneStandaloneFormLead}</Txt>
         {/* The refusal sits beside the verb unless the OPEN disclosure is already wearing it on the
             field it names — a sentence hidden behind a closed disclosure is a refusal nobody reads,
             and a sentence about a password attached to the host field names the wrong thing. */}
         {phase.k === "failed" && !(advanced && refusalNamesServerFields(phase.reason)) ? (
           <Txt
-            variant="caption"
-            tone="ink2"
+            variant="body"
             accessibilityRole="alert"
-            style={{ paddingHorizontal: 16, paddingTop: 14 }}
+            style={{ color: palette.ink, fontWeight: "700" }}
           >
             {sayRefusal(phase.reason)}
           </Txt>
@@ -419,26 +409,103 @@ function Credentials() {
           </View>
         ) : null}
 
-        <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
-          <Button
-            label={phase.k === "opening" ? Copy.phoneStandaloneConnecting : Copy.phoneStandaloneConnect}
-            variant="solid"
-            disabled={!ready}
-            onPress={() => void connect()}
-          />
-        </View>
-      </Panel>
+        {/* A provider that takes only an App Password says so here, before the first press. */}
+        {note !== null ? <ProviderLinks links={note.links} note={note.text} /> : null}
+
+        {/* ── SERVER SETTINGS, PRE-FILLED FROM THE ADDRESS ────────────────────────────────────
+            A disclosure rather than a nine-field form: behind a recognised domain these are facts
+            this app knows, and behind an unrecognised one the person opens it and types them. */}
+        {preset.manual ? <OnboardingTag
+          label={fields.imapHost || Copy.phoneMailboxHostPorts}
+          accessibilityLabel={Copy.phoneStandaloneAdvanced}
+          disclosure
+          expanded={advanced}
+          onPress={() => setAdvanced((shown) => !shown)}
+        /> : null}
+        {advanced ? (
+          <View style={{ gap: 12 }}>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Field
+                  value={fields.imapHost}
+                  onChange={(v) => setFields((cur) => setTyped(cur, "imapHost", v))}
+                  boxed
+                  label={Copy.phoneStandaloneImapHost}
+                  {...wears("imapHost")}
+                  input={{ keyboardType: "url" }}
+                />
+              </View>
+              <View style={{ width: 96 }}>
+                <Field
+                  value={fields.imapPort}
+                  onChange={(v) => setFields((cur) => setImapPort(cur, v))}
+                  boxed
+                  label={Copy.phoneStandaloneImapPort}
+                  {...wears("imapPort")}
+                  input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
+                />
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Field
+                  value={fields.smtpHost}
+                  onChange={(v) => setFields((cur) => setTyped(cur, "smtpHost", v))}
+                  boxed
+                  label={Copy.phoneStandaloneSmtpHost}
+                  {...wears("smtpHost")}
+                  input={{ keyboardType: "url" }}
+                />
+              </View>
+              <View style={{ width: 96 }}>
+                <Field
+                  value={fields.smtpPort}
+                  onChange={(v) => setFields((cur) => setTyped(cur, "smtpPort", v))}
+                  boxed
+                  label={Copy.phoneStandaloneSmtpPort}
+                  {...wears("smtpPort")}
+                  input={{ inputMode: "numeric", keyboardType: "number-pad", selectTextOnFocus: true }}
+                />
+              </View>
+            </View>
+            <Tap
+              accessibilityRole="switch"
+              accessibilityLabel={Copy.phoneStandaloneImapTls}
+              accessibilityHint={Copy.phoneStandaloneImapTlsHint}
+              accessibilityState={{ checked: fields.imapTls }}
+              onPress={() => setFields((cur) => setImapTls(cur, !cur.imapTls))}
+              style={{ minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+            >
+              <Txt variant="settingsLabel" style={{ color: palette.ink }}>{Copy.phoneStandaloneImapTls}</Txt>
+              <View style={{
+                width: 44, height: 26, padding: 4, borderRadius: 13,
+                alignItems: fields.imapTls ? "flex-end" : "flex-start",
+                backgroundColor: fields.imapTls ? palette.solid : palette.soft,
+              }}>
+                <View style={{
+                  width: 18, height: 18, borderRadius: 9,
+                  backgroundColor: fields.imapTls ? palette["on-solid"] : palette.ink2,
+                }} />
+              </View>
+            </Tap>
+          </View>
+        ) : null}
+
+      </View>
       <NotifyPermission open={notify.open} onAnswer={notify.answer} />
-      <View style={{ height: 32 }} />
-    </Scroller>
+    </OnboardingPage>
   );
 }
 
 /** A provider's pages, each opened in the system browser by the person's own press. */
-function ProviderLinks({ links }: { links: readonly ProviderLink[] }) {
+function ProviderLinks({ links, note }: { links: readonly ProviderLink[]; note?: string }) {
+  const [more, setMore] = useState(false);
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 16 }}>
-      {links.map((link) => (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+      {note && links.length > 1 ? <OnboardingTag label={Copy.phoneMailboxPrerequisite} /> : null}
+      {note ? <OnboardingTag label={Copy.phonePasswordHelp} expanded={more} onPress={() => setMore(!more)} /> : null}
+      {more ? <Txt variant="body" tone="ink2" style={{ width: "100%" }}>{note}</Txt> : null}
+      {(more || !note ? links : []).map((link) => (
         <Tap
           key={link.url}
           onPress={() => { void Linking.openURL(link.url).catch(() => undefined); }}

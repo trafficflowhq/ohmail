@@ -50,6 +50,21 @@ describe("the tab navigation, migrated onto the glass grammar", () => {
     }
   });
 
+  it("opens More over the current compact mail screen and closes it before selecting a place", () => {
+    expect(NAV).toMatch(/if \(id === "more" && onMore\) \{\s*onMore\(\);\s*return;/);
+    expect(NAV).toContain("<MailPlacesDrawer");
+    const drawer = read("src/ui/MailPlacesDrawer.tsx");
+    expect(drawer).toContain("<GlassSidebar");
+    expect(drawer).toContain("onNavigate={onClose}");
+    expect(drawer).toContain('"hardwareBackPress"');
+  });
+
+  it("offers the calendar switch at the Ohbox title and in More", () => {
+    expect(read("app/(tabs)/index.tsx")).toContain("<MailCalendarSwitch");
+    expect(read("src/ui/MailPlacesDrawer.tsx")).toContain("<MailCalendarSwitch");
+    expect(read("src/ui/MailCalendarSwitch.tsx")).toContain('sender.open({ to: "last" })');
+  });
+
   it("keeps every badge on the engine's own counts — the fields, not a local derivation", () => {
     for (const field of ["w.ohbox.unread", "w.screener.waiting.length", "w.reads.newCount", "w.receipts.newCount"]) {
       expect(NAV).toContain(field);

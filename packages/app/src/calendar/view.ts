@@ -20,6 +20,7 @@ export interface CalendarViewSettings {
   readonly newEventsCalendarId?: string | null;
   /** The week's first day, Monday 0 to Sunday 6. */
   readonly weekStart: number;
+  readonly weekends?: boolean;
   readonly weekNumbers: boolean;
   readonly secondZone: string | null;
   /** The hours in view when the calendar opens, in minutes of the day. */

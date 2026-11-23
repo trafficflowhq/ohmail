@@ -35,7 +35,7 @@ export interface SecurityDoor {
   /** Makes a new set of recovery codes. The set in use stops working. */
   newCodes(): Promise<Answer<readonly string[]>>;
   /** Starts an authenticator's enrolment: the key to type into the app. */
-  startAuthenticator(): Promise<Answer<{ readonly key: string }>>;
+  startAuthenticator(): Promise<Answer<{ readonly key: string; readonly uri?: string }>>;
   /** Finishes the enrolment with the app's code, as typed and trimmed. */
   activate(code: string): Promise<Answer<null>>;
   removeAuthenticator(): Promise<Answer<null>>;
@@ -65,7 +65,8 @@ export interface SecurityModel {
     | { readonly at: "shown"; readonly codes: readonly string[] };
   /** The authenticator's sheet: at rest, or its key with the code being typed. */
   readonly authenticator:
-    { readonly at: "rest" } | { readonly at: "key"; readonly key: string; readonly code: string };
+    | { readonly at: "rest" }
+    | { readonly at: "key"; readonly key: string; readonly uri?: string; readonly code: string };
   /** The verb on its way, for the control that says it is working. */
   readonly working: SecurityAct["kind"] | null;
   /** Why the last verb did not go through, and which verb it was. */
@@ -117,7 +118,7 @@ export type SecurityEvent =
   /** The door made the new set: it is shown before anything else is asked. */
   | { readonly kind: "made"; readonly codes: readonly string[] }
   /** The door started an enrolment: its key. */
-  | { readonly kind: "started"; readonly key: string }
+  | { readonly kind: "started"; readonly key: string; readonly uri?: string }
   /** The door took the code: the key and the code leave memory. */
   | { readonly kind: "activated" }
   /** The act on its way is over: taken, or refused with a word. */
@@ -205,7 +206,10 @@ export function securityStep(state: SecurityState, event: SecurityEvent): Securi
     case "made":
       return stays({ ...state, codes: { at: "shown", codes: event.codes } });
     case "started":
-      return stays({ ...state, authenticator: { at: "key", key: event.key, code: "" } });
+      return stays({
+        ...state,
+        authenticator: { at: "key", key: event.key, ...(event.uri ? { uri: event.uri } : {}), code: "" },
+      });
     case "activated":
       return stays({ ...state, authenticator: { at: "rest" } });
     case "answered":

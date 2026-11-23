@@ -26,9 +26,11 @@ import {
   useHoursScroller,
   useTimeGrid,
   weekDays,
+  weekdayOfDay,
   type PlainDate,
   type TimeGridDay,
 } from "@ohmail/app-logic/calendar";
+import { freeHours } from "../day/DayView.js";
 import { timedResizeProps } from "../calendar/view.js";
 import type {
   CalendarEventView,
@@ -103,7 +105,8 @@ function timeContext(menu: WeekContextActions, day: string, event: MouseEvent<HT
 
 /** The days the week shows: seven from the week's first day. */
 export function weekSpan(anchor: PlainDate, settings: CalendarViewSettings): readonly PlainDate[] {
-  return weekDays(anchor, settings.weekStart);
+  const days = weekDays(anchor, settings.weekStart);
+  return settings.weekends === false ? days.filter((day) => weekdayOfDay(day) < 5) : days;
 }
 
 /** On a phone's narrow width the week shows the picked day's hours alone; the unfolded phone's hinge falls after its fourth day. */
@@ -126,7 +129,7 @@ export function WeekView(props: CalendarViewProps) {
   const { anchor, settings, plan, clock, openId } = props;
   const all = useMemo(() => weekSpan(anchor, settings), [anchor, settings]);
   const { one, crease, dense } = weekLayout(plan, props.panel);
-  const days = useMemo(() => (one ? all.filter((d) => sameDay(d, anchor)) : all), [one, all, anchor]);
+  const days = useMemo(() => (one ? [anchor] : all), [one, all, anchor]);
   const hours = useHoursScroller({
     hours: settings.hours,
     hourDefault: plan.device === "phone" ? 56 : 60,
@@ -134,6 +137,7 @@ export function WeekView(props: CalendarViewProps) {
     focusMinute: props.cursor,
     spanKey: isoOfDay(days[0]!),
     openId,
+    revealOpen: props.revealOpen,
     openTop: () => model.days.flatMap((d) => d.blocks).find((b) => b.item.id === openId)?.top ?? null,
   });
   const model = useTimeGrid({
@@ -145,11 +149,12 @@ export function WeekView(props: CalendarViewProps) {
     hourPx: hours.hourPx,
     inView: hours.inView,
     picked: anchor,
-    free: false,
+    free: one,
   });
   const open = (e: CalendarEventView): void => props.onOpen(e.ref);
 
   const calendar = useText("calendar");
+  const dayWords = useText("day");
   const menu = useContext(WeekContextMenu);
   const slot = menu?.slot;
   const context = useEventContext(menu);
@@ -166,6 +171,7 @@ export function WeekView(props: CalendarViewProps) {
     picked: d.picked,
     above: capsule(d, "above", hours.show, t),
     below: capsule(d, "below", hours.show, t),
+    free: d.free.map((gap) => ({ minutes: gap.at, text: freeHours(dayWords, gap.minutes) })),
     children: d.blocks.map((b) => (
       <EventChip
         key={b.item.id}
@@ -222,6 +228,7 @@ export function WeekView(props: CalendarViewProps) {
         }}
         onDayContextMenu={menu ? (day, event) => timeContext(menu, day, event) : undefined}
         onDayPointerDown={props.onSlot}
+        scrollRoomForSheet={props.revealOpen && plan.device === "phone"}
         scrollRef={hours.ref}
         scrollGestures={swipe}
         onScroll={hours.onScroll}

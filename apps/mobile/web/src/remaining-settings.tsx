@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { useEngine } from "@ohmail/app-logic/engine";
+import { liveMailboxes } from "@ohmail/app-logic/mail-state/mail-state";
+import { useFrame } from "@ohmail/app/frame";
 import { NONE } from "@ohmail/app/host";
 import { type MailPaneParts } from "@ohmail/app/mail";
 import { DiagnosticFileSheet } from "@ohmail/app/phone-settings/diagnostic-file";
 import { ThisPhoneSheet } from "@ohmail/app/phone-settings/this-phone";
 import { useText } from "@ohmail/app/text";
-import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { Button, EndDot } from "@ohmail/ui/base";
+import { SettingActs, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import type { PhoneOrganizerRequest, PhoneOrganizerRow, Requests, ShellConfig } from "../../src/shell/bridge-kinds";
 import type { Bridge } from "./bridge";
 import { MIRROR_ENTITY_TYPES } from "./engine-package";
@@ -18,8 +21,22 @@ export function phoneSettingsParts(
 ): Pick<MailPaneParts, "about" | "mailboxes"> {
   function About() {
     const engine = useEngine();
+    const { host } = useFrame();
     const t = useText("phoneSettings");
     const about = useText("about");
+    const words = useText("settings");
+    const refusal = useText("viewError");
+    const roster = host.wires.mailboxes;
+    const [count, setCount] = useState<number | null>(null);
+    useEffect(() => {
+      if (roster === NONE) return;
+      let live = true;
+      void roster.list({ counts: false }).then((answer) => {
+        if (live && answer.ok) setCount(liveMailboxes(answer.value)?.length ?? 0);
+      }, () => {});
+      return () => { live = false; };
+    }, [roster]);
+    const [linkFailed, setLinkFailed] = useState(false);
     const [backup, setBackup] = useState<Backup | null>(null);
     useEffect(() => {
       const read = new AbortController();
@@ -32,10 +49,23 @@ export function phoneSettingsParts(
     return (
       <>
         <SettingsSheet>
+          <p className="oh-text oh-display"><EndDot kind="hot">ohmail</EndDot></p>
           <SettingLine
             label={about("buildLabel")}
             value={about("build", { version: config.build.version ?? "", build: config.build.commit ?? "dev" })}
           />
+          <SettingLine label={words("mailboxes")} value={count === null ? undefined : t("mailboxCount", { count })} />
+        </SettingsSheet>
+        <SettingsSheet>
+          <SettingLine label={t("legalTitle")} narrow="under">
+            <SettingActs label={t("legalTitle")}>{(["privacy", "subprocessors", "imprint"] as const).map((page) => (
+              <Button key={page} kind="quiet" size="s" onPress={() => {
+                setLinkFailed(false);
+                void bridge.request("act", { act: "about.page", page }).catch(() => setLinkFailed(true));
+              }}>{t(page)}</Button>
+            ))}</SettingActs>
+          </SettingLine>
+          {linkFailed ? <SettingNote warn>{refusal("tryAgain")}</SettingNote> : null}
         </SettingsSheet>
         <SettingsSheet title={t("onThisPhone.title")} sign="phone">
           <SettingNote>{t("onThisPhone.forgetting")}</SettingNote>

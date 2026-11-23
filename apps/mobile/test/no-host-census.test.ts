@@ -909,11 +909,13 @@ describe("§5 the four doors are named and reachable — the positive control", 
     // without the second is a control that cannot do what its name says.
     expect(doors).toContain("onPress={onStandalone}");
     expect(doors).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
-    for (const screen of [welcome, servers]) {
-      expect(screen).toContain("<Doors");
-      expect(screen).toContain("onScan");
-      expect(screen).toContain('router.push("/standalone")');
-    }
+    expect(welcome).toContain('router.push("/servers")');
+    expect(welcome).toContain('router.push("/scan")');
+    expect(welcome).toContain('router.push("/standalone")');
+    expect(welcome).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
+    expect(servers).toContain("<Doors");
+    expect(servers).toContain('onScan={() => router.push("/scan")}');
+    expect(servers).toContain('onStandalone={() => router.push("/standalone")}');
     expect(ROUTE_FILES.map(rel)).toContain("apps/mobile/app/scan.tsx");
     expect(ROUTE_FILES.map(rel)).toContain("apps/mobile/app/standalone.tsx");
   });

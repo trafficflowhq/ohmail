@@ -13,7 +13,7 @@ import type { SupportSeed } from "./composer-types.js";
 
 /** The build and live account facts supplied by the current host. */
 export interface SupportHost {
-  surface: Exclude<SupportSurface, "phone">;
+  surface: SupportSurface;
   version: string | null | undefined;
   commit: string | null | undefined;
   /** The opaque account ID, or null where there is no confirmed account. */

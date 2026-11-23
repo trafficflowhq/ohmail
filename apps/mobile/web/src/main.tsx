@@ -10,6 +10,7 @@ import mounted from "./mounted";
 import { createRoot, type Root } from "react-dom/client";
 import { createPortal } from "react-dom";
 import { calendarPortOf } from "@ohmail/app-logic/calendar";
+import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
 import { calendar as calendarEntry } from "@ohmail/app/calendar";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { mailboxTotalOf, readSearchBy } from "@ohmail/app-logic/search";
@@ -18,10 +19,13 @@ import { setComposerScope } from "@ohmail/app-logic/writing/compose";
 import { unsentDraftsOf, type NoticePermission } from "./engine-package";
 import { benchDoor, type BenchDoor } from "./bench";
 import { calendarRecordClearer, calendarRecordSender, followWidget } from "./calendar-record";
+import { companionSwitch } from "./companion-switch";
 import { isWidgetGeneration } from "../../src/calendar/opened";
 import type { LinkInTarget } from "../../src/shell/bridge-kinds";
 import { otherAppDoor } from "./other-app";
 import { note, type Bridge } from "./bridge";
+import { readCalendarDevice } from "./calendar-device";
+import { accountFetch } from "./account-fetch";
 import { bridgeFetch } from "./bridge-fetch";
 import { createPhoneEngine, keptStoreOf } from "./engine";
 import { phoneFrameSupplies } from "./frame-supplies";
@@ -89,12 +93,16 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   }
   let permission: NoticePermission = config.notifications;
   const mountedPlaces = mounted(bridge, config);
-  const frame = phoneFrameSupplies(mountedPlaces, config.place, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
+  const calendarHome = config.app === "ohcal" ? `#/cal/${readCalendarDevice(config.scope).opensIn}` : null;
+  const frame = phoneFrameSupplies(mountedPlaces, config.place ?? calendarHome, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
   const signals = phoneSignals(bridge, config.facts, () => unsentDraftsOf(engine.read()).length, frame.address);
   const transport = config.app === "ohcal" ? engine.calendarTransport() : null;
+  const setup = transport && engine.calendarSetupTransport();
   const calendar = transport ? calendarPortOf({
     engine, transport, clock: { uuid: () => crypto.randomUUID(), now: Date.now },
     mayRun: () => engine.calendarQueueReady(), settings: transport.calendarSettings,
+    setSuggestionDismissed: transport.setSuggestionDismissed,
+    setup: setup ? calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()) : undefined,
     held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
   }) : undefined;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -116,11 +124,12 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
       }, store, timeZone, (fragment) => frame.address.write(fragment, "push"),
     ),
   } : undefined;
-  const facts = { setting: config.setting, scope: config.scope, accountId: config.accountId, build: config.build };
+  const facts = { setting: config.setting, serverName: config.serverName, scope: config.scope, accountId: config.accountId, build: config.build };
   const read = bridgeFetch(bridge, config.scope);
   const host = phoneHost(engine, facts, {
     mailboxWires: mountedPlaces.mailboxWires,
-    mailFetch: config.app === "ohmail" ? read : undefined,
+    mailFetch: read,
+    accountFetch: config.app === "ohmail" ? accountFetch(bridge, config.scope) : undefined,
     search: {
       by: config.setting === "standalone" ? "people" : () => readSearchBy(read),
       mailboxTotal: async () => {
@@ -131,7 +140,13 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
       },
     },
     signOut: async () => { await bridge.request("act", { act: "signOut" }); },
-    frame: calendar ? { ...frame, calendar: calendarEntry } : frame,
+    frame: calendar ? {
+      ...frame,
+      calendar: {
+        ...calendarEntry, CompanionSwitch: companionSwitch(other, config.os),
+        writeGuests: async (to, subject) => { await bridge.request("act", { act: "calendar.guests", to, subject }); },
+      },
+    } : frame,
     calendar,
     notifications: {
       permission: () => permission,
@@ -162,7 +177,15 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
     <portalRenderer.Provider value={createPortal}>
       <PhonePage
         host={host}
-        locale={config.language}
+        language={{
+          locale: config.language,
+          choice: config.languageChoice ?? null,
+          async set(choice) {
+            const { language } = await bridge.request("act", { act: "language.set", choice });
+            if (language === undefined) throw new Error("The phone did not confirm its language");
+            return language;
+          },
+        }}
         catalogue={catalogue}
         timeZone={timeZone}
         sync={sync}

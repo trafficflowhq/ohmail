@@ -12,11 +12,24 @@
 /** What a date-shaped hole says. The same glyph the web wall's `dayStamp` answers. */
 export const NO_DATE = "—";
 
-export function dayStamp(iso: string | null | undefined, locale: string, zone?: string): string {
+export function dayStamp(
+  iso: string | null | undefined,
+  locale: string,
+  zone?: string,
+  style: "medium" | "weekday" = "medium",
+): string {
   if (!iso) return NO_DATE;
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return NO_DATE;
   try {
+    if (style === "weekday") {
+      const stamp = new Intl.DateTimeFormat(locale, {
+        weekday: "short", day: "numeric", month: "short", timeZone: zone,
+      });
+      if (!locale.startsWith("en")) return stamp.format(at);
+      const parts = stamp.formatToParts(at);
+      return ["weekday", "day", "month"].map((unit) => parts.find((part) => part.type === unit)?.value).join(" ");
+    }
     return at.toLocaleDateString(locale, {
       dateStyle: "medium",
       ...(zone ? { timeZone: zone } : {}),

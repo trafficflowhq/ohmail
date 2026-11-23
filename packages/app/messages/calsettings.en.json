@@ -43,6 +43,14 @@
       "title": "Calendar accounts"
     },
     "view": {
+      "opensIn": "Opens in",
+      "startsOn": "Week starts on",
+      "weekends": "Weekends",
+      "showDeclined": "Show declined events",
+      "deviceSummary": "{view} · {day}",
+      "opens": { "agenda": "Agenda", "day": "Day", "week": "Week", "month": "Month", "year": "Year" },
+      "starts": { "0": "Monday", "5": "Saturday", "6": "Sunday" },
+
       "newEvents": "New events go to",
       "noWritable": "No calendar to write to",
       "week": "Week",
@@ -68,6 +76,13 @@
     "group": "Calendar",
     "close": "Close Settings",
     "mail": {
+      "readForEvents": "Read for events",
+      "noMailbox": "No mailbox",
+      "phoneOfferNote": "Choose which mailboxes show calendar offers on this phone.",
+      "offered": "Offered",
+      "evidence": { "calendar": "Calendar invitations", "data": "Dates in structured mail" },
+      "onCalendar": "On the calendar",
+
       "title": "Mail and calendar",
       "fromMail": "From mail",
       "open": "Open"

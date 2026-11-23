@@ -73,12 +73,17 @@ export function railFold(groups: readonly (readonly RailEntry[])[], availableHei
 
 /** The dock's metrics: 44pt buttons, 2 inside a pill, 8 pill padding, 8 between the two pills, 12 each side. */
 export const DOCK = { btn: 44, itemGap: 2, groupPad: 8, groupGap: 8, sideInset: 12 } as const;
+export const MAIL_DOCK = { ...DOCK, btn: 48 } as const;
 /** The fixed verbs pill — New mail and Search, two buttons that never fold. */
 const DOCK_VERBS = 2 * DOCK.btn + DOCK.itemGap + DOCK.groupPad;
 
 /** The width the dock needs with `k` destinations standing. */
-export const dockNeed = (k: number): number =>
-  2 * DOCK.sideInset + (k * DOCK.btn + Math.max(0, k - 1) * DOCK.itemGap + DOCK.groupPad) + DOCK.groupGap + DOCK_VERBS;
+export function dockNeed(k: number, mail = false): number {
+  const { btn, itemGap, groupPad, groupGap, sideInset } = mail ? MAIL_DOCK : DOCK;
+  const destinations = k * btn + Math.max(0, k - 1) * itemGap + groupPad;
+  const actions = mail ? 2 * (btn + groupPad + groupGap) : groupGap + DOCK_VERBS;
+  return 2 * sideInset + destinations + actions;
+}
 
 /**
  * The order destinations leave the dock and the rail for More — the rail's own bottom-to-top, the
@@ -91,12 +96,12 @@ export const DESTINATION_FOLD_ORDER = ["receipts", "reads", "screener", "index"]
  * {@link DESTINATION_FOLD_ORDER} leaves it into More. `ids` is the row as ordered; `null` room (no
  * measurement yet) keeps the whole row.
  */
-export function dockFold(ids: readonly string[], room: number | null): { kept: string[]; folded: string[] } {
+export function dockFold(ids: readonly string[], room: number | null, mail = false): { kept: string[]; folded: string[] } {
   const kept = [...ids];
   const folded: string[] = [];
   if (room === null) return { kept, folded };
   for (const id of DESTINATION_FOLD_ORDER) {
-    if (dockNeed(kept.length) <= room) break;
+    if (dockNeed(kept.length, mail) <= room) break;
     const at = kept.indexOf(id);
     if (at < 0) continue;
     kept.splice(at, 1);

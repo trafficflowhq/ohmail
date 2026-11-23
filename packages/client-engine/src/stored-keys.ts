@@ -511,6 +511,12 @@ export const STORED_KEYS = [
     words: false, erased: "never", mark: "kept",
   },
   {
+    key: "ohmail.calendar.display.", family: true, store: "localStorage", owner: "phone",
+    at: ["apps/mobile/web/src/calendar-device.ts"],
+    holds: "the calendar display choices on this phone, scoped to its pairing",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
     key: "ohmail.notices.calendar", store: "localStorage", owner: "web",
     at: ["packages/app-logic/src/notices/browser-channels.ts"],
     holds: "which of the calendar's notices are switched on on this device, whether a notice or a widget shows an event's title, and when the day's summary rings: switches and a minute of the day, never an event. Read by the web's shell and by the phone's page beside the mail's record, through the one reader of a device's choices; nothing writes it until a Notifications pane offers the calendar's switches, and until then the start values hold",

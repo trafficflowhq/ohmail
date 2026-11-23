@@ -23,6 +23,13 @@ export const fonts = [
         "sha256": "e1a04c169c022f63ad24fc1b6fbd932dee1ded62ac08734eeb1d5d51afee38dd"
       }
     ],
+    "nativeFiles": [
+      {
+        "file": "bricolage-800.ttf",
+        "weight": "800",
+        "sha256": "2f3df74cd30a13ad5f64acd58b8d0ef82ead844269ace37f89827e775a4e965f"
+      }
+    ],
     "licence": {
       "name": "OFL-1.1",
       "file": "OFL-BricolageGrotesque.txt",
@@ -44,6 +51,28 @@ export const fonts = [
         "file": "hanken-latin-ext.woff2",
         "unicodeRange": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+a720-a7ff",
         "sha256": "768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24"
+      }
+    ],
+    "nativeFiles": [
+      {
+        "file": "hanken-400.ttf",
+        "weight": "400",
+        "sha256": "02db0350381b3836bdf49119e2305467176fb00b596529117c564ec1d93b94ad"
+      },
+      {
+        "file": "hanken-500.ttf",
+        "weight": "500",
+        "sha256": "52404900c49932e61e34b3deec7c0ed2477388e09fdbceec6281882c2deea92c"
+      },
+      {
+        "file": "hanken-600.ttf",
+        "weight": "600",
+        "sha256": "08a01ba4bd4557d511652839c534372483abd987c8138c5abab6743e9bfefd80"
+      },
+      {
+        "file": "hanken-700.ttf",
+        "weight": "700",
+        "sha256": "5ed602635d55bcc4dd2644ea8a29e3b8189c730735ed38668b91dc5701b477cd"
       }
     ],
     "licence": {
@@ -69,6 +98,18 @@ export const fonts = [
         "sha256": "79bfdab9ba467e26eea4122e6f2567e188dd8a09a8c730d501fc487c4ab99c6e"
       }
     ],
+    "nativeFiles": [
+      {
+        "file": "jetbrains-400.ttf",
+        "weight": "400",
+        "sha256": "31061b2d753659f980f18c8fda8f3e6e1090933edf4ae6d6585c1b0ae086b864"
+      },
+      {
+        "file": "jetbrains-500.ttf",
+        "weight": "500",
+        "sha256": "38f5e0f1c847b5b5f3005218e2904c0c8fd0cc552974e72740d973d2840e04f7"
+      }
+    ],
     "licence": {
       "name": "OFL-1.1",
       "file": "OFL-JetBrainsMono.txt",
@@ -78,8 +119,11 @@ export const fonts = [
   }
 ] as const;
 
-/** Every font file, in fonts/. */
+/** Every web font file, in fonts/. */
 export const fontFiles = ["bricolage-latin.woff2","bricolage-latin-ext.woff2","hanken-latin.woff2","hanken-latin-ext.woff2","jetbrains-latin.woff2","jetbrains-latin-ext.woff2"] as const;
+
+/** Every native TrueType font file, in fonts/. */
+export const nativeFontFiles = ["bricolage-800.ttf","hanken-400.ttf","hanken-500.ttf","hanken-600.ttf","hanken-700.ttf","jetbrains-400.ttf","jetbrains-500.ttf"] as const;
 
 /** The licence texts, in fonts/. A copy of a font file is passed on with its licence text. */
 export const fontLicenceFiles = ["OFL-BricolageGrotesque.txt","OFL-HankenGrotesk.txt","OFL-JetBrainsMono.txt"] as const;

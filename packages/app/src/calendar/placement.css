@@ -34,6 +34,27 @@
   min-width: 0;
 }
 
+.cal-invitations {
+  --cal-invitations-z: 9;
+  --oh-calside-flex: 1;
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: var(--cal-invitations-z);
+  min-block-size: 30%;
+  max-block-size: calc(100% - var(--h-xl));
+  animation: cal-invitations-in var(--d-slide) var(--e-out) both;
+}
+
+@keyframes cal-invitations-in {
+  from {
+    transform: translateY(var(--s6));
+    opacity: var(--o-slide);
+  }
+}
+
 :root[data-device="desktop"] .cal-body-panel {
   flex: 0 0 var(--cal-side-width);
 }

@@ -1,8 +1,9 @@
 /**
  * Settings › Subscription. A shell's registration draws {@link SubscriptionPane} over `useSubscription` and a
- * {@link SubscriptionDoor} it fills; a build that may show no price imports none of it.
+ * {@link SubscriptionDoor} it fills. The shared trial progress row can also be used on its own.
  */
 export { SubscriptionPane, type SubscriptionPaneProps } from "./SubscriptionPane.js";
+export { TrialProgress } from "./TrialProgress.js";
 export { readPlansOf, type ReadPlans } from "./SubscriptionPlans.js";
 export {
   subscriptionModelOf,

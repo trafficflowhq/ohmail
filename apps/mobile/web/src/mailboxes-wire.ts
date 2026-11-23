@@ -2,17 +2,28 @@ import { NONE, mailboxRosterOver, type ConnectWire, type MailboxesWire } from "@
 import { refusalOf } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import { reveal } from "@ohmail/app-logic/mailboxes/connect/secret";
 import type { Answered } from "@ohmail/app-logic/mailboxes/connect/types";
+import type { MailboxDTO } from "@ohmail/wire";
 import type { PhoneServerPatch } from "../../src/shell/bridge-kinds";
 import type { Bridge } from "./bridge";
 import { bridgeFetch } from "./bridge-fetch";
 
 const NO_ANSWER: Answered<never> = { ok: false, refusal: refusalOf(null) };
 
+export async function readPhoneMailboxes(request: ReturnType<typeof bridgeFetch>, counts = false) {
+  const response = await request(counts ? "/mailboxes?counts=1" : "/mailboxes");
+  if (!response.ok) throw new Error(`Mailbox list refused (${response.status})`);
+  const answer = (await response.json()) as { items?: MailboxDTO[] } | null;
+  if (!Array.isArray(answer?.items) || answer.items.some((row) =>
+    typeof row?.id !== "string" || typeof row.address !== "string" || typeof row.status !== "string"
+  )) throw new Error("The engine did not answer with a mailbox list");
+  return answer.items;
+}
+
 export function phoneMailboxWires(bridge: Bridge, scope: string, standalone: boolean) {
-  if (!standalone) return { mailboxes: NONE, connect: NONE } as const;
   const request = bridgeFetch(bridge, scope);
   const roster = mailboxRosterOver({
     async list({ counts }) {
+      if (!standalone) return readPhoneMailboxes(request, counts);
       const answer = await bridge.request("phone.mailbox", { do: "list", counts });
       if (answer.rows === undefined) throw new Error("Mailbox list unavailable");
       return answer.rows;
@@ -21,7 +32,8 @@ export function phoneMailboxWires(bridge: Bridge, scope: string, standalone: boo
       const answer = await request(`/mailboxes/${encodeURIComponent(id)}/resync`, { method: "POST" });
       if (!answer.ok) throw { status: answer.status };
     },
-  }, true, NONE);
+  }, standalone, NONE);
+  if (!standalone) return { mailboxes: roster, connect: NONE } as const;
   const mailboxes: MailboxesWire = {
     ...roster,
     async selfCheck(mailboxId) {

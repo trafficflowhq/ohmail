@@ -514,7 +514,8 @@ export async function identityProbe(
  * forwarded by hand — an absent forward would silently strip it on the live path only.
  */
 type GuardedMobileAdapter = EngineAdapter
-  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash" | "timeline">;
+  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash" | "timeline">
+  & Partial<Pick<HttpAdapter, "calendarSettings" | "writeCalendar" | "retryCalendarWrite" | "dismissCalendarWrite" | "setSuggestionDismissed">>;
 
 function accountGuarded(
   adapter: HttpAdapter,
@@ -532,6 +533,7 @@ function accountGuarded(
   cleared: () => boolean,
   /** `GET /hello` read right before a forward that names its parts — see {@link helloForwardParts}. */
   forwardPartsSaid: () => Promise<boolean | null>,
+  paired: boolean,
 ): GuardedMobileAdapter {
   const HELD = `this mirror's sync is held until the account identity check settles — run verifyIdentity() first`;
   const check = (changes: SyncChange[]): void => {
@@ -545,7 +547,18 @@ function accountGuarded(
       }
     }
   };
+  const calendar = async <T>(ask: () => Promise<T>): Promise<T> => {
+    if (!cleared()) throw new StoreFault("sync_held_pre_identity", HELD);
+    return ask();
+  };
   return {
+    ...(paired ? {
+      calendarSettings: () => calendar(() => adapter.calendarSettings()),
+      writeCalendar: (...args: Parameters<HttpAdapter["writeCalendar"]>) => calendar(() => adapter.writeCalendar(...args)),
+      retryCalendarWrite: (...args: Parameters<HttpAdapter["retryCalendarWrite"]>) => calendar(() => adapter.retryCalendarWrite(...args)),
+      dismissCalendarWrite: (...args: Parameters<HttpAdapter["dismissCalendarWrite"]>) => calendar(() => adapter.dismissCalendarWrite(...args)),
+      setSuggestionDismissed: (...args: Parameters<HttpAdapter["setSuggestionDismissed"]>) => calendar(() => adapter.setSuggestionDismissed(...args)),
+    } : {}),
     sync: async (params) => {
       if (!cleared()) throw new StoreFault("sync_held_pre_identity", HELD);
       const resp = await adapter.sync(params);
@@ -784,6 +797,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
       // The phone's own engine is this same build.
       () => (local !== undefined ? Promise.resolve(true)
         : helloForwardParts(fetchImpl, origin, config.forwardPartsDeadlineMs ?? FORWARD_PARTS_HELLO_MS)),
+      local === undefined,
     ),
     store,
     storePolicy: MOBILE_WINDOW,

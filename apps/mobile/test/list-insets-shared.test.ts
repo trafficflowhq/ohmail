@@ -160,9 +160,9 @@ describe("the hook, rendered at a posture", () => {
 
 describe("both primitives read the one hook", () => {
   it("the hook is defined once, over the theme's space and the live bottom inset", () => {
-    expect(base).toContain("export function useListInsets(measure = false): ListInsets {");
+    expect(base).toContain("export function useListInsets(measure = false, flush = false): ListInsets {");
     expect(base).toContain("const nav = listNavClearance(plan, t.space.tabClearance, useNavDrawn());");
-    expect(base).toContain("return listInsets(t.space, foot > 0 ? foot : safe.bottom, nav, useBottomChromeExtent(), room);");
+    expect(base).toContain("return listInsets(t.space, foot > 0 ? foot : safe.bottom, nav, useBottomChromeExtent(), room, flush && !inPane && win <= 560);");
     // …over the plan the posture answers, so the rail's side is in the arithmetic and not guessed.
     expect(base).toContain("const plan = scaffoldPlan(usePosture(), Platform.OS === \"ios\" ? \"ios\" : \"android\");");
     expect(base.match(/function useListInsets/g)).toHaveLength(1);
@@ -178,7 +178,7 @@ describe("both primitives read the one hook", () => {
   });
 
   it("MailList hands the hook's result as its whole content style", () => {
-    expect(mailList).toContain("const insets = useListInsets(true);");
+    expect(mailList).toContain("const insets = useListInsets(true, t.mail === true && surface && rowLayout === undefined);");
     expect(mailList).toContain("contentContainerStyle={insets}");
     expect(mailList, "no inset of its own").not.toMatch(/tabClearance|deckCompact|insets\.bottom/);
     // The surface it paints sits inside the same gutter and ends above the same clearance.

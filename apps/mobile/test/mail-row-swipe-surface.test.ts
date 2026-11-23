@@ -10,15 +10,18 @@
  * claims the visual fact; the frame reader does.
  */
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { bracketSpan, withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
-const ROW = new URL("../src/ui/MailRow.tsx", import.meta.url).pathname;
-const BASE = new URL("../src/ui/base.tsx", import.meta.url).pathname;
-const MAILLIST = new URL("../src/ui/MailList.tsx", import.meta.url).pathname;
+const ROW = fileURLToPath(new URL("../src/ui/MailRow.tsx", import.meta.url));
+const BASE = fileURLToPath(new URL("../src/ui/base.tsx", import.meta.url));
+const MAILLIST = fileURLToPath(new URL("../src/ui/MailList.tsx", import.meta.url));
 const LISTS = [
-  "../app/(tabs)/index.tsx", "../app/(tabs)/receipts.tsx", "../app/history.tsx", "../app/folder/[id].tsx",
-].map((p) => new URL(p, import.meta.url).pathname);
+  "../app/(tabs)/index.tsx", "../app/history.tsx", "../app/folder/[id].tsx",
+].map((p) => fileURLToPath(new URL(p, import.meta.url)));
+
+const RECEIPTS = fileURLToPath(new URL("../app/(tabs)/receipts.tsx", import.meta.url));
 
 /** A file with its comments blanked — a needle must not be satisfiable by prose about the fix. */
 function source(path: string): string {
@@ -51,7 +54,7 @@ describe("a swiped row is a clipped, opaque surface", () => {
     const parent = styleObjectAfter(src, branch);
     expect(parent.at).toBeLessThan(panAt);
     expect(parent.body).toMatch(/overflow:\s*"hidden"/);
-    expect(parent.body).toMatch(/borderRadius:\s*t\.radius\.row\b/);
+    expect(parent.body).toMatch(/borderRadius:\s*receipt\s*\?\s*t\.radius\.card\s*:\s*t\.radius\.row\b/);
 
     const moving = styleObjectAfter(src, panAt);
     expect(moving.body).toMatch(/transform:\s*\[\s*\{\s*translateX:\s*pan\.x/);
@@ -69,8 +72,9 @@ describe("a swiped row is a clipped, opaque surface", () => {
   it("and `panel` is the surface every list that offers the gesture actually puts it on", () => {
     /* The token above is right only while the rows rest on the l1 panel face. The rows now sit on
        `MailList`'s one surface, painted with `panelSurface(t)` at its default level — so the face
-       is read for the l1 token, the primitive for painting it at the default, and the four lists
-       for mounting `MailList` with its surface on (a `surface={false}` list is a card stream). */
+       is read for the l1 token, the primitive for painting it at the default, and the ordinary lists
+       for mounting `MailList` with its surface on. Receipt cards carry the same token on the
+       moving surface and clip at their own rounded edge. */
     expect(source(BASE)).toMatch(/level\s*===\s*"l1"\s*\?\s*t\.c\.panel\s*:\s*t\.c\.float/);
     expect(source(BASE)).toMatch(/export function panelSurface\(t: Theme, level: PanelLevel = "l1"/);
     expect(source(MAILLIST)).toContain("panelSurface(t)");
@@ -79,5 +83,9 @@ describe("a swiped row is a clipped, opaque surface", () => {
       expect(text, list + " renders its rows through MailList").toMatch(/<MailList[\s>]/);
       expect(text, list + " keeps the panel under its rows").not.toMatch(/surface=\{false\}/);
     }
+    const receipts = source(RECEIPTS);
+    expect(receipts, "Receipts renders its cards through the virtualized list").toMatch(/<MailList[\s>]/);
+    expect(receipts, "Receipt cards carry the swipe surface themselves").toMatch(/surface=\{false\}/);
+    expect(receipts, "Each receipt uses the same swipe row, in its card presentation").toMatch(/<MailRow[^\n]*\bswipe receipt\s+receiptDetail=\{t\.mail \? <ReceiptEvents m=\{m\} \/> : null\}\s*\/>/s);
   });
 });

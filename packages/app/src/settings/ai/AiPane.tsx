@@ -13,6 +13,8 @@ export interface AiPaneProps {
   readonly credits?: { remaining: number; total?: number } | null;
   readonly toPlans?: () => void;
   readonly draftReplies?: { enabled: boolean; toggle(next: boolean): void };
+  readonly draftCost?: number;
+  readonly phone?: boolean;
 }
 
 /**
@@ -20,7 +22,16 @@ export interface AiPaneProps {
  * drawn before the server answers and cannot be pressed until it has; a failed read or a refused write is said on
  * the sheet, never left out.
  */
-export function AiPane({ model, noModelSaid, cloudModel, draftReplies, credits, toPlans }: AiPaneProps) {
+export function AiPane({
+  model,
+  noModelSaid,
+  cloudModel,
+  draftReplies,
+  credits,
+  toPlans,
+  draftCost,
+  phone,
+}: AiPaneProps) {
   const t = useText("settings");
   const own = useText(AI_NAMESPACE);
   return (
@@ -55,6 +66,7 @@ export function AiPane({ model, noModelSaid, cloudModel, draftReplies, credits, 
         {draftReplies ? (
           <SettingLine
             label={own("draftReply")}
+            tag={draftCost === undefined ? undefined : own("draftCost", { credits: draftCost })}
             sub
             off={model.enabled !== true || model.noModel}
             toggle={{ on: draftReplies.enabled, onChange: draftReplies.toggle }}
@@ -64,12 +76,16 @@ export function AiPane({ model, noModelSaid, cloudModel, draftReplies, credits, 
           <>
             <SettingLine
               label={own("budget")}
-              value={own(credits.total === undefined ? "creditsBalance" : "creditsLeft", credits)}
+              value={own(
+                credits.total === undefined ? "creditsBalance" : phone ? "creditsAmount" : "creditsLeft",
+                credits,
+              )}
               off={model.enabled === false}
             />
             {credits.total !== undefined && credits.total > 0 ? (
               <progress
                 className="ai-credits-meter"
+                data-phone={phone ? "" : undefined}
                 aria-hidden="true"
                 value={Math.min(credits.remaining, credits.total)}
                 max={credits.total}
@@ -80,7 +96,13 @@ export function AiPane({ model, noModelSaid, cloudModel, draftReplies, credits, 
       </SettingsSheet>
       {cloudModel ? (
         <SettingsSheet title={own("model")} aside={<Tag>{own("working")}</Tag>}>
-          <SettingLine label={own("where")} value={own("cloud")} />
+          {phone ? (
+            <SettingLine label={own("where")} narrow="under">
+              <Tag>{own("cloud")}</Tag>
+            </SettingLine>
+          ) : (
+            <SettingLine label={own("where")} value={own("cloud")} />
+          )}
         </SettingsSheet>
       ) : null}
     </>

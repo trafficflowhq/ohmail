@@ -35,6 +35,12 @@ export function Welcome({ door, to }: StepProps): ReactNode {
   }, []);
   return (
     <Page
+      centerLead
+      aside={
+        <Button kind="quiet" onPress={() => door.go("servers")}>
+          {t("welcome.servers")}
+        </Button>
+      }
       acts={
         <>
           {mailbox ? (
@@ -45,16 +51,13 @@ export function Welcome({ door, to }: StepProps): ReactNode {
           <Button size="l" kind={mailbox ? "quiet" : "ink"} onPress={() => to({ step: "scan" })}>
             {t("welcome.scan")}
           </Button>
-          <Button size="l" kind="quiet" onPress={() => door.go("servers")}>
-            {t("welcome.servers")}
-          </Button>
         </>
       }
     >
       <Mark hot ringing={rang} bell={{ label: t("welcome.ring") }}>
         oh
       </Mark>
-      <Said text={t(LINE[app])} />
+      <Said text={t(LINE[app])} dot="ink" />
     </Page>
   );
 }

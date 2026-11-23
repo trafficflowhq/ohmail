@@ -3,14 +3,17 @@ import { Button, Dialog, Field } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet, type SettingsSheetProps } from "@ohmail/ui/mail";
 import { browserClipboard } from "../../host/browser/index.js";
 import { useText, type Text } from "../../text/index.js";
-import { ACCOUNT_REFUSALS, type FactorSlot } from "../contract.js";
+import { ACCOUNT_REFUSALS, type FactorSlot, type QrSlot } from "../contract.js";
 import type { GatedRefusal } from "../gated.js";
 import type { SecurityModel } from "./model.js";
+import "./authenticator.css";
 
 export interface SecurityPaneProps {
+  readonly phone?: boolean;
   readonly model: SecurityModel;
   /** The factor's dialog, filled by the shell: drawn while a verb is parked behind it. */
   readonly factor: FactorSlot;
+  readonly qr?: QrSlot;
 }
 
 type Wants = NonNullable<SettingsSheetProps["wants"]>;
@@ -30,14 +33,14 @@ const refusalSaid = (refusal: GatedRefusal, t: Text): string =>
  * authenticator's key stands the same way, with its code and its Cancel. It holds no state and reaches nothing: it
  * draws its model, and its verbs are the model's.
  */
-export function SecurityPane({ model, factor }: SecurityPaneProps) {
+export function SecurityPane({ model, factor, qr, phone }: SecurityPaneProps) {
   const t = useText("security");
   const own = useText("accountSecurity");
   const { enrolled } = model;
   if (enrolled.at === "loading") return null;
   const fresh =
     model.codes.at === "shown" ? <FreshCodes codes={model.codes.codes} done={model.codesDone} /> : null;
-  const key = model.authenticator.at === "key" ? <NewAuthenticator model={model} /> : null;
+  const key = model.authenticator.at === "key" ? <NewAuthenticator model={model} qr={qr} /> : null;
   // A verb parked behind the factor; over a failed read that is only ever the key's code.
   const asked = model.ask ? factor(model.ask) : null;
   if (enrolled.at === "failed") {
@@ -54,7 +57,7 @@ export function SecurityPane({ model, factor }: SecurityPaneProps) {
     <>
       {fresh}
       {key}
-      <Enrolment model={model} />
+      <Enrolment model={model} phone={phone} />
       <Dialog
         open={model.codes.at === "asked"}
         onClose={model.cancelNewCodes}
@@ -84,6 +87,7 @@ function Verb(p: {
   readonly working: boolean;
   readonly off: boolean;
   readonly press: () => void;
+  readonly phone?: boolean;
 }) {
   const t = useText("security");
   return p.working ? (
@@ -91,14 +95,14 @@ function Verb(p: {
       {t("working")}
     </Button>
   ) : (
-    <Button kind="two" size="s" label={p.name} disabled={p.off} onPress={p.press}>
+    <Button kind={p.phone ? "quiet" : "two"} size="s" label={p.name} disabled={p.off} onPress={p.press}>
       {p.word}
     </Button>
   );
 }
 
 /** The two facts, each with its verb, and what the last verb left to say. One verb at a time: the others are off. */
-function Enrolment({ model }: { readonly model: SecurityModel }) {
+function Enrolment({ model, phone }: { readonly model: SecurityModel; readonly phone?: boolean }) {
   const t = useText("security");
   const own = useText("accountSecurity");
   const steps = useText("devices");
@@ -118,11 +122,13 @@ function Enrolment({ model }: { readonly model: SecurityModel }) {
       {here && nothingRan ? <SettingNote>{nothingRanSaid}</SettingNote> : null}
       <SettingLine
         label={t("codesTitle")}
+        icon={phone ? "shield" : undefined}
         value={own(enrolled.recoveryCodes ? "codesUnused" : "codesNoneUnused")}
         narrow="detail"
       >
         {model.codes.at === "shown" ? null : (
           <Verb
+            phone={phone}
             name={t(enrolled.recoveryCodes ? "codesReplace" : "codesGenerate")}
             word={own(enrolled.recoveryCodes ? "replace" : "generate")}
             working={working === "newCodes"}
@@ -134,12 +140,14 @@ function Enrolment({ model }: { readonly model: SecurityModel }) {
       {enrolled.recoveryCodes ? null : <SettingNote warn>{t("codesNone")}</SettingNote>}
       <SettingLine
         label={t("totpTitle")}
+        icon={phone ? "phone" : undefined}
         value={own(enrolled.authenticator ? "on" : "notSetUp")}
         narrow="detail"
       >
         {model.authenticator.at === "key" ? null : (
           <>
             <Verb
+              phone={phone}
               name={t(enrolled.authenticator ? "totpReplace" : "totpAdd")}
               word={own(enrolled.authenticator ? "replace" : "setUp")}
               working={working === "startAuthenticator"}
@@ -149,6 +157,7 @@ function Enrolment({ model }: { readonly model: SecurityModel }) {
             {/* Offered only while another factor would survive it. */}
             {enrolled.authenticator && enrolled.passkey ? (
               <Verb
+                phone={phone}
                 name={t("totpRemove")}
                 word={own("remove")}
                 working={working === "removeAuthenticator"}
@@ -180,15 +189,16 @@ function FreshCodes({ codes, done }: { readonly codes: readonly string[]; readon
 }
 
 /** A new authenticator: its key to type into the app, the app's six digits, and the verb that turns it on. */
-function NewAuthenticator({ model }: { readonly model: SecurityModel }) {
+function NewAuthenticator({ model, qr }: { readonly model: SecurityModel; readonly qr?: QrSlot }) {
   const t = useText("security");
   const own = useText("accountSecurity");
   if (model.authenticator.at !== "key") return null;
-  const { key, code } = model.authenticator;
+  const { key, code, uri } = model.authenticator;
   const activating = model.working === "activate";
   const refused = model.problem !== null && saidAtTheCode(model) ? refusalSaid(model.problem.why, t) : null;
   return (
     <SettingsSheet title={t("totpTitle")} sign="shield">
+      {uri && qr ? <div className="account-authenticator-qr">{qr(uri, own("setupQr"))}</div> : null}
       <SettingLine label={own("byHandLabel")} value={key} narrow="detail">
         <CopySecret value={key} />
       </SettingLine>

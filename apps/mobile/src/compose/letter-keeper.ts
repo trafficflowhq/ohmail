@@ -20,7 +20,7 @@ let session: LetterSession | null = null;
 export function openLetterSession(s: LetterSession | null): void { session = s; }
 export const letterSession = (): LetterSession | null => session;
 
-export type LetterWords = Pick<Letter, "mode" | "messageId" | "mailboxId" | "to" | "cc" | "bcc" | "subject" | "body" | "envelope">;
+export type LetterWords = Pick<Letter, "mode" | "messageId" | "mailboxId" | "to" | "cc" | "bcc" | "subject" | "body" | "html" | "envelope">;
 
 /** What a keep answered: the row it made or updated, or the key a queued save waits under. */
 export interface KeptRow { draftId: string | null; key: string | null; revision?: string }

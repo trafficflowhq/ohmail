@@ -44,7 +44,15 @@ export const BENCH_MARKER = "ohmail-bench-door";
  * line borrows. A place registered on the phone adds the namespaces it reads here, in the same change.
  */
 const FRAME_NAMESPACES = ["frame", "mailboxes"];
-const CALENDAR_NAMESPACES = [...FRAME_NAMESPACES, "calendar", "calsettings", "event", "calmail", "relativeTime", "viewError", "place"];
+const ACCOUNT_NAMESPACES = [
+  "account", "accountOwn", "accountSubscription", "devices", "accountDevices", "invites", "accountInvites",
+  "security", "accountSecurity", "stepUp", "passwordChange",
+];
+const CALENDAR_NAMESPACES = [
+  ...FRAME_NAMESPACES, "calendar", "calsettings", "event", "calmail", "relativeTime", "viewError", "place",
+  "week", "day", "month", "year", "agenda", "calsearch", "calsetup", "invitations", "frommail",
+  "settings", "settingsMenu", "settingsGeneral", "settingsNotifications", "phoneSettings", ...ACCOUNT_NAMESPACES, "servers",
+];
 export const PAGE_NAMESPACES = [
   ...FRAME_NAMESPACES, "rail", "cursor", "viewError", "sync", "sendingLine", "place", "relativeTime",
   "ohbox", "markAll", "reader", "body", "message", "mailBody", "bodyText", "attachments", "icsEvent",
@@ -52,6 +60,8 @@ export const PAGE_NAMESPACES = [
   "screener", "seed", "screening", "reads", "stream", "news", "receipts", "triage", "later", "parked", "resurface",
   "history", "trash", "tag", "tags", "folder", "drafts", "address", "search", "palette", "shortcuts", "rules",
   "settings", "settingsMenu", "phoneSettings", "about", "away", "calsettings", "phoneRefusal", "onboarding", "providerPicker", "session",
+  "settingsGeneral", "settingsNotifications", "settingsScreener", "settingsRules", "settingsTags", "settingsSignatures",
+  ...ACCOUNT_NAMESPACES, "settingsAi", "help", "servers",
 ];
 /**
  * The namespaces the door's page carries: the ways in's own and the phone's refusals, and those the one connect form

@@ -63,7 +63,7 @@ vi.mock("expo", () => ({
 }));
 vi.mock("expo-blur", () => ({ BlurView: () => null }));
 vi.mock("expo-crypto", () => ({}));
-vi.mock("react-native-svg", () => ({ default: () => null, Defs: () => null, LinearGradient: () => null, Rect: () => null, Stop: () => null }));
+vi.mock("react-native-svg", () => ({ default: () => null, Circle: () => null, Defs: () => null, LinearGradient: () => null, Rect: () => null, Stop: () => null }));
 vi.mock("react-native-reanimated", () => ({ default: { View: () => null } }));
 vi.mock("../src/state/servers-native", () => ({
   nativeServerProfiles: () => scene.store, nativeFamilyDigest: async () => "", secureKV: () => null,
@@ -82,7 +82,7 @@ vi.mock("../src/net/connection", async (original) => {
   const real = (await original()) as { useConnection: () => unknown };
   return { ...real, useConnection: () => scene.conn ?? real.useConnection() };
 });
-vi.mock("../src/theme", () => ({ useTheme: () => ({ c: { accent: "#000", ink2: "#000", ink3: "#000" }, radius: { dot: 1 }, zLayer: { tabBar: 1 } }) }));
+vi.mock("../src/theme", () => ({ useTheme: () => ({ face: "paper", scheme: "light", c: { accent: "#000", ink2: "#000", ink3: "#000" }, radius: { dot: 1 }, zLayer: { tabBar: 1 } }) }));
 vi.mock("../src/ui/base", () => {
   const div = (p: { children?: ReactNode }) => h("div", null, p.children);
   return {
@@ -207,10 +207,10 @@ const navDrawnFor = (state: ConnectionState, count: number) => gateFor(state, co
 
 const settle = () => act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); });
 
-async function pressBack(el: HTMLElement): Promise<void> {
-  const back = el.querySelector(`[data-button="${EN.back}"]`) as HTMLButtonElement | null;
-  expect(back, "the pane offers no Back").not.toBeNull();
-  act(() => back!.click());
+async function pressBack(el: HTMLElement, label: string = EN.back): Promise<void> {
+  const backs = el.querySelectorAll<HTMLButtonElement>(`[data-button="${label}"]`);
+  expect(backs, "the pane offers exactly one way back").toHaveLength(1);
+  act(() => backs[0]!.click());
   await settle();
   gateRedirects();
 }
@@ -238,8 +238,9 @@ describe("Back from the pane after a pairing ended", () => {
       const switches = connection(shape.state, phone.rows, phone.activeId);
       scene.stack.push("/", "/servers");
       const view = mount(h(ServersScreen));
-      await pressBack(view.el);
-      expect({ switches, at: scene.stack.at(-1), backs: view.el.querySelectorAll(`[data-button="${EN.back}"]`).length })
+      const label = shape === REVOKE ? EN.ohbox : EN.back;
+      await pressBack(view.el, label);
+      expect({ switches, at: scene.stack.at(-1), backs: view.el.querySelectorAll(`[data-button="${label}"]`).length })
         .toEqual({ switches: [phone.here!.id], at: "/", backs: 1 });
       view.unmount();
     });
@@ -249,7 +250,7 @@ describe("Back from the pane after a pairing ended", () => {
       const switches = connection(shape.state, phone.rows, phone.activeId);
       scene.stack.push("/servers");
       const view = mount(h(ServersScreen));
-      await pressBack(view.el);
+      await pressBack(view.el, shape === REVOKE ? EN.ohbox : EN.back);
       expect({ switches, at: scene.stack.at(-1) }).toEqual({ switches: [phone.here!.id], at: "/" });
       view.unmount();
     });
@@ -271,7 +272,7 @@ describe("Back from the pane after a pairing ended", () => {
       const switches = connection(REVOKE.state, phone.rows, phone.activeId);
       scene.stack.splice(0, scene.stack.length, ...start);
       const view = mount(h(ServersScreen));
-      await pressBack(view.el);
+      await pressBack(view.el, EN.ohbox);
       expect({ switches, at: scene.stack.at(-1) }).toEqual({ switches: [phone.other!.id], at: "/" });
       view.unmount();
     }
@@ -315,7 +316,7 @@ describe("Back from the pane after a pairing ended", () => {
     const switches = connection(REVOKE.state, rows, phone.paired.id);
     scene.stack.push("/servers");
     const view = mount(h(ServersScreen));
-    await pressBack(view.el);
+    await pressBack(view.el, EN.ohbox);
     expect({ switches, at: scene.stack.at(-1) }).toEqual({ switches: [phone.other!.id], at: "/" });
     view.unmount();
   });
@@ -371,8 +372,9 @@ describe("Back from the pane after a pairing ended", () => {
     const c = scene.conn as { state: ConnectionState; profiles: ServerProfile[] };
     /* The root's own frame: the drawn flag as the root derives it (`app/_layout.tsx`), the pane and the rail beside it. */
     const view = mount(h(NavDrawnContext.Provider, { value: navDrawnFor(c.state, c.profiles.length) }, h(ServersScreen), h(NavRail)));
-    expect(view.el.querySelectorAll(`[data-button="${EN.back}"]`).length).toBe(1);
-    await pressBack(view.el);
+    expect(view.el.querySelectorAll(`[data-button="${EN.ohbox}"]`).length).toBe(1);
+    expect(view.el.querySelectorAll(`[data-button="${EN.back}"]`).length).toBe(0);
+    await pressBack(view.el, EN.ohbox);
     expect({ switches, at: scene.stack.at(-1) }).toEqual({ switches: [phone.here!.id], at: "/" });
     view.unmount();
   });

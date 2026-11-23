@@ -184,7 +184,8 @@ export default defineConfig({
       { find: "@ohmail/testing/adapter", replacement: r("./packages/testing/src/adapter.ts") },
       { find: "@ohmail/testing/calendar-span-twin", replacement: r("./packages/testing/src/calendar-span-twin.ts") },
       { find: "@ohmail/testing", replacement: r("./packages/testing/src/index.ts") },
-      { find: /^@ohmail\/cal-core$/, replacement: r("./packages/cal-core/src/index.ts") }, // anchored: a subpath resolves by the package's own exports
+      { find: /^(@ohmail\/cal-core\/.+)$/, replacement: "$1" }, // subpaths resolve by the package exports
+      { find: "@ohmail/cal-core", replacement: r("./packages/cal-core/src/index.ts") },
       { find: /^@ohmail\/cal-providers$/, replacement: r("./packages/cal-providers/src/index.ts") }, // anchored, for the same reason
       // Types only, so no run resolves it; listed for the censuses that walk import graphs off this table.
       { find: "@ohmail/wire", replacement: r("./packages/wire/src/index.ts") },

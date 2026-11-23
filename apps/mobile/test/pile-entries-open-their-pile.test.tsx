@@ -27,6 +27,9 @@ vi.mock("../src/ui/base", async () => {
 vi.mock("../src/theme", () => ({
   useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: { card: 8 }, lift: () => ({}) }),
 }));
+vi.mock("../src/ui/MailCalendarSwitch", () => ({ MailCalendarSwitch: () => null }));
+vi.mock("../src/ui/MailPlaceDock", () => ({ MailPlaceDock: ({ children }: { children: React.ReactNode }) => children }));
+vi.mock("../src/ui/MessageReader", () => ({ MessageReader: () => null }));
 vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null, PaneTop: () => null }));
 vi.mock("../src/ui/Gated", () => ({ Gated: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children?: ReactNode }) => p.children }));

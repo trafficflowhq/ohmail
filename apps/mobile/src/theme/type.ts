@@ -10,6 +10,7 @@
  */
 import type { TextStyle } from "react-native";
 import { typography } from "@ohmail/tokens";
+import { design } from "@ohmail/tokens/design";
 
 /** `typography.size` is authored as CSS strings; RN wants points. */
 const px = (v: string) => Number(v.replace("px", ""));
@@ -167,6 +168,50 @@ export const type = {
   protectedCode: t({ size: size.h4, weight: weight.medium, tracking: tracking.code }),
 } as const;
 
+/** Paper's display and mail text roles, applied only inside the mail routes. */
+const paper = design.faces.paper.light;
+const ui = px(paper["t-ui"]);
+const meta = px(paper["t-meta"]);
+const reading = px(paper["t-read"]);
+const title = px(paper["t-title"]);
+const line = Number(paper["lh-read"]);
+const text = (size: number, weight: TextStyle["fontWeight"], leading = 1.4) =>
+  t({ size, weight, leading });
+
+export const paperMailType = {
+  h1: { ...text(title + 2, "800", 1.18), letterSpacing: -0.45 },
+  h2: { ...text(title + 2, "800", 1.18), letterSpacing: -0.45 },
+  readerTitle: { ...text(title + 2, "800", 1.18), letterSpacing: -0.45 },
+  cardTitle: { ...text(title, "800", 1.18), letterSpacing: -0.4 },
+  heldTitle: text(title, "800", 1.2),
+  rowSender: text(ui, "700"),
+  rowSenderSeen: text(ui, "400"),
+  rowSubject: text(ui, "700"),
+  rowSubjectSeen: text(ui, "400"),
+  body: text(ui, "400"),
+  msgBody: text(reading, "400", line),
+  readerBody: text(reading, "400", line),
+  streamBody: text(reading, "400", line),
+  meta: text(meta, "400"),
+  note: text(meta, "400", 1.5),
+  caption: text(meta, "400"),
+  button: text(ui, "700", 1.2),
+  sectionLabel: text(px(paper["t-group"]), "800"),
+} as const;
+
+/** The asset aliases name instances at the weights Paper uses, so Android retains the weight. */
+export function nativePaperType(presets: typeof type): typeof type {
+  const roles = { ...presets };
+  for (const key of Object.keys(roles) as TypeRole[]) {
+    const style = roles[key];
+    const weight = style.fontWeight ?? "400";
+    const family = key === "protectedCode" ? `PaperMono${weight}`
+      : weight === "800" ? "PaperDisplay" : `PaperBody${weight}`;
+    roles[key] = { ...style, fontFamily: family, fontWeight: undefined };
+  }
+  return roles;
+}
+
 export type TypeRole = keyof typeof type;
 
 /**
@@ -184,3 +229,21 @@ export function badgeAtScale(fontScale: number): { text: TextStyle; height: numb
   const lineHeight = Math.ceil(fontSize * 1.2);
   return { text: { fontSize, lineHeight }, height: Math.max(16, lineHeight + 2 * BADGE_RING) };
 }
+
+export function onboardingDisplay(type: Readonly<Record<"t-head" | "t-display", string>>, compact = false) {
+  const fontSize = px(type[compact ? "t-head" : "t-display"]);
+  return { fontSize, lineHeight: fontSize * 1.07, fontWeight: "800" as const, letterSpacing: -fontSize * 0.022 };
+}
+
+export function onboardingTagType(type: Readonly<Record<"t-ui", string>>, large = false): TextStyle {
+  return { fontSize: large ? px(type["t-ui"]) : size.bodyS, fontWeight: "600" };
+}
+
+export const onboardingType = {
+  button: { fontSize: size.h4, lineHeight: 20, fontWeight: "700" },
+  body: { fontSize: size.h4, lineHeight: 22 },
+  wallBody: { fontSize: size.h4, lineHeight: 23 },
+  label: { fontSize: size.h4 },
+  dot: { fontSize: 9 },
+  provider: { fontSize: size.h2 },
+} as const;

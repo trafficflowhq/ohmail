@@ -88,7 +88,7 @@ const UI = fileURLToPath(new URL("../src/ui/", import.meta.url));
 const INLINE = [
   "ComposeCopies", "Doors", "Field", "FoldersGroup", "MoreNav", "RecipientInput", "SenderNamePanel", "SignaturesPanel",
 ];
-const OWN_WINDOW = ["MessageActions", "list-detail"];
+const OWN_WINDOW = ["MessageActions", "StandaloneProvider", "list-detail", "MailPlacesDrawer", "SearchFacets"];
 const read = (dir: string) =>
   (readdirSync(dir, { recursive: true }) as string[])
     .filter((f) => f.endsWith(".tsx"))
@@ -107,10 +107,10 @@ const uiFields = (() => {
 const FIELD = draws(INLINE);
 const SCROLLER = /<(Scroller|MailList|FlatList|SectionList|ScrollView)\b/g;
 /** Each scroller's opening tag, its props walked to the `>` that closes it. */
-function scrollerTags(src: string): { name: string; tag: string }[] {
+function scrollerTags(src: string, pattern = SCROLLER): { name: string; tag: string }[] {
   const walk = withoutCommentsAndLiterals(src);
   const out: { name: string; tag: string }[] = [];
-  for (const m of walk.matchAll(SCROLLER)) {
+  for (const m of walk.matchAll(pattern)) {
     let depth = 0;
     let i = m.index! + m[0].length;
     for (; i < walk.length; i++) {
@@ -124,7 +124,7 @@ function scrollerTags(src: string): { name: string; tag: string }[] {
   return out;
 }
 const asks = (s: { name: string; tag: string }): boolean =>
-  s.name === "Scroller" || s.name === "MailList"
+  s.name === "Scroller" || s.name === "MailList" || s.name === "Sheet"
     ? /\bavoidKeyboard\b(?!\s*=\s*\{\s*false)/.test(s.tag)
     : /keyboardShouldPersistTaps="handled"/.test(s.tag);
 const forms = read(APP).filter((s) => FIELD.test(s.src));
@@ -134,9 +134,10 @@ describe("every screen with a text field avoids the keyboard", () => {
     expect(forms.map((f) => f.file).sort()).toEqual(
       expect.arrayContaining([
         "(tabs)/more.tsx", "away.tsx", "connect.tsx", "search.tsx", "seed-review.tsx", "servers.tsx", "settings.tsx",
-        "standalone.tsx", "welcome.tsx",
+        "standalone.tsx",
       ]),
     );
+    expect(forms.map((f) => f.file)).not.toContain("welcome.tsx");
   });
   it("each scroller on those screens asks for it", () => {
     const missing = forms.flatMap((f) => scrollerTags(f.src).filter((s) => !asks(s)).map((s) => `${f.file}: <${s.name}`));
@@ -148,6 +149,22 @@ describe("every screen with a text field avoids the keyboard", () => {
   it("each scroller in those files asks for it (the Tag sheet's list under its field)", () => {
     const missing = uiFields.flatMap((f) => scrollerTags(f.src).filter((s) => !asks(s)).map((s) => `${f.file}: <${s.name}`));
     expect(missing).toEqual([]);
+  });
+  it("the provider input inherits the setup page's keyboard-safe scroller", () => {
+    const provider = read(UI).find((file) => file.file === "StandaloneProvider.tsx")!;
+    expect(provider.src).toMatch(/<OnboardingPage[\s\S]*?<TextInput/);
+    const page = read(UI).find((file) => file.file === "OnboardingPage.tsx")!;
+    expect(scrollerTags(page.src)).toHaveLength(1);
+    expect(scrollerTags(page.src).every(asks)).toBe(true);
+  });
+  it("the mail drawer and search facets each own a keyboard-aware window", () => {
+    const drawer = uiFields.find((file) => file.file === "MailPlacesDrawer.tsx")!;
+    const facets = uiFields.find((file) => file.file === "SearchFacets.tsx")!;
+    const drawerScrollers = scrollerTags(drawer.src);
+    const facetSheets = scrollerTags(facets.src, /<(Sheet)\b/g);
+    expect(drawerScrollers.map(({ name }) => name)).toEqual(["Scroller"]);
+    expect(facetSheets.map(({ name }) => name)).toEqual(["Sheet"]);
+    expect([...drawerScrollers, ...facetSheets].every(asks)).toBe(true);
   });
   it("control: the walk reads a tag's props past an arrow, and refuses one that does not ask", () => {
     const [mail] = scrollerTags("<MailList renderRow={(r) => <Row r={r} />} avoidKeyboard\n/>");

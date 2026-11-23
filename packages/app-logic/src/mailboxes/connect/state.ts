@@ -172,5 +172,5 @@ export function presetOf(typed: ConnectTyped, facts: ConnectFacts): ProviderPres
 
 /** The servers the form holds now, each as a press would name it. */
 export function hostsNow(typed: ConnectTyped, facts: ConnectFacts): HostsNow {
-  return sentOf(typed, presetOf(typed, facts));
+  return sentOf(typed, presetOf(typed, facts), facts.purpose === "standalone");
 }

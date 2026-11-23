@@ -87,8 +87,8 @@ export type PasswordWord =
   | "refused";
 /** Nobody is signed in on this browser. */
 export type AccountWord = "signed_out";
-/** How a sign-out ended: it left; the copy is still here; this browser will not say what it holds. */
-export type SignOutOutcome = "left" | "blocked" | "unverified";
+/** The session ended, its confirmation was opened, or its local cleanup was blocked or could not be verified. */
+export type SignOutOutcome = "left" | "opened" | "blocked" | "unverified";
 /** The plans and prices could not be read. */
 export type SubscriptionWord = "plans_unavailable";
 /** How the press that opens the account page ended: it left; no page is served; the address could not be made. */
@@ -137,7 +137,7 @@ export const ACCOUNT_REFUSALS = {
   readonly invites: Readonly<Record<"sign_in", CatalogueKey>>;
   readonly security: Readonly<Record<"sign_in", CatalogueKey>>;
   readonly password: Readonly<Record<"sign_in" | PasswordWord, CatalogueKey>>;
-  readonly account: Readonly<Record<AccountWord | Exclude<SignOutOutcome, "left">, CatalogueKey>>;
+  readonly account: Readonly<Record<AccountWord | Exclude<SignOutOutcome, "left" | "opened">, CatalogueKey>>;
   readonly subscription: Readonly<Record<SubscriptionWord | Extract<ManageOutcome, "failed">, CatalogueKey>>;
   readonly storage: Readonly<Record<"sign_in" | StorageWord, CatalogueKey>>;
   readonly wayOut: Readonly<Record<never, CatalogueKey>>;

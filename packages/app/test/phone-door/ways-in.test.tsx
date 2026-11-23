@@ -141,6 +141,22 @@ describe("a server by its address", () => {
     await settle();
     expect(screen.getByRole("alert").textContent).toBe(R.unknown);
   });
+
+  it("takes someone back to Servers when Cloud is not offering pairing", async () => {
+    const fake = fakePhoneDoor({
+      answers: { "server.ask": () => ({ k: "refused", said: { code: "managedDeferred", args: [] } }) },
+    });
+    draw(fake, { step: "server" });
+    type(W.server.label, "mailbox.example");
+    press(W.server.continue);
+    await settle();
+    expect(screen.getByRole("alert").textContent).toBe(R.managedDeferred);
+    expect(says(W.server.cloud)).toBe(true);
+    expect(screen.queryByLabelText(W.server.label)).toBeNull();
+    press(W.terms.chooseOther);
+    expect(fake.kinds()).toEqual(["server.ask", "go"]);
+    expect(fake.asked.at(-1)).toEqual({ kind: "go", ask: "servers" });
+  });
 });
 
 describe("the scan", () => {

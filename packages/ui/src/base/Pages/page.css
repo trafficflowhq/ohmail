@@ -221,6 +221,15 @@
     --oh-page-rows: auto auto auto auto minmax(var(--s5), 1fr) auto;
     --oh-page-areas: "trail" "say" "mat" "line" "." "acts";
   }
+  :root[data-device="phone"] .oh-page[data-center-lead] > .oh-page-body {
+    --oh-page-rows: 0 minmax(auto, 1fr) auto auto 0 auto;
+  }
+  :root[data-device="phone"] .oh-page[data-center-lead] .oh-page-say {
+    align-self: center;
+  }
+  .oh-page[data-center-lead] .oh-page-say > .oh-sentence {
+    max-width: 13em;
+  }
   :root[data-device="phone"] .oh-page[data-line-first] > .oh-page-body {
     --oh-page-areas: "trail" "say" "line" "mat" "." "acts";
   }

@@ -257,9 +257,10 @@ describe("the built page in a browser", () => {
     config: ShellConfig; kept: KeptReading; settings: PhoneSettingsReading; feeds?: Feeds; nativeHttp: boolean; replies: Readonly<Record<string, object>>;
   }) {
     const w = window as unknown as Record<string, unknown>;
-    const asked: { kind: string; path?: string; place?: string; do?: string; distributor?: string; mailboxId?: string; name?: string | null; took?: unknown; askId?: number }[] = [];
+    const asked: { kind: string; path?: string; method?: string; act?: string; place?: string; do?: string; distributor?: string; mailboxId?: string; name?: string | null; took?: unknown; askId?: number }[] = [];
     const listeners: ((e: { data: string }) => void)[] = [];
     let { wake, names, refuseFirstNameRead } = settings;
+    const replyCounts = new Map<string, number>();
     const reply = (message: object) => {
       setTimeout(() => { for (const l of listeners) l({ data: JSON.stringify(message) }); }, 0);
     };
@@ -297,7 +298,7 @@ describe("the built page in a browser", () => {
     w.ohmailShell = {
       postMessage(text: string) {
         const m = JSON.parse(text) as (typeof asked)[number] & { id: number; epoch: string; act?: string };
-        asked.push({ kind: m.kind, path: m.path, place: m.place, do: m.do, distributor: m.distributor, mailboxId: m.mailboxId, name: m.name, took: m.took, askId: m.askId });
+        asked.push({ kind: m.kind, path: m.path, method: m.method, act: m.act, place: m.place, do: m.do, distributor: m.distributor, mailboxId: m.mailboxId, name: m.name, took: m.took, askId: m.askId });
         const envelope = { id: m.id, epoch: m.epoch, ok: true };
         if (m.kind === "http" && nativeHttp) {
           const ask = w.__askNativeHttp as (request: object) => Promise<object>;
@@ -350,7 +351,11 @@ describe("the built page in a browser", () => {
           }
           return;
         }
-        const response = replies[`${m.kind}:${m.do ?? m.act ?? ""}`] ?? answers[m.kind]?.() ?? {};
+        const key = m.kind === "http" ? `http:${m.method} ${m.path}` : `${m.kind}:${m.do ?? m.act ?? ""}`;
+        const choices = replies[key];
+        const at = replyCounts.get(key) ?? 0;
+        replyCounts.set(key, at + 1);
+        const response = (Array.isArray(choices) ? choices[Math.min(at, choices.length - 1)] : choices) ?? answers[m.kind]?.() ?? {};
         const answer = { ...envelope, ...(m.kind === "answer" ? { accepted: true } : response) };
         if (m.kind === "answer" && m.took === "held" && holdAcknowledgement) {
           holdAcknowledgement = false;
@@ -536,13 +541,471 @@ describe("the built page in a browser", () => {
   it("keeps the calendar app's page on its own frame", async () => {
     const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en" });
     try {
-      const dock = page.getByRole("navigation", { name: "Places" });
+      const dock = page.getByRole("navigation", { name: "Calendar" });
       await browserExpect(dock).toBeVisible();
       await browserExpect(dock.getByRole("button", { name: "Ohbox", exact: true })).toHaveCount(0);
       await browserExpect(page.getByRole("button", { name: "Settings", exact: true })).toHaveCount(0);
+      await browserExpect(page.locator("html")).toHaveAttribute("data-product", "cal");
+      await browserExpect(page.locator("html")).toHaveAttribute("data-face", "paper");
+      await browserExpect(page.locator("html")).toHaveAttribute("data-accent", "cobalt");
+      await browserExpect(dock.getByRole("button", { name: "Agenda", exact: true })).toBeVisible();
+      await dock.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("dialog", { name: "More", exact: true })
+        .getByRole("button", { name: "Settings", exact: true }).click();
+      await page.getByRole("button", { name: "General", exact: true }).click();
+      await browserExpect(page.getByText("Appearance", { exact: true })).toBeVisible();
+      await browserExpect(page.getByText("Messages", { exact: true })).toHaveCount(0);
     } finally {
       await close();
     }
+  }, 120_000);
+
+  it("keeps Calendar notification and widget titles private on the phone", async () => {
+    const { page, close } = await drawn({
+      ...CONFIG, app: "ohcal", language: "en", place: "#/cal/calendars/notifications", notifications: "granted",
+    });
+    try {
+      await browserExpect(page.getByRole("switch", { name: "An alert", exact: true })).toBeVisible();
+      await browserExpect(page.getByRole("switch", { name: /show titles/i })).toHaveCount(0);
+      await browserExpect(page.getByText("Reminders and widgets show no event details.", { exact: true })).toBeVisible();
+    } finally { await close(); }
+  }, 120_000);
+
+  it("keeps device Calendar view choices when moving between Settings pages", async () => {
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en", place: "#/cal/calendars/calview" });
+    try {
+      const opener = page.getByRole("button", { name: "Opens in", exact: true });
+      await opener.click({ timeout: 1400 });
+      await page.getByRole("menu").getByText("Month", { exact: true }).click();
+      await browserExpect(opener).toContainText("Month");
+      const weekends = page.getByRole("switch", { name: "Weekends", exact: true });
+      await weekends.click();
+      await browserExpect(weekends).toHaveAttribute("aria-checked", "false");
+      await page.evaluate(() => { location.hash = "#/cal/calendars"; });
+      await page.evaluate(() => { location.hash = "#/cal/calendars/calview"; });
+      await browserExpect(opener).toContainText("Month");
+      await browserExpect(weekends).toHaveAttribute("aria-checked", "false");
+    } finally { await close(); }
+  }, 120_000);
+
+  it("keeps calendar mail offer choices on this phone", async () => {
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en", place: "#/cal/calendars/calmail" },
+      [], undefined, undefined, {}, undefined, undefined, { "http:GET /mailboxes": httpAnswer({ items: [
+        { id: "fixture-mailbox", address: ["mailbox", "example.invalid"].join("@"), status: "connected" },
+      ] }) });
+    try {
+      const calendar = page.getByRole("switch", { name: "Calendar invitations", exact: true });
+      await browserExpect(calendar).toBeChecked({ timeout: 1300 });
+      await calendar.click();
+      await browserExpect(calendar).not.toBeChecked();
+      await page.reload();
+      await browserExpect(calendar).not.toBeChecked();
+      await browserExpect(page.getByRole("switch", { name: "Dates in structured mail", exact: true })).toBeChecked();
+    } finally { await close(); }
+  }, 120_000);
+
+  it("turns off Calendar reminders on this device without changing the alert choice", async () => {
+    const { page, close } = await drawn({
+      ...CONFIG, app: "ohcal", language: "en", place: "#/cal/calendars/notifications", notifications: "granted",
+    });
+    try {
+      const master = page.getByRole("switch", { name: "On this device", exact: true });
+      const alert = page.getByRole("switch", { name: "An alert", exact: true });
+      await browserExpect(master).toBeChecked({ timeout: 1400 });
+      await master.click();
+      await browserExpect(master).not.toBeChecked();
+      await browserExpect(alert).toBeDisabled();
+      await master.click();
+      await browserExpect(alert).toBeEnabled();
+    } finally { await close(); }
+  }, 120_000);
+
+  it("changes Calendar week numbers using the existing settings call", async () => {
+    const calendar = { enabledAt: "2026-11-12T08:00:00Z", weekNumbers: false, secondZone: null,
+      dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null };
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en", place: "#/cal/calendars/calview" },
+      [], undefined, undefined, {}, undefined, undefined, {
+        "http:GET /calendar/settings": httpAnswer(calendar),
+        "http:PATCH /calendar/settings": httpAnswer({ ...calendar, weekNumbers: true }),
+      });
+    try {
+      const numbers = page.getByRole("switch", { name: "Week numbers", exact: true });
+      await browserExpect(numbers).toBeVisible({ timeout: 1300 });
+      await numbers.click();
+      await askedFor(page, "http", "PATCH /calendar/settings");
+      await browserExpect(numbers).toHaveAttribute("aria-checked", "true");
+    } finally { await close(); }
+  }, 120_000);
+
+  it("keeps Calendar Accounts open when turning off ohcal on the phone", async () => {
+    const calendar = { enabledAt: "2026-11-12T08:00:00Z", weekNumbers: false, secondZone: null,
+      dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null };
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en", place: "#/cal/calendars/calaccounts" },
+      [], undefined, undefined, {}, undefined, undefined, {
+        "http:GET /calendar/settings": httpAnswer(calendar),
+        "http:PATCH /calendar/settings": httpAnswer({ ...calendar, enabledAt: null }),
+      });
+    try {
+      const enabled = page.getByRole("switch", { name: "Use ohcal", exact: true });
+      await browserExpect(enabled).toBeChecked({ timeout: 1400 });
+      await enabled.click();
+      await askedFor(page, "http", "PATCH /calendar/settings");
+      await browserExpect(enabled).not.toBeChecked({ timeout: 1400 });
+      await browserExpect(enabled).toBeEnabled();
+    } finally { await close(); }
+  }, 120_000);
+
+  it("opens the account Settings sections on a paired phone", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings" });
+    try {
+      for (const name of ["Account", "Devices", "AI", "Away responder", "Subscription", "Storage", "Invites", "Security"]) {
+        await browserExpect(page.getByRole("button", { name, exact: true })).toBeAttached({ timeout: 600 });
+      }
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  const httpAnswer = (value: object) => ({
+    status: 200, headers: [["content-type", "application/json"]],
+    body: { as: "text", text: JSON.stringify(value) },
+  });
+  const access = httpAnswer({
+    metered: true, access: "open", lifecycle: { state: "active" },
+    storage: { usedBytes: 200_000_000, limitBytes: 1_000_000_000, offer: { current: { plan: "plus" } },
+      mailboxes: [{ id: "metered-mailbox", usedBytes: 200_000_000, letters: 2000, expectedBytes: 400_000_000 }] },
+  });
+  const awayRow = { enabled: true, body: "Back on Monday", startsAt: null, endsAt: null, audience: "everyone", throttle: "per_day" };
+  const dataReplies = {
+    "http:GET /account/access": access,
+    "http:GET /mailboxes": httpAnswer({ items: [
+      { id: "metered-mailbox", displayName: "Fixture mailbox", address: ["mailbox", "example.invalid"].join("@") },
+    ] }),
+    "http:GET /account/ai": httpAnswer({ aiEnabled: true }),
+    "http:PATCH /account/ai": httpAnswer({ aiEnabled: false }),
+    "http:GET /consent": httpAnswer({ draftReplies: true, dormancyDays: 28 }),
+    "http:PATCH /consent/settings": httpAnswer({ draftReplies: false }),
+    "http:GET /away-responder": httpAnswer(awayRow),
+    "http:PUT /away-responder": httpAnswer({ ...awayRow, body: "Back on Tuesday" }),
+  };
+
+  it.each([
+    { pane: "ai", value: "Use AI for suggestions and drafts" },
+    { pane: "away", value: "Away responder" },
+    { pane: "billing", value: "Plus" },
+    { pane: "storage", value: "200 MB" },
+  ])("draws $pane from the paired account without purchase controls", async ({ pane, value }) => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: `#/settings/${pane}` }, [], undefined, undefined, {}, undefined, undefined, dataReplies);
+    try {
+      await browserExpect(page.getByText(value, { exact: true }).last()).toBeVisible({ timeout: 1400 });
+      await browserExpect(page.getByRole("link", { name: /plan|subscribe|payment|storage/i })).toHaveCount(0);
+      await browserExpect(page.getByRole("button", { name: /change plan|subscribe|payment|add storage/i })).toHaveCount(0);
+    } finally { await close(); }
+  }, 120_000);
+
+  it.each([
+    { label: "Use AI for suggestions and drafts", method: "PATCH", path: "/account/ai" },
+    { label: "Draft reply", method: "PATCH", path: "/consent/settings" },
+  ])("saves $label on the paired account", async ({ label, method, path }) => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/ai" }, [], undefined, undefined, {}, undefined, undefined, dataReplies);
+    try {
+      const toggle = page.getByRole("switch", { name: label, exact: true });
+      await browserExpect(toggle).toHaveAttribute("aria-checked", "true", { timeout: 1400 });
+      await toggle.click();
+      await browserExpect.poll(() => page.evaluate(({ method, path }) => {
+        const { asked } = (window as unknown as { __native: { asked: { method?: string; path?: string }[] } }).__native;
+        return asked.filter((ask) => ask.method === method && ask.path === path).length;
+      }, { method, path })).toBe(1);
+      await browserExpect(toggle).toHaveAttribute("aria-checked", "false");
+    } finally { await close(); }
+  }, 120_000);
+
+  it("saves an Away message after the person confirms the edit", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/away" }, [], undefined, undefined, {}, undefined, undefined, dataReplies);
+    try {
+      const message = page.getByRole("textbox", { name: "Message", exact: true });
+      await browserExpect(message).toHaveValue("Back on Monday", { timeout: 1400 });
+      await message.fill("Back on Tuesday");
+      await page.getByRole("button", { name: "Save", exact: true }).last().click();
+      await browserExpect.poll(() => page.evaluate(() => {
+        const { asked } = (window as unknown as { __native: { asked: { method?: string; path?: string }[] } }).__native;
+        return asked.filter((ask) => ask.method === "PUT" && ask.path === "/away-responder").length;
+      })).toBe(1);
+      await browserExpect(message).toHaveValue("Back on Tuesday");
+    } finally { await close(); }
+  }, 120_000);
+
+  const fixtureIdentity = { scope: "full", user: {
+    accountId: CONFIG.accountId, email: ["person", "example.invalid"].join("@"), displayName: "Fixture Person",
+    twofaEnrolled: { totp: true, webauthn: true, recoveryCodes: true },
+  } };
+  const pairRow = { id: "paired-elsewhere", label: "Spare device", grant: "device-pair", status: "live", createdAt: "2026-11-04T10:00:00Z", expiresAt: "2026-11-04T10:05:00Z" };
+  const accountReplies = {
+    "http:GET /auth/session": httpAnswer(fixtureIdentity),
+    "http:POST /auth/password": httpAnswer({ revoked: 2 }),
+    "http:GET /devices": httpAnswer({ items: [
+      { id: "remote-device", kind: "mobile-android", label: "Travel phone", current: false, createdAt: pairRow.createdAt, lastSeenAt: pairRow.createdAt },
+      { id: "remote-browser", kind: "web", label: "", named: false, current: false, createdAt: pairRow.createdAt, lastSeenAt: pairRow.createdAt },
+    ] }),
+    "http:DELETE /devices/remote-device": httpAnswer({}),
+    "http:POST /devices/revoke-web-sessions": httpAnswer({ revoked: 1 }),
+    "http:POST /auth/2fa/recovery-codes": httpAnswer({ codes: ["fixture-code"] }),
+    "http:POST /auth/2fa/totp/enroll": httpAnswer({
+      ...enrollmentFixture(),
+    }),
+    "http:DELETE /auth/2fa/totp": httpAnswer({}),
+    "phone.account:pairs": { result: httpAnswer({ items: [pairRow, { ...pairRow, id: "other-invite", grant: "invite", label: "Spare invitation" }] }) },
+    "phone.account:mint": { result: httpAnswer({ id: "new-link", label: "Fixture link", expiresAt: pairRow.expiresAt, link: "https://example.invalid/pair#fixture" }) },
+    "phone.account:revoke": { result: httpAnswer({}) },
+    "phone.account:activate": { result: httpAnswer({}) },
+    "phone.account:deletePage": {},
+  };
+  const openedAccount = (pane: string, setting: ShellConfig["setting"] = "selfHosted") =>
+    drawn({ ...CONFIG, setting, language: "en", place: `#/settings/${pane}` }, [], undefined, undefined, {}, undefined, undefined, accountReplies);
+
+  it.each([
+    { pane: "account", words: "Fixture Person" },
+    { pane: "devices", words: "Travel phone" },
+    { pane: "invites", words: "Spare invitation" },
+    { pane: "security", words: "Authenticator app" },
+  ])("reads $pane for the current server account", async ({ pane, words }) => {
+    const { page, close } = await openedAccount(pane);
+    try {
+      await browserExpect(page.getByText(words, { exact: true }).first()).toBeVisible({ timeout: 1400 });
+    } finally { await close(); }
+  }, 120_000);
+
+  function askedFor(page: import("@playwright/test").Page, kind: string, verb: string) {
+    return browserExpect.poll(() => page.evaluate(({ kind, verb }) => {
+      const { asked } = (window as unknown as { __native: { asked: { kind: string; method?: string; path?: string; do?: string; act?: string }[] } }).__native;
+      return asked.filter((ask) => ask.kind === kind && (ask.do ?? ask.act ?? `${ask.method} ${ask.path}`) === verb).length;
+    }, { kind, verb }), { timeout: 1400 }).toBe(1);
+  }
+
+  it("changes the server password using the same form as the web", async () => {
+    const { page, close } = await openedAccount("account");
+    try {
+      await page.getByRole("button", { name: "Change password", exact: true }).click({ timeout: 1400 });
+      await page.getByLabel("Current password", { exact: true }).fill("fixture-original");
+      await page.getByLabel("New password", { exact: true }).fill("fixture-replacement");
+      await page.getByLabel("New password, once more", { exact: true }).fill("fixture-replacement");
+      await page.getByRole("button", { name: "Change password", exact: true }).click();
+      await askedFor(page, "http", "POST /auth/password");
+      await browserExpect(page.getByText(/2 other sessions were signed out/)).toBeVisible();
+    } finally { await close(); }
+  }, 120_000);
+
+  it.each([
+    { pane: "account", button: "Delete my account", kind: "phone.account", verb: "deletePage" },
+    { pane: "account", button: "Sign out", kind: "act", verb: "signOut" },
+    { pane: "devices", button: "Servers", kind: "act", verb: "openServers" },
+    { pane: "devices", button: "Add a device", kind: "phone.account", verb: "mint" },
+    { pane: "devices", button: "Revoke", kind: "phone.account", verb: "revoke" },
+    { pane: "devices", button: "Sign out", confirm: "Sign out", kind: "http", verb: "DELETE /devices/remote-device" },
+    { pane: "devices", button: "Sign out all", confirm: "Sign out all", kind: "http", verb: "POST /devices/revoke-web-sessions" },
+    { pane: "invites", button: "Make an invite link", kind: "phone.account", verb: "mint" },
+    { pane: "invites", button: "Revoke", kind: "phone.account", verb: "revoke" },
+    { pane: "security", button: "Replace recovery codes", confirm: "Replace them", kind: "http", verb: "POST /auth/2fa/recovery-codes" },
+    { pane: "security", button: "Remove authenticator", kind: "http", verb: "DELETE /auth/2fa/totp" },
+  ])("runs $button from $pane on the signed-in phone", async ({ pane, button, confirm, kind, verb }) => {
+    const { page, close } = await openedAccount(pane);
+    try {
+      await page.getByRole("button", { name: button, exact: true }).first().click({ timeout: 1400 });
+      if (confirm) await page.getByRole("dialog").getByRole("button", { name: confirm, exact: true }).click({ timeout: 1400 });
+      await askedFor(page, kind, verb);
+    } finally { await close(); }
+  }, 120_000);
+
+  it("enrols an authenticator only after the entered code is confirmed", async () => {
+    const { page, close } = await openedAccount("security");
+    try {
+      await page.getByRole("button", { name: "Replace authenticator", exact: true }).click({ timeout: 1400 });
+      await askedFor(page, "http", "POST /auth/2fa/totp/enroll");
+      await browserExpect(page.getByRole("img", { name: "Authenticator setup QR code" })).toBeVisible({ timeout: 1400 });
+      await page.getByLabel("6-digit code", { exact: true }).fill("123456");
+      await page.getByRole("button", { name: "Turn it on", exact: true }).click();
+      await askedFor(page, "phone.account", "activate");
+    } finally { await close(); }
+  }, 120_000);
+
+  const stepRequired = {
+    ...httpAnswer({ error: { code: "step_up_required" } }), status: 403,
+  };
+  const futureLink = accountReplies["phone.account:mint"];
+
+  it("offers the browser when a paired account can confirm only with a passkey", async () => {
+    const passkeyOnly = { ...fixtureIdentity, user: { ...fixtureIdentity.user, twofaEnrolled: { webauthn: true } } };
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/devices" }, [], undefined, undefined, {}, undefined, undefined, {
+      ...accountReplies, "phone.account:mint": { result: stepRequired },
+      "http:GET /auth/session": httpAnswer(passkeyOnly), "phone.account:settingsPage": {},
+    });
+    try {
+      await page.getByRole("button", { name: "Add a device", exact: true }).click();
+      const dialog = page.getByRole("dialog");
+      await dialog.getByRole("button", { name: "Open in browser", exact: true }).click({ timeout: 1500 });
+      await askedFor(page, "phone.account", "settingsPage");
+      await askedFor(page, "phone.account", "mint");
+      await browserExpect(dialog).toHaveCount(0);
+    } finally { await close(); }
+  }, 120_000);
+
+  it.each([
+    { label: "Six-digit code from your authenticator app", path: "/auth/step-up/totp", choice: null },
+    { label: "One of the recovery codes you saved", path: "/auth/step-up/recovery-code", choice: "Use a recovery code instead" },
+  ])("retries issuing the device link once after $label verifies", async ({ label, path, choice }) => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/devices" }, [], undefined, undefined, {}, undefined, undefined, {
+      ...accountReplies, "phone.account:mint": [{ result: stepRequired }, futureLink],
+      [`http:POST ${path}`]: httpAnswer({}),
+    });
+    try {
+      await page.getByRole("button", { name: "Add a device", exact: true }).click();
+      const dialog = page.getByRole("dialog");
+      if (choice) await dialog.getByRole("button", { name: choice, exact: true }).click();
+      await dialog.getByLabel(label, { exact: true }).fill("123456");
+      await dialog.getByRole("button", { name: "Verify code", exact: true }).click();
+      await askedFor(page, "http", `POST ${path}`);
+      await browserExpect(page.getByRole("img", { name: /pairing link as a QR code/ })).toBeVisible();
+      await browserExpect.poll(() => page.evaluate(() => {
+        const { asked } = (window as unknown as { __native: { asked: { kind: string; do?: string }[] } }).__native;
+        return asked.filter((ask) => ask.kind === "phone.account" && ask.do === "mint").length;
+      })).toBe(2);
+    } finally { await close(); }
+  }, 120_000);
+
+  it("shows mailbox use and the account total in phone Storage", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/storage" }, [], undefined, undefined, {}, undefined, undefined, dataReplies);
+    try {
+      const table = page.getByRole("table", { name: "Mailboxes", exact: true });
+      await browserExpect(table.getByRole("row", { name: /Fixture mailbox/ })).toContainText("400 MB", { timeout: 1400 });
+      await browserExpect(table.getByRole("row", { name: /Total/ })).toContainText("200 MB");
+      await browserExpect(page.getByText("Storage mails", { exact: true })).toHaveCount(0);
+    } finally { await close(); }
+  }, 120_000);
+
+  it("keeps account-only panes empty on a standalone phone and leaves the local responder available", async () => {
+    const { page, close } = await drawn({ ...CONFIG, setting: "standalone", language: "en", place: "#/settings/devices" }, [], undefined, undefined, {}, undefined, undefined, dataReplies);
+    try {
+      await browserExpect(page.getByRole("button", { name: "Servers", exact: true })).toBeVisible();
+      await browserExpect(page.getByRole("switch", { name: "Use AI for suggestions and drafts" })).toHaveCount(0);
+      const next = await page.evaluate(() => {
+        const { asked } = (window as unknown as { __native: { asked: { kind: string; path?: string }[] } }).__native;
+        return asked.some((ask) => ask.kind === "phone.account" || ask.path?.startsWith("/account/"));
+      });
+      expect(next).toBe(false);
+      const back = page.getByRole("button", { name: "Back to Settings", exact: true });
+      await browserExpect(back).toBeVisible({ timeout: 1400 });
+      await browserExpect(page.getByRole("heading", { name: "Devices", exact: true })).toBeVisible();
+      await back.click();
+      await page.getByRole("button", { name: "Away responder", exact: true }).click();
+
+      await browserExpect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Back on Monday");
+      await browserExpect(page.getByText("Replies are sent while ohmail is open on this phone.", { exact: true })).toBeVisible();
+    } finally { await close(); }
+  }, 120_000);
+
+  it.each([
+    { setting: "standalone", name: "Fixture phone", note: "Replies are sent while ohmail is open on this phone." },
+    { setting: "desktopHost", name: "Fixture desktop", note: "Replies are sent while ohmail is open on Fixture desktop." },
+  ] as const)("names the running organizer for Away on $setting", async ({ setting, name, note }) => {
+    const { page, close } = await drawn({ ...CONFIG, serverName: name, setting, language: "en", place: "#/settings/away" },
+      [], undefined, undefined, {}, undefined, undefined, {
+        ...dataReplies, "phone.organize:read": { rows: [{
+          id: "fixture-mailbox", tag: "reader", notes: ["A different install organizes this mailbox."], warnings: [],
+        }] },
+      });
+    try {
+      await browserExpect(page.getByText(note, { exact: true })).toBeVisible({ timeout: 1200 });
+      if (setting === "standalone") {
+        await browserExpect(page.getByText("A different install organizes this mailbox.", { exact: true })).toBeVisible();
+      }
+    } finally { await close(); }
+  }, 120_000);
+
+  it("only offers to save a changed phone Away responder", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/away" },
+      [], undefined, undefined, {}, undefined, undefined, dataReplies);
+    try {
+      await browserExpect(page.getByRole("textbox", { name: "Message" })).toHaveValue("Back on Monday");
+      await browserExpect(page.getByText("At most once a day", { exact: true })).toBeVisible();
+      const save = page.getByRole("button", { name: "Save", exact: true });
+      await browserExpect(save).toHaveCount(0);
+      await page.getByRole("textbox", { name: "Message" }).fill("Back on Tuesday");
+      await browserExpect(save).toBeVisible();
+      await page.getByRole("button", { name: "Discard changes", exact: true }).click();
+      await browserExpect(page.getByRole("textbox", { name: "Message" })).toHaveValue("Back on Monday");
+      await browserExpect(save).toHaveCount(0);
+      await page.getByRole("textbox", { name: "Message" }).fill("Back on Tuesday");
+      await save.click();
+      await askedFor(page, "http", "PUT /away-responder");
+      await browserExpect(save).toHaveCount(0);
+    } finally { await close(); }
+  }, 120_000);
+
+  it("lists only applicable Settings on the standalone phone", async () => {
+    const { page, close } = await drawn({ ...CONFIG, setting: "standalone", language: "en", place: "#/settings" });
+    try {
+      await browserExpect(page.getByRole("button", { name: "Away responder", exact: true })).toBeVisible();
+      for (const name of ["Account", "AI", "Subscription", "Storage", "Invites", "Security"]) {
+        await browserExpect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+      }
+    } finally { await close(); }
+  }, 120_000);
+
+  it.each([
+    { state: "active", date: null },
+    { state: "trialing", date: "Wed 18 Nov" },
+  ])("shows only dates the subscription reports for $state", async ({ state, date }) => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/billing" },
+      [], undefined, undefined, {}, undefined, undefined, {
+        "http:GET /account/access": httpAnswer({ metered: true, lifecycle: { state, trialEndsAt: "2026-11-18T12:00:00Z" }, trialProgress: state === "trialing" ? { day: 8, total: 14 } : undefined }),
+      });
+    try {
+      await browserExpect(page.getByText(state === "active" ? "Active" : "Trial", { exact: true })).toBeVisible();
+      await browserExpect(page.getByText("Renewal date", { exact: true })).toHaveCount(0);
+      if (date) {
+        await browserExpect(page.getByText(date, { exact: true })).toBeVisible({ timeout: 1300 });
+        await browserExpect(page.getByText("8 of 14", { exact: true })).toBeVisible();
+      }
+    } finally { await close(); }
+  }, 120_000);
+
+  it("explains what counts against phone Storage without opening a plan", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/storage" },
+      [], undefined, undefined, {}, undefined, undefined, dataReplies);
+    try {
+      await browserExpect(page.getByText("Attachments", { exact: true })).toBeVisible({ timeout: 1400 });
+      await page.getByRole("button", { name: "What counts", exact: true }).click();
+      await browserExpect(page.getByText("The text of your messages counts, and attachments never do.")).toBeVisible();
+    } finally { await close(); }
+  }, 120_000);
+
+  it("opens the legal pages from phone About", async () => {
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/settings/about" },
+      [], undefined, undefined, {}, undefined, undefined, {
+        ...dataReplies, "http:GET /mailboxes": httpAnswer({ items: [
+          { id: "mailbox", address: ["here", "example.invalid"].join("@"), status: "connected" },
+        ] }),
+      });
+    try {
+      await browserExpect(page.getByRole("group", { name: "Mailboxes", exact: true }).getByText("1", { exact: true })).toBeVisible({ timeout: 1400 });
+      for (const name of ["Privacy", "Subprocessors", "Imprint"]) {
+        await page.getByRole("button", { name, exact: true }).click({ timeout: 1300 });
+      }
+      await browserExpect.poll(() => page.evaluate(() => {
+        const { asked } = (window as unknown as { __native: { asked: { act?: string }[] } }).__native;
+        return asked.filter((ask) => ask.act === "about.page").length;
+      })).toBe(3);
+    } finally { await close(); }
+  }, 120_000);
+
+  it("lets someone cancel native sign-out and return to an active Account pane", async () => {
+    const { page, close } = await openedAccount("account");
+    try {
+      const signOut = page.getByRole("button", { name: "Sign out", exact: true });
+      await signOut.click();
+      await askedFor(page, "act", "signOut");
+      await browserExpect(signOut).toBeEnabled({ timeout: 1400 });
+    } finally { await close(); }
   }, 120_000);
 
   it("opens New mail from phone Settings and shows the device's answer to each choice", async () => {
@@ -629,12 +1092,21 @@ describe("the built page in a browser", () => {
   }, 120_000);
 
   it("keeps a paired phone from asking for standalone sender names", async () => {
-    const { page, close } = await drawn({ ...CONFIG, language: "en" });
+    const { page, close } = await drawn({ ...CONFIG, language: "en" }, [], undefined, undefined, {}, undefined, undefined, {
+      "act:language.set": { language: "de" },
+    });
     try {
       await page.getByRole("button", { name: "More", exact: true }).click();
       await page.getByRole("dialog", { name: "More" }).getByRole("button", { name: "Settings", exact: true }).click();
       await browserExpect(page.getByRole("button", { name: "Notifications", exact: true })).toBeVisible();
-      await browserExpect(page.getByRole("button", { name: "General", exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "General", exact: true }).click();
+      await browserExpect(page.getByText("Appearance", { exact: true })).toBeVisible();
+      await browserExpect(page.getByText("Your name", { exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "Dark", exact: true }).click();
+      await browserExpect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+      await page.getByRole("button", { name: "Deutsch", exact: true }).click();
+      await browserExpect(page.getByRole("heading", { name: "Allgemein", exact: true })).toBeVisible();
+      expect(new URL(page.url()).hash).toBe("#/settings/general");
       const askedForName = await page.evaluate(() => {
         const native = (window as unknown as { __native: { asked: { kind: string }[] } }).__native;
         return native.asked.some((entry) => entry.kind === "phone.name");
@@ -882,3 +1354,10 @@ describe("the built page in a browser", () => {
     }
   }, 120_000);
 });
+
+function enrollmentFixture() {
+  const value = "JBSW".repeat(4);
+  const link = new URL("otpauth://totp/Fixture");
+  link.searchParams.set("secret", value);
+  return { secret: value, otpauthUrl: link.href };
+}

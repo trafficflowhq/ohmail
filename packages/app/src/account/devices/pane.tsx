@@ -29,6 +29,7 @@ export interface DevicesPaneParts {
   readonly factor: FactorSlot;
   /** The picture of a link to scan. */
   readonly qr: QrSlot;
+  readonly End?: () => ReactNode;
 }
 
 /** Whether these parts can draw this host's answer: the pane, and nothing else. */
@@ -54,7 +55,8 @@ export function devicesPane(parts: DevicesPaneParts): SettingsPane {
     const door = parts.useDoor();
     const watch = parts.useWatch?.();
     const model = useDevices(door, watch);
-    const owner = confirmedAccountForScope(useFrame().host);
+    const { host } = useFrame();
+    const owner = confirmedAccountForScope(host);
     const t = useText("devices");
     const locale = useLocale();
     const pairing = model.made !== null;
@@ -77,7 +79,31 @@ export function devicesPane(parts: DevicesPaneParts): SettingsPane {
       },
       [owner],
     );
-    return <DevicesPane model={model} factor={parts.factor} qr={parts.qr} sheet={sheet} />;
+    const End = parts.End;
+    const place =
+      sheet && End
+        ? (body: ReactNode, foot?: ReactNode, count?: string) =>
+            sheet(
+              <>
+                {body}
+                <End />
+              </>,
+              foot,
+              count,
+            )
+        : sheet;
+    return (
+      <>
+        <DevicesPane
+          model={model}
+          factor={parts.factor}
+          qr={parts.qr}
+          sheet={place}
+          phone={host.device.build.surface === "phone"}
+        />
+        {!sheet && End ? <End /> : null}
+      </>
+    );
   }
   function Body({ sheet }: PaneBodyProps): ReactNode {
     return draws(useFrame().host) ? <Drawn sheet={sheet} /> : null;

@@ -25,6 +25,11 @@
     transition: transform var(--d-press) var(--e-press);
   }
 
+  .oh-doorbell[data-ink] {
+    background: var(--ink);
+    color: var(--sheet);
+  }
+
   .oh-doorbell:focus-visible {
     border-radius: var(--r-pill);
   }

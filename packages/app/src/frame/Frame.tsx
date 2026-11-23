@@ -32,7 +32,6 @@ import type { LinkedDraft } from "../host/signals.js";
 import { useText } from "../text/index.js";
 import { FrameContext, type EnteredTarget, type FrameInner } from "./commands.js";
 import {
-  type CalendarEntry,
   type EventRef,
   type FrameApi,
   type FrameCommands,
@@ -54,7 +53,14 @@ import type { RoomSeam } from "./room-store.js";
 import type { ReportSlotApi } from "./report-slot.js";
 import { useFrameReportSlot } from "./WindowReports.js";
 import { attributesOf } from "./root-attributes.js";
-import { CALENDAR_HOME, MAIL_HOME, eventRefString, isCalendarPlace, productOf } from "./product.js";
+import {
+  CALENDAR_HOME,
+  MAIL_HOME,
+  calendarOf,
+  eventRefString,
+  isCalendarPlace,
+  productOf,
+} from "./product.js";
 import { useRouteMemory } from "./route-memory.js";
 import { fragmentOf, hasLetterTail, routeOf } from "./route.js";
 import { Scoped } from "./scope.js";
@@ -65,12 +71,6 @@ import "./seam.generated.css";
 
 /** A place under its own word: what a kept letter is remembered by (a letter open under one tag is not another's). */
 const spot = (at: Pick<Route, "place" | "sub">): string => `${at.place}/${at.sub ?? ""}`;
-
-/** The calendar's entry where this host offers the switch between the two products, else null. */
-function calendarOf(host: FrameHost): CalendarEntry | null {
-  const entry = host.features.calendar;
-  return host.capabilities.products === "both" && entry !== NONE ? entry : null;
-}
 
 function noticePlaceAt(host: FrameHost, fragment: string) {
   const notice = host.features.calendar === NONE ? undefined : host.features.calendar.notice;
@@ -167,6 +167,7 @@ function useCommands(
       over: setOver,
       switchProduct: (to, setupHome) => {
         if (calendarOf(host) === null) return;
+        if (to === "mail" && host.capabilities.products === "calendar") return;
         const here = now.current.place;
         const { calendarView, lastCalendar, lastMail } = memory.current;
         const home = setupHome === undefined ? null : { place: setupHome };
@@ -238,14 +239,18 @@ function FrameBody({ host }: { host: FrameHost }) {
   const fragment = useSyncExternalStore(address.subscribe, address.read, address.read);
   const addressed = useMemo(() => routeOf(fragment), [fragment]);
   const calendar = calendarOf(host);
+  const calendarOnly = calendar !== null && host.capabilities.products === "calendar";
   const noticePlace = noticePlaceAt(host, fragment);
-  /* A calendar address where the switch is absent folds back to mail's home: the bar is replaced, and mail's home is
-     drawn meanwhile, never a blank frame. */
   const folded =
     calendar === null &&
     noticePlace === null &&
     (isCalendarPlace(addressed.place) || addressed.stage?.id === "calSetup");
-  const route = folded ? HOME : addressed;
+  const route =
+    calendarOnly && !isCalendarPlace(addressed.place)
+      ? calendarHome(layoutPlan(facts, undefined))
+      : folded
+        ? HOME
+        : addressed;
   const placeHere = spot(route);
   const [startupPlace, setStartupPlace] = useState<string | null>(() =>
     route.open === null ? placeHere : null,
@@ -284,9 +289,7 @@ function FrameBody({ host }: { host: FrameHost }) {
     ? (noticePlace ?? calendar?.places[route.place] ?? NONE)
     : places[route.place];
   const entry = place === NONE ? null : place;
-  /* AN ADDRESS THAT NAMES A PLACE THIS HOST DOES NOT HAND (a stored link, a notice's link) is replaced by the
-     Ohbox's: nothing of that place exists here, no page stands in for it, and Back does not lead there again. On a
-     host that hands no Ohbox either the address stays and nothing is drawn. */
+  /* Replace an unavailable place in the address so Back does not lead there again. */
   const lost = place === NONE && places.ohbox !== NONE;
   /* Correct the fragment in place, with one write even if its place is unavailable. A bare page may stay bare. */
   useLayoutEffect(() => {
@@ -303,9 +306,7 @@ function FrameBody({ host }: { host: FrameHost }) {
   const readingShown = plan.columns === 2 || route.open !== null || holdsItsReading(entry);
   const panes = panesOf(entry, pane, readingShown, host.features.reader);
   const Above = host.features.above;
-  /* Whose press seam it is, the host's record says, statically: a host that hands a ground above the panes or a reader
-     gets the room's own, mounted once for the frame's life and on wherever the frame stands. A host that hands neither
-     has nothing that can press, and no seam. */
+  /* A ground or a reader supplies the room's press seam. */
   const whose: RoomSeam = Above !== NONE || host.features.reader !== NONE ? "own" : "none";
   const room = whose === "own";
   const root = useRef<HTMLDivElement>(null);

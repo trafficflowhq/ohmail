@@ -18,3 +18,8 @@ export function ownStorage(scope: string): void {
   const state = storageOwnerState();
   if (state.source !== "host" || state.owner !== scope) throw new StorageNotOwned(state.source);
 }
+
+export function ownsStorage(scope: string): boolean {
+  const state = storageOwnerState();
+  return state.source === "host" && state.owner === scope;
+}

@@ -7,10 +7,11 @@
  * how fast. An address-shaped query that settles empty offers the address door: All · From them ·
  * To them — the device's rows, then the archive's (`useAddressArchive`), as the web address view.
  */
+import { MailAppearance } from "../src/theme/mail";
 import type { EngineMessage as StoreMessage } from "@ohmail/wire";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactElement } from "react";
-import { TextInput, View } from "react-native";
-import { router } from "expo-router";
+import { Platform, TextInput, View } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../src/copy";
 /* The engine is reached through the seam, never from a screen — `privacy.test.ts`'s
    allow-list is the rule, and the direction union rides out with the rest. */
@@ -20,12 +21,17 @@ import { partReachSaid, searchCountLine } from "../src/state/search-count";
 import { useAddressArchive, useStoreSearch } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
-import { Empty, Screen, Tap, Txt } from "../src/ui/base";
-import { DetailBar, PaneTop } from "../src/ui/chrome";
+import { Empty, Screen, Tap, Txt, ViewHead } from "../src/ui/base";
+import { Icon } from "../src/ui/Icon";
+import { MailPlaceDock } from "../src/ui/MailPlaceDock";
+import { MailCalendarSwitch } from "../src/ui/MailCalendarSwitch";
+import { DetailBar, PaneTop, TopBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { MailList, type ListGroup } from "../src/ui/MailList";
 import { MailRow } from "../src/ui/MailRow";
 import { SlotHeights } from "../src/ui/history-slot";
+import { SearchFacets } from "../src/ui/SearchFacets";
+import { phoneSearchQuestion, type SearchFilters, type SearchOrder } from "../src/state/search-facets";
 import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
@@ -36,6 +42,8 @@ import type { WorldMail } from "../src/state/world";
 /** A row of the one list: the device's own, a store slot read at render, or one only the archive holds. */
 type Row = { key: string; device: WorldMail } | { key: string; slot: number } | { key: string; archive: StoreMessage; mail: WorldMail };
 
+const NO_FILTERS: SearchFilters = {};
+
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function SearchScreen({ inPane = false }: { inPane?: boolean }) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
@@ -43,9 +51,11 @@ export default function SearchScreen({ inPane = false }: { inPane?: boolean }) {
   useLocale();
   return (
     <SurfaceBoundary surface="search">
-      <Gated>
-        <SearchBody inPane={inPane} />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <SearchBody inPane={inPane} />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
@@ -54,7 +64,11 @@ function SearchBody({ inPane }: { inPane: boolean }) {
   const t = useTheme();
   const w = useWorld();
   const network = useNetworkNow();
+  const searchField = useRef<TextInput>(null);
   const [q, setQ] = useState("");
+  const { folder } = useLocalSearchParams<{ folder?: string }>();
+  const [filters, setFilters] = useState<SearchFilters>(() => typeof folder === "string" && folder.trim() !== "" ? { folder } : NO_FILTERS);
+  const [order, setOrder] = useState<SearchOrder>("relevance");
   /** The address view this screen switched into — the empty state's door. Typing leaves it. */
   const [addr, setAddr] = useState<string | null>(null);
   const [dir, setDir] = useState<AddressDirection>("any");
@@ -84,7 +98,9 @@ function SearchBody({ inPane }: { inPane: boolean }) {
   };
 
   const trimmed = q.trim();
-  const answer = addr === null ? w.search.query(q) : null;
+  const question = addr === null ? phoneSearchQuestion(trimmed, filters, order) : null;
+  const questionKey = JSON.stringify(question);
+  const answer = addr === null ? (question?.filters || question?.sort ? w.search.query(q, undefined, filters, order) : w.search.query(q)) : null;
   const around = addr !== null ? w.search.address(addr, dir) : null;
   const archive = useAddressArchive(addr, dir);
   /* The archive's rows only under All or the direction it answered (`address-view.ts`'s rule). */
@@ -104,7 +120,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
             : Copy.searchAddressArchive(archive.total, archive.importing, archive.atLeast, true);
   const deviceIds = useMemo(() => (answer?.items ?? []).map((m) => m.id), [answer]);
   /* THE WHOLE-MAILBOX PASS — its page replaces the device's paint, rows on screen first. */
-  const store = useStoreSearch(addr === null ? q : "", deviceIds);
+  const store = useStoreSearch(addr === null ? q : "", deviceIds, addr === null ? filters : NO_FILTERS, order);
   /* The store's slots, as positions only: a row is read per slot from the walker's cache. */
   const slots = useMemo(() => Array.from({ length: store.length }, (_, i): Row => ({ key: `slot-${i}`, slot: i })), [store.length]);
   const deviceRows = (list: readonly WorldMail[]): Row[] => list.map((m) => ({ key: m.id, device: m }));
@@ -114,18 +130,21 @@ function SearchBody({ inPane }: { inPane: boolean }) {
   /** Where slot 0 sits in the scroll content, learnt from its own frame. */
   const top = useRef(0);
   /* History's slot rule (`history-slot.ts`), one ledger per question: a slot index is a hit of it. */
-  const heights = useMemo(() => new SlotHeights(), [trimmed, addr]);
+  const heights = useMemo(() => new SlotHeights(), [questionKey, addr]);
   const [, redraw] = useReducer((n: number) => n + 1, 0);
   const onRowHeight = useCallback((i: number, height: number) => {
     if (heights.record(i, height)) redraw();
   }, [heights]);
-  const door = answer !== null ? addressShaped(trimmed) : null;
+  const door = answer !== null && !question?.filters ? addressShaped(trimmed) : null;
   /* Where a part inside a word is looked for: the store's empty and closest-words answers only. */
   const partsSaid = partReachSaid(trimmed, store);
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
       ? `${searchCountLine(store)}${store.ms !== null ? ` · ${Copy.searchServerMs(store.ms)}` : ""}`
       : store.verdict === "unanswered" ? unansweredSaid(network, "search", store.cause) : null;
+
+  const showVerdict = verdict !== null && (!t.mail || store.verdict !== "ready"
+    || store.importing || store.bounded || !store.totalExact || store.indexedPercent !== null);
 
   /* EVERY ROW GOES THROUGH THE WINDOW. One address can hold thousands of this mailbox's
      messages — `messagesWith` returns all of them, unsliced — so the results are a `MailList`
@@ -134,11 +153,11 @@ function SearchBody({ inPane }: { inPane: boolean }) {
   const groups: ListGroup<Row>[] =
     around !== null && addr !== null
       ? [{ key: "around", rows: [...deviceRows(around.items), ...extras] }]
-      : answer !== null && trimmed !== "" && (shownItems.length > 0 || shownSimilar.length > 0)
+      : answer !== null && (trimmed !== "" || question !== null) && (shownItems.length > 0 || shownSimilar.length > 0)
         ? [
             {
               key: "results",
-              title: Copy.searchResultsHead(found),
+              title: t.mail ? undefined : Copy.searchResultsHead(found),
               rows: shownItems,
             },
             {
@@ -149,12 +168,19 @@ function SearchBody({ inPane }: { inPane: boolean }) {
           ]
         : [];
 
-  return (
+  const page = (
     <Screen>
-      {inPane ? <PaneTop /> : <DetailBar title={Copy.search} />}
+      {inPane ? <PaneTop /> : t.mail ? <TopBar /> : <DetailBar title={Copy.search} />}
+      {t.mail ? <ViewHead title={Copy.search} leading={inPane ? undefined : <MailCalendarSwitch />} /> : null}
       {inPane ? <ReleaseOnReturn token={paneHold} /> : null}
       <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
+        <View style={t.mail ? {
+          minHeight: 48, flexDirection: "row", alignItems: "center", paddingHorizontal: 14,
+          borderRadius: t.radius.row, backgroundColor: t.c.panel, gap: 8,
+        } : undefined}>
+        {t.mail ? <Icon name="search" color={t.c.ink2} size={16} /> : null}
         <TextInput
+          ref={searchField}
           maxFontSizeMultiplier={t.textCap}
           disableFullscreenUI
           keyboardAppearance={t.scheme}
@@ -174,24 +200,38 @@ function SearchBody({ inPane }: { inPane: boolean }) {
             t.type.body,
             {
               color: t.c.ink,
-              backgroundColor: t.c.tint2,
+              backgroundColor: t.mail ? "transparent" : t.c.tint2,
               borderRadius: t.radius.pill,
-              paddingHorizontal: 14,
+              paddingHorizontal: t.mail ? 0 : 14,
               paddingVertical: 9,
+              flex: t.mail ? 1 : undefined,
+              minWidth: 0,
             },
+            t.mail && Platform.OS === "web" ? ({ outlineStyle: "none" } as object) : null,
           ]}
         />
+        {t.mail && store.verdict === "ready" && store.ms !== null && addr === null
+          ? <Txt variant="caption" tone="ink3" tabular>{Copy.searchServerMs(store.ms)}</Txt> : null}
+        {t.mail && (addr ?? q) !== "" ? (
+          <Tap accessibilityRole="button" accessibilityLabel={Copy.searchClear}
+            onPress={() => { setAddr(null); setQ(""); }} style={{ padding: 6 }}>
+            <Icon name="x" size={14} color={t.c.ink2} />
+          </Tap>
+        ) : null}
+        </View>
+        {addr === null ? <SearchFacets filters={filters} order={order} onFilters={setFilters} onOrder={setOrder}
+          results={t.mail && groups.length > 0 ? found : undefined} /> : null}
       </View>
       <MailList
         groups={groups}
         rowKey={(r) => r.key}
-        topFor={addr === null ? `q:${trimmed}` : `a:${dir}:${addr}`}
+        topFor={addr === null ? `q:${questionKey ?? trimmed}` : `a:${dir}:${addr}`}
         renderRow={(r): ReactElement => {
           if ("device" in r) {
-            return <MailRow m={r.device} onPress={() => openMessage(r.device.id)} />;
+            return <MailRow m={r.device} searchTerm={t.mail ? trimmed : undefined} onPress={() => openMessage(r.device.id)} />;
           }
           if ("archive" in r) {
-            return <MailRow m={r.mail} onPress={() => { w.store.open(r.archive); openMessage(r.archive.id); }} />;
+            return <MailRow m={r.mail} searchTerm={t.mail ? trimmed : undefined} onPress={() => { w.store.open(r.archive); openMessage(r.archive.id); }} />;
           }
           const m = store.rowAt(r.slot);
           return (
@@ -205,6 +245,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
                 <View onLayout={(e) => onRowHeight(r.slot, e.nativeEvent.layout.height)}>
                   <MailRow
                     m={m}
+                    searchTerm={t.mail ? trimmed : undefined}
                     onPress={() => {
                       const src = store.sourceAt(r.slot);
                       if (src) w.store.open(src);
@@ -228,7 +269,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
         scrollEventThrottle={100}
         rowInset={6}
         avoidKeyboard
-        surface={around !== null || (answer !== null && trimmed !== "")}
+        surface={around !== null || (answer !== null && (trimmed !== "" || question !== null))}
         head={
           around !== null && addr !== null ? (
             /* ── THE ADDRESS VIEW — the device's half, three directions, all three counts ───── */
@@ -260,7 +301,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
                 </Tap>
               ) : null}
             </View>
-          ) : verdict !== null ? (
+          ) : showVerdict ? (
             /* ── THE VERDICT — what was searched, and how fast ──────────────────────────── */
             <View style={{ paddingHorizontal: 14, paddingTop: 8, paddingBottom: 4, gap: 4 }}>
               {store.verdict === "unanswered" ? (
@@ -294,7 +335,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
               }
               hint=""
             />
-          ) : answer !== null && trimmed === "" ? null : answer !== null ? (
+          ) : answer !== null && trimmed === "" && question === null ? null : answer !== null ? (
             answer.indexing && !store.ready ? (
               /* Not yet ≠ nothing: the index is still filling (`indexingResult`'s whole rule). */
               <Empty title={Copy.searchIndexing} hint={verdict ?? ""} />
@@ -328,4 +369,5 @@ function SearchBody({ inPane }: { inPane: boolean }) {
       />
     </Screen>
   );
+  return t.mail && !inPane ? <MailPlaceDock onSearch={() => searchField.current?.focus()}>{page}</MailPlaceDock> : page;
 }

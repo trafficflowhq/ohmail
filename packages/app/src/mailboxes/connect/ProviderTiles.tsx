@@ -18,8 +18,10 @@ export function ProviderTiles({
   bridgeHere,
   onPick,
   onManual,
+  onBridge,
   query = "",
   ref,
+  compact = onPick !== undefined,
 }: {
   form: ConnectForm;
   picker: Text;
@@ -27,8 +29,10 @@ export function ProviderTiles({
   bridgeHere: boolean;
   onPick?: (manual: boolean) => void;
   onManual?: (() => void) | undefined;
+  onBridge?: (() => void) | undefined;
   query?: string;
   ref?: Ref<HTMLDivElement>;
+  compact?: boolean;
 }): ReactNode {
   const [bridge, setBridge] = useState(false);
   const open = bridge || form.bridged;
@@ -37,7 +41,7 @@ export function ProviderTiles({
     <div ref={ref} className="mbx-connect-part">
       <ChoiceTiles
         label={picker("label")}
-        compact={onPick !== undefined}
+        compact={compact}
         options={[
           ...form.presets.map((preset) => ({
             value: preset.id,
@@ -62,7 +66,11 @@ export function ProviderTiles({
         /* The bridge provider's tile is held while its note stands and no provider is chosen. */
         value={chosen ?? (open ? BRIDGE : null)}
         onChange={(value) => {
-          if (value === BRIDGE) return setBridge((was) => !was);
+          if (value === BRIDGE) {
+            if (onBridge) onBridge();
+            else setBridge((was) => !was);
+            return;
+          }
           setBridge(false);
           form.choose(value);
           const manual = form.presets.find((preset) => preset.id === value)?.manual === true;

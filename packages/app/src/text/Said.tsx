@@ -62,10 +62,12 @@ export function SaidWith({
   parts,
   dot = "hot",
   level,
+  compact = false,
 }: {
   parts: ReactNode;
   dot?: "hot" | "ink";
   level?: 1 | 2;
+  compact?: boolean;
 }): ReactNode {
   const list: ReactNode[] = Array.isArray(parts) ? [...(parts as ReactNode[])] : [parts];
   const last = list.at(-1);
@@ -87,7 +89,7 @@ export function SaidWith({
       );
   }
   return (
-    <Sentence size="xl" level={level}>
+    <Sentence size={compact ? undefined : "xl"} level={level}>
       {list.map((part, i) => (
         <Fragment key={i}>{part}</Fragment>
       ))}

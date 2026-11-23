@@ -3,6 +3,9 @@
     "title": "Invitations",
     "close": "Close",
     "unreadable": "The calendar cannot be read on this device.",
+    "position": "{group} · {index} of {count}",
+    "previous": "The one before",
+    "next": "The next",
     "noZone": "The invitations cannot be listed: this device does not know its time zone.",
     "group": {
       "toAnswer": "To answer",

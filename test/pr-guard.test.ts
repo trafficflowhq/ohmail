@@ -441,7 +441,8 @@ describe("the typefaces the base's list admits, by path and by sha256", () => {
       ["a .. segment", `${HEADER}packages/../a.woff2\t${sum}\t${lic}\n`, 2],
       ["a .. segment in the licence", `${HEADER}${p}\t${sum}\tpackages/../OFL.txt\n`, 2],
       ["a missing column", `${HEADER}${p}\t${sum}\n`, 2],
-      ["another kind", `${HEADER}packages/tokens/fonts/a.ttf\t${sum}\t${lic}\n`, 2],
+      ["another kind", `${HEADER}packages/tokens/fonts/a.otf\t${sum}\t${lic}\n`, 2],
+      ["a native font outside the shared directory", `${HEADER}apps/mobile/a.ttf\t${sum}\t${lic}\n`, 2],
       ["a pattern for a path", `${HEADER}packages/tokens/fonts/*.woff2\t${sum}\t${lic}\n`, 2],
       ["a comment", `${HEADER}# the faces\n${row(p, "x", lic)}`, 2],
       ["a blank line", `${HEADER}${row(p, "x", lic)}\n${row(facePath("b"), "y", lic)}`, 3],
@@ -535,25 +536,31 @@ describe("the typefaces the base's list admits, by path and by sha256", () => {
     expect(r.out).not.toMatch(/^guard: ADMITTED/m);
   });
 
-  it("the list this repository carries: six rows under packages/tokens/fonts, three licence texts, sorted, and read whole", () => {
+  it("the list this repository carries: the admitted web and native faces, their licence texts, sorted, and read whole", () => {
     const text = readFileSync(resolve(ROOT, publicRel("github/scripts/admitted-fonts.tsv")), "utf8");
     const lines = text.split("\n");
     expect(lines[0]).toBe(HEADER.trimEnd());
     expect(lines.pop()).toBe("");
     const rows = lines.slice(1).map((l) => l.split("\t"));
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(13);
+    expect(rows.map((r) => r[0]?.replace("packages/tokens/fonts/", ""))).toEqual([
+      "bricolage-800.ttf", "bricolage-latin-ext.woff2", "bricolage-latin.woff2",
+      "hanken-400.ttf", "hanken-500.ttf", "hanken-600.ttf", "hanken-700.ttf",
+      "hanken-latin-ext.woff2", "hanken-latin.woff2",
+      "jetbrains-400.ttf", "jetbrains-500.ttf", "jetbrains-latin-ext.woff2", "jetbrains-latin.woff2",
+    ]);
     for (const r of rows) {
       expect(r).toHaveLength(3);
-      expect(r[0]).toMatch(/^packages\/tokens\/fonts\/[a-z0-9-]+\.woff2$/);
+      expect(r[0]).toMatch(/^packages\/tokens\/fonts\/[a-z0-9-]+\.(?:woff2|ttf)$/);
       expect(r[1]).toMatch(/^[0-9a-f]{64}$/);
       expect(r[2]).toMatch(/^packages\/tokens\/fonts\/OFL-[A-Za-z]+\.txt$/);
     }
     expect(rows.map((r) => r[0])).toEqual(rows.map((r) => r[0]).sort());
-    expect(new Set(rows.map((r) => r[0])).size).toBe(6);
+    expect(new Set(rows.map((r) => r[0])).size).toBe(13);
     expect(new Set(rows.map((r) => r[2])).size).toBe(3);
     const r = guard(world({ "a.txt": "b\n" }, "docs: a change", { [LIST]: text }), fromFork());
     expect(r.rc, r.out).toBe(0);
-    expect(r.out).toMatch(/admitted typefaces: 6 row\(s\) read from /);
+    expect(r.out).toMatch(/admitted typefaces: 13 row\(s\) read from /);
   });
 });
 

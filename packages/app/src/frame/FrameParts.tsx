@@ -42,7 +42,7 @@ import {
   STAGE_NOTICE_FEED,
 } from "./FeatureNotices.js";
 import { LetterBesideClose, LetterOverKeys } from "./letter-over.js";
-import { isCalendarPlace } from "./product.js";
+import { calendarOf, isCalendarPlace } from "./product.js";
 import { useRailGesture } from "./rail-gesture.js";
 import { RAIL_SHEET, RailKeys } from "./rail-keys.js";
 import type { NoticeStore } from "./notice-store.js";
@@ -281,8 +281,7 @@ export function FrameParts({
   const slotNotice = staged ? null : (
     <NoticeHost store={inner.notices} place={plan.rail === "words" ? "rail" : "bar"} />
   );
-  const calendar =
-    host.capabilities.products === "both" && host.features.calendar !== NONE ? host.features.calendar : null;
+  const calendar = calendarOf(host);
   const inCalendar = isCalendarPlace(route.place) && calendar !== null;
   const drawerGesture = active && plan.rail !== "words";
   const frame = useRef<HTMLDivElement>(null);
@@ -304,7 +303,7 @@ export function FrameParts({
       <ConnectionHost host={host} feed={inner.connection} notices={inner.notices} commands={commands} />
       <FeatureNotices features={host.features} notices={inner.notices} />
       <NoticeMore store={inner.notices} />
-      {calendar && active ? <ProductKeys /> : null}
+      {calendar && active && host.capabilities.products === "both" ? <ProductKeys /> : null}
       {!inCalendar ? <PlaceChords places={host.features.places} go={commands.go} /> : null}
       {letterOver ? <LetterOverKeys close={() => commands.open(null)} push={plan.ribbon === "push"} /> : null}
       {letterBeside ? <LetterBesideClose close={() => commands.open(null, "replace")} /> : null}

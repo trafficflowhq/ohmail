@@ -29,6 +29,7 @@
       "node": "./dist/design/fonts.js",
       "default": "./src/design/fonts.ts"
     },
+    "./fonts/*.ttf": "./fonts/*.ttf",
     "./design/tokens.json": "./src/design/tokens.json"
   },
   "dependencies": {}

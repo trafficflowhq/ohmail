@@ -193,6 +193,10 @@ function fakeServer(opts: { accountId?: string; sessionRoute?: boolean } = {}) {
       json(200, { user: { accountId: account }, scope: "full" });
       return;
     }
+    if (url.pathname === "/calendar/settings") {
+      json(200, { newEventsCalendarId: "studio-calendar" });
+      return;
+    }
     if (url.pathname === "/sync/pull" && req.method === "POST") {
       pullRings += 1;
       json(202, {
@@ -700,4 +704,19 @@ describe("a mailbox removed on the paired server leaves this phone", () => {
       server.server.close();
     }
   });
+});
+
+
+it("exposes the paired server's calendar doors only after checking the account", async () => {
+  const boot = await bootEngine(deps, { origin, token: "tok-123", accountId: "acct-1" });
+  expect(boot.kind).toBe("ready");
+  if (boot.kind !== "ready") return;
+  try {
+    const transport = boot.engine.calendarTransport();
+    expect(transport).not.toBeNull();
+    await expect(transport!.calendarSettings()).rejects.toMatchObject({ code: "sync_held_pre_identity" });
+    expect((await boot.verifyIdentity()).kind).toBe("verified");
+    await expect(transport!.calendarSettings()).resolves.toMatchObject({ newEventsCalendarId: "studio-calendar" });
+    expect(typeof transport!.setSuggestionDismissed).toBe("function");
+  } finally { boot.store.close(); }
 });

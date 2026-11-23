@@ -1,23 +1,15 @@
-/**
- * First run — the one screen a phone with no pairing sees, and it asks the
- * product's own question: which machine organizes this mail? The scan is the
- * last step of an answer, not the question, so the desktop chooser's shape
- * holds here — the phone's own three doors (`ui/Doors.tsx` says why they are
- * not the desktop's three, and why this order). No sample data, no tour: the
- * app is empty until connected. The screen exists only while nothing is
- * paired: the tabs gate routes here; the redirect below hands the screen back
- * the moment a session goes live.
- */
 import { View } from "react-native";
 import { Redirect, router } from "expo-router";
 import { Copy } from "../src/copy";
-import { useConnection } from "../src/net/connection";
-import { useTheme } from "../src/theme";
-import { Screen, Scroller, Txt, useTopPad } from "../src/ui/base";
-import { Doors } from "../src/ui/Doors";
-import { Wordmark } from "../src/ui/Icon";
+import { phoneEngineStart } from "../src/engine/engine-artifact";
+import { standaloneAvailable } from "../src/engine/standalone-door";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { useConnection } from "../src/net/connection";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
+import { points } from "../src/theme/onboarding";
+import { Txt } from "../src/ui/base";
+import { WelcomeWordmark } from "../src/ui/Icon";
+import { OnboardingButton, OnboardingPage, useOnboardingLook, useOnboardingTitle } from "../src/ui/OnboardingPage";
 
 export default function WelcomeScreen() {
   return (
@@ -28,41 +20,34 @@ export default function WelcomeScreen() {
 }
 
 function WelcomeBody() {
-  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
-     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
-  const t = useTheme();
-  /* THE ONE ROUTE OUTSIDE THE CHROME, so it owes its own top inset. This was a fixed
-     `paddingTop: 28`, and on an iPhone the wordmark sat on the OS clock at every launch —
-     the signed-in bars have always paid it (`ui/chrome.tsx`). */
-  const top = useTopPad(28);
+  const { palette, type } = useOnboardingLook();
+  const title = useOnboardingTitle(Copy.welcomeTitle, false, "ink");
   if (conn.state.k === "live") return <Redirect href="/" />;
 
+  const canOrganize = standaloneAvailable({ startEngine: phoneEngineStart() });
   return (
-    <Screen>
-      {/* SCROLLABLE, and that is a change forced by the content rather than a style choice: three
-          doors with a factual line each, an address step that can open under the middle one, and
-          the travel sentence do not fit a centred column on a small phone. A chooser whose third
-          door is below the fold on a 5" screen would be a chooser with two doors. */}
-      <Scroller bounded avoidKeyboard>
-        <View style={{ paddingHorizontal: 16, paddingTop: top, paddingBottom: 14, gap: 12 }}>
-          <Wordmark color={t.c.ink} dot={t.c.accent} size={30} />
-          <Txt variant="h2">{Copy.welcomeTitle}</Txt>
-          {/* ONE LEAD, NOT TWO. `welcomeHow` said "No password is ever typed here" — true while
-              every door scanned a code, false behind the standalone one. The lead states the
-              mechanism instead: whatever organizes has to be running. */}
-          <Txt variant="note" tone="ink2">
-            {Copy.welcomeLead}
-          </Txt>
-        </View>
-        <Doors
-          lead
-          onScan={() => router.push("/scan")}
-          onTypeToken={() => router.push("/connect")}
-          onStandalone={() => router.push("/standalone")}
-        />
-      </Scroller>
-    </Screen>
+    <OnboardingPage
+      centered
+      aside={<OnboardingButton label={Copy.serversTitle} short kind="quiet" onPress={() => router.push("/servers")} />}
+      actions={
+        <>
+          {canOrganize ? (
+            <OnboardingButton label={Copy.welcomeConnect} onPress={() => router.push("/standalone")} />
+          ) : null}
+          <OnboardingButton
+            label={Copy.welcomeScan}
+            kind={canOrganize ? "quiet" : "ink"}
+            onPress={() => router.push("/scan")}
+          />
+        </>
+      }
+    >
+      <View style={{ gap: 24, maxWidth: 266, paddingTop: 20 }}>
+        <WelcomeWordmark color={palette.ink} dot={palette.hot} em={points(type["t-mark"])} />
+        <Txt accessibilityRole="header" {...title} />
+      </View>
+    </OnboardingPage>
   );
 }

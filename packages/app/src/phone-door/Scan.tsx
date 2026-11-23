@@ -90,7 +90,7 @@ function Camera({ door, seed, to, back }: StepProps): ReactNode {
               {t("scan.allow")}
             </Button>
           ) : null}
-          <Button size="l" kind="two" onPress={() => to({ step: "scan", phase: "byHand" })}>
+          <Button size="l" kind="two" surface="sheet" onPress={() => to({ step: "scan", phase: "byHand" })}>
             {t("scan.byHand")}
           </Button>
         </>

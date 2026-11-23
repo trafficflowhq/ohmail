@@ -9,7 +9,7 @@ import type { HostContract } from "../../host/index.js";
 import type { SettingsPane } from "../../settings/contract.js";
 import { PANE_FACTS, paneOf } from "../../settings/facts.js";
 import { accountBodies } from "../bodies.js";
-import type { FactorSlot } from "../contract.js";
+import type { FactorSlot, QrSlot } from "../contract.js";
 import { useWayOut, WayOutPane, type WayOutDoor } from "../way-out/index.js";
 import type { SecurityDoor } from "./model.js";
 import { SecurityPane } from "./SecurityPane.js";
@@ -21,6 +21,7 @@ interface SecurityFormParts {
   readonly useDoor: () => SecurityDoor;
   /** The second factor's dialog, drawn while an act waits for it. */
   readonly factor: FactorSlot;
+  readonly qr?: QrSlot;
 }
 
 type BrowserParts = { readonly useBrowserDoor: () => WayOutDoor };
@@ -42,7 +43,14 @@ export function securityPane(parts: SecurityPaneParts): SettingsPane {
   const draws = (host: HostContract): boolean =>
     accountBodies(host).security === ("useBrowserDoor" in parts ? "card" : "pane");
   function Form({ form }: { readonly form: SecurityFormParts }): ReactNode {
-    return <SecurityPane model={useSecurity(form.useDoor())} factor={form.factor} />;
+    return (
+      <SecurityPane
+        model={useSecurity(form.useDoor())}
+        factor={form.factor}
+        qr={form.qr}
+        phone={useFrame().host.device.build.surface === "phone"}
+      />
+    );
   }
   function Body(): ReactNode {
     if (!draws(useFrame().host)) return null;

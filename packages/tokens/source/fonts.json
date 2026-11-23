@@ -25,7 +25,14 @@
       "upstream": {
         "project": "https://github.com/ateliertriay/bricolage",
         "version": "1.001"
-      }
+      },
+      "nativeFiles": [
+        {
+          "file": "bricolage-800.ttf",
+          "weight": "800",
+          "sha256": "2f3df74cd30a13ad5f64acd58b8d0ef82ead844269ace37f89827e775a4e965f"
+        }
+      ]
     },
     {
       "family": "Hanken Grotesk",
@@ -51,7 +58,29 @@
       "upstream": {
         "project": "https://github.com/marcologous/hanken-grotesk",
         "version": "3.013"
-      }
+      },
+      "nativeFiles": [
+        {
+          "file": "hanken-400.ttf",
+          "weight": "400",
+          "sha256": "02db0350381b3836bdf49119e2305467176fb00b596529117c564ec1d93b94ad"
+        },
+        {
+          "file": "hanken-500.ttf",
+          "weight": "500",
+          "sha256": "52404900c49932e61e34b3deec7c0ed2477388e09fdbceec6281882c2deea92c"
+        },
+        {
+          "file": "hanken-600.ttf",
+          "weight": "600",
+          "sha256": "08a01ba4bd4557d511652839c534372483abd987c8138c5abab6743e9bfefd80"
+        },
+        {
+          "file": "hanken-700.ttf",
+          "weight": "700",
+          "sha256": "5ed602635d55bcc4dd2644ea8a29e3b8189c730735ed38668b91dc5701b477cd"
+        }
+      ]
     },
     {
       "family": "JetBrains Mono",
@@ -77,7 +106,19 @@
       "upstream": {
         "project": "https://github.com/JetBrains/JetBrainsMono",
         "version": "2.211"
-      }
+      },
+      "nativeFiles": [
+        {
+          "file": "jetbrains-400.ttf",
+          "weight": "400",
+          "sha256": "31061b2d753659f980f18c8fda8f3e6e1090933edf4ae6d6585c1b0ae086b864"
+        },
+        {
+          "file": "jetbrains-500.ttf",
+          "weight": "500",
+          "sha256": "38f5e0f1c847b5b5f3005218e2904c0c8fd0cc552974e72740d973d2840e04f7"
+        }
+      ]
     }
   ]
 }

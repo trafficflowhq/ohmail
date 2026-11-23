@@ -56,9 +56,11 @@ function paneBodyOf(host: HostContract, parts: AccountPaneParts): "pane" | "sign
 function WholePane({
   parts,
   service,
+  onPhone,
   sheet,
 }: {
   readonly parts: Whole;
+  readonly onPhone: boolean;
   readonly service: HostCapabilities["service"];
   readonly sheet?: PaneSheet;
 }): ReactNode {
@@ -69,6 +71,7 @@ function WholePane({
       body="pane"
       sheet={sheet}
       service={service}
+      onPhone={onPhone}
       model={model}
       password={password}
       factor={parts.password.factor}
@@ -104,7 +107,14 @@ export function accountPane(parts: AccountPaneParts): SettingsPane {
     const { host } = useFrame();
     const body = paneBodyOf(host, parts);
     if (body === "pane" && "password" in parts && parts.password !== NONE) {
-      return <WholePane parts={parts as Whole} service={host.capabilities.service} sheet={sheet} />;
+      return (
+        <WholePane
+          parts={parts as Whole}
+          service={host.capabilities.service}
+          onPhone={host.device.build.surface === "phone"}
+          sheet={sheet}
+        />
+      );
     }
     const content =
       "useBrowserDoor" in parts && body === "card" ? (

@@ -3,6 +3,7 @@
  * component the two-pane posture renders beside the list (`src/ui/DraftReader.tsx`), so the
  * verbs and the sentences cannot drift between the two shapes.
  */
+import { MailAppearance } from "../../src/theme/mail";
 import { router, useLocalSearchParams } from "expo-router";
 import { DraftReader } from "../../src/ui/DraftReader";
 import { Gated } from "../../src/ui/Gated";
@@ -14,9 +15,11 @@ export default function DraftScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   return (
     <SurfaceBoundary surface="drafts">
-      <Gated>
-        <DraftReader id={String(id)} onClose={() => router.back()} />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <DraftReader id={String(id)} onClose={() => router.back()} />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }

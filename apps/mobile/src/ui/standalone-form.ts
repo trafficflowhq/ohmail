@@ -9,7 +9,7 @@
  * carries it to the engine once — never logged, stamped into a refusal, or stored.
  */
 import {
-  appPasswordPresetFor, authHintPreset, holderIsLive, organizerSituation, portMeansImplicitTls, serverGuessFor,
+  appPasswordPresetFor, authHintPreset, holderIsLive, organizerSituation, portMeansImplicitTls, providerById, serverGuessFor,
   standingOf, type ProviderPreset,
 } from "@ohmail/client-engine";
 import {
@@ -24,7 +24,7 @@ import type { OrganizeInstruction } from "../engine/organizer-session";
 import { refuse, type Refusal, type RefusalKey } from "../refusal";
 
 /** The two steps. The limitations screen comes first and cannot be skipped. */
-export type StandaloneStep = "limits" | "credentials";
+export type StandaloneStep = "limits" | "provider" | "credentials";
 
 /**
  * THE PLATFORM SENTENCE — the only fork on any of these three screens.
@@ -96,8 +96,14 @@ const GUESSED = ["imapHost", "imapPort", "smtpHost", "smtpPort"] as const;
  * wrong host is a value. `serverGuessFor` is the shared table's; nothing about providers is decided
  * in this app.
  */
-export function withAddress(fields: StandaloneFields, address: string): StandaloneFields {
-  const guess = serverGuessFor(address);
+export function withAddress(fields: StandaloneFields, address: string, providerId?: string): StandaloneFields {
+  const selected = providerId === undefined ? null : providerById(providerId);
+  const guess = selected === null ? serverGuessFor(address) : {
+    imapHost: selected.imap.host,
+    imapPort: String(selected.imap.port),
+    smtpHost: selected.smtp.host,
+    smtpPort: String(selected.smtp.port),
+  };
   const keep = <K extends keyof StandaloneFields>(key: K, next: string): string =>
     fields.typed.has(key) ? (fields[key] as string) : next;
   const imapPort = keep("imapPort", guess.imapPort);
@@ -181,7 +187,7 @@ export function appPasswordNote(
   fields: Pick<StandaloneFields, "address" | "imapHost">,
 ): { readonly text: string; readonly links: readonly ProviderLink[] } | null {
   const preset = appPasswordPresetFor(fields.address, fields.imapHost);
-  if (preset === null || preset.authHints !== true) return null;
+  if (preset === null || preset.appPassword !== true) return null;
   return { text: Copy.standaloneProviderNote(preset.label, preset.account ?? preset.label), links: linksOf(preset) };
 }
 

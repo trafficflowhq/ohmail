@@ -8,6 +8,19 @@
   min-width: 0;
 }
 
+.mbx-standalone-sentences {
+  display: grid;
+  gap: var(--s3);
+  padding-block-start: var(--s4);
+}
+
+.mbx-standalone-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
 /* The fingerprint a certificate tick claims, standing on its own line under the line that asks for it. */
 .mbx-cert-fingerprint {
   margin: var(--s2) 0 0;
@@ -26,7 +39,7 @@
   font-weight: var(--w-bold);
 }
 
-.mbx-manual-ports > .mbx-manual-disclosure {
+.mbx-manual-disclosure {
   display: flex;
   align-items: center;
   gap: var(--s1);
@@ -44,7 +57,8 @@
   display: none;
 }
 
-.mbx-manual-ports[open] > .mbx-manual-disclosure > .mbx-manual-arrow {
+.mbx-manual-ports[open] > .mbx-manual-disclosure > .mbx-manual-arrow,
+.mbx-manual-disclosure[aria-expanded="true"] > .mbx-manual-arrow {
   transform: rotate(180deg);
 }
 

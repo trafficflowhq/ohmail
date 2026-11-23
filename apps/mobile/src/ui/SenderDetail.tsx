@@ -33,6 +33,7 @@ import { mailboxStatusOf, withheldNote } from "./body-note";
 import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
+import { MailAvatar } from "./MailAvatar";
 import { EventCards } from "./EventCard";
 import { Segmented } from "./Segmented";
 import { usePosture } from "./posture";
@@ -87,7 +88,7 @@ export function SenderDetail({
   if (!row) {
     return (
       <Screen>
-        {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} />}
+        {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} backCapsule={t.mail} />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
             {Copy.senderGone}
@@ -123,18 +124,21 @@ export function SenderDetail({
 
   return (
     <Screen>
-      {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} />}
+      {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} backCapsule={t.mail} />}
       <Scroller contentStyle={{ paddingBottom: 40 }}>
         <View
           style={{ paddingHorizontal: 12, paddingBottom: 14 }}
           onLayout={(e) => setPaneWidth(Math.round(e.nativeEvent.layout.width))}
         >
-          <Txt variant={senderTitleVariant(paneWidth)} numberOfLines={SENDER_TITLE_LINES}>
-            {row.name}
-          </Txt>
-          <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
-            {row.address}
-          </Txt>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            {t.mail ? <MailAvatar person={{ name: row.name, address: row.address }} unread={seg === "waiting"} surface={t.c.canvas} /> : null}
+            <View style={{ flex: 1 }}>
+              <Txt variant={senderTitleVariant(paneWidth)} numberOfLines={SENDER_TITLE_LINES}>
+                {row.name}
+              </Txt>
+              <Txt variant="caption" tone="ink3" style={{ marginTop: t.mail ? 0 : 6 }}>{row.address}</Txt>
+            </View>
+          </View>
           {/* THE IDENTITY FACT FIRST, its own line and outside the AI advice: ohmail measured it. */}
           {row.checked ? (
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12, alignItems: "flex-start" }}>

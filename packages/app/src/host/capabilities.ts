@@ -15,7 +15,7 @@ export interface HostCapabilities {
   /** How much one send may carry: the strict limit, the mailbox's own, or a number of bytes. Replaces `sendSurfaceMaxTotalBytes`. */
   readonly sendCeiling: "strict" | "mailbox" | number;
   /** Where away replies leave from. Replaces `awayIsLocal` and `awayOnHost`. */
-  readonly awayRunsOn: "service" | "thisComputer" | { readonly host: string } | None;
+  readonly awayRunsOn: "service" | "thisComputer" | "thisPhone" | { readonly host: string } | None;
   /** Whether a rule that came from a suggestion can be told apart here. Replaces `actRulesUnmarked`. */
   readonly rulesMarked: boolean;
   /** Whose machine fetches a letter's pictures. Replaces the first fact of `imagesFromComputer`. */
@@ -57,7 +57,7 @@ export interface HostCapabilities {
    * Whether this shell offers the calendar beside mail: the switch between the two is drawn exactly where this is
    * `both` and the calendar's entry is handed in. A shell answers it from its server's word at seating.
    */
-  readonly products: "both" | None;
+  readonly products: "both" | "calendar" | None;
 }
 
 /**

@@ -26,7 +26,8 @@ import {
   type FolderTreeRow,
 } from "../state/folders";
 import { folderNameError } from "../state/live";
-import { Rule, Section, Tap, TapRow, Txt } from "./base";
+import { Rule, Tap, TapRow, Txt } from "./base";
+import { DrawerGroup } from "./DrawerGroup";
 import { Icon } from "./Icon";
 import { Sheet, SheetRow } from "./Sheet";
 
@@ -66,6 +67,7 @@ type Open =
 
 export function FoldersGroup({
   folders,
+  drawer = false,
   unread,
   onOpen,
   selectedId = null,
@@ -75,6 +77,7 @@ export function FoldersGroup({
 }: {
   /** The mirror's `folder` entities — already flag-gated by the world layer. */
   folders: FolderEntity[];
+  drawer?: boolean;
   /** Per-folder unread, keyed `mailboxId|name` — the world's one map, no second number. */
   unread: ReadonlyMap<string, number>;
   onOpen: (folderId: string) => void;
@@ -384,8 +387,8 @@ export function FoldersGroup({
 
   return (
     <>
-      <Rule inset={20} />
-      <Section>{Copy.folders}</Section>
+      {drawer ? null : <Rule inset={20} />}
+      <DrawerGroup active={drawer} label={Copy.folders}>
       {/* No folders discovered anywhere: the invite line, not a blank group — discovery is
           the server's. With the verbs and an unambiguous mailbox, the first create stands
           beside the sentence (the answer to it, not a replacement — the webapp's own rule). */}
@@ -510,6 +513,7 @@ export function FoldersGroup({
         </Txt>
       ) : null}
 
+      </DrawerGroup>
       {/* ── the verb sheet: Rename / New subfolder / Delete… — one folder's commands ──────── */}
       {open !== null && open.kind === "menu" ? (
         <Sheet open onClose={close} label={Copy.folderMenuAria(folderLeafOf(open.folder.name))}>

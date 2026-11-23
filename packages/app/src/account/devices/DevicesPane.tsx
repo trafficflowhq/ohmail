@@ -14,6 +14,7 @@ import type { DeviceKind, DeviceSession, DevicesModel } from "./model.js";
 import "./placement.css";
 
 export interface DevicesPaneProps {
+  readonly phone?: boolean;
   readonly model: DevicesModel;
   /** The factor's dialog, filled by the shell: drawn while a verb is parked behind it. */
   readonly factor: FactorSlot;
@@ -49,14 +50,14 @@ function nameOf(device: DeviceSession, t: Text): string {
  * in, each with its way back. It holds no state and reaches nothing: it draws its model, and its verbs are the
  * model's. A removal is asked about before it is sent.
  */
-export function DevicesPane({ model, factor, qr, sheet }: DevicesPaneProps) {
+export function DevicesPane({ model, factor, qr, sheet, phone }: DevicesPaneProps) {
   const t = useText("devices");
   const locale = useLocale();
   const body = (
     <>
       {model.made === null ? <NewDevice model={model} /> : <MadeLink model={model} qr={qr} />}
       <CodesNotUsed model={model} />
-      <SignedIn model={model} />
+      <SignedIn model={model} phone={phone} />
       <Question model={model} />
       {model.ask ? factor(model.ask) : null}
     </>
@@ -225,7 +226,7 @@ function CodesNotUsed({ model }: { readonly model: DevicesModel }) {
  * read again, never an empty list. Then this device first, marked and with no verb; every other with its way out;
  * and, where the server groups them, the other browser sessions as one line.
  */
-function SignedIn({ model }: { readonly model: DevicesModel }) {
+function SignedIn({ model, phone }: { readonly model: DevicesModel; readonly phone?: boolean }) {
   const t = useText("devices");
   const own = useText("accountDevices");
   const { list, working } = model;
@@ -262,13 +263,23 @@ function SignedIn({ model }: { readonly model: DevicesModel }) {
           <SettingLine
             key={device.id}
             label={nameOf(device, t)}
-            value={t(kind.word)}
+            value={phone ? undefined : t(kind.word)}
+            description={phone ? t(kind.word) : undefined}
             icon={kind.sign}
-            tag={device.current ? own("thisOne") : undefined}
+            tag={
+              device.current
+                ? own(device.kind === "ios" || device.kind === "android" ? "thisPhone" : "thisOne")
+                : undefined
+            }
           >
             {/* This device's way out is signing out, which Account has: it gets no second one here. */}
             {device.current ? null : (
-              <Button kind="two" size="s" disabled={off} onPress={() => model.askRemove(device.id)}>
+              <Button
+                kind={phone ? "quiet" : "two"}
+                size="s"
+                disabled={off}
+                onPress={() => model.askRemove(device.id)}
+              >
                 {working?.kind === "remove" && working.id === device.id ? t("working") : t("remove")}
               </Button>
             )}
@@ -278,7 +289,7 @@ function SignedIn({ model }: { readonly model: DevicesModel }) {
       {webGroup === null ? null : (
         <>
           <SettingLine label={t("webGroup", { count: webGroup.count })} icon="desktop">
-            <Button kind="two" size="s" disabled={off} onPress={model.askSignOutWeb}>
+            <Button kind={phone ? "quiet" : "two"} size="s" disabled={off} onPress={model.askSignOutWeb}>
               {working?.kind === "signOutWeb" ? t("working") : t("webGroupAction")}
             </Button>
           </SettingLine>

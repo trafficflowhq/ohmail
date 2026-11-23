@@ -11,9 +11,11 @@ import {
   type DeviceNotifications, type FrameSupplies, type HostContract, type HostSignals,
 } from "@ohmail/app/host";
 import { consentVia } from "@ohmail/app-logic/consent/consent-wire";
-import type { MailboxDTO } from "@ohmail/wire";
 import type { ShellSetting } from "../../src/shell/bridge-kinds";
+import { accountFetch } from "./account-fetch";
+import { phoneAwayWire } from "./account-data-panes";
 import type { bridgeFetch } from "./bridge-fetch";
+import { readPhoneMailboxes } from "./mailboxes-wire";
 
 type Engine = HostContract["engine"];
 type Supplied<T> = Exclude<T, typeof NONE>;
@@ -21,6 +23,7 @@ type Supplied<T> = Exclude<T, typeof NONE>;
 /** What the page knows before it mounts, from native's `config`. */
 export interface PhoneFacts {
   readonly setting: ShellSetting;
+  readonly serverName?: string;
   readonly scope: string;
   /** The account the server named at pairing; native asks the server again at every start. */
   readonly accountId: string;
@@ -37,6 +40,7 @@ export interface PhoneSupplies {
   readonly frame: FrameSupplies;
   /** The page's existing scoped transport, to the phone's own engine or its paired server. */
   readonly mailFetch?: ReturnType<typeof bridgeFetch>;
+  readonly accountFetch?: ReturnType<typeof accountFetch>;
   readonly mailboxWires?: Pick<HostContract["wires"], "mailboxes" | "connect">;
   readonly search?: HostContract["capabilities"]["searchBy"];
   readonly signals: {
@@ -55,6 +59,9 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
   const { setting } = facts;
   const { mailFetch } = has;
   const own = setting === "standalone";
+  const calendar = has.frame.calendar !== NONE && has.calendar !== undefined;
+  const settings = has.mailboxWires !== undefined || calendar;
+  const managesAccount = settings && (setting === "managed" || setting === "selfHosted");
   return {
     engine,
     session: {
@@ -72,27 +79,12 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       today: NONE,
     },
     reads: {
-      mailboxes: mailFetch
-        ? async ({ counts } = {}) => {
-            const response = await mailFetch(counts ? "/mailboxes?counts=1" : "/mailboxes");
-            if (!response.ok) throw new Error(`Mailbox list refused (${response.status})`);
-            const answer = (await response.json()) as { items?: MailboxDTO[] } | null;
-            if (
-              !Array.isArray(answer?.items) ||
-              answer.items.some((row) =>
-                typeof row?.id !== "string" || typeof row.address !== "string" || typeof row.status !== "string"
-              )
-            ) {
-              throw new Error("The engine did not answer with a mailbox list");
-            }
-            return answer.items;
-          }
-        : NONE,
+      mailboxes: mailFetch ? ({ counts } = {}) => readPhoneMailboxes(mailFetch, counts) : NONE,
       copyAge: NONE,
       access: NONE,
     },
     wires: {
-      organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: NONE, profileImport: NONE,
+      organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: has.accountFetch ? phoneAwayWire(has.accountFetch) : NONE, profileImport: NONE,
       consent: mailFetch ? consentVia(mailFetch) : NONE,
       images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
       screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE,
@@ -104,28 +96,37 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       // A phone never links out to a purchase.
       prices: CANNOT.prices,
       sendCeiling: CANNOT.sendCeiling,
-      awayRunsOn: CANNOT.awayRunsOn,
+      awayRunsOn: !has.accountFetch ? CANNOT.awayRunsOn
+        : setting === "desktopHost" ? facts.serverName ? { host: facts.serverName } : CANNOT.awayRunsOn
+        : own ? "thisPhone" : "service",
       rulesMarked: true,
       imagesFrom: CANNOT.imagesFrom,
       unsubscribeFrom: setting === "managed" || setting === "selfHosted" ? "service" : "computer",
-      foldersStorable: CANNOT.foldersStorable,
+      foldersStorable: has.mailboxWires !== undefined && mailFetch !== undefined,
       suggest: CANNOT.suggest,
-      pairing: CANNOT.pairing,
-      account: own ? CANNOT.account : "signOutOnly",
+      pairing: managesAccount ? "account" : CANNOT.pairing,
+      account: managesAccount ? "here" : own ? CANNOT.account : "signOutOnly",
       firstRunDoor: CANNOT.firstRunDoor,
-      mailboxes: has.mailboxWires?.mailboxes && has.mailboxWires.mailboxes !== NONE ? "here" : CANNOT.mailboxes,
+      mailboxes: has.mailboxWires?.mailboxes && has.mailboxWires.mailboxes !== NONE
+        ? own ? "here" : "resyncOnly"
+        : CANNOT.mailboxes,
       language: "install",
       searchBy: has.search ?? (own ? "people" : CANNOT.searchBy),
-      products: CANNOT.products,
+      products: calendar ? "calendar" : CANNOT.products,
     },
     features: {
-      account: NONE,
+      account: managesAccount ? { name: "account", render: () => null } : NONE,
       mailboxes: has.mailboxWires ? { name: "mailboxes", render: () => null } : NONE,
-      ai: NONE, subscription: NONE, storage: NONE, storageCard: NONE, accountStrip: NONE,
-      invites: NONE, security: NONE,
+      ai: managesAccount && has.mailboxWires ? { name: "ai", render: () => null } : NONE,
+      subscription: managesAccount ? { name: "subscription", render: () => null } : NONE,
+      storage: managesAccount ? { name: "storage", render: () => null } : NONE, storageCard: NONE, accountStrip: NONE,
+      invites: managesAccount ? { name: "invites", render: () => null } : NONE,
+      security: managesAccount ? { name: "security", render: () => null } : NONE,
       about: has.mailboxWires ? { name: "about", render: () => null } : NONE,
-      desktop: NONE, devices: NONE, defaultMail: NONE, stageCard: NONE,
-      screener: NONE, help: NONE,
+      desktop: NONE, devices: settings ? { name: "devices", render: () => null } : NONE,
+      defaultMail: NONE, stageCard: NONE,
+      screener: has.mailboxWires ? { name: "screener", render: () => null } : NONE,
+      help: has.mailboxWires ? { name: "help", render: () => null } : NONE,
       places: has.frame.places,
       stages: has.frame.stages,
       overs: has.frame.overs,

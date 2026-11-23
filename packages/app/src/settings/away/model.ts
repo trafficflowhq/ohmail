@@ -229,7 +229,7 @@ export function awayPilesAfter(
 }
 
 /** Where the replies leave from: the service, this computer while it is open, or another install while it is. */
-export type AwayRunsOn = "service" | "thisComputer" | { readonly host: string };
+export type AwayRunsOn = "service" | "thisComputer" | "thisPhone" | { readonly host: string };
 
 /** What the pane draws: the state, the piles, and the verbs the shell's hook wires. */
 export interface AwayModel {

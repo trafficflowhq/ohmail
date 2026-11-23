@@ -104,7 +104,7 @@ function phoneDoorOf(door: DoorHandle): PhoneDoor {
     hand: ({ address, token }) => door.ask("hand", { address, token }),
     pair: (ticket) => door.ask("pair", { ticket }, { deadlineMs: PAIR_DEADLINE_MS }),
     dismiss: (ticket) => quiet(door.ask("dismiss", { ticket })),
-    connect: (ask) => <ConnectForm ask={ask} door={wire} factor={NONE} />,
+    connect: (ask, page) => <ConnectForm ask={ask} door={wire} factor={NONE} page={page} />,
     // Only to a page this door draws: an empty stage has no way back (the list of servers comes with its page).
     go: (to) => {
       if (pages[to] !== NONE) door.go(to);

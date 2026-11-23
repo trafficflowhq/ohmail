@@ -14,7 +14,7 @@ export interface OutboxRow { key: string; mutation: { kind: string } & Record<st
 
 /** A draft row the mirror holds. */
 export interface MirrorDraft {
-  id: string; status?: unknown; subject?: unknown; body?: unknown; to?: unknown; cc?: unknown; bcc?: unknown;
+  id: string; status?: unknown; subject?: unknown; body?: unknown; html?: unknown; to?: unknown; cc?: unknown; bcc?: unknown;
   inReplyToMessageId?: unknown; forwardOfMessageId?: unknown; updatedAt?: unknown; contentRevision?: unknown;
 }
 
@@ -28,6 +28,7 @@ export interface LetterKeep {
   bcc?: LetterAddress[];
   subject: string;
   body: string;
+  html?: string | null;
   files: number;
   draftId: string | null;
   /** The version of `draftId` the words are based on: a row changed elsewhere since is never written over. */
@@ -108,6 +109,7 @@ function sameRow(l: Letter, mark: LetterMark, r: MirrorDraft, parse: (typed: str
   const parent = r.inReplyToMessageId ?? r.forwardOfMessageId ?? null;
   if (parent !== (l.mode === "new" ? null : l.messageId)) return false;
   return typeof r.subject === "string" && r.subject.trim() === subjectOf(l)
+    && (l.html ? typeof r.html === "string" && r.html.startsWith(l.html) : !r.html)
     && sameRecipients(l, parse, r.to, r.cc, r.bcc) && sameBody(l, mark, r.body);
 }
 
@@ -126,7 +128,8 @@ function heldBy(l: Letter, mark: "keep" | "send", rows: readonly OutboxRow[], pa
     if (parent !== (l.mode === "new" ? null : l.messageId)) return false;
     // A reply's envelope may be left to the engine: its parent names it.
     const stated = l.mode === "new" || m.to !== undefined;
-    return sameBody(l, marked, m.body)
+    return (l.html ? typeof m.html === "string" && m.html.startsWith(l.html) : !m.html)
+      && sameBody(l, marked, m.body)
       && (l.mode !== "new" || (typeof m.subject === "string" && m.subject.trim() === subjectOf(l)))
       && (!stated || sameRecipients(l, parse, m.to, m.cc, m.bcc));
   });
@@ -146,10 +149,10 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
   /** The row holds the words this phone last saved or queued to it. */
   const holdsSaved = (l: Letter, r: MirrorDraft): boolean => {
     if (l.savedAs === null) return false;
-    const [to, subject, body, cc, bcc] = JSON.parse(l.savedAs) as string[];
+    const [to, subject, body, cc, bcc, html] = JSON.parse(l.savedAs) as string[];
     const saved = { ...l, to: to ?? "", subject: subject ?? "", body: body ?? "", cc: cc ?? "", bcc: bcc ?? "" };
     return typeof r.subject === "string" && r.subject.trim() === subjectOf(saved)
-      && typeof r.body === "string" && r.body.trim() === saved.body.trim() && sameRecipients(saved, d.parse, r.to, r.cc, r.bcc);
+      && (r.html || null) === (html || null) && typeof r.body === "string" && r.body.trim() === saved.body.trim() && sameRecipients(saved, d.parse, r.to, r.cc, r.bcc);
   };
   /** A save of the letter's row this phone queued or sent unanswered: its answer moves the version the letter states. */
   const waits = (l: Letter): boolean => d.afterFlush !== undefined && l.draftId !== null && !!l.revision
@@ -180,6 +183,7 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
         : asNew && letter.envelope ? { cc: letter.envelope.cc } : {}),
       subject: asNew ? subjectOf(letter) : letter.subject,
       body: letter.body,
+      ...(letter.html === undefined ? {} : { html: letter.html }),
       files: letter.files.length,
       draftId: letter.draftId,
       ...(revision ? { revision } : {}),

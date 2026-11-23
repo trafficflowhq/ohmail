@@ -380,6 +380,46 @@ describe("a mailbox's password on the door's page", () => {
     clean(href);
   });
 
+  it("sends the explicit ports from the phone’s manual server settings", async () => {
+    const n = native((request) => request.kind === "open" ? { ok: true, mailboxId: "engine-account" } : {});
+    const door = doorHandle(createDoorBridge(n.port, EPOCH), CONFIG);
+    render(h(TextProvider, {
+      locale: "en",
+      messages: WORDS as never,
+      timeZone: "UTC",
+      children: h(ConnectForm, {
+        ask: { purpose: { kind: "standalone" }, onDone: () => {} },
+        door: phoneConnectWire(door),
+        factor: NONE,
+        page: (material, _back, blank) => h("div", null, blank, material),
+      }),
+    }));
+    pressWay(P.otherShort);
+    type(F.addressLabel, ADDRESS);
+    type(F.passwordLabel, MARKER);
+    pressWay("Server settings");
+    type(F.imapHost, "mail.lichtgrat.example");
+    type(F.smtpHost, "smtp.lichtgrat.example");
+    const tls = screen.getByRole("switch", { name: F.tls });
+    expect(tls.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(tls);
+    expect((screen.getByLabelText(F.imapPort) as HTMLInputElement).value).toBe("143");
+    fireEvent.click(tls);
+    expect((screen.getByLabelText(F.imapPort) as HTMLInputElement).value).toBe("993");
+    type(F.imapPort, "1993");
+    type(F.smtpPort, "65536");
+    pressWay(F.connect);
+    expect(n.requests).toEqual([]);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    type(F.smtpPort, "1465");
+    pressWay(F.connect);
+    await settle();
+    expect(n.requests.map((request) => request.kind)).toEqual(["open"]);
+    const open = n.requests[0] as DoorRequest<"open">;
+    expect(open.ask.input.imap).toEqual({ host: "mail.lichtgrat.example", port: 1993 });
+    expect(open.ask.input.smtp).toEqual({ host: "smtp.lichtgrat.example", port: 1465 });
+  });
+
   it("draws the app password's help under a refused sign-in about the password, as on every other purpose, and none under any other refusal", async () => {
     const answers: Open["answer"][] = [
       { ok: false, code: "standaloneAuthAppOnly", field: null, args: [] },

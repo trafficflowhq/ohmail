@@ -15,3 +15,7 @@
 .trial-progress-day[data-elapsed] {
   background: var(--ink);
 }
+
+.trial-progress[data-phone] .trial-progress-day:not([data-elapsed]) {
+  background: var(--ground);
+}

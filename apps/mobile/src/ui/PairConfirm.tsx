@@ -14,82 +14,58 @@ import { View } from "react-native";
    symbol for the same reason it re-exports the link parser — the screens keep one import. */
 import { Copy } from "../copy";
 import { shortPin, type PairAdmission } from "../net/pairing";
-import { Button, Panel, Rule, Txt } from "./base";
+import { Button, Txt } from "./base";
+import { OnboardingButton, OnboardingPage, OnboardingTitle, useOnboardingLook, useOnboardingButton } from "./OnboardingPage";
 
 export function PairConfirm({
   admission,
   busy,
   onConfirm,
   onCancel,
+  back,
 }: {
   admission: PairAdmission;
   /** The redeem is in flight — both controls go inert, and the primary says so. */
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  back: (() => void) | undefined;
 }) {
+  const { palette } = useOnboardingLook();
+  const onboardingButton = useOnboardingButton();
   return (
-    <View>
-      <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
-        <Txt variant="h1">{Copy.pairConfirmTitle}</Txt>
-        <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>
-          {Copy.pairConfirmLead}
+    <OnboardingPage
+      showUnsaved
+      back={back}
+      actions={
+        <>
+          <Button appearance={onboardingButton} label={busy ? Copy.pairingBusy : Copy.pairConfirmGo} disabled={busy} onPress={onConfirm} />
+          {!busy ? <OnboardingButton label={Copy.pairConfirmCancel} kind="quiet" onPress={onCancel} /> : null}
+        </>
+      }
+    >
+      <OnboardingTitle text={Copy.pairConfirmTitle} compact />
+      <View style={{ backgroundColor: palette.sheet, borderRadius: 20, padding: 16, marginTop: 16, gap: 12 }}>
+        <Fact label={Copy.pairConfirmWhatLabel} value={Copy.pairConfirmWhat(admission.flavor)} />
+        <Fact label={Copy.pairConfirmAddressLabel} value={admission.origin} />
+        {admission.pin === null ? null : (
+          <Fact label={Copy.pairConfirmKeyLabel} value={shortPin(admission.pin)} code />
+        )}
+        <Txt variant="note" style={{ color: palette.ink2 }}>
+          {admission.pin === null ? Copy.pairConfirmNoKeyWhy : Copy.pairConfirmKeyWhy}
         </Txt>
       </View>
-
-      <Panel style={{ paddingTop: 4, paddingBottom: 16 }}>
-        <Fact label={Copy.pairConfirmWhatLabel} value={Copy.pairConfirmWhat(admission.flavor)} />
-        <Rule inset={20} />
-        {/* The address VERBATIM and unabridged: it is what the person is being asked about, and a
-            truncated host is the one shape a lookalike address hides in. */}
-        <Fact label={Copy.pairConfirmAddressLabel} value={admission.origin} />
-        <Rule inset={20} />
-        {admission.pin === null ? (
-          <View style={{ paddingHorizontal: 20, paddingVertical: 10 }}>
-            <Txt variant="caption" tone="ink3">{Copy.pairConfirmNoKeyWhy}</Txt>
-          </View>
-        ) : (
-          <View style={{ paddingHorizontal: 20, paddingVertical: 10 }}>
-            <Txt variant="caption" tone="ink3">{Copy.pairConfirmKeyLabel}</Txt>
-            {/* `protectedCode` — the code preset, tabular, so twelve characters read as characters
-                to be compared rather than as a word to be skimmed. */}
-            <Txt variant="protectedCode" tabular style={{ marginTop: 4 }}>
-              {shortPin(admission.pin)}
-            </Txt>
-            <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
-              {Copy.pairConfirmKeyWhy}
-            </Txt>
-          </View>
-        )}
-      </Panel>
-
-      {/* The refusal is a real control beside the verb, not the bar's back arrow: after reading
-          three facts the way out belongs next to the decision. `quiet`, so the press that
-          proceeds is the one that looks like the primary. */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
-        <Button
-          label={busy ? Copy.pairingBusy : Copy.pairConfirmGo}
-          variant="solid"
-          disabled={busy}
-          onPress={onConfirm}
-        />
-        <Button
-          label={Copy.pairConfirmCancel}
-          variant="quiet"
-          disabled={busy}
-          onPress={onCancel}
-        />
-      </View>
-    </View>
+      <Txt variant="body" style={{ marginTop: 16, color: palette.ink, fontWeight: "700" }}>{Copy.pairConfirmLead}</Txt>
+    </OnboardingPage>
   );
 }
 
-/** One label-over-value row, the panel's own idiom (rows separated by a `Rule`, no ornament). */
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, code }: { label: string; value: string; code?: boolean }) {
+  const { palette } = useOnboardingLook();
   return (
-    <View style={{ paddingHorizontal: 20, paddingVertical: 10 }}>
-      <Txt variant="caption" tone="ink3">{label}</Txt>
-      <Txt variant="body" style={{ marginTop: 4 }}>{value}</Txt>
+    <View style={{ gap: 4 }}>
+      <Txt variant="caption" style={{ color: palette.ink2 }}>{label}</Txt>
+      <Txt variant={code ? "protectedCode" : "body"} tabular={code} style={{ color: palette.ink }}>{value}</Txt>
     </View>
   );
 }

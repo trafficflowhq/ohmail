@@ -35,10 +35,11 @@ export interface GeneralSettingsProps extends Partial<PaneBodyProps> {
     choices: readonly number[];
   };
   captureOwner?: (scope: string | null) => () => boolean;
+  showMessages?: boolean;
 }
 
 /** Each setting uses the host's own device controls or the confirmed account row. */
-export function BrowserGeneralPane({ language, textSize, captureOwner }: GeneralSettingsProps) {
+export function BrowserGeneralPane({ language, textSize, captureOwner, showMessages }: GeneralSettingsProps) {
   const { host, report } = useFrame();
   const scope = host.session.scope;
   const t = useText("settings");
@@ -128,5 +129,5 @@ export function BrowserGeneralPane({ language, textSize, captureOwner }: General
         : null,
     defaultMail: null,
   };
-  return <GeneralPane model={model} />;
+  return <GeneralPane model={model} showMessages={showMessages} />;
 }

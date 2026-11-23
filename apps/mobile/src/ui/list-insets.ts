@@ -9,6 +9,7 @@ export interface ListInsets {
   paddingLeft: number;
   paddingRight: number;
   paddingBottom: number;
+  minHeight?: "100%";
 }
 
 /**
@@ -48,11 +49,12 @@ export const LIST_MEASURE = 560;
  * (`useBottomChromeExtent`: the reader's bar, the dock) plus the gap — whichever reaches higher,
  * so the last line of a message stops above the bar.
  */
-export function listInsets(space: ListSpace, insetBottom: number, nav: ListNav, chromeExtent = 0, room = 0): ListInsets {
+export function listInsets(space: ListSpace, insetBottom: number, nav: ListNav, chromeExtent = 0, room = 0, flush = false): ListInsets {
   const side = room > LIST_MEASURE + 2 * space.deckCompact ? (room - LIST_MEASURE) / 2 : space.deckCompact;
   return {
-    paddingLeft: side,
-    paddingRight: side,
+    paddingLeft: flush ? 0 : side,
+    paddingRight: flush ? 0 : side,
+    ...(flush ? { minHeight: "100%" as const } : {}),
     paddingBottom: Math.max(nav.bottom + insetBottom, chromeExtent > 0 ? chromeExtent + CHROME_GAP : 0),
   };
 }

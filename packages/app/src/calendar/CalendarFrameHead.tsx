@@ -352,6 +352,7 @@ function calendarHeadBar(
         waiting ? (
           <Doorbell
             count={String(waiting)}
+            ink={phone}
             word={t("toAnswer")}
             keyHint="g i"
             keyShown

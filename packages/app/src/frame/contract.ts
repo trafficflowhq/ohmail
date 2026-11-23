@@ -6,6 +6,8 @@
 import type { RailFootModel } from "./rail-model.js";
 import type { ComponentType, ReactNode } from "react";
 import type { IconName } from "@ohmail/ui/base";
+import type { AnswerSwitchProps, CalendarTone } from "@ohmail/ui/calendar";
+import type { PanelVerb } from "@ohmail/ui/mail";
 import type { DisabledReason } from "@ohmail/app-logic/keys";
 import type { ToastFn } from "@ohmail/app-logic/press";
 import type {
@@ -326,9 +328,20 @@ export interface CalendarRailProps {
 }
 export interface CalendarPanelProps extends PaneProps {
   readonly onClose: () => void;
+  readonly compact?: {
+    readonly tags: readonly { text: string; tone?: CalendarTone }[];
+    readonly propose?: AnswerSwitchProps["propose"];
+    readonly write?: PanelVerb;
+    readonly move?: {
+      readonly label: string;
+      readonly destinations: readonly { id: string; name: string }[];
+      pick(id: string, anchor: HTMLElement): void;
+    };
+  };
 }
 /** The calendar's registration: the root export is one of these. Each slot is the entry or `none`. */
 export interface CalendarEntry {
+  readonly writeGuests?: (to: readonly string[], subject: string) => Promise<void>;
   /** A host without the Calendar product may open one validated notification destination. */
   readonly notice?: { readonly fragment: string; readonly place: PlaceEntry };
   readonly places: Readonly<Record<CalendarPlaceId, PlaceEntry | None>>;
@@ -337,6 +350,8 @@ export interface CalendarEntry {
   readonly Rail: ComponentType<CalendarRailProps>;
   /** What stands above the columns while the switch is shown (the calendar's port and keys). */
   readonly Above: ComponentType<{ readonly children: ReactNode }>;
+  /** Companion app switch, when mail runs in a separate installed app. */
+  readonly CompanionSwitch?: ComponentType<{ kind: "pair" | "round" | "entry"; onRail?: boolean }>;
   /** Whether the calendar side has something waiting for the person (the switch's dot). */
   readonly useWants: () => boolean;
   /** Whether to show the product switch once the host can offer Calendar. */

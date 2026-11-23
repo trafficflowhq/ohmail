@@ -6,6 +6,7 @@
  * and a full-screen reading survives the posture change — the folder route's own rule
  * (`MOBILE-FOLDER-AND-GATE-HELD-READER-STAYS-FULL-SCREEN-ON-UNFOLD`), same class, stated.
  */
+import { MailAppearance } from "../../src/theme/mail";
 import { router, useLocalSearchParams } from "expo-router";
 import { Gated } from "../../src/ui/Gated";
 import { TrashReader } from "../../src/ui/TrashReader";
@@ -19,9 +20,11 @@ export default function TrashMessageScreen() {
   useLocale();
   return (
     <SurfaceBoundary surface="trash">
-      <Gated>
-        <TrashMessageRoute />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <TrashMessageRoute />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }

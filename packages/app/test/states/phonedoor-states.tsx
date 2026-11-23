@@ -140,11 +140,13 @@ export function stepsOf(drawn: Drawn, lang: Lang): readonly Step[] {
   if (data.step === "hand" && drawn.id !== "hand" && drawn.id !== "handempty")
     return [{ into: w.phoneDoor.hand.tokenLabel!, type: TYPED_CODE }];
   if (data.step !== "mailbox" || drawn.id === "form") return [];
-  const other = { press: w.providerPicker.otherLabel! };
-  if (drawn.id === "formhost") return [other];
+  const other = { press: w.providerPicker.otherShort! };
+  const settings = { press: F.serverSettings! };
+  if (drawn.id === "formhost") return [other, settings];
   return [
     { into: F.addressLabel!, type: "mila@lichtgrat.example" },
     other,
+    settings,
     { into: F.imapHost!, type: "mail.lichtgrat.example" },
     { into: F.smtpHost!, type: "mail.lichtgrat.example" },
     { into: F.passwordLabel!, type: IN_THE_HIDDEN_FIELD },
@@ -219,7 +221,9 @@ function stateDoor(data: StateData, lang: Lang): PhoneDoor {
     hand: never,
     pair: never,
     dismiss: () => {},
-    connect: (ask: ConnectAsk): ReactNode => <ConnectForm ask={ask} door={wire} factor={NONE} />,
+    connect: (ask: ConnectAsk, page): ReactNode => (
+      <ConnectForm ask={ask} door={wire} factor={NONE} page={page} />
+    ),
     go: () => {},
     back: { subscribe: () => () => {} },
   };

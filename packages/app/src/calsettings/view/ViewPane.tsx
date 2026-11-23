@@ -11,6 +11,7 @@ import { NONE } from "../../host/index.js";
 import type { PaneBodyProps, PaneSummary } from "../../settings/contract.js";
 import { useLocale, useText, useTimeZone } from "../../text/index.js";
 import { useCalendarMirror, useSetupPort } from "../../calsetup/index.js";
+import { CALENDAR_OPEN_VIEWS, useCalendarDevice, type CalendarDeviceSettings } from "../device.js";
 import { hoursInView } from "../hours.js";
 import { useCalendarSettings } from "../settings-read.js";
 import { Choice, type ChoiceItem } from "./Choice.js";
@@ -23,6 +24,7 @@ export function useViewSummary(): PaneSummary | null {
   const locale = useLocale();
   const mirror = useCalendarMirror();
   const { said } = useCalendarSettings(null, "none");
+  const device = useCalendarDevice();
   if (said === null || mirror === null) return null;
   const calendar = newEventsCalendarOf(
     said.newEventsCalendarId,
@@ -34,7 +36,12 @@ export function useViewSummary(): PaneSummary | null {
     to: to === 1440 ? "24:00" : clockTime(to, locale),
   });
   return {
-    value: t("view.summary"),
+    value: device
+      ? t("view.deviceSummary", {
+          view: t(`view.opens.${device.settings.opensIn}`),
+          day: t(`view.starts.${device.settings.weekStart}`),
+        })
+      : t("view.summary"),
     detail: calendar ? t("view.scheduleSummary", { hours, calendar: calendar.name }) : hours,
   };
 }
@@ -45,6 +52,7 @@ export function ViewPane(_: PaneBodyProps) {
   const report = useReport();
   const mirror = useCalendarMirror();
   const given = useSetupPort();
+  const device = useCalendarDevice();
   const { said, save } = useCalendarSettings(mirror?.port ?? null, given === NONE ? "none" : given);
   if (mirror === null) {
     return (
@@ -80,15 +88,22 @@ export function ViewPane(_: PaneBodyProps) {
             onPick={saving && ((id) => saving({ newEventsCalendarId: id }))}
           />
         )}
+        {device ? <OpensIn device={device} /> : null}
       </SettingsSheet>
       <SettingsSheet title={t("view.week")}>
+        {device ? <WeekChoice device={device} /> : null}
         <WeekNumbers said={said} saving={saving} />
+        {device ? <DeviceToggle which="showDeclined" device={device} /> : null}
       </SettingsSheet>
       <SettingsSheet title={t("view.hours")}>
         <Hours said={said} save={save} />
       </SettingsSheet>
       <SettingsSheet title={t("view.time")}>
-        <SettingLine label={t("view.zone")} value={t("view.followsDevice")} />
+        {device ? (
+          <PrimaryZone device={device} />
+        ) : (
+          <SettingLine label={t("view.zone")} value={t("view.followsDevice")} />
+        )}
         <Choice
           label={t("view.secondZone")}
           value={
@@ -122,6 +137,68 @@ function WeekNumbers({
     <SettingLine
       label={t("view.weekNumbers")}
       toggle={{ on: said.weekNumbers, onChange: (on) => saving({ weekNumbers: on }) }}
+    />
+  );
+}
+
+type Device = NonNullable<ReturnType<typeof useCalendarDevice>>;
+
+function OpensIn({ device }: { device: Device }) {
+  const t = useText("calsettings");
+  const items = CALENDAR_OPEN_VIEWS.map((key) => ({ key, label: t(`view.opens.${key}`) }));
+  return (
+    <Choice
+      label={t("view.opensIn")}
+      items={items}
+      value={items.find((item) => item.key === device.settings.opensIn) ?? null}
+      onPick={(key) => device.change({ opensIn: key as CalendarDeviceSettings["opensIn"] })}
+    />
+  );
+}
+
+function WeekChoice({ device }: { device: Device }) {
+  const t = useText("calsettings");
+  const days = [0, 6, 5] as const;
+  const items = days.map((key) => ({ key: String(key), label: t(`view.starts.${key}`) }));
+  return (
+    <>
+      <Choice
+        label={t("view.startsOn")}
+        items={items}
+        value={items.find((item) => item.key === String(device.settings.weekStart)) ?? null}
+        onPick={(key) => device.change({ weekStart: Number(key) as CalendarDeviceSettings["weekStart"] })}
+      />
+      <DeviceToggle which="weekends" device={device} />
+    </>
+  );
+}
+
+function DeviceToggle({ which, device }: { which: "weekends" | "showDeclined"; device: Device }) {
+  const t = useText("calsettings");
+  return (
+    <SettingLine
+      label={t(`view.${which}`)}
+      toggle={{
+        on: device.settings[which],
+        onChange: (on) => device.change({ [which]: on }),
+      }}
+    />
+  );
+}
+
+function PrimaryZone({ device }: { device: Device }) {
+  const t = useText("calsettings");
+  const auto = { key: "", label: t("view.followsDevice") };
+  const value = device.settings.zone
+    ? { key: device.settings.zone, label: zoneName(device.settings.zone) }
+    : auto;
+  return (
+    <Choice
+      label={t("view.zone")}
+      value={value}
+      items={[auto, ...knownZones().map((key) => ({ key, label: zoneName(key) }))]}
+      find={{ label: t("view.findZone"), most: 8 }}
+      onPick={(key) => device.change({ zone: key || null })}
     />
   );
 }
