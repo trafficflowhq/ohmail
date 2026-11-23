@@ -167,8 +167,7 @@ export interface EngineOptions {
   now?: () => Date;
   uuid?: () => string;
   /**
-   * Override {@link OUTBOX_REPLAY_DEADLINE_MS}. A test seam, exactly like `staleResumeMs`: the
-   * shipped paths never pass it, so the one number below is the one every client uses.
+   * Test override for the replay and live mutation deadlines.
    */
   outboxReplayDeadlineMs?: number;
   /** Override {@link OUTBOX_HOLD_CEILING_MS}: a test seam like the one above, a positive number, never below it. */
@@ -219,8 +218,11 @@ export interface EngineOptions {
  */
 export const OUTBOX_REPLAY_DEADLINE_MS = 10_000;
 
+/** Give a live mutation time for the server to confirm an accepted but slow write. */
+export const OUTBOX_MUTATE_DEADLINE_MS = 45_000;
+
 /**
- * HOW LONG ONE WRITE MAY HOLD THE OUTBOX. A dispatch past {@link OUTBOX_REPLAY_DEADLINE_MS} becomes
+ * HOW LONG ONE WRITE MAY HOLD THE OUTBOX. A dispatch past its first deadline becomes
  * the order barrier ({@link OhmailEngine.outboxHold}), and it stood for as long as its request did:
  * on a connection that died silently that was until a reload — every later change only queued, the
  * replay skipped, Try again sent nothing. Past this, counted from the request's start, the attempt

@@ -317,7 +317,7 @@ describe("the middleware wiring cannot drift from the gate", () => {
     expect(paths).toContain(APP_ROUTE);
   });
 
-  it("the matcher is EVERY html path this deployment answers, and nothing else", () => {
+  it("the matcher covers the declared page, landing zone and API routes", () => {
     // Widened in the repair so the canonical-host redirect and the strict script policy
     // cover the whole origin rather than only `/`. Derived from the route table in
     // `routes.mjs` — the enumerated split of the namespace — so a route added there and
@@ -337,11 +337,9 @@ describe("the middleware wiring cannot drift from the gate", () => {
     expect(matcherPaths().sort()).toEqual([...EDGE_PATHS].sort());
   });
 
-  it("the paths that must NOT be matched, are not — the proxy stays the hot path", () => {
-    // A function in front of `/api/*` or `/auth/refresh` would add an edge invocation to
-    // every request the mail client makes, and `next.config.mjs`'s `headers()` already
-    // covers them for the policy the matcher was widened for.
-    for (const never of ["/api", "/api/:path*", "/auth/refresh", "/_next", "/demo"]) {
+  it("matches the API rewrite for address authentication and leaves the refresh handlers and assets outside", () => {
+    expect(matcherPaths()).toContain("/api/:path*");
+    for (const never of ["/api", "/auth/refresh", "/_next", "/demo"]) {
       expect(matcherPaths(), never).not.toContain(never);
     }
   });

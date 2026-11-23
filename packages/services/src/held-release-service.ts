@@ -3,7 +3,7 @@ import {
   AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, authScreensSql, changeLog,
   contactOnlyHeldWhere, CUTLINE_ALLOW_DESTINATIONS, destinationIsDecisionSql, folderState, lockAccountMailboxes, lockAccountRuleKeys,
   heldUnconfirmedOnlySql, mailboxes, messages, notHeldForIdentitySql, personSkipSql,
-  recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
+  recordRuleDelta, ruleMatchKeySql, ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
@@ -216,40 +216,52 @@ function decidedRule(accountId: string) {
  * `ruleNamesSenderSql` is the SQL spelling of the pass's `ruleMatchKey(rule.match)`, spaces only,
  * on both stores.
  */
-const ruleClaimsSender = (d: ReturnType<typeof dialect>) =>
-  ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination }, sql`lower(${messages.fromAddress})`);
+const ruleClaimsSender = (d: ReturnType<typeof dialect>, sender = sql`lower(${messages.fromAddress})`) =>
+  ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination }, sender);
 
 /**
- * THE PASS MOVES IT: under a rule that ADMITS, the router keeps a letter whose stored authentication
- * verdict the gate screens on (`rules.ts#evaluateRules`), so the group neither counts nor offers it
- * A denying rule moves it whatever the verdict.
+ * The pass keeps a letter with a screening verdict under an admitting rule. A denying rule
+ * still moves it. The count uses that same condition.
  */
-const releaseMoves = (): SQL => sql`not (${rulesTbl.destination} in (${sql.join(
+const releaseMoves = (auth = sql`${messages.authVerdict}`): SQL => sql`not (${rulesTbl.destination} in (${sql.join(
   CUTLINE_ALLOW_DESTINATIONS.map((f) => sql`${f}`), sql`, `,
-)}) and ${authScreensSql(sql`${messages.authVerdict}`)})`;
+)}) and ${authScreensSql(auth)})`;
+
+/** Find held letters once, then match their sender and domain keys by equality. */
+function heldRuleMatches(db: Tx, accountId: string, ids?: string[]): SQL {
+  const d = dialect(db);
+  // Older device rows may have a null folder account. The message still owns the placement.
+  const folderAccount = d.name === "pg" ? sql`and ${folderState.accountId} = ${messages.accountId}` : sql``;
+  // scoped-by: heldAtGate and decidedRule both carry the same account.
+  return sql`with held as (
+    select ${messages.id}, lower(${messages.fromAddress}) as sender, ${messages.authVerdict}
+    from ${folderState} join ${messages} on ${messages.id} = ${folderState.messageId} ${folderAccount}
+    where ${heldAtGate(d, accountId)}
+  ), keys as (
+    select id, sender, auth_verdict, 'sender' as kind, sender as sender_key from held
+    union all
+    select id, sender, auth_verdict, 'domain', ${d.domainOf(sql`sender`)} from held
+  ), matched as (
+    select ${rulesTbl.id} as rule_id, ${rulesTbl.kind}, ${rulesTbl.match}, ${rulesTbl.destination}, keys.id as message_id
+    from ${rulesTbl} join keys
+      on ${rulesTbl.kind} = keys.kind and ${ruleMatchKeySql(rulesTbl.match)} = keys.sender_key
+    where ${and(decidedRule(accountId), ruleClaimsSender(d, sql`keys.sender`), releaseMoves(sql`keys.auth_verdict`),
+      ids === undefined ? undefined : inArray(rulesTbl.id, ids))}
+  )`;
+}
 
 /** The screen's rows: every group with mail stuck behind it, largest first. */
-export async function heldReleaseGroups(
-  db: Tx, accountId: string,
-): Promise<HeldReleaseGroup[]> {
+export async function heldReleaseGroups(db: Tx, accountId: string): Promise<HeldReleaseGroup[]> {
   const d = dialect(db);
-  const rows = await db
-    .select({
-      ruleId: rulesTbl.id, kind: rulesTbl.kind, match: rulesTbl.match,
-      destination: rulesTbl.destination,
-      count: sql<number>`${d.castInt(sql`count(${messages.id})`)}`,
-    })
-    .from(rulesTbl)
-    .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
-    .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(and(decidedRule(accountId), heldAtGate(d, accountId), releaseMoves()))
-    .groupBy(rulesTbl.id, rulesTbl.kind, rulesTbl.match, rulesTbl.destination)
-    .orderBy(sql`count(${messages.id}) desc`, rulesTbl.id)
-    .limit(HELD_RELEASE_GROUPS_MAX);
-
-  return rows.map((r) => ({
-    ruleId: r.ruleId, kind: r.kind as "sender" | "domain",
-    match: r.match, destination: r.destination, count: Number(r.count),
+  const rows = await d.exec(db, sql`${heldRuleMatches(db, accountId)}
+    select rule_id, kind, match, destination, ${d.castInt(sql`count(*)`)} as n
+    from matched
+    group by rule_id, kind, match, destination
+    order by n desc, rule_id
+    limit ${HELD_RELEASE_GROUPS_MAX}`);
+  return rows.map(([ruleId, kind, match, destination, count]) => ({
+    ruleId: String(ruleId), kind: kind as "sender" | "domain", match: String(match),
+    destination: String(destination), count: Number(count),
   }));
 }
 
@@ -288,13 +300,9 @@ export async function heldReleaseTotal(
   // The ids are this account's OWN group keys, read out of `heldReleaseGroups` a few statements
   // ago and bounded by `HELD_RELEASE_GROUPS_MAX` — never a caller's list.
   const ids = groups.map((g) => g.ruleId);
-  const [row] = await db
-    .select({ n: sql<number>`${d.castInt(sql`count(distinct ${messages.id})`)}` })
-    .from(rulesTbl)
-    .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
-    .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(and(decidedRule(accountId), heldAtGate(d, accountId), releaseMoves(), inArray(rulesTbl.id, ids)));
-  return Number(row?.n ?? 0);
+  const [row] = await d.exec(db, sql`${heldRuleMatches(db, accountId, ids)}
+    select ${d.castInt(sql`count(distinct message_id)`)} as n from matched`);
+  return Number(row?.[0] ?? 0);
 }
 
 /**

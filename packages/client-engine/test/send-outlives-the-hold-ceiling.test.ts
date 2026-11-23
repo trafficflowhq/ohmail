@@ -21,7 +21,7 @@
 import type { ComposeAttachment, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_REPLAY_DEADLINE_MS,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_MUTATE_DEADLINE_MS,
   OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, type MutationResult,
 } from "@ohmail/client-engine";
 
@@ -146,7 +146,7 @@ function surface(engine: OhmailEngine) {
     heard,
     press: async (m: EngineMutation): Promise<MutationResult> => {
       const pressed = engine.mutate(m);
-      await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+      await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
       const r = await pressed;
       key = r.key;
       take(r);
@@ -175,7 +175,7 @@ describe("a send whose request outlasts the hold's ceiling", () => {
     expect(pressed.status, "the send did not become the hold").toBe("queued");
     expect((await engine.mutate(setAside)).status, "a change behind the send went out beside it").toBe("queued");
 
-    await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS - OUTBOX_REPLAY_DEADLINE_MS);
+    await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS - OUTBOX_MUTATE_DEADLINE_MS);
     expect(srv.count("POST", /\/triage$/), "the change behind the send still waited past the ceiling").toBe(1);
     expect(srv.log.find((c) => c.path.endsWith("/triage"))!.at).toBeLessThan(80_000);
 
@@ -250,7 +250,7 @@ describe("Try again on another change while a send is on the wire", () => {
     await ui.press(sendWith([file(MIB, "plans.pdf")]));
     await vi.advanceTimersByTimeAsync(1_000);
     const change = await engine.mutate(setAside);
-    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_REPLAY_DEADLINE_MS);
+    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_MUTATE_DEADLINE_MS);
 
     const pressed = engine.retryQueued(change.id);
     await vi.advanceTimersByTimeAsync(10);

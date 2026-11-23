@@ -105,7 +105,7 @@ export function usePersistedIdSet(
 
 /**
  * One value out of a closed set — the store behind Search's result ordering. A third hook because
- * the shape matters: `allowed` is passed in and a stored value outside it is DISCARDED, not
+ * the shape matters: `allowed` is a list or a validator, and a stored value outside it is DISCARDED, not
  * repaired. The preference is about to be sent to a server that refuses an unknown value with a 400
  * rather than substituting a default, so a stale key from a build that offered an option this one no
  * longer does must read as "no preference" — otherwise every search a returning user runs fails
@@ -115,7 +115,7 @@ export function usePersistedIdSet(
  */
 export function usePersistedChoice<T extends string>(
   key: string | null,
-  allowed: readonly T[],
+  allowed: readonly T[] | ((raw: string) => raw is T),
   fallback: T,
 ): [T, (next: T) => void] {
   const [value, setValue] = useState<T>(fallback);
@@ -126,7 +126,9 @@ export function usePersistedChoice<T extends string>(
       const raw = window.localStorage.getItem(key);
       // The membership test IS the validator — see the note above on why a stale value is
       // dropped rather than repaired.
-      if (raw !== null && (allowed as readonly string[]).includes(raw)) setValue(raw as T);
+      if (raw !== null && (typeof allowed === "function" ? allowed(raw) : (allowed as readonly string[]).includes(raw))) {
+        setValue(raw as T);
+      }
     } catch {
       /* storage blocked or unavailable — the fallback stands */
     }

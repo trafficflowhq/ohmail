@@ -493,8 +493,8 @@ export {
  * it is store-neutral — the phone runs the same engine on the device store.
  */
 export {
-  resolveCutline, cutlineArms, perMailboxSql, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
-  senderHasHeldClaimSql, heldClaimInsideSql, heldForIdentitySql, notHeldForIdentitySql, heldUnconfirmedOnlySql, heldArrivedInsideSql, senderHasHeldArrivalSql, heldClaimWaitsSql, personSkipSql, senderHasPersonConsentSql,
+  resolveCutline, cutlineArms, perMailboxSql, senderIsActiveSql, activeSenderKeysSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
+  senderHasHeldClaimSql, heldClaimKeysSql, heldClaimInsideSql, heldForIdentitySql, notHeldForIdentitySql, heldUnconfirmedOnlySql, heldArrivedInsideSql, senderHasHeldArrivalSql, heldClaimWaitsSql, personSkipSql, senderHasPersonConsentSql,
   CUTLINE_PERSON_WRITTEN_PROVENANCE,
   mailboxCountsAsOwn, mailboxCountsAsOwnSql, notGoneSql,
   heldSortKey,

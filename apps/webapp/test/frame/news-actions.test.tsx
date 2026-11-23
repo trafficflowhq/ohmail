@@ -42,10 +42,10 @@ describe("the note on News and Receipts", () => {
       await act(async () => { window.location.hash = "#/reads"; window.dispatchEvent(new Event("hashchange")); });
       await live.tick(1_000);
       const note = () => [...document.querySelectorAll<HTMLElement>('[role="note"]')]
-        .find(n => n.textContent?.includes("senders you never let in")) ?? null;
+        .find(n => n.textContent?.includes("you haven't screened yet")) ?? null;
       const posts = () => calls.filter(c => c.method === "POST");
       expect(calls.map(c => `${c.method} ${c.url}`)).toContain("GET /api/screener/unscreened?pile=news");
-      expect(note()?.textContent).toBe("3 letters here were never let in They are from senders you never let in.Screen 3");
+      expect(note()?.textContent).toBe("3 letters in News come from senders you haven't screened yet Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.Screen 3Not now");
       expect(posts(), "a READ moved somebody's mail").toEqual([]);
 
       await act(async () => { note()!.querySelector("button")!.click(); });

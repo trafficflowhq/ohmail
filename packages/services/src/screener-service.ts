@@ -17,8 +17,8 @@ import {
   readSuggestionGrant, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn, type ReverseChargeFact,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
-  senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
-  senderHasHeldClaimSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, parseDecisionScope, confirmedScreenerRows, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  senderIsActiveSql, activeSenderKeysSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
+  senderHasHeldClaimSql, heldClaimKeysSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, parseDecisionScope, confirmedScreenerRows, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied, readListAddresses, readListAddressesLetIn, mailboxTakesPressSql,
   readListClaimsFiledAlone, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -1713,12 +1713,17 @@ export class ScreenerReadService {
         .as("waiting_total")
       : sql<null>`null`.as("waiting_total");
     // scoped-by: `reps` is the account-scoped messages subquery (eq messages.accountId, ctx.accountId)
-    const page = ctx.db.select({
+    const candidates = ctx.db.select({
       messageId: reps.messageId, sortKey: reps.sortKey, senderMarked: reps.senderMarked,
       senderMarkedBrand: reps.senderMarkedBrand, senderHeld: reps.senderHeld, waitingTotal,
-    }).from(reps)
-      .where(and(
-        ...this.waitingFilters(ctx, held, opts.cutline, opts.gone),
+    }).from(reps);
+    const cutline = d.name === "pg" ? opts.cutline : undefined;
+    const sender = sql`lower(${reps.fromAddress})`;
+    const qualified = cutline ? candidates
+      .leftJoin(sql`active_senders`, sql`active_senders.sender = ${sender}`)
+      .leftJoin(sql`claimed_senders`, sql`claimed_senders.sender = ${sender}`) : candidates;
+    const picked = qualified.where(and(
+        ...this.waitingFilters(ctx, held, opts.cutline, opts.gone, cutline !== undefined),
         opts.after
           // Row comparison, which is the `date desc, id desc` keyset written as one expression:
           // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound
@@ -1728,8 +1733,20 @@ export class ScreenerReadService {
           : undefined,
       ))
       .orderBy(desc(reps.sortKey), desc(reps.messageId))
-      .limit(opts.limit)
-      .as("page");
+      .limit(opts.limit);
+    // Each set is materialized once. Under RLS the sender index cannot seek on lower(address).
+    const page = cutline ? ctx.db.select({
+      messageId: sql<string>`picked.id`.as("picked_message_id"),
+      sortKey: sql<Date>`picked.sort_key`.mapWith(messages.date).as("sort_key"),
+      senderMarked: sql<number>`picked.sender_marked`.as("sender_marked"),
+      senderMarkedBrand: sql<string | null>`picked.sender_marked_brand`.as("sender_marked_brand"),
+      senderHeld: sql<number>`picked.sender_held`.as("sender_held"),
+      waitingTotal: sql<number | string | null>`picked.waiting_total`.as("waiting_total"),
+    }).from(sql`(
+      with active_senders as materialized (${activeSenderKeysSql(d, ctx.accountId, cutline, opts.gone)}),
+        claimed_senders as materialized (${heldClaimKeysSql(d, ctx.accountId, cutline, SCREENING_AUTH_VERDICTS, opts.gone)})
+      ${picked}
+    ) picked`).as("page") : picked.as("page");
     // scoped-by: `page` holds only ids of the account-scoped `reps` subquery above
     const rows = await ctx.db.select({
       ...HELD_COLUMNS, sortKey: page.sortKey, senderMarked: page.senderMarked,
@@ -1750,7 +1767,7 @@ export class ScreenerReadService {
    */
   private waitingFilters(
     ctx: ServiceContext, held: ReturnType<ScreenerReadService["heldSenderKeys"]>, cutline: CutlineSet | undefined,
-    gone: readonly string[],
+    gone: readonly string[], useSets: boolean,
   ): Array<SQL | undefined> {
     const { reps, d } = held;
     const sender = sql`lower(${reps.fromAddress})`;
@@ -1759,13 +1776,15 @@ export class ScreenerReadService {
     // Such a claim is a live held message marked 'impersonation', a row of the window's partition,
     // so `sender_marked` is 1 wherever one can exist: asked first, the probe skips every other sender.
     const claim = cutline
-      ? sql`(${reps.senderMarked} = 1 and ${senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS, gone)})`
+      ? sql`(${reps.senderMarked} = 1 and ${useSets ? sql`claimed_senders.sender is not null`
+        : senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS, gone)})`
       : undefined;
+    const active = cutline && (useSets ? sql`active_senders.sender is not null` : senderIsActiveSql(d, ctx.accountId, sender, cutline, gone));
     // A held letter that arrived inside the cutline whatever its Date, as the gate dated it.
     const arrival = cutline ? sql`${reps.heldArrival} = 1` : undefined;
     return [
       eq(reps.rank, 1),
-      cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline, gone)} or ${claim} or ${arrival})` : undefined,
+      active ? sql`(${active} or ${claim} or ${arrival})` : undefined,
       // A decided sender is waiting again while the gate holds such a claim of theirs.
       claim
         ? sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${claim})`

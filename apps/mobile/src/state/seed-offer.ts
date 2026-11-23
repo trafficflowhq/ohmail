@@ -9,7 +9,7 @@
  * read once per launch, never per drain.
  */
 import type { SeedReview } from "../net/consent";
-import type { SecureKV } from "./servers";
+import { secureOwnerSuffix, type SecureKV } from "./servers";
 import { importFloorInWindow } from "./surface";
 
 /** What the account's consent answer said about the seed. */
@@ -130,7 +130,7 @@ export function bindSeedOfferKV(store: SecureKV): void {
 
 /** `boot.ts#dbFileName`'s injective `_hex_` encoding, so two owners never share a key. */
 export function seedNotNowKey(owner: string): string {
-  return `ohmail.seed.notNow.${owner.replace(/[^A-Za-z0-9.-]/gu, (ch) => `_${ch.codePointAt(0)!.toString(16)}_`)}`;
+  return `ohmail.seed.notNow.${secureOwnerSuffix(owner)}`;
 }
 
 export function subscribeSeedOffer(cb: () => void): () => void {

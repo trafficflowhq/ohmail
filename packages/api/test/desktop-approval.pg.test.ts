@@ -51,7 +51,7 @@ const post = (db: Db, path: string, body: unknown, bearer?: string): Promise<Res
   app.handle(new Request(`http://localhost${path}`, {
     method: "POST",
     headers: {
-      "content-type": "application/json", "x-vercel-forwarded-for": freshIp(),
+      "content-type": "application/json", "x-forwarded-for": freshIp(),
       ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
     },
     body: JSON.stringify(body),

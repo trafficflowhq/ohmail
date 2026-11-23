@@ -25,6 +25,36 @@ const refusal = (e: NodeJS.ProcessEnv, door: SettingsDoorInput = PROCESS_DOOR): 
  */
 const shape = (s: Settings): unknown => ({ ...s, keyRing: { ...s.keyRing, provider: null }, installId: null });
 
+describe("the managed web client address secret", () => {
+  it.each([
+    ["empty", ""], ["only whitespace", " ".repeat(32)], ["31 characters", "a".repeat(31)],
+  ])("refuses a configured secret with %s", (_label, value) => {
+    expect(() => loadSettings(env(MANAGED_ENV, { TF_WEB_CLIENT_IP_SECRET: value }), PROCESS_DOOR))
+      .toThrow("TF_WEB_CLIENT_IP_SECRET must be at least 32 characters");
+  });
+
+  it("accepts an unset secret or one with 32 characters", () => {
+    expect(loadSettings(env(MANAGED_ENV), PROCESS_DOOR).network.webClientIpSecret).toBeNull();
+    const value = "a".repeat(32);
+    expect(loadSettings(env(MANAGED_ENV, { TF_WEB_CLIENT_IP_SECRET: value }), PROCESS_DOOR)
+      .network.webClientIpSecret === value).toBe(true);
+  });
+});
+
+describe("the managed client address header", () => {
+  it("defaults to the proxy walk and accepts x-real-ip on the managed server", () => {
+    const extra = { TF_CLIENT_IP_HEADER: "x-real-ip" };
+    expect(loadSettings(env(MANAGED_ENV), PROCESS_DOOR).network.clientIpHeader).toBeNull();
+    expect(loadSettings(env(MANAGED_ENV, extra), PROCESS_DOOR).network.clientIpHeader).toBe("x-real-ip");
+    expect(loadSettings(env(PLAIN_ENV, extra), PROCESS_DOOR).network.clientIpHeader).toBeNull();
+  });
+
+  it.each(["", "x-forwarded-for", "X-Real-IP"])("refuses unsupported header settings", (value) => {
+    expect(() => loadSettings(env(MANAGED_ENV, { TF_CLIENT_IP_HEADER: value }), PROCESS_DOOR))
+      .toThrow("TF_CLIENT_IP_HEADER must be x-real-ip");
+  });
+});
+
 describe("a configuration says which service it is by the name that leads it", () => {
   it("OHMAIL_ORIGIN is a self-hosted server; DATABASE_URL_POOLED is the managed service", () => {
     expect(loadSettings(env(PLAIN_ENV), PROCESS_DOOR).managed).toBe(false);

@@ -25,7 +25,7 @@ export const coreRoutes: Route[] = [
     pattern: "/auth/register",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    options: { public: true, credentialSubject: true, credentialLookup: true },
     handler: async (req, deps) => {
       // `locale` is the signup screen's language: it picks the mail's language and nothing else
       // (the service reads it from a closed set, English otherwise).
@@ -67,7 +67,7 @@ export const coreRoutes: Route[] = [
     pattern: "/auth/verify-email",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    options: { public: true, credentialSubject: true, credentialLookup: true },
     handler: async (req, deps) => {
       const body = await readBody<{ token?: unknown; password?: unknown }>(req);
       const result = await auth(deps).verifyEmail(serviceContext(deps, req), body);

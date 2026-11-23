@@ -191,7 +191,7 @@ export const screenerRoutes: Route[] = [
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const query = new URL(req.url).searchParams;
-      // `pile` asks News or Receipts instead of the Ohbox, with no window: that pile's note.
+      // `pile` asks News or Receipts instead of the Ohbox, inside the account's screening window.
       const pile = query.get("pile");
       if (pile !== null && !isUnscreenedPile(pile)) {
         throw new ServiceError("validation_failed", 400, "pile must be news or receipts");

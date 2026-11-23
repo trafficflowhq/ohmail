@@ -737,7 +737,7 @@ export {
   NO_WAITING,
   // The boot replay's per-attempt deadline and the unkeyed-create replay horizon — exported so
   // the guards read the shipped numbers, not copies.
-  OUTBOX_REPLAY_DEADLINE_MS,
+  OUTBOX_MUTATE_DEADLINE_MS, OUTBOX_REPLAY_DEADLINE_MS,
   OUTBOX_UNKEYED_CREATE_TTL_MS,
   // How long one hung write may hold the outbox, how old it must be before a Try again ends its
   // wait, and the drain's belt for a door with no bound.

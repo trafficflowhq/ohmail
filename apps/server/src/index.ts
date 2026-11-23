@@ -146,6 +146,7 @@ async function main(): Promise<void> {
   if (door.door === "external") {
     logger.info("external_door_configured", { configVar: "OHMAIL_TLS_TERMINATOR", effective, proxyPeerFrom: PROXY_PEER_HEADER });
   }
+  const { webClientIpSecret: clientIpSecret, clientIpHeader } = settings.network;
   const eventStreamShutdown = new AbortController();
   const server = makeHttpServer(program.dispatch, {
     bodyMaxBytes: cfg.bodyMaxBytes,
@@ -153,6 +154,8 @@ async function main(): Promise<void> {
     requestTimeoutMs: cfg.requestTimeoutMs,
     eventStreamShutdown: eventStreamShutdown.signal,
     trustedProxies,
+    ...(clientIpSecret ? { clientIpSecret } : {}),
+    ...(clientIpHeader ? { clientIpHeader } : {}),
     ...(door.door === "external" ? { proxyPeerHeader: PROXY_PEER_HEADER } : {}),
     onForwardingNote: (n) => {
       if (n.kind === "proxy_peer_is_client") {

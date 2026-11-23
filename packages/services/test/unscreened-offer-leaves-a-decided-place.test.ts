@@ -126,29 +126,27 @@ describe("Screen N takes only the letters inside the window", () => {
   });
 });
 
-/* THE NOTE ON NEWS ASKS THE SAME PREDICATE, AND NO WINDOW: a letter somebody placed in News (an
-   answer the gate admitted, the person's own filing) is neither counted nor screened, and the
-   undecided ones are, however old and whether or not their arrival was recorded. */
-describe("the News note leaves a place somebody decided, and has no window", () => {
+describe("the News note leaves decided placements and older mail alone", () => {
   const NEWS = "ohmail/News";
   const OLD = new Date(NOW.getTime() - 800 * DAY);
 
-  it("counts and screens the undecided letters at any age, and neither the admitted answer nor the person's filing", async () => {
+  it("counts and screens only undecided letters inside the window", async () => {
     const w = await world();
     const open = await w.letter("stranger@x.test", { setBy: "us", decidedAt: null }, ARRIVED, ARRIVED, NEWS);
     const old = await w.letter("olden@x.test", { setBy: "us", decidedAt: null }, OLD, OLD, NEWS);
     const undated = await w.letter("undated@x.test", { setBy: "us", decidedAt: null }, null, OLD, NEWS);
+    const imported = await w.letter("imported@x.test", { setBy: "us", decidedAt: null }, ARRIVED, OLD, NEWS);
     const answer = await w.letter("answerer@x.test", { setBy: "us", decidedAt: new Date("2026-10-02T08:00:00.000Z") }, ARRIVED, ARRIVED, NEWS);
     const filed = await w.letter("filed@x.test", { setBy: "external", decidedAt: new Date("2026-10-03T08:00:00.000Z") }, ARRIVED, ARRIVED, NEWS);
 
     const summary = await unscreenedSummary(w.db as never, w.accountId, NOW, "news");
-    expect(summary.groups.map((g) => g.address).sort()).toEqual(["olden@x.test", "stranger@x.test", "undated@x.test"]);
-    expect(summary.total).toBe(3);
+    expect(summary.groups.map((g) => g.address)).toEqual(["stranger@x.test"]);
+    expect(summary.total).toBe(1);
     expect(await unscreenedSummary(w.db as never, w.accountId, NOW), "the Ohbox's window took News").toMatchObject({ total: 0 });
 
-    expect(await screenUnscreened(w.ctx, { pile: "news" })).toMatchObject({ total: 3 });
-    for (const id of [open, old, undated]) expect(await w.desired(id)).toBe(GATE);
+    expect(await screenUnscreened(w.ctx, { pile: "news" })).toMatchObject({ total: 1 });
+    expect(await w.desired(open)).toBe(GATE);
     const stay = { desired: NEWS, observed: NEWS, unread: true, changes: 0 };
-    for (const id of [answer, filed]) expect(await w.untouched(id)).toEqual(stay);
+    for (const id of [old, undated, imported, answer, filed]) expect(await w.untouched(id)).toEqual(stay);
   });
 });

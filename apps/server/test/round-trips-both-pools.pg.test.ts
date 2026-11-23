@@ -2,10 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
-  accounts, accountSettings, changeLog, flagState, folderState, mailboxes, messageBodies, messages, sessions, users,
+  accounts, accountSettings, changeLog, flagState, folderState, mailboxes, messageBodies, messages, refreshTokens, sessions, users,
   accountPass, writePassProgress,
 } from "@trafficflow/db";
-import { closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
+import { closePooledDbs, makeOwnedDb, makePooledDb, POOLED_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS } from "@trafficflow/db/cloud";
 import { ensureSearchExtensions, runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable, recordPgWire } from "@trafficflow/db/testing";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
@@ -62,6 +62,7 @@ async function settled(): Promise<void> {
 describe.skipIf(!PG_UP)("the waits of a request on both pools (the program, real Postgres)", () => {
   const programs = {} as Record<Pool, Program>;
   let token = "";
+  let refreshToken = "";
   let accountId = "";
   const ids: string[] = [];
   let flip = false;
@@ -81,6 +82,16 @@ describe.skipIf(!PG_UP)("the waits of a request on both pools (the program, real
       accountId, userId: user!.id, familyId: randomUUID(), accessTokenHash: hashToken(token),
       accessExpiresAt: new Date(now.getTime() + 3_600_000), refreshExpiresAt: new Date(now.getTime() + 7_200_000),
       lastTwofaAt: now,
+    });
+    const [session] = await seed.insert(sessions).values({
+      accountId, userId: user!.id, familyId: randomUUID(), accessTokenHash: hashToken(generateToken()),
+      accessExpiresAt: new Date(now.getTime() + 3_600_000), refreshExpiresAt: new Date(now.getTime() + 7_200_000),
+      lastTwofaAt: now,
+    }).returning();
+    refreshToken = generateToken();
+    await seed.insert(refreshTokens).values({
+      accountId, userId: user!.id, sessionId: session!.id, familyId: session!.familyId,
+      tokenHash: hashToken(refreshToken), expiresAt: session!.refreshExpiresAt, createdAt: now,
     });
     const [mb] = await seed.insert(mailboxes).values({
       accountId, provider: "imap", address: `rt2-${randomUUID().slice(0, 8)}@rt.example`,
@@ -122,6 +133,7 @@ describe.skipIf(!PG_UP)("the waits of a request on both pools (the program, real
       await seed.delete(mailboxes).where(eq(mailboxes.accountId, accountId));
       await seed.delete(accountSettings).where(eq(accountSettings.accountId, accountId));
       await seed.delete(changeLog).where(eq(changeLog.accountId, accountId));
+      await seed.delete(refreshTokens).where(eq(refreshTokens.accountId, accountId));
       await seed.delete(sessions).where(eq(sessions.accountId, accountId));
       await seed.delete(users).where(eq(users.accountId, accountId));
       await seed.delete(accounts).where(eq(accounts.id, accountId));
@@ -176,6 +188,82 @@ describe.skipIf(!PG_UP)("the waits of a request on both pools (the program, real
     await one.execute(sql`select 2 as b`);
     expect(wire.read().bursts).toBe(2);
   });
+
+  it("marks a letter read while every managed read connection is occupied", async () => {
+    const readPool = programs.pooled.runtime.db.request();
+    const blocker = makeOwnedDb(PG_TEST_URL);
+    const lock = 402815;
+    const holders: Promise<unknown>[] = [];
+    let response: Promise<Response> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await blocker.db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${lock})`);
+        for (let i = 0; i < POOLED_MAX_CONNECTIONS; i++) {
+          const holder = Promise.resolve(readPool.execute(sql`select pg_advisory_xact_lock_shared(${lock})`));
+          void holder.catch(() => {});
+          holders.push(holder);
+        }
+        const until = Date.now() + 5_000;
+        for (;;) {
+          const [count] = await tx.execute<{ waiting: number }>(sql`
+            select count(*)::int as waiting from pg_locks
+            where locktype = 'advisory' and objid = ${lock} and not granted`);
+          if (count?.waiting === POOLED_MAX_CONNECTIONS) break;
+          if (Date.now() >= until) throw new Error("the read connections never filled");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        response = programs.pooled.dispatch(new Request(`${origin("pooled")}/messages/${ids[2]}`, {
+          method: "PATCH",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ unread: false }),
+        }));
+        const limit = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 2_000); });
+        const answer = await Promise.race([response, limit]);
+        expect(answer?.status, "the write waited for a connection held by a read").toBe(200);
+        expect(await answer!.json()).toMatchObject({ unread: false });
+      });
+    } finally {
+      clearTimeout(timer);
+      await Promise.allSettled(holders);
+      await response;
+      await blocker.close();
+    }
+  }, 20_000);
+
+  it("rotates a session while another write holds a managed write connection", async () => {
+    const program = programs.pooled;
+    let release!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const writing = new Promise<void>((resolve) => { started = resolve; });
+    const holder = program.runtime.db.request(true).transaction(async (tx) => {
+      await tx.update(messages).set({ unread: false }).where(eq(messages.id, ids[4]!));
+      started();
+      await held;
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refresh: Promise<Response> | undefined;
+    try {
+      await Promise.race([writing, holder]);
+      refresh = program.dispatch(new Request(`${origin("pooled")}/auth/refresh`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+      }));
+      const limit = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), SESSION_ACQUIRE_TIMEOUT_MS);
+      });
+      const answer = await Promise.race([refresh, limit]);
+      expect(answer?.status, "refresh must rotate before the write releases its connection").toBe(200);
+      expect(typeof (await answer!.json()).tokens?.accessToken).toBe("string");
+    } finally {
+      clearTimeout(timer);
+      release();
+      await holder;
+      await refresh;
+    }
+  }, 20_000);
 
   for (const pool of ["owned", "pooled"] as const) {
     for (const [name, journey] of journeys) {

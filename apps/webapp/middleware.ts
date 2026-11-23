@@ -53,10 +53,9 @@ import {
  *    can replace a request's header set; a config rewrite forwards the jar. Unarmed, they are
  *    served here exactly as before.
  *
- * `/api/*` (bar `/api/waitlist`, a zone path), `/auth/refresh` and the sign-out door below it,
- * `/_next/*`, `/demo/*` and the icons are deliberately NOT matched. They are proxied or static,
- * they are the hot path, and putting a function in front of them would buy nothing —
- * `next.config.mjs`'s `headers()` covers them.
+ * `/api/*` authenticates the Vercel client address for the API rewrite. The waitlist keeps
+ * its landing-zone routing. The refresh handlers and static assets are handled outside
+ * middleware, with their security headers set by `next.config.mjs`.
  *
  * ## Caching
  *
@@ -197,6 +196,34 @@ function clientKey(request: NextRequest): string {
   return request.headers.get("x-real-ip") ?? "unknown";
 }
 
+const WEB_CLIENT_IP = "x-ohmail-client-ip";
+
+function isApiPath(pathname: string): boolean {
+  const lower = pathname.toLowerCase();
+  return lower === API_BASE || lower.startsWith(`${API_BASE}/`);
+}
+
+/** Attach proof to the upstream request before the configured API rewrite. */
+async function forwardClientIp(request: NextRequest): Promise<NextResponse> {
+  const secret = !SELF_HOST_BUILD && API_ORIGIN && process.env.VERCEL === "1"
+    ? process.env.TF_WEB_CLIENT_IP_SECRET?.trim()
+    : undefined;
+  const ip = request.headers.get("x-vercel-forwarded-for");
+  const fromEdge = secret && ip && /^[0-9a-fA-F:.]{1,45}$/.test(ip);
+  if (!fromEdge && !request.headers.has(WEB_CLIENT_IP)) return NextResponse.next();
+  const headers = new Headers(request.headers);
+  headers.delete(WEB_CLIENT_IP);
+  if (fromEdge) {
+    const bytes = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", bytes.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const payload = `${ip};${Math.floor(Date.now() / 1000)}`;
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes.encode(payload)));
+    const hex = Array.from(mac, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    headers.set(WEB_CLIENT_IP, `${payload};${hex}`);
+  }
+  return NextResponse.next({ request: { headers } });
+}
+
 /**
  * NO PAGE TAKES A REQUEST BODY. Next decodes a POST to any App Router page as a Server Action
  * BEFORE it looks the action up, and that decoder is where the React Server Components
@@ -207,7 +234,7 @@ function clientKey(request: NextRequest): string {
  */
 function refusesPageBody(request: NextRequest): boolean {
   const { pathname } = request.nextUrl;
-  if (pathname === API_BASE || pathname.startsWith(`${API_BASE}/`)) return false;
+  if (isApiPath(pathname)) return false;
   if (REFRESH_SCOPED_PATHS.includes(pathname)) return false;
   if (HANDLER_PATHS.includes(pathname)) return false;
   return (request.method !== "GET" && request.method !== "HEAD") || request.headers.has("next-action");
@@ -248,8 +275,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const bypass = (process.env.LANDING_ZONE_BYPASS ?? "").trim();
   const zone = armedZone(LANDING_ZONE, bypass);
 
-  // 3. Every matched path that is NOT `/` is an ordinary page: no cookie is read, no
-  //    session is looked up, nothing is fetched. `/login` and `/join` take credentials, so
+  // 3. Routes other than `/` do no session lookup. `/login` and `/join` take credentials, so
   //    they are served under the strict script policy; the marketing pages are static
   //    prerenders and keep the baseline policy from `next.config.mjs` (a nonce cannot
   //    survive a prerender — see `app/security-headers.ts`).
@@ -267,6 +293,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     }
     // Decided on the path the router serves, so `/%6cogin` or `/x/../approve` meets the same three headers.
     const routed = routedPath(pathname) ?? pathname;
+    if ((isApiPath(pathname) || isApiPath(routed)) && routed.toLowerCase() !== "/api/waitlist") return forwardClientIp(request);
     if (
       routed === "/login" || routed === "/join" || routed === "/verify-email" ||
       // `/link-desktop` receives no credential and PRINTS one, which needs the same three
@@ -299,7 +326,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     ) {
       return credentialPage(request);
     }
-    return nextWithoutPageOwner(request);
+    return nextWithScrubbedHeaders(request);
   }
 
   const wakeEntry = request.nextUrl.searchParams.has("wake") &&
@@ -397,7 +424,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const rewrite = (target: string, word?: "now" | "wait", account?: string): NextResponse =>
     strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init), word, account);
   const response = answerFor(surface, {
-    marketing: () => (zone !== null ? zoneRewrite(request, zone, bypass, "/") : nextWithoutPageOwner(request)),
+    marketing: () => (zone !== null ? zoneRewrite(request, zone, bypass, "/") : nextWithScrubbedHeaders(request)),
     resume: () => rewrite(RESUME_ROUTE),
     demo: () => rewrite(APP_ROUTE),
     app: () => owner === null ? rewrite(APP_ROUTE, "wait") : rewrite(APP_ROUTE, "now", owner),
@@ -489,6 +516,7 @@ function strict(
   const headers = new Headers(request.headers);
   headers.delete(FIRST_PAGE_HEADER);
   headers.delete(FIRST_PAGE_OWNER_HEADER);
+  headers.delete(WEB_CLIENT_IP);
   if (account !== undefined) headers.set(FIRST_PAGE_OWNER_HEADER, account);
   if (firstPage !== undefined) headers.set(FIRST_PAGE_HEADER, firstPage);
   headers.set("x-nonce", nonce);
@@ -498,11 +526,12 @@ function strict(
   return response;
 }
 
-/** Also scrub a forged owner on paths that do not normally pass through the strict gate. */
-function nextWithoutPageOwner(request: NextRequest): NextResponse {
-  if (!request.headers.has(FIRST_PAGE_OWNER_HEADER)) return NextResponse.next();
+/** Strip internal headers from requests that pass through without a rewrite or a nonce. */
+function nextWithScrubbedHeaders(request: NextRequest): NextResponse {
+  if (!request.headers.has(FIRST_PAGE_OWNER_HEADER) && !request.headers.has(WEB_CLIENT_IP)) return NextResponse.next();
   const headers = new Headers(request.headers);
   headers.delete(FIRST_PAGE_OWNER_HEADER);
+  headers.delete(WEB_CLIENT_IP);
   return NextResponse.next({ request: { headers } });
 }
 
@@ -539,7 +568,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
  * The matcher is STATICALLY ANALYSED by `next build` — it is read out of the source,
  * not evaluated — so `APP_ROUTE` cannot appear here and the paths have to be spelled
  * again as literals. A drift guard asserts they never drift from `EDGE_PATHS` — the routes
- * marked `edge: true` in `routes.mjs` plus every landing-zone path, the two prefixes as
+ * marked `edge: true` in `routes.mjs`, the API prefix and every landing-zone path, the prefixes as
  * `/:path*` — because a silent divergence would leave the rewrite target publicly reachable
  * or a legacy host serving the product.
  *
@@ -568,9 +597,11 @@ export const config = {
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
     "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/account/delete", "/de", "/privacy", "/imprint",
     "/subprocessors", "/support", "/delete-account", "/ohcal", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
-    "/api/waitlist",
+    "/api/waitlist", "/api/:path*",
     "/site-assets/:path*", "/landing/:path*",
     { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Ss][Uu][Pp][Pp][Oo][Rr][Tt]|[Dd][Ee][Ll][Ee][Tt][Ee]-[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Dd][Ee]|[Oo][Hh][Cc][Aa][Ll]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
+    { source: "/([Aa][Pp][Ii](?:/.*)?)" },
+    { source: "/:path*", has: [{ type: "header", key: "x-ohmail-client-ip" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "x-ohmail-first-page-owner" }] },

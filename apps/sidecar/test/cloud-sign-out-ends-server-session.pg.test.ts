@@ -48,7 +48,7 @@ describe.skipIf(!PG_UP)("a Cloud desktop's sign-out at the server", () => {
     app.handle(new Request(`http://localhost${path}`, {
       method,
       headers: {
-        "content-type": "application/json", "x-vercel-forwarded-for": freshIp(),
+        "content-type": "application/json", "x-forwarded-for": freshIp(),
         ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -128,7 +128,7 @@ describe.skipIf(!PG_UP)("a Cloud desktop's sign-out at the server", () => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       if (url.pathname.startsWith("/auth/")) {
         const headers = new Headers(init?.headers);
-        headers.set("x-vercel-forwarded-for", freshIp());
+        headers.set("x-forwarded-for", freshIp());
         return app.handle(new Request(`http://localhost${url.pathname}${url.search}`, {
           method: init?.method ?? "GET", headers, ...(init?.body === undefined ? {} : { body: init.body as string }),
         }), depsOn());

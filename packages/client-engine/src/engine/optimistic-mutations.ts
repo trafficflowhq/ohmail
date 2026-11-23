@@ -465,7 +465,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
 
       // Deadline-bounded like every other road. A timeout leaves the attempt owning its entry
       // and arms the hold; the verb is answered `queued` rather than left on a hung request.
-      const out = await this.outboxGate(() => this.dispatchOnLane(pending, unsubscribeIds));
+      const out = await this.outboxGate(() => this.dispatchOnLane(pending, this.mutateDeadlineMs, unsubscribeIds));
       if (out.held) {
         if (!awaitsHold) return queued();
         continue; // the create re-reads the hold at the top and waits it out off the chain
@@ -557,7 +557,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    * batch queue behind itself, a deadlock a nested-flag cannot fix.
    */
   protected async dispatchOnLane(
-    p: PendingMutation, unsubscribeIds?: readonly string[],
+    p: PendingMutation, deadlineMs = this.replayDeadlineMs, unsubscribeIds?: readonly string[],
   ): Promise<{
     result: MutationResult | null;
     timedOut: boolean;
@@ -569,7 +569,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     // From here a fresh read is on the wire, where `inFlight` holds it.
     this.freshReads.delete(p);
     let owed: "await" | "background" | null = null;
-    const { result, timedOut } = await this.dispatchWithDeadline(p, {
+    const { result, timedOut } = await this.dispatchWithDeadline(p, deadlineMs, {
       deferReconcile: true,
       onReconcileDeferred: (mode) => { owed = mode; },
       unsubscribeIds,
@@ -637,6 +637,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
 
   protected async dispatchWithDeadline(
     p: PendingMutation,
+    deadlineMs: number,
     opts: DispatchOptions = {},
   ): Promise<{ result: MutationResult | null; timedOut: boolean }> {
     // NO SEPARATE "ACTIVE" DEFERRED. Every caller of this method reaches it through
@@ -666,7 +667,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     const raced = await Promise.race([
       attempt.then((r) => ({ r })),
       new Promise<{ r: null }>((resolve) => {
-        timer = setTimeout(() => { timedOut = true; resolve({ r: null }); }, this.replayDeadlineMs);
+        timer = setTimeout(() => { timedOut = true; resolve({ r: null }); }, deadlineMs);
       }),
     ]);
     if (timer !== undefined) clearTimeout(timer);
@@ -1170,7 +1171,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     }
     const { ahead, out } = await this.outboxGate(async () => {
       const first = await this.dispatchEndedFirst(ended, p);
-      return { ahead: first, out: await this.dispatchOnLane(p) };
+      return { ahead: first, out: await this.dispatchOnLane(p, this.mutateDeadlineMs) };
     });
     if (ahead !== null) void this.settleReconcile("background");
     if (out.held) {
@@ -2790,7 +2791,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       const at = this.queue.indexOf(p);
       if (at < 0) return { ahead: first, out: null }; // a flush or a drive took it while this waited its turn
       this.queue.splice(at, 1);
-      const o = await this.dispatchOnLane(p);
+      const o = await this.dispatchOnLane(p, this.mutateDeadlineMs);
       if (o.held) this.queue.push(p);
       return { ahead: first, out: o };
     });
@@ -3224,6 +3225,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       // Retired by a same-key press or withdrawn by Cancel while an earlier entry was on the wire:
       // its replacement answers for the key, so this flush says nothing about it.
       if (this.takeTurn(p) === "gone") continue;
+      // Keep the flush short so background work can resume while the request is still in flight.
       const out = await this.dispatchOnLane(p);
       if (out.held) {
         this.queue.push(p);

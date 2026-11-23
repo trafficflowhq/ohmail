@@ -1,1 +1,1 @@
-export const calendarId = (): string => globalThis.crypto.randomUUID();
+export { randomUuid as calendarId } from "../random-uuid";

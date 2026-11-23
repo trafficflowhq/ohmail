@@ -37,8 +37,9 @@ export function StreamGround({ children }: { readonly children: ReactNode }) {
     if (said.kind === "failed") report(t("unscreenedFailed"));
     else reportScreened(report, t, said.kind === "moved" ? said.count : 0, organizer);
   };
-  const news = usePileNote(engine, "news", !demo && route.place === "news", say);
-  const receipts = usePileNote(engine, "receipts", !demo && route.place === "receipts", say);
+  const scope = demo ? null : host.session.scope;
+  const news = usePileNote(engine, "news", !demo && route.place === "news", say, scope);
+  const receipts = usePileNote(engine, "receipts", !demo && route.place === "receipts", say, scope);
   const shown = route.place === "news" ? news : route.place === "receipts" ? receipts : null;
   return (
     <StreamVisits.Provider value={visits.current.piles}>

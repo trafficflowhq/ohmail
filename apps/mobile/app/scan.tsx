@@ -18,6 +18,7 @@ import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
 import { discardAdmission, parsePairLink, type PairAdmission } from "../src/net/pairing";
 import { Txt } from "../src/ui/base";
+import { requestPairingLink } from "../src/ui/manual-pair-mode";
 import { PairConfirm } from "../src/ui/PairConfirm";
 import { OnboardingButton, OnboardingPage, useOnboardingLook } from "../src/ui/OnboardingPage";
 import { useLocale } from "../src/i18n/LocaleProvider";
@@ -152,7 +153,10 @@ function ScanBody() {
   const granted = permission?.granted === true;
   const denied = permission !== null && !granted;
   const failed = phase.k === "failed";
-  const manual = () => router.replace({ pathname: "/connect", params: { method: "link" } });
+  const manual = () => {
+    requestPairingLink();
+    router.replace("/connect");
+  };
   const allow = () => void requestPermission();
   const retry = () => {
     armed.current = true;

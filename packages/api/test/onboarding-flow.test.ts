@@ -551,7 +551,7 @@ describe("POST /waitlist", () => {
     const { db, deps } = await makeDeps();
     const from = (n: number) =>
       req("POST", "/waitlist", {
-        headers: { "x-vercel-forwarded-for": "203.0.113.7" },
+        headers: { "x-forwarded-for": "203.0.113.7" },
         body: JSON.stringify({ email: `flood${n}@example.com` }),
       });
 
@@ -566,7 +566,7 @@ describe("POST /waitlist", () => {
     // A DIFFERENT connection is unaffected — the limit is per caller, not global.
     const other = await H(
       req("POST", "/waitlist", {
-        headers: { "x-vercel-forwarded-for": "198.51.100.4" },
+        headers: { "x-forwarded-for": "198.51.100.4" },
         body: JSON.stringify({ email: "elsewhere@example.com" }),
       }),
       deps,

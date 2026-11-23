@@ -65,11 +65,54 @@ it("the prior account's pending screening answer cannot change the current accou
   });
   expect(report()).toBe(priorReport);
   expect(screen.getByRole("note").textContent).toBe(
-    "2 letters here were never let in They are from senders you never let in.Screen 2",
+    "2 letters in News come from senders you haven't screened yet Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.Screen 2Not now",
   );
   expect(first.ask.mock.calls).toEqual([["news"]]);
   expect(next.ask.mock.calls).toEqual([["news"]]);
   expect(next.press.mock.calls).toEqual([]);
+});
+
+it("Not now keeps the note hidden for this account and pile until its count grows", async () => {
+  const current = account("account-not-now", 7, Promise.resolve(0));
+  const page = render(current.frame);
+  fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
+  expect(screen.queryByRole("note")).toBeNull();
+  expect(current.press).not.toHaveBeenCalled();
+
+  await act(async () => current.address.visit("#/receipts"));
+  expect(await screen.findByRole("button", { name: "Screen 7" })).toBeTruthy();
+
+  const other = account("account-not-now-other", 7, Promise.resolve(0));
+  page.rerender(other.frame);
+  expect(await screen.findByRole("button", { name: "Screen 7" })).toBeTruthy();
+  const returned = account("account-not-now", 6, Promise.resolve(0));
+  page.rerender(returned.frame);
+  await act(async () => {});
+  expect(returned.ask).toHaveBeenCalledWith("news");
+  expect(screen.queryByRole("note")).toBeNull();
+
+  await act(async () => returned.address.visit("#/receipts"));
+  expect(await screen.findByRole("button", { name: "Screen 6" })).toBeTruthy();
+  returned.ask.mockResolvedValue({ total: 8, atLeast: false });
+  await act(async () => returned.address.visit("#/reads"));
+  expect(await screen.findByRole("button", { name: "Screen 8" })).toBeTruthy();
+});
+
+it("shows the note when the count grows after dropping below the dismissed count", async () => {
+  const current = account("account-count-drop", 40, Promise.resolve(0));
+  render(current.frame);
+  expect(await screen.findByRole("button", { name: "Screen 40" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+
+  await act(async () => current.address.visit("#/ohbox"));
+  current.ask.mockResolvedValue({ total: 10, atLeast: false });
+  await act(async () => current.address.visit("#/reads"));
+  expect(screen.queryByRole("note")).toBeNull();
+
+  await act(async () => current.address.visit("#/ohbox"));
+  current.ask.mockResolvedValue({ total: 25, atLeast: false });
+  await act(async () => current.address.visit("#/reads"));
+  expect(await screen.findByRole("button", { name: "Screen 25" })).toBeTruthy();
 });
 
 it("an earlier count cannot restore the screening button after the press has emptied its pile", async () => {

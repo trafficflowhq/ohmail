@@ -66,7 +66,7 @@ async function mint(
  */
 const claimBody = (deps: ApiDeps, body: unknown, ip = IP): Promise<Response> =>
   H(req("POST", "/auth/desktop-claim", {
-    headers: { "x-vercel-forwarded-for": ip },
+    headers: { "x-forwarded-for": ip },
     body: JSON.stringify(body),
   }), deps);
 
@@ -291,7 +291,7 @@ describe("a code works ONCE, briefly, and only as the thing it was minted as", (
     for (const body of ["{}", JSON.stringify({ code: "" }), JSON.stringify({ code: 42 }),
       JSON.stringify({ code: "x".repeat(2000) })]) {
       const res = await H(req("POST", "/auth/desktop-claim", {
-        headers: { "x-vercel-forwarded-for": IP }, body,
+        headers: { "x-forwarded-for": IP }, body,
       }), deps);
       expect(res.status, `body ${body.slice(0, 40)} answered ${res.status}`).toBe(400);
       expect((await envelope(res)).code).toBe("invalid_code");

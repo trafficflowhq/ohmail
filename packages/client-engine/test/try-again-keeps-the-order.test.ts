@@ -20,11 +20,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_MAX_SERVER_FAILURES,
-  OUTBOX_REPLAY_DEADLINE_MS, OUTBOX_TRY_AGAIN_ENDS_HOLD_MS,
+  OUTBOX_MUTATE_DEADLINE_MS, OUTBOX_TRY_AGAIN_ENDS_HOLD_MS,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";
-const FIRST_LANDS_MS = 30_000;
+const FIRST_LANDS_MS = OUTBOX_MUTATE_DEADLINE_MS + 15_000;
 
 const message = (id: string) => ({
   id, accountId: "acct_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
@@ -45,7 +45,7 @@ interface ServerState { folder: string; unread: boolean; body: string }
 type Plan = (m: EngineMutation, n: number) => "slow" | "dead" | "fail" | "ok";
 const FIRST_SLOW: Plan = (_m, n) => (n === 1 ? "slow" : "ok");
 
-async function world(opts: { autoReplay: boolean; plan?: Plan }) {
+async function world(opts: { autoReplay: boolean; plan?: Plan; slowMs?: number }) {
   const store = new MemoryMirrorStore();
   await store.load();
   const server: ServerState = { folder: "INBOX", unread: true, body: "v0" };
@@ -80,7 +80,7 @@ async function world(opts: { autoReplay: boolean; plan?: Plan }) {
         if (how === "fail") throw new MutationRejectedError("the server failed", { status: 500, code: "internal", retryable: true });
         if (how === "slow") {
           // Slow, not dead: the server applies it at 30 s, inside its own limit.
-          return new Promise((resolve) => setTimeout(() => { apply(m); resolve({ changes: [], seq: null }); }, FIRST_LANDS_MS));
+          return new Promise((resolve) => setTimeout(() => { apply(m); resolve({ changes: [], seq: null }); }, opts.slowMs ?? FIRST_LANDS_MS));
         }
         apply(m);
         return { changes: [], seq: null };
@@ -133,6 +133,28 @@ describe("the press waits while the server may still be working on the hung writ
     expect(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS).toBeLessThan(OUTBOX_HOLD_CEILING_MS);
   });
 
+  it.each(["queued", "abandoned"] as const)("an explicit retry of a %s change waits for a 36-second answer", async (state) => {
+    let failing = true;
+    const { engine, sent } = await world({
+      autoReplay: false, slowMs: 36_000, plan: () => failing ? "fail" : "slow",
+    });
+    const change = await engine.mutate(PAIRS[1]!.first);
+    if (state === "abandoned") {
+      for (let i = 1; i < OUTBOX_MAX_SERVER_FAILURES; i++) await engine.flushPending();
+      expect(engine.abandoned().map(({ id }) => id)).toEqual([change.id]);
+    }
+    failing = false;
+
+    const retry = state === "queued" ? engine.retryQueued(change.id) : engine.retryAbandoned(change.id);
+    const answers: string[] = [];
+    void retry.then((result) => { if (result) answers.push(result.status); });
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(answers).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await retry)?.status).toBe("confirmed");
+    expect(sent.at(-1)?.key).toBe(change.key);
+  });
+
   it("web: a press that waited its turn leaves when the barrier goes, its own backoff yielding to it", async () => {
     let failing = true;
     const { engine, sent } = await world({
@@ -144,7 +166,7 @@ describe("the press waits while the server may still be working on the hung writ
     await engine.flushPending(); // three counted failures: its own backoff runs for minutes
     failing = false;
     void engine.mutate(saveDraft("v1"));
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 5_000);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 5_000);
 
     const pressed = engine.retryQueued(change.id);
     await vi.advanceTimersByTimeAsync(10);
@@ -156,12 +178,12 @@ describe("the press waits while the server may still be working on the hung writ
   });
 
   for (const shape of [{ autoReplay: true, label: "web" }, { autoReplay: false, label: "phone" }]) {
-    describe(`${shape.label}: the first answers at 30 s, Try again at 15 s`, () => {
+    describe(`${shape.label}: Try again while the first write awaits its answer`, () => {
       for (const pair of PAIRS) {
         it(`${pair.name}: the server ends at the newer value`, async () => {
           const { engine, server, sent } = await world({ autoReplay: shape.autoReplay });
           const first = engine.mutate(pair.first);
-          await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+          await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
           expect((await first).status, "the slow write did not become the hold").toBe("queued");
           await vi.advanceTimersByTimeAsync(1_000);
           const newer = await engine.mutate(pair.newer);
@@ -187,7 +209,7 @@ describe("the press waits while the server may still be working on the hung writ
       it("CONTROL: nobody presses, and the move ends where the person left it", async () => {
         const { engine, server } = await world({ autoReplay: shape.autoReplay });
         void engine.mutate(PAIRS[0]!.first);
-        await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1_000);
+        await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1_000);
         await engine.mutate(PAIRS[0]!.newer);
         await vi.advanceTimersByTimeAsync(FIRST_LANDS_MS);
         if (!shape.autoReplay) await engine.flushPending();
@@ -208,7 +230,7 @@ describe("the press waits while the server may still be working on the hung writ
         failing = false;
 
         void engine.mutate(saveDraft("v1"));
-        await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 5_000);
+        await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 5_000);
         const before = sent.length;
         const pressed = engine.retryAbandoned(given.id);
         await vi.advanceTimersByTimeAsync(10);
@@ -227,9 +249,9 @@ describe("the press waits while the server may still be working on the hung writ
       it("CONTROL: past the API's limit, a press on a write that never answers sends the newer change at once", async () => {
         const { engine, server, sent } = await world({ autoReplay: shape.autoReplay, plan: (_m, n) => (n === 1 ? "dead" : "ok") });
         void engine.mutate(PAIRS[0]!.first);
-        await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1_000);
+        await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1_000);
         const newer = await engine.mutate(PAIRS[0]!.newer);
-        await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_REPLAY_DEADLINE_MS);
+        await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_MUTATE_DEADLINE_MS);
         expect(sent).toHaveLength(1);
         const pressed = engine.retryQueued(newer.id);
         await vi.advanceTimersByTimeAsync(10);

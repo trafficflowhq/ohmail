@@ -18,7 +18,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, s
 function login(email: string, ip: string): Request {
   return new Request("https://api.test/auth/login", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-vercel-forwarded-for": ip },
+    headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
     body: JSON.stringify({ email, password: "WRONG-password-guess" }),
   });
 }
@@ -38,7 +38,7 @@ describe("GET /internal/security-notices/run", () => {
     const { deps, mailer } = await makeDeps();
     const armed = { ...deps, alerts: { secret: SECRET, sinks: [] } as unknown as ApiDeps["alerts"] };
     const reg = await H(new Request("https://api.test/auth/register", {
-      method: "POST", headers: { "Content-Type": "application/json", "x-vercel-forwarded-for": "10.200.0.1" },
+      method: "POST", headers: { "Content-Type": "application/json", "x-forwarded-for": "10.200.0.1" },
       body: JSON.stringify({ email: "target@example.com", password: "long-signin-password", displayName: "T", inviteCode: "INVITE-OK" }),
     }), armed);
     expect(reg.status).toBeLessThan(300);
@@ -67,7 +67,7 @@ describe("GET /internal/security-notices/run", () => {
     const armed = { ...deps, alerts: { secret: SECRET, sinks: [] } as unknown as ApiDeps["alerts"] };
     for (const [email, ip] of [["deutsch@example.com", "10.210.0.1"], ["english@example.com", "10.211.0.1"]] as const) {
       const reg = await H(new Request("https://api.test/auth/register", {
-        method: "POST", headers: { "Content-Type": "application/json", "x-vercel-forwarded-for": ip },
+        method: "POST", headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
         body: JSON.stringify({ email, password: "long-signin-password", displayName: "T", inviteCode: "INVITE-OK" }),
       }), armed);
       expect(reg.status).toBeLessThan(300);

@@ -307,6 +307,12 @@ export const STORED_KEYS = [
     words: false, erased: "account-erase", mark: "kept",
   },
   {
+    key: "ohmail.ui.pileNote.notNow.", family: true, store: "localStorage", owner: "web",
+    at: ["packages/app-logic/src/lists/pile-note.ts"],
+    holds: "the News or Receipts screening count put off, per pile and account",
+    words: false, erased: "account-erase", mark: "kept",
+  },
+  {
     key: "ohmail.access.", family: true, store: "localStorage", owner: "web",
     at: ["packages/app-logic/src/doors/wall-lift.ts"],
     holds: "whether this device last found the account open or closed, per account",
@@ -1115,6 +1121,12 @@ export const STORED_KEYS = [
     at: ["apps/mobile/src/state/seed-offer.ts"],
     holds: "that the seed offer was put off, per account",
     words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "ohmail.pileNote.notNow.", family: true, store: "secureStore", owner: "phone",
+    at: ["apps/mobile/src/state/account-rows.ts"],
+    holds: "the News or Receipts screening count put off, per pile and account",
+    words: false, erased: "account-erase", mark: "kept",
   },
   {
     key: "ohmail.delete.intents.local", store: "sqliteFile", owner: "phone",

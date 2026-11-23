@@ -1,11 +1,11 @@
 import { and, asc, count, eq, gt, inArray, isNull, isNotNull, desc, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { type Tx } from "@trafficflow/db";
-import { accountOfUser, devices, pairingTokens, refreshTokens, sessions, users } from "@trafficflow/db";
+import { accountOfUser, devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
-import { PAIRED_DEVICE_KINDS, holdLiveSession, lockUserRow, type PairedDeviceKind } from "./auth/session-lifecycle.js";
+import { PAIRED_DEVICE_KINDS, holdLiveSession, lockUserRow, refuseCrossAccountCredential, type PairedDeviceKind } from "./auth/session-lifecycle.js";
 import { ringDeviceMade } from "./auth/device-doorbell.js";
-import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
+import { bridgeTx, credentialContext, keyedCredentialDb, runInTransaction, type ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
 
@@ -384,7 +384,7 @@ export async function pairingLinkState(ctx: ServiceContext, tokenHash: unknown):
   if (typeof tokenHash !== "string" || !TOKEN_HASH_SHAPE.test(tokenHash)) {
     throw new ServiceError("validation_failed", 400, "tokenHash must be the link's sha256, base64url");
   }
-  const [row] = await asTx(ctx).select({
+  const [row] = await bridgeTx(keyedCredentialDb(ctx, tokenHash)).select({
     expiresAt: pairingTokens.expiresAt,
     consumedAt: pairingTokens.consumedAt,
     revokedAt: pairingTokens.revokedAt,
@@ -440,22 +440,24 @@ export async function redeemDevicePair(
   // before anything is spent; the burn then has to name the same creator.
   const raw = typeof input.token === "string" ? input.token.trim() : "";
   if (raw.length === 0 || raw.length > 512) throw pairingInvalid();
-  const [owner] = await asTx(ctx).select({ userId: users.id, accountId: users.accountId })
-    .from(pairingTokens).innerJoin(users, eq(users.id, pairingTokens.createdByUserId))
-    .where(and(...liveTokenConditions(raw, "device-pair", ctx.now())))
-    .limit(1);
-  if (!owner) throw pairingInvalid();
-  const paired = await runInTransaction(ctx, async (txCtx) => {
+  const [row] = await bridgeTx(keyedCredentialDb(ctx, hashToken(raw)))
+    .select({ userId: pairingTokens.createdByUserId, accountId: pairingTokens.accountId })
+    .from(pairingTokens).where(and(...liveTokenConditions(raw, "device-pair", ctx.now()))).limit(1);
+  if (!row?.accountId || !row.userId) throw pairingInvalid();
+  const { accountId, userId } = row;
+  refuseCrossAccountCredential(ctx, accountId);
+  const owner = credentialContext(ctx, accountId);
+  const paired = await runInTransaction(owner, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "device-pair" });
-    if (!consumed || consumed.createdByUserId !== owner.userId) throw pairingInvalid();
+    if (!consumed || consumed.createdByUserId !== userId) throw pairingInvalid();
     return auth.establishPairedDevice(txCtx, {
       userId: consumed.createdByUserId,
       label: consumed.label.length > 0 ? consumed.label : "Paired device",
       kind,
     });
-  }, { fence: { accountId: owner.accountId } });
+  }, { fence: { accountId } });
   // The device is made and committed: the account's other clients are told (`device-doorbell.ts`).
-  await ringDeviceMade(ctx, owner.accountId);
+  await ringDeviceMade(owner, accountId);
   return paired;
 }
 
@@ -491,16 +493,18 @@ export async function mintAppHandoff(
     throw new ServiceError("validation_failed", 400, 'target must be "ohmail" or "ohcal"');
   }
   const now = ctx.now();
-  const [held] = await asTx(ctx).select({
+  const digest = hashToken(String(input.renewed ?? ""));
+  const [held] = await bridgeTx(keyedCredentialDb(ctx, digest)).select({
     sessionId: refreshTokens.sessionId, userId: refreshTokens.userId, accountId: refreshTokens.accountId,
   }).from(refreshTokens).where(and(
-    eq(refreshTokens.tokenHash, hashToken(String(input.renewed ?? ""))),
+    eq(refreshTokens.tokenHash, digest),
     isNull(refreshTokens.revokedAt),
     isNull(refreshTokens.consumedAt),
     gt(refreshTokens.expiresAt, now),
   )).limit(1);
   if (!held) throw handoffRefused();
-  return runInTransaction(ctx, async (txCtx) => {
+  refuseCrossAccountCredential(ctx, held.accountId);
+  return runInTransaction(credentialContext(ctx, held.accountId), async (txCtx) => {
     const tx = asTx(txCtx);
     await lockUserRow(tx, held.userId);
     const [session] = await dialect(tx).forUpdate(tx.select({
@@ -550,30 +554,32 @@ export async function redeemAppHandoff(
   }
   const raw = typeof input.token === "string" ? input.token.trim() : "";
   if (raw.length === 0 || raw.length > 512 || !isVerifier(input.verifier)) throw pairingInvalid();
-  const [owner] = await asTx(ctx).select({ userId: users.id, accountId: users.accountId })
-    .from(pairingTokens).innerJoin(users, eq(users.id, pairingTokens.createdByUserId))
-    .where(and(...liveTokenConditions(raw, APP_HANDOFF_GRANT, ctx.now(), hashToken(input.verifier))))
-    .limit(1);
-  if (!owner) throw pairingInvalid();
-  const handed = await runInTransaction(ctx, async (txCtx) => {
+  const [row] = await bridgeTx(keyedCredentialDb(ctx, hashToken(raw)))
+    .select({ userId: pairingTokens.createdByUserId, accountId: pairingTokens.accountId })
+    .from(pairingTokens).where(and(...liveTokenConditions(raw, APP_HANDOFF_GRANT, ctx.now(), hashToken(input.verifier)))).limit(1);
+  if (!row?.accountId || !row.userId) throw pairingInvalid();
+  const { accountId, userId } = row;
+  refuseCrossAccountCredential(ctx, accountId);
+  const owner = credentialContext(ctx, accountId);
+  const handed = await runInTransaction(owner, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: APP_HANDOFF_GRANT, verifier: input.verifier });
-    if (!consumed || consumed.createdByUserId !== owner.userId || consumed.handoffFromDeviceId === null) throw pairingInvalid();
+    if (!consumed || consumed.createdByUserId !== userId || consumed.handoffFromDeviceId === null) throw pairingInvalid();
     const tx = asTx(txCtx);
     const [parent] = await dialect(tx).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(and(
       eq(sessions.deviceId, consumed.handoffFromDeviceId),
-      eq(sessions.userId, owner.userId),
+      eq(sessions.userId, userId),
       isNull(sessions.revokedAt),
     )).orderBy(asc(sessions.id)).limit(1), { mode: "share" });
     if (!parent) throw pairingInvalid();
     return auth.establishPairedDevice(txCtx, {
-      userId: owner.userId,
+      userId,
       label: consumed.label,
       kind: input.kind,
       handedOffFrom: consumed.handoffFromDeviceId,
     });
-  }, { fence: { accountId: owner.accountId } });
+  }, { fence: { accountId } });
   // A handed-off app is a device of its own in Devices: made and committed, and told as a pairing is.
-  await ringDeviceMade(ctx, owner.accountId);
+  await ringDeviceMade(owner, accountId);
   return handed;
 }
 

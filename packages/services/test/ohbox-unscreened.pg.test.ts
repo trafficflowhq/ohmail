@@ -6,7 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accounts, approvals, auditLog, contacts, drafts, folderState, mailboxes, messageBodies,
+  accounts, accountSettings, approvals, auditLog, contacts, drafts, folderState, mailboxes, messageBodies,
   messageStates, messages, rules, threads,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
@@ -127,6 +127,22 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     expect(await desiredOf(id)).toEqual({ desired: GATE, status: "pending" });
     // Older than the window: neither counted nor moved.
     expect(await desiredOf(old)).toEqual({ desired: OHBOX, status: "reconciled" });
+  });
+
+  it("counts and screens recent Receipts while keeping older receipts in place", async () => {
+    const w = await newWorld();
+    await db.insert(accountSettings).values({
+      accountId: w.accountId, screeningBaselineAt: new Date("2026-09-16T09:00:00.000Z"),
+      screeningScope: "window", dormancyDays: 1,
+    });
+    const folder = "ohmail/Receipts";
+    const older = await seedOhbox(w, { from: "shop@x.test", folder, lastSetBy: "us", arrivedAt: OLD });
+    const recent = await seedOhbox(w, { from: "shop@x.test", folder, lastSetBy: "us" });
+
+    expect((await unscreenedSummary(db as never, w.accountId, NOW, "receipts")).total).toBe(1);
+    expect((await screenUnscreened(ctxOf(w), { pile: "receipts" })).total).toBe(1);
+    expect(await desiredOf(older)).toEqual({ desired: folder, status: "reconciled" });
+    expect(await desiredOf(recent)).toEqual({ desired: GATE, status: "pending" });
   });
 
   it("the offer is idempotent by the predicate — a second press finds nothing", async () => {

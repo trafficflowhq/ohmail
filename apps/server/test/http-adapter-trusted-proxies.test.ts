@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { createHmac, randomBytes } from "node:crypto";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IncomingMessage, Server } from "node:http";
 import { serviceContext, type ApiDeps } from "@trafficflow/api";
 import { canonicalIp } from "@trafficflow/core/adapters/http-host";
@@ -56,6 +57,125 @@ async function seen(
 
 const noLookup = async (): Promise<string[]> => { throw new Error("no lookup expected"); };
 const set = (...entries: string[]): TrustedProxies => makeTrustedProxies(entries, { lookup: noLookup });
+
+describe("a configured client address header", () => {
+  async function through(
+    peer: string, values: Array<[string, string]>, clientIpHeader?: "x-real-ip",
+  ): Promise<Request> {
+    const proxies = set(PROXY);
+    const options = {
+      bodyMaxBytes: 1024,
+      onTooLarge: () => {},
+      trust: { proxies, peerTrusted: await proxies.trustsPeer(peer) },
+      ...(clientIpHeader === undefined ? {} : { clientIpHeader }),
+    };
+    return toWebRequest(fakeReq(peer, [["X-Forwarded-For", A], ...values]), options);
+  }
+
+  it("takes a single IP supplied by a trusted proxy", async () => {
+    const r = await through(PROXY, [["X-Real-IP", B]], "x-real-ip");
+    expect(clientOf(r)).toBe(B);
+    expect(r.headers.has("x-real-ip")).toBe(false);
+  });
+
+  it("ignores a client address header supplied by an untrusted peer", async () => {
+    const r = await through(A, [["X-Real-IP", B]], "x-real-ip");
+    expect(clientOf(r)).toBe(A);
+    expect(r.headers.has("x-real-ip")).toBe(false);
+  });
+
+  it("uses the existing walk for missing, malformed, comma-listed and repeated values", async () => {
+    const inputs: Array<Array<[string, string]>> = [
+      [],
+      [["X-Real-IP", "not-an-ip"]],
+      [["X-Real-IP", `${B}%scope`]],
+      [["X-Real-IP", `${B}, ${A}`]],
+      [["X-Real-IP", B], ["x-real-ip", B]],
+    ];
+    for (const values of inputs) {
+      const r = await through(PROXY, values, "x-real-ip");
+      expect(clientOf(r)).toBe(A);
+      expect(r.headers.get("x-forwarded-for")).toBe(A);
+      expect(r.headers.has("x-real-ip")).toBe(false);
+    }
+  });
+
+  it("leaves the existing forwarding chain and raw header untouched when unset", async () => {
+    const chain = `${B}, ${A}, ${PROXY}`;
+    const r = await through(PROXY, [["X-Real-IP", B], ["X-Forwarded-For", chain]]);
+    expect(clientOf(r)).toBe(A);
+    expect(r.headers.get("x-forwarded-for")).toBe(`${A}, ${B}, ${A}`);
+    expect(r.headers.get("x-real-ip")).toBe(B);
+  });
+});
+
+describe("proof of a web client address", () => {
+  const proofHeader = "x-ohmail-client-ip";
+  const now = 1_800_000_000;
+  const secret = randomBytes(32).toString("hex");
+  const proxies = set(PROXY);
+  const sign = (payload: string): string =>
+    payload + ";" + createHmac("sha256", secret).update(payload).digest("hex");
+
+  afterEach(() => vi.restoreAllMocks());
+
+  async function through(
+    peer: string, headers: Array<[string, string]>, clientIpSecret: string | undefined, clientIpHeader?: "x-real-ip",
+  ): Promise<string> {
+    vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+    const options = {
+      bodyMaxBytes: 1024,
+      onTooLarge: () => {},
+      trust: { proxies, peerTrusted: await proxies.trustsPeer(peer) },
+      ...(clientIpSecret === undefined ? {} : { clientIpSecret }),
+      ...(clientIpHeader === undefined ? {} : { clientIpHeader }),
+    };
+    const r = toWebRequest(fakeReq(peer, [["x-forwarded-for", A], ...headers]), options);
+    expect(r.headers.has(proofHeader)).toBe(false);
+    return clientOf(r);
+  }
+
+  it.each([0, 60, -3])("accepts a proof with an age of %s seconds on a trusted connection", async (age) => {
+    expect(await through(PROXY, [[proofHeader, sign(`${B};${now - age}`)]], secret)).toBe(B);
+  });
+
+  it("uses the signed web address ahead of the proxy's client address header", async () => {
+    const headers: Array<[string, string]> = [[proofHeader, sign(`${B};${now}`)], ["x-real-ip", A]];
+    expect(await through(PROXY, headers, secret, "x-real-ip")).toBe(B);
+  });
+
+  it.each([61, -10])("falls back to the proxy walk for a proof with an age of %s seconds", async (age) => {
+    expect(await through(PROXY, [[proofHeader, sign(`${B};${now - age}`)]], secret)).toBe(A);
+  });
+
+  it("falls back for a proof without a timestamp", async () => {
+    expect(await through(PROXY, [[proofHeader, sign(B)]], secret)).toBe(A);
+  });
+
+  it("uses the socket peer when an untrusted connection sends a valid proof", async () => {
+    expect(await through(A, [[proofHeader, sign(`${B};${now}`)]], secret)).toBe(A);
+  });
+
+  it("uses the proxy walk when the API has no secret configured", async () => {
+    expect(await through(PROXY, [[proofHeader, sign(`${B};${now}`)]], undefined)).toBe(A);
+  });
+
+  it("accepts a single proof header with mixed casing", async () => {
+    expect(await through(PROXY, [["X-Ohmail-Client-Ip", sign(`${B};${now}`)]], secret)).toBe(B);
+  });
+
+  it("uses the proxy walk for duplicate or combined proof headers", async () => {
+    const proof = sign(`${B};${now}`);
+    const variants: Array<Array<[string, string]>> = [
+      [[proofHeader, proof], [proofHeader, proof]],
+      [[proofHeader, `${proof}, ${proof}`]],
+      [[proofHeader, proof], ["X-Ohmail-Client-Ip", proof]],
+    ];
+    for (const headers of variants) {
+      expect(await through(PROXY, headers, secret)).toBe(A);
+    }
+  });
+});
 
 describe("the red control: two clients behind the trusted proxy are two clients", () => {
   it("the proxy's word names each client, so they key apart", async () => {
@@ -148,6 +268,15 @@ describe("serve(): the verdict taken on a real socket", () => {
       server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
     });
   }
+
+  it("passes the configured client address header through the normal server entry point", async () => {
+    const sink: { ip: string; xff: string | null }[] = [];
+    const options = { trustedProxies: set("127.0.0.1"), clientIpHeader: "x-real-ip" as const };
+    const port = await listen(options, sink);
+    const response = await fetch(`http://127.0.0.1:${port}/hello`, { headers: { "x-real-ip": B } });
+    expect(response.status).toBe(200);
+    expect(sink).toEqual([{ ip: B, xff: B }]);
+  });
 
   it("a trusted loopback proxy's header names the client; an untrusted one's is appended to", async () => {
     const sink: { ip: string; xff: string | null }[] = [];

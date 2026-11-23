@@ -4,7 +4,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
-  markFenced, accountOfUser, bindDb, BINDING_KEY_MAX, type Tx,
+  markFenced, accountOfUser, assertBinding, bindDb, onServerPool, rebindTx, BINDING_KEY_MAX, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { createLogger } from "@trafficflow/core/mail";
@@ -800,7 +800,10 @@ export class AuthService extends SessionLifecycle {
     // network call with its own timeout, and holding a Postgres transaction (and its connection,
     // on a small serverless pool) across one is a self-inflicted outage — and a mail failure can
     // then never roll back a committed account.
-    const created = await this.inTransaction(ctx, async (txCtx) => {
+    const registration = { ...ctx, db: ctx.credentialDb ?? ctx.db, accountId: "" };
+    const created = await this.inTransaction(registration, async (txCtx) => {
+      assertBinding(txCtx.db, null);
+      await rebindTx(txCtx.db, { key: email });
       const tx = asTx(txCtx);
 
       // (1) THE INVITE, consumed atomically — when one was offered. `consumedByUserId` is
@@ -851,12 +854,15 @@ export class AuthService extends SessionLifecycle {
         throw openGate ? new AddressAlreadyRegistered() : emailTaken(true);
       }
 
-      // scoped-by: sign-up creates the account itself — there is no prior account to scope by
-      const [acct] = await tx.insert(accounts).values({ name: b.displayName }).returning();
+      const accountId = randomUUID();
+      // Open signup carries no session back. Invite signup must not replace another account's session.
+      if (!openGate) refuseCrossAccountCredential(ctx, accountId);
+      const accountDb = await rebindTx(txCtx.db, { account: accountId, key: email });
+      await tx.insert(accounts).values({ id: accountId, name: b.displayName });
       // FENCED BY CREATION: no erasure can stamp a row before the transaction that inserts it commits.
-      markFenced(tx, acct!.id);
+      markFenced(accountDb, accountId);
       const [user] = await tx.insert(users).values({
-        accountId: acct!.id, email, displayName: b.displayName,
+        accountId, email, displayName: b.displayName,
         // #9 — a consumed ROW that PROVES control is the only thing that stamps: mailed invites
         // and the first-boot setup invite carry `confers_verified = true`, a user's
         // pairing-minted invite carries `false` (its holder typed the address; nothing was
@@ -893,8 +899,8 @@ export class AuthService extends SessionLifecycle {
       // The INVITE path gets its session here, inside the transaction, exactly as before. The
       // open path does not get one at all, so it only needs to carry the new user out.
       return openGate
-        ? { openUserId: user!.id }
-        : await this.establishEnrollment(txCtx, user!);
+        ? { openUserId: user!.id, accountId }
+        : await this.establishEnrollment({ ...txCtx, db: accountDb, accountId }, user!);
     }).catch((e: unknown) => {
       // The ONLY thing caught here is the open path's "already registered" sentinel, and it is
       // caught OUTSIDE the transaction so the rollback has already happened. Everything else —
@@ -920,7 +926,9 @@ export class AuthService extends SessionLifecycle {
     const locale = mailLocaleOf(b.locale);
     const result = created === null
       ? await mail.sendAccountExists(ctx, { to: email, locale })
-      : await mail.issueEmailVerification(ctx, { userId: created.openUserId, to: email, locale });
+      : await mail.issueEmailVerification(credentialContext(ctx, created.accountId), {
+          userId: created.openUserId, to: email, locale,
+        });
     return { status: "verification_pending", mailed: result.status === "sent" };
   }
 
@@ -950,22 +958,25 @@ export class AuthService extends SessionLifecycle {
     // so "no token" and "not a real token" are one answer.
     if (token === "") throw invalidVerification();
 
-    const db = asTx(ctx);
+    const digest = hashToken(token);
+    const lookup = bridgeTx(keyedCredentialDb(ctx, digest));
 
     // PEEK first, so the password check has a user to run against. This reads the row WITHOUT
     // consuming it: a wrong password must not burn the link, or one mistyped attempt would cost
     // the user their only credential and force a resend.
-    const [row] = await db.select({ userId: loginTokens.userId })
+    const [row] = await lookup.select({ userId: loginTokens.userId, accountId: loginTokens.accountId })
       .from(loginTokens)
       .where(and(
-        eq(loginTokens.tokenHash, hashToken(token)),
+        eq(loginTokens.tokenHash, digest),
         eq(loginTokens.purpose, EMAIL_VERIFY_PURPOSE),
         isNull(loginTokens.consumedAt),
         gt(loginTokens.expiresAt, ctx.now()),
       ))
       .limit(1);
-    if (!row) throw invalidVerification();
+    if (!row?.accountId) throw invalidVerification();
 
+    const owner = credentialContext(ctx, row.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, boundUserId(row.userId));
 
     // The lockout on `login`'s client key, ahead of the scrypt verify so a locked-out client does
@@ -993,8 +1004,9 @@ export class AuthService extends SessionLifecycle {
     await this.rehashIfStale(db, user.id, cred!.passwordHash, password);
 
     const methods = await this.enrolledMethods(db, user.id);
+    if (methods.length === 0) refuseCrossAccountCredential(ctx, user.accountId);
 
-    return this.inTransaction(ctx, async (txCtx) => {
+    return this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       // CONSUME INSIDE the transaction that stamps, so the two cannot come apart: a crash
       // between them would otherwise spend the token without recording the proof, and the user
@@ -1002,7 +1014,7 @@ export class AuthService extends SessionLifecycle {
       const consumed = await mail.consumeEmailVerification(txCtx, token);
       // Lost the race against another presentation of the same link. The single-statement
       // consumption guarantees exactly one winner; this is the loser.
-      if (!consumed) throw invalidVerification();
+      if (!consumed || consumed.userId !== user.id) throw invalidVerification();
 
       // `COALESCE` — verification is monotonic. A second (legitimately re-issued) link opened
       // later must not rewrite the instant the address was first proven.
@@ -1420,8 +1432,9 @@ export class AuthService extends SessionLifecycle {
     const binding = verifier.length > 0
       ? eq(loginTokens.challengeHash, hashToken(verifier))
       : isNull(loginTokens.challengeHash);
+    const digest = hashToken(raw);
     const liveCode = () => and(
-      eq(loginTokens.tokenHash, hashToken(raw)),
+      eq(loginTokens.tokenHash, digest),
       eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
       isNull(loginTokens.consumedAt),
       gt(loginTokens.expiresAt, now),
@@ -1433,10 +1446,10 @@ export class AuthService extends SessionLifecycle {
     // cross-account refusal, which cannot live at `establish`: by the time that runs the code is
     // spent, and a 409 would leave the claimant unable to retry after signing out. A row consumed
     // between this read and the burn still loses there, on `consumed_at IS NULL`.
-    const [owner] = await db.select({ userId: users.id, accountId: users.accountId })
-      .from(loginTokens).innerJoin(users, eq(users.id, loginTokens.userId))
-      .where(liveCode()).limit(1);
-    if (owner) refuseCrossAccountCredential(ctx, owner.accountId);
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest))
+      .select({ userId: loginTokens.userId, accountId: loginTokens.accountId })
+      .from(loginTokens).where(liveCode()).limit(1);
+    if (row?.accountId) refuseCrossAccountCredential(ctx, row.accountId);
 
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
@@ -1450,20 +1463,23 @@ export class AuthService extends SessionLifecycle {
       if (!claimed) throw desktopClaimRateLimited();
     }
     // No live code: the burn's own answer, given after the slot as it always was.
-    if (!owner) throw invalidDesktopCode();
+    if (!row?.accountId || !row.userId) throw invalidDesktopCode();
+    const accountId = row.accountId;
+    const userId = row.userId;
+    const owner = credentialContext(ctx, accountId);
 
     // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION. Committed apart, a revoke landing between
     // them found the code spent and no session yet, and the session written after it outlived the
     // revoke. An account erased under the claim answers what its code answers once it is gone.
-    const claimed = await this.inTransaction(ctx, async (txCtx) => {
+    const claimed = await this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       const [row] = await tx.update(loginTokens)
         .set({ consumedAt: now })
         .where(liveCode())
         .returning({ userId: loginTokens.userId, oauthMeta: loginTokens.oauthMeta });
-      if (!row || row.userId !== owner.userId) throw invalidDesktopCode();
+      if (!row || row.userId !== userId) throw invalidDesktopCode();
 
-      const user = await this.loadUser(tx, owner.userId);
+      const user = await this.loadUser(tx, userId);
       // The device row is labelled for the app — the claimant's declared kind, or legacy `"macos"`
       // when it said nothing — so `GET /devices` shows the machine and `DELETE /devices/:id` can
       // take it away; that revocation path is what makes the handoff safe to offer. `surface:
@@ -1482,9 +1498,9 @@ export class AuthService extends SessionLifecycle {
       // that would turn a code displayed on a screen into a browser session, are both things
       // this route deliberately does not hand back. The route sets no cookies either.
       return { tokens: established.tokens! };
-    }, { fence: { accountId: owner.accountId, onErased: () => { throw invalidDesktopCode(); } } });
+    }, { fence: { accountId, onErased: () => { throw invalidDesktopCode(); } } });
     // Every admissible kind of this claim makes the app's own device row: committed, and told.
-    await ringDeviceMade(ctx, owner.accountId);
+    await ringDeviceMade(owner, accountId);
     return claimed;
   }
 
@@ -1516,11 +1532,12 @@ export class AuthService extends SessionLifecycle {
       if (!admitted) throw desktopClaimRateLimited();
     }
     const approvalId = randomUUID();
+    const digest = hashToken(approvalId);
     const unit = addressUnitOf(ip);
-    await db.insert(loginTokens).values({
+    await bridgeTx(keyedCredentialDb(ctx, digest)).insert(loginTokens).values({
       id: approvalId,
       userId: null,
-      tokenHash: hashToken(approvalId),
+      tokenHash: digest,
       methods: [],
       purpose: DESKTOP_APPROVAL_PURPOSE,
       challengeHash: challenge,
@@ -1534,9 +1551,8 @@ export class AuthService extends SessionLifecycle {
     return { approvalId, expiresIn: Math.floor(this.cfg.desktopApprovalTtlMs / 1000) };
   }
 
-  /** The request row, or null — by id and purpose, never by anything the caller could widen. */
+  /** The row for a validated approval id and purpose. */
   private async approvalRow(db: Tx, approvalId: string) {
-    if (!APPROVAL_ID_RE.test(approvalId)) return null;
     const [row] = await db.select().from(loginTokens)
       .where(and(eq(loginTokens.id, approvalId), eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE)))
       .limit(1);
@@ -1558,7 +1574,9 @@ export class AuthService extends SessionLifecycle {
   }> {
     const userId = this.requireUser(ctx);
     const now = ctx.now();
-    const row = await this.approvalRow(asTx(ctx), approvalId);
+    if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
+    const lookup = bridgeTx(keyedCredentialDb(ctx, hashToken(approvalId.toLowerCase())));
+    const row = await this.approvalRow(lookup, approvalId);
     if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
     const refusal = approvalRefusal(row, now);
     if (refusal) throw refusal;
@@ -1591,6 +1609,7 @@ export class AuthService extends SessionLifecycle {
       // The confirming session's factor time, for the claim to inherit as a desktop link's does:
       // stamped `approved_at`, a desktop signed in here could confirm the next one into a fresh window.
       const meta = await desktopGrantMeta(db, ctx);
+      await rebindTx(txCtx.db, { key: hashToken(approvalId.toLowerCase()) });
       const [bound] = await db.update(loginTokens)
         .set({ userId, accountId: accountOfUser(userId), approvedAt: now, oauthMeta: meta })
         .where(and(
@@ -1625,6 +1644,7 @@ export class AuthService extends SessionLifecycle {
     // Fenced for the confirm's reason: this bind gives the row to this user too.
     return this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
+      await rebindTx(txCtx.db, { key: hashToken(approvalId.toLowerCase()) });
       const [killed] = await db.update(loginTokens)
         .set({ userId, accountId: accountOfUser(userId), revokedAt: now })
         .where(and(
@@ -1674,14 +1694,24 @@ export class AuthService extends SessionLifecycle {
       if (!admitted) throw desktopClaimRateLimited();
     };
 
-    const row = await this.approvalRow(db, approvalId);
+    if (!APPROVAL_ID_RE.test(approvalId)) {
+      await chargeSlot();
+      throw approvalExpired();
+    }
+    const digest = hashToken(approvalId.toLowerCase());
+    const lookup = bridgeTx(keyedCredentialDb(ctx, digest));
+    const row = await this.approvalRow(lookup, approvalId);
     if (!row) {
       await chargeSlot();
       throw approvalExpired();
     }
-    if (row.challengeHash !== hashToken(verifier)) {
+    const accountId = row.accountId;
+    const verifierHash = hashToken(verifier);
+    if (row.challengeHash !== verifierHash) {
       await chargeSlot();
-      const [hit] = await db.update(loginTokens)
+      const owner = accountId === null ? null : credentialContext(ctx, accountId);
+      const attemptDb = owner ? asTx(owner) : lookup;
+      const [hit] = await attemptDb.update(loginTokens)
         .set({
           attempts: sql`${loginTokens.attempts} + 1`,
           revokedAt: sql`case when ${loginTokens.attempts} + 1 >= ${DESKTOP_APPROVAL_MAX_ATTEMPTS} then ${now.toISOString()}::timestamptz else ${loginTokens.revokedAt} end`,
@@ -1689,36 +1719,44 @@ export class AuthService extends SessionLifecycle {
         .where(and(eq(loginTokens.id, row.id), isNull(loginTokens.revokedAt), isNull(loginTokens.consumedAt)))
         .returning({ attempts: loginTokens.attempts });
       if (hit && hit.attempts === DESKTOP_APPROVAL_MAX_ATTEMPTS) {
-        const owner = row.userId ? await this.loadUser(db, row.userId) : null;
-        await this.audit(db, owner, "desktop_approval_refused", undefined, ctx);
+        if (owner && row.userId) {
+          await this.audit(attemptDb, await this.loadUser(attemptDb, row.userId), "desktop_approval_refused", undefined, owner);
+        } else if (!onServerPool(ctx.db)) {
+          await this.audit(attemptDb, null, "desktop_approval_refused", undefined, ctx);
+        } else {
+          // An unconfirmed request has no account for the audit table.
+          authLog.warn("desktop_approval_refused", { requestId: ctx.requestId });
+        }
       }
       throw approvalWrongVerifier();
     }
     // THE OWNER, read before the burn: the fence must be the transaction's first statement. A row no
     // browser has confirmed has no owner and cannot be spent, so it is answered from this read as the
     // burn would answer it, and the burn below is bound to the user the fence was taken for.
-    if (row.userId === null) {
+    if (row.userId === null || accountId === null) {
       const refusal = approvalRefusal(row, now);
       if (refusal) throw refusal;
       return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
     }
-    const owner = await this.loadUser(db, row.userId);
     // Before the burn, for `claimDesktopLink`'s reason: a claimant holding another account's
     // session must be refused while the approval can still be spent by the right desktop.
-    if (ctx.accountId) refuseCrossAccountCredential(ctx, owner.accountId);
+    refuseCrossAccountCredential(ctx, accountId);
+    const owner = credentialContext(ctx, accountId);
+    const userId = row.userId;
 
     // THE BURN DECIDES a confirmed row, and every other answer is read off the row after it missed:
     // pending, used, denied, expired (the same `approvalRefusal` the unconfirmed arm above asks). The
     // concurrent loser reads `approval_used`.
-    const answer = await this.inTransaction(ctx, async (txCtx) => {
+    const answer = await this.inTransaction(owner, async (txCtx) => {
+      await rebindTx(txCtx.db, { key: digest });
       const tx = asTx(txCtx);
       const [spent] = await tx.update(loginTokens)
         .set({ consumedAt: now })
         .where(and(
           eq(loginTokens.id, row.id),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
-          eq(loginTokens.challengeHash, hashToken(verifier)),
-          eq(loginTokens.userId, owner.id),
+          eq(loginTokens.challengeHash, verifierHash),
+          eq(loginTokens.userId, userId),
           isNotNull(loginTokens.approvedAt),
           isNull(loginTokens.consumedAt),
           isNull(loginTokens.revokedAt),
@@ -1732,7 +1770,7 @@ export class AuthService extends SessionLifecycle {
         if (refusal) throw refusal;
         return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
       }
-      const user = await this.loadUser(tx, owner.id);
+      const user = await this.loadUser(tx, userId);
       const [dev] = await tx.insert(devices).values({
         accountId: user.accountId, userId: user.id, kind,
         label: spent.label || (APPROVAL_DEVICE_LABELS[kind] ?? "ohmail for desktop"), ip: txCtx.ip ?? "",
@@ -1742,9 +1780,9 @@ export class AuthService extends SessionLifecycle {
         kind, deviceId: dev!.id, twofaAt: meta?.twofaAt ? new Date(meta.twofaAt) : null, surface: "native",
       });
       return { tokens: established.tokens! };
-    }, { fence: { accountId: owner.accountId } });
+    }, { fence: { accountId } });
     // Only the answer that carries the pair made a device; a poll that still waits made none.
-    if ("tokens" in answer) await ringDeviceMade(ctx, owner.accountId);
+    if ("tokens" in answer) await ringDeviceMade(owner, accountId);
     return answer;
   }
 
@@ -2753,9 +2791,9 @@ export class AuthService extends SessionLifecycle {
     requireField(b.redirect_uri, "redirect_uri");
     requireField(b.client_id, "client_id");
     requireField(b.code_verifier, "code_verifier");
-    const db = asTx(ctx);
-    const row = (await db.select().from(oauthAuthCodes)
-      .where(eq(oauthAuthCodes.codeHash, hashToken(b.code))).limit(1))[0];
+    const digest = hashToken(b.code);
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest)).select().from(oauthAuthCodes)
+      .where(eq(oauthAuthCodes.codeHash, digest)).limit(1);
     // A SECOND PRESENTATION OF A REAL CODE, which is what RFC 6749 §4.1.2 asks two answers to and
     // only got one of. Refusing is not enough: these codes travel through a redirect URI, so a code
     // arriving twice is the signal somebody other than the client read it — and what the first
@@ -2765,6 +2803,7 @@ export class AuthService extends SessionLifecycle {
     // Judged BEFORE PKCE on purpose: a replay that cannot produce the verifier is still a replay,
     // and waiting for a correct one would mean the case this defends against never triggers it.
     if (row?.consumedAt) {
+      const db = asTx(credentialContext(ctx, row.accountId));
       const revoked = await this.revokeFamily(db, row.id, ctx.now());
       await this.pruneWakeRegistrations(db, [row.id]);
       // The counts leave by the ERROR, which is the only seam this layer has to a logger: what the
@@ -2789,15 +2828,13 @@ export class AuthService extends SessionLifecycle {
     // has to be its first statement. It also carries the cross-account refusal, for the reason the
     // verify ceremonies give: a cross-account exchange must not spend the code on its way to a 409.
     // A user gone under the code is the burn's own answer.
-    const [owner] = await db.select({ accountId: users.accountId }).from(users)
-      .where(eq(users.id, row.userId)).limit(1);
-    if (!owner) throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code");
-    refuseCrossAccountCredential(ctx, owner.accountId);
+    refuseCrossAccountCredential(ctx, row.accountId);
+    const owner = credentialContext(ctx, row.accountId);
 
     // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION, `claimDesktopLink`'s reason: committed
     // apart, a revoke landing between them found the code spent and no session yet. An account
     // erased under the exchange answers what its code answers once it is gone.
-    const tokens = await this.inTransaction(ctx, async (txCtx) => {
+    const tokens = await this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       // Single-use, and the predicate is the enforcement. The `row.consumedAt` check
       // twenty lines up is a READ; without repeating the condition in the write, two token
@@ -2828,12 +2865,12 @@ export class AuthService extends SessionLifecycle {
       return est.tokens!;
     }, {
       fence: {
-        accountId: owner.accountId,
+        accountId: row.accountId,
         onErased: () => { throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code"); },
       },
     });
     // The exchange signs a desktop app in, and that sign-in made the app's device row.
-    await ringDeviceMade(ctx, owner.accountId);
+    await ringDeviceMade(owner, row.accountId);
     return tokens;
   }
 
