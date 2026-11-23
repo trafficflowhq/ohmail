@@ -1,8 +1,9 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { schema } from "./schema.js";
-import { bindDb } from "./bound.js";
+import { assertBinding, bindDb, executePassRosterRead, onServerPool, type NothingBound } from "./bound.js";
 import { makeOwnedDb, makePooledDb } from "./client.js";
+import { PASS_ROSTERS, type PassRosterTable } from "./row-security/policies.js";
 
 /**
  * THE ROSTER HANDLE: the API process's third connection, signed in as the worker's role, for the
@@ -50,6 +51,29 @@ export interface RosterExpectation {
 export type RosterVerdict = "attested" | "attested-empty";
 
 type Execute = Pick<PostgresJsDatabase<typeof schema>, "execute">;
+
+export type PassRosterRow = { readonly accountId: string; readonly id: string };
+export type PassRoster = (limit: number, offset?: number, priority?: "recovery") => Promise<PassRosterRow[]>;
+
+/** Use the ID roster only on a store that applies its policy to the connected role. */
+export async function passRosterFor(db: object, table: PassRosterTable): Promise<PassRoster | undefined> {
+  if (!onServerPool(db)) return undefined;
+  assertBinding(db, null);
+  const walk = db as NothingBound & Execute;
+  const [state] = await walk.execute(sql`select pg_catalog.row_security_active(
+    pg_catalog.to_regclass(${`public.${table}`})) as active`);
+  if (state?.active !== true) return undefined;
+  const roster = PASS_ROSTERS[table];
+  return async (limit, offset = 0, priority) => {
+    const order = table === "drafts" && priority === "recovery" ? PASS_ROSTERS.drafts.recoveryOrder : roster.order;
+    return executePassRosterRead<PassRosterRow>(walk, sql`
+      select ${sql.identifier(roster.account)} as "accountId", ${sql.identifier(roster.id)} as id
+      from public.${sql.identifier(table)}
+      order by ${sql.raw(order)} limit ${limit} offset ${offset}
+    `);
+  };
+}
+
 
 /** One statement of the attestation, on a flight bound to nothing; a statement that cannot run refuses. */
 async function ask(db: object, what: string, statement: SQL): Promise<Array<Record<string, unknown>>> {

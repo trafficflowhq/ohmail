@@ -169,7 +169,15 @@ export type AccessVerdict =
     dispatchAiEnabled?: boolean;
     aiCredits?: { remaining: number; total?: number };
   }
-  | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle; trial?: AccessTrial };
+  | {
+      ok: false;
+      reason: AccessRefusal;
+      /** No subscription to resume. Kept separate from the public refusal code. */
+      needsPlan?: true;
+      manageUrl?: string;
+      lifecycle?: AccessLifecycle;
+      trial?: AccessTrial;
+    };
 
 /**
  * `null` means UNBOUNDED, never unknown: a fault answers with the last known verdict and defaults

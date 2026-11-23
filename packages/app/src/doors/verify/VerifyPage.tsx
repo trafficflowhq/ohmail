@@ -35,7 +35,7 @@ export function VerifyPage({ door }: { door: VerifyDoor | None }): ReactNode {
             </Button>
           }
         >
-          <Said text={verify("doneTitle")} dot="ink" />
+          <Said text={verify(state.already ? "alreadyConfirmedTitle" : "doneTitle")} dot="ink" />
         </Page>
       );
     case "handed":

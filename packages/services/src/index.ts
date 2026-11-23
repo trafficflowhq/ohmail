@@ -354,7 +354,7 @@ export {
 // The wall's nightly pass (cloud 0040): the reminder mails, idempotent by the notices PK, and
 // the erasure door, one account per call, through the same path DELETE /account runs.
 export {
-  runAccountLifecyclePass, eraseOneDueAccount, noticesDue, erasureDue, erasureClearsEpoch,
+  runAccountLifecyclePass, eraseOneDueAccount, eraseRequestedAccount, noticesDue, erasureDue, erasureClearsEpoch,
   connectReminderDue, CONNECT_REMINDER_AFTER_MS,
   TRIAL_REMINDER_AHEAD_MS, ERASURE_REMINDER_AHEAD_MS, ERASURE_SLACK_MS,
   ACCOUNT_LIFECYCLE_BUDGET_MS, ERASURE_DUE_PER_RUN,

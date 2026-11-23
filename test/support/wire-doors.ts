@@ -1,5 +1,5 @@
 import {
-  HORIZONS, KEYED_TABLES, KEYED_WRITES, OPERATIONS_TABLES, STAFF_DOOR_KEY, STAFF_TABLES, UNOWNED_TABLES, WORKER_WIDE_READ,
+  HORIZONS, PASS_ROSTERS, KEYED_TABLES, KEYED_WRITES, OPERATIONS_TABLES, STAFF_DOOR_KEY, STAFF_TABLES, UNOWNED_TABLES, WORKER_WIDE_READ,
   serverTables,
 } from "@trafficflow/db/cloud";
 import { keyEquals, type PgWireFlight } from "@trafficflow/db/testing";
@@ -94,13 +94,14 @@ export function namedBy(statement: string): Named {
 }
 
 /** Which door a flight came through. `digests`: the credentials' digests the test itself presented. */
-export type Door = "plain" | "account" | "nothing" | "credential" | "staff" | "unknown-key";
+export type Door = "plain" | "account" | "nothing" | "credential" | "staff" | "passes" | "unknown-key";
 
 export function doorOf(flight: PgWireFlight, digests: readonly string[] = []): Door {
   if (flight.door === "plain") return "plain";
   if (flight.account !== null) return flight.keyed ? "unknown-key" : "account";
   if (!flight.keyed) return "nothing";
   if (keyEquals(flight, STAFF_DOOR_KEY)) return "staff";
+  if (keyEquals(flight, "ohmail:passes")) return "passes";
   return digests.some((d) => keyEquals(flight, d)) ? "credential" : "unknown-key";
 }
 
@@ -172,6 +173,7 @@ const PAST = new Set<string>(HORIZONS.filter((h) => h.runs === "unbound").map((h
 
 /** `table` admitted to `verb` through `door` on `login`, by the lists the lock is made from. */
 function admitted(login: "api" | "worker", door: Door, table: string, verb: Verb): boolean {
+  if (door === "passes") return login === "api" && verb === "read" && Object.hasOwn(PASS_ROSTERS, table);
   if (OPERATIONS.has(table)) return door !== "unknown-key";
   switch (door) {
     case "plain": return false;
@@ -352,6 +354,11 @@ export function refusedOf(
     const door = doorOf(flight, digests);
     for (const statement of flight.statements) {
       const named = namedBy(statement);
+      if (door === "passes" && (named.reads.length !== 1 || !/^\s*select\s/i.test(statement) ||
+        /\bfor\s+(?:no\s+key\s+update|update|key\s+share|share)\b/i.test(statement))) {
+        out.push({ door, table: named.reads[0] ?? "", verb: "write", statement: statementText(statement).slice(0, 160) });
+        continue;
+      }
       for (const table of named.reads) {
         const verb: Verb = named.writes === table ? "write" : "read";
         if (admitted(login, door, table, verb)) continue;

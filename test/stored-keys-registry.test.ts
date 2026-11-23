@@ -136,6 +136,8 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "ohmail.key": "a setting a transaction carries for its own life: the key a look-up compares",
   "ohmail_api": "a database role's name",
   "ohmail:staff": "the key a transaction names for its own life to reach the staff tables",
+  "ohmail:passes": "the key a transaction names for its own life to read due pass identifiers",
+  "ohmail:": "the shared prefix that the credential binder reserves for internal entry points",
   "ohmail-lock": "the first word of the comment the lock's setup writes on a policy it made",
   "ohmail.lock": "the first word of the lock's off marker, a comment on a database schema",
   "ohmail.db.dialect": "a symbol's description on a database handle",
@@ -478,6 +480,8 @@ describe("the registry of stored keys", () => {
       '"server-devices" => Some("devices"),',
       '"server-storage" => Some("storage"),',
       '"server-mailboxes" => Some("mailboxes"),',
+      '"server-calendar-google" => Some("calendar-google"),',
+      '"server-calendar-microsoft" => Some("calendar-microsoft"),',
       "_ => None,",
     ]);
     expect(read("apps/desktop/src/native.ts")).toContain(

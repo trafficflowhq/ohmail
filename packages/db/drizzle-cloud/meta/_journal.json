@@ -358,6 +358,13 @@
       "when": 1794732061380,
       "tag": "0105_calendar_sign_in",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1794732061381,
+      "tag": "0106_security_notice_recipients",
+      "breakpoints": true
     }
   ]
 }

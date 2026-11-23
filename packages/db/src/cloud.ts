@@ -60,10 +60,10 @@ export {
 } from "./row-security/names.js";
 export {
   OPERATIONS_TABLES, STAFF_TABLES, KEYED_TABLES, KEYED_WRITES, UNOWNED_TABLES, WORKER_WIDE_READ,
-  PLANE_READS, PLANE_APPENDS, NOTICE_FAMILY, ACCOUNT_BY_ID,
+  PLANE_READS, PLANE_APPENDS, NOTICE_FAMILY, ACCOUNT_BY_ID, PASS_ROSTERS,
   tableClass, accountColumnOf, serverTables, lockedTables, adminReadTables, policiesOfTable, policyList,
   policiesFor, policiesNaming,
-  type TableClass, type PolicyVerb, type PolicyRow,
+  type TableClass, type PolicyVerb, type PolicyRow, type PassRosterTable,
 } from "./row-security/policies.js";
 export { ROLE_DEADLINES, deadlineText } from "./row-security/deadlines.js";
 /**
@@ -347,6 +347,7 @@ export {
 export {
   rosterDbFor, assertRoster, NotRosterError, ROSTER_ROLE,
   type RosterDb, type Roster, type RosterExpectation, type RosterVerdict,
+  passRosterFor, type PassRoster, type PassRosterRow,
 } from "./roster-db.js";
 
 /**

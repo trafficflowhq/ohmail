@@ -25,12 +25,7 @@ export const POLICY_ROLES: readonly PolicyRole[] = [...RUNTIME_LOGINS, ...OPTION
 /** How a policy calls the key's reader. */
 export const KEY_READER = `${READER_SCHEMA}.current_key()`;
 
-/**
- * The key a transaction names to reach the five staff tables, with no account named. A word, not a
- * secret: it keeps a transaction whose binding was reset, or never written, away from the
- * operators' rows, so that only a statement that names the door on purpose passes it.
- */
-export const STAFF_DOOR_KEY = "ohmail:staff";
+export { STAFF_DOOR_KEY } from "../bound.js";
 
 /** The first word of every comment the lock step writes on a policy it made. */
 export const POLICY_COMMENT_TAG = "ohmail-lock";

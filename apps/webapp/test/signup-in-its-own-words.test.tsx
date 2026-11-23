@@ -247,3 +247,17 @@ describe("German on the signup screens says Mail, not Post", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+
+it.each([
+  ["en", en, "My email address is already confirmed"],
+  ["de", de, "Meine E-Mail-Adresse ist bereits bestätigt"],
+] as const)("offers sign-in after an already confirmed address in %s", async (_locale, messages, title) => {
+  answers["/auth/verify-email"] = { status: 200, body: { status: "already_verified" } };
+  const ui = await render(messages, "verify");
+  await ui.type({ label: messages.verify.passwordLabel }, "a-long-signup-password");
+  await ui.press(messages.verify.confirm);
+  expect(ui.host.textContent).toContain(title);
+  expect([...ui.host.querySelectorAll("button")].some((b) => b.textContent === messages.verify.signInDone)).toBe(true);
+  expect(ui.host.querySelector('input[type="password"]')).toBeNull();
+});

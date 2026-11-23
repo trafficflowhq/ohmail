@@ -20,7 +20,7 @@ const toNewLink = (): void => { window.location.assign("/login?next=join"); };
 function stateOf(c: VerifyCeremony, asksCode: boolean, wrongPassword: string): VerifyState {
   if (!c.configured) return { at: "unavailable" };
   if (c.handedOff) return { at: "handed" };
-  if (c.done) return { at: "done" };
+  if (c.done) return { at: "done", already: c.done === "already_verified" };
   return {
     at: "form",
     asksCode,

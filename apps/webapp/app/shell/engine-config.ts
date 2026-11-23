@@ -89,7 +89,8 @@ export function syncsWhileHidden(env: EngineEnv = BUILD_ENV): boolean {
 
 /**
  * The wake stream decision — which builds hold an `EventSource` on `/events`, decided here so it
- * can be tested rather than described. A factory, or `null` for "this build polls". Three
+ * can be tested rather than described. A factory, or `null` for polling. No stream when the
+ * server disables SSE. Other
  * refusals: the desktop build ({@link syncsWhileHidden}) — its API base is the local engine
  * process, which serves no `/events`; no API base — nothing to connect to; no `EventSource` in the
  * environment (SSR, jsdom) — a null is honest where a throw is an event. The demo never reaches
@@ -99,8 +100,9 @@ export function syncsWhileHidden(env: EngineEnv = BUILD_ENV): boolean {
  */
 export function cloudWakeStream(
   env: EngineEnv = BUILD_ENV,
+  sse?: boolean,
 ): (() => WakeStreamLike) | null {
-  if (syncsWhileHidden(env)) return null;
+  if (sse === false || syncsWhileHidden(env)) return null;
   // Deliberately NOT spelled the way `createEngine` reads the same variable (a local named
   // `apiBase`): `test/api-rewrite.test.ts` pins the ORDER of that exact line against the demo gate
   // by `indexOf`, so an identical occurrence above the gate — even in a comment — would

@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type StorageCap } from "@trafficflow/core/mail";
 import {
-  bridgeTx, bridgeDb, passContext, type Db, type OpenPassSendAdapter, type PassContext, type ServiceContext,
+  bridgeTx, assertPassWalk, bridgeDb, rosterAccountDb, passContext, type Db, type PassRoster, type PassRosterRow, type OpenPassSendAdapter, type PassContext, type ServiceContext,
   type UnboundDb,
 } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -71,6 +71,7 @@ export const SCHEDULED_FILES_TIDY_BATCH = 100;
 const defaultLog = createLogger({ service: "scheduled-send" });
 
 export interface ScheduledSendPassDeps {
+  roster?: PassRoster;
   /**
    * STOP BEFORE THE NEXT DELIVERY — consulted between rows. A pass that has begun is not entitled
    * to finish: on the desktop the mailbox can change hands MID-PASS (the socket dies, a re-dial
@@ -172,6 +173,7 @@ interface ClaimedRow {
 export async function runScheduledSendPass(
   walk: UnboundDb, deps: ScheduledSendPassDeps,
 ): Promise<ScheduledSendPassResult> {
+  assertPassWalk(walk);
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
   const batch = deps.batch ?? SCHEDULED_SEND_BATCH;
@@ -182,8 +184,13 @@ export async function runScheduledSendPass(
     passContext(walk, row.accountId, { userId: null, now, requestId: `sched:${row.id}` });
 
   const startedAt = now().getTime();
-  if (deps.files?.tidy) await tidyKeptFiles(walk, now(), log);
-  const rows = await claimDue(walk, now(), batch, deps.accountEligible, log, deps.mailboxIds);
+  const readRoster = deps.roster;
+  const roster = await readRoster?.(SCHEDULED_SEND_SCAN_ACCOUNTS * SCHEDULED_SEND_SCAN_FACTOR);
+  if (deps.files?.tidy) await tidyKeptFiles(walk, now(), log, roster);
+  const rows = readRoster && roster
+    ? await claimFromRoster(walk, now(), batch, deps, log, roster,
+      await readRoster(batch * SCHEDULED_SEND_SCAN_FACTOR, 0, "recovery"))
+    : await claimDue(walk, now(), batch, deps.accountEligible, log, deps.mailboxIds);
   result.claimed = rows.length;
 
   for (const [i, row] of rows.entries()) {
@@ -203,8 +210,18 @@ export async function runScheduledSendPass(
 
   // Files of appointments that ended here (sent, closed or expired) go now, not at the next drain.
   if (rows.some((r) => r.sendFiles > 0)) {
-    await sweepScheduledSendFiles(walk, { ...(deps.mailboxIds ? { mailboxIds: deps.mailboxIds } : {}), vacuum: !deps.files })
-      .catch((err: unknown) => log.warn("scheduled_send_files_sweep_failed", { err }));
+    const opts = { ...(deps.mailboxIds ? { mailboxIds: deps.mailboxIds } : {}), vacuum: !deps.files };
+    try {
+      if (roster) {
+        for (const accountId of new Set(rows.filter((row) => row.sendFiles > 0).map((row) => row.accountId))) {
+          await sweepScheduledSendFiles(rosterAccountDb(walk, { accountId }), opts, accountId);
+        }
+      } else {
+        await sweepScheduledSendFiles(walk, opts);
+      }
+    } catch (err) {
+      log.warn("scheduled_send_files_sweep_failed", { err });
+    }
   }
   return result;
 }
@@ -351,14 +368,16 @@ async function sendOne(
  * statements: account deletion locks files and then drafts, so no transaction here holds both. A
  * draft in the claim window or `sending` is never closed here. Never throws.
  */
-async function tidyKeptFiles(walk: UnboundDb, now: Date, log: Logger): Promise<void> {
+async function tidyKeptFiles(walk: UnboundDb, now: Date, log: Logger, roster?: PassRosterRow[]): Promise<void> {
+  const closedAccounts = new Set<string>();
   try {
-    const overdue = await bridgeTx(walk).select({ id: drafts.id, accountId: drafts.accountId }).from(drafts)
+    const overdue = roster?.slice(0, SCHEDULED_FILES_TIDY_BATCH) ?? await bridgeTx(walk).select({ id: drafts.id, accountId: drafts.accountId }).from(drafts)
       .where(and(
         eq(drafts.status, "scheduled"), gt(drafts.sendFiles, 0),
         lt(drafts.sendAt, new Date(now.getTime() - SCHEDULED_FILES_OVERDUE_MS)),
       ))
       .limit(SCHEDULED_FILES_TIDY_BATCH);
+    let closedCount = 0;
     for (const row of overdue) {
       // One appointment's close, on its own account's handle: the account is the row's, read above.
       const ctx = passContext(walk, row.accountId, { userId: null, now: () => now, requestId: `sched-tidy:${row.id}` });
@@ -372,17 +391,28 @@ async function tidyKeptFiles(walk: UnboundDb, now: Date, log: Logger): Promise<v
           ))
           .returning({ id: drafts.id });
         if (closed.length > 0) {
+          closedCount += 1;
+          closedAccounts.add(row.accountId);
           await recordChange(tx, { accountId: row.accountId, entityType: "draft", entityId: row.id, op: "update", meta: null });
         }
       });
     }
-    if (overdue.length > 0) log.warn("scheduled_files_overdue_closed", { count: overdue.length });
+    if (closedCount > 0) log.warn("scheduled_files_overdue_closed", { count: closedCount });
   } catch (err) {
     log.warn("scheduled_files_tidy_failed", { err });
   }
   try {
-    const swept = await sweepScheduledSendFiles(walk, { vacuum: false })
-      + await sweepAgedScheduledFiles(walk, new Date(now.getTime() - SCHEDULED_FILES_MAX_AGE_MS));
+    let swept = 0;
+    const before = new Date(now.getTime() - SCHEDULED_FILES_MAX_AGE_MS);
+    if (roster) {
+      for (const accountId of closedAccounts) {
+        const db = rosterAccountDb(walk, { accountId });
+        swept += await sweepScheduledSendFiles(db, { vacuum: false }, accountId)
+          + await sweepAgedScheduledFiles(db, before, accountId);
+      }
+    } else {
+      swept = await sweepScheduledSendFiles(walk, { vacuum: false }) + await sweepAgedScheduledFiles(walk, before);
+    }
     if (swept > 0) log.info("scheduled_files_swept", { rows: swept });
   } catch (err) {
     log.warn("scheduled_send_files_sweep_failed", { err });
@@ -422,11 +452,49 @@ export const SCHEDULED_SEND_SCAN_ACCOUNTS = 200;
  * ON THE WALK, whole: one transaction reads and flips the due rows of every account, so it names
  * none, and the eligibility read rides inside it.
  */
+async function claimFromRoster(
+  walk: UnboundDb, now: Date, batch: number, deps: ScheduledSendPassDeps, log: Logger,
+  roster: PassRosterRow[], recovery: PassRosterRow[],
+): Promise<ClaimedRow[]> {
+  const out: ClaimedRow[] = [];
+  const verdicts = new Map<string, boolean>();
+  const eligible = async (accountId: string, db: Db) => {
+    const answer = verdicts.get(accountId) ?? (await deps.accountEligible?.(accountId, db) ?? true);
+    verdicts.set(accountId, answer);
+    return answer;
+  };
+  const attemptedRecovery = new Set<string>();
+  const claim = async (rows: PassRosterRow[], through: number, phase: "scheduled" | "recovery") => {
+    const accounts = new Set<string>();
+    for (const row of rows) {
+      if (out.length >= through || accounts.size >= SCHEDULED_SEND_SCAN_ACCOUNTS) break;
+      if (verdicts.get(row.accountId) === false) continue;
+      if (phase === "recovery") {
+        if (attemptedRecovery.has(row.id)) continue;
+        attemptedRecovery.add(row.id);
+      }
+      accounts.add(row.accountId);
+      const scoped = rosterAccountDb(walk, row);
+      const claimed = await claimDue(scoped, now, 1, eligible, log, deps.mailboxIds, row, phase);
+      if (phase === "scheduled" && claimed.length > 0) attemptedRecovery.add(row.id);
+      out.push(...claimed);
+    }
+    if (out.length < through && accounts.size >= SCHEDULED_SEND_SCAN_ACCOUNTS) {
+      log.error("scheduled_send_scan_saturated", { count: accounts.size });
+    }
+  };
+  // Reserve the first opportunity for a stranded send even when every scheduled slot is due.
+  await claim(recovery, Math.min(1, batch), "recovery");
+  await claim(roster, batch, "scheduled");
+  await claim(recovery, batch, "recovery");
+  return out;
+}
+
 async function claimDue(
-  walk: UnboundDb, now: Date, batch: number,
+  walk: Db, now: Date, batch: number,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
   log: Logger,
-  mailboxIds: readonly string[] | undefined,
+  mailboxIds: readonly string[] | undefined, candidate?: PassRosterRow, phase?: "scheduled" | "recovery",
 ): Promise<ClaimedRow[]> {
   const d = dialect(walk);
   /* NONE MEANS NONE, decided before a transaction is opened. See the field's own note: an empty
@@ -477,6 +545,7 @@ async function claimDue(
         }).from(drafts)
           .where(and(
             base(),
+            ...(candidate ? [eq(drafts.id, candidate.id), eq(drafts.accountId, candidate.accountId)] : []),
             /* THE MAILBOX NARROWING, in the scan rather than in either arm's `base()`, so the
                due arm and the stale-recovery arm cannot drift apart about it. A recovered
                'sending' row belongs to exactly the same mailbox its appointment did. */
@@ -509,13 +578,13 @@ async function claimDue(
       return taken;
     };
 
-    const due = await pagedScan(
+    const due = phase === "recovery" ? [] : await pagedScan(
       () => and(eq(drafts.status, "scheduled"), lte(drafts.sendAt, now), isNotNull(drafts.sendKey)),
       batch,
     );
 
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
-    const recovery = due.length >= batch ? [] : await pagedScan(
+    const recovery = phase === "scheduled" || due.length >= batch ? [] : await pagedScan(
       () => and(
         isNotNull(drafts.sendKey),
         lte(drafts.sendAt, staleBefore),

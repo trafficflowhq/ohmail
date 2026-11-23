@@ -867,7 +867,7 @@ export interface MailboxServiceDeps {
    * means nobody wired one, and the paid gate refuses rather than admitting an unbounded create.
    * See {@link MailboxService.access}.
    */
-  accessOf?: (accountId: string) => Promise<AccessVerdict>;
+  accessOf?: (accountId: string, opts: { fresh: true }) => Promise<AccessVerdict>;
   /**
    * How the organizer stands: when its last pass finished, for {@link MailboxDTO.filing}'s
    * `lastCycleAt`, and whether fetching is behind, for {@link MailboxDTO.fetching} and the pull
@@ -1163,7 +1163,7 @@ export class MailboxService {
     // the plan limit from any host that wired the paid gate and forgot this — the exact failure
     // `mailbox-allowance-registry.ts` refuses by name one seam over, reintroduced one seam up. The
     // paid gate refuses a `null`; the unmetered policy ignores it.
-    return this.deps.accessOf ? this.deps.accessOf(accountId) : null;
+    return this.deps.accessOf ? this.deps.accessOf(accountId, { fresh: true }) : null;
   }
 
   async list(ctx: ServiceContext, opts: ListMailboxesOptions = {}): Promise<MailboxDTO[]> {
@@ -1924,7 +1924,7 @@ export class MailboxService {
 
     // The access verdict, read BEFORE the transaction: answering it may be a network hop, and a
     // remote call under the account's row lock is the deadlock the send pass already records.
-    const access = await this.access(ctx.accountId);
+    const access = patch.status && patch.status !== "disabled" ? await this.access(ctx.accountId) : null;
 
     return asTx(ctx).transaction(async (tx) => {
       // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its

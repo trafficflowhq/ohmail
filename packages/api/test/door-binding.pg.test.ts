@@ -213,7 +213,7 @@ describe.skipIf(!PG_UP)("the doors without a session name what they run for (rea
   });
 
   describe("a clock's route", () => {
-    it("the sender's pass: the walk names no account and no key, and each due letter rides its own account, its dial too", async () => {
+    it("an unlocked store keeps the ordinary claim and dials each letter under its account", async () => {
       const schedules = new ScheduleService();
       for (const [world, minutesAgo] of [[B, 3], [A, 2], [B, 1]] as const) {
         const at = new Date(NOW.getTime() - minutesAgo * MINUTE);
@@ -238,6 +238,7 @@ describe.skipIf(!PG_UP)("the doors without a session name what they run for (rea
 
       expect(flights.filter((f) => f.door === "plain")).toEqual([]);
       expect(flights.filter((f) => f.keyed)).toEqual([]);
+      expect(flights.filter((f) => f.statements.some((statement) => /row_security_active/i.test(statement)))).toHaveLength(1);
       const mine = flights.filter((f) => f.account === A.accountId || f.account === B.accountId);
       const inTurn = (of: readonly PgWireFlight[]): string[] => {
         const turns: string[] = [];
@@ -249,8 +250,10 @@ describe.skipIf(!PG_UP)("the doors without a session name what they run for (rea
       const dials = flights.filter((f) => names(f, "mailbox_credentials"));
       expect(dials.every((f) => f.account !== null)).toBe(true);
       expect(inTurn(dials.filter((f) => mine.includes(f)))).toEqual([B.accountId, A.accountId, B.accountId]);
-      // The claim flips rows of both accounts in one transaction that names neither.
-      expect(flights.filter((f) => f.account === null && f.door === "write").some((f) => names(f, "drafts"))).toBe(true);
+      const claims = flights.filter((f) => f.door === "write"
+        && f.statements.some((statement) => /^update "drafts"/i.test(statement))
+        && f.statements.some((statement) => /skip locked/i.test(statement)));
+      expect(claims.map((f) => [f.account, f.keyed])).toEqual([[null, false]]);
     });
   });
 });

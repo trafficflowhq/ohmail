@@ -4080,11 +4080,28 @@ fn sign_up_and_setup_are_fixed_pages() {
     assert_eq!(link_for("setup"), Some("https://ohmail.app/login?next=join"));
     const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
     const ID: &str = "4f9a3c1e-2b7d-4e8f-9a01-23456789abcd";
-    for key in ["join", "setup"] {
+    for key in ["join", "setup", "forgot-password"] {
         assert_eq!(open_target(key, None, None).unwrap(), link_for(key).unwrap());
         assert!(open_target(key, Some(GOOD), None).is_err(), "{key} took a sign-in commitment");
         assert!(open_target(key, None, Some(ID)).is_err(), "{key} took a request id");
     }
+}
+
+#[test]
+fn password_recovery_opens_on_the_server_that_owns_the_sign_in() {
+    let base = "https://mail.example.invalid:8443/api";
+    let door = Config::Cloud(crate::config::CloudDoor {
+        cloud_url: base.to_string(),
+        address: None,
+        flavor: None,
+        host_pin: None,
+        identity_pending: false,
+    });
+    assert_eq!(open_target("forgot-password", None, None).unwrap(), "https://ohmail.app/forgot-password");
+    assert_eq!(server_password_reset_target(Some(&door), Some(base)).unwrap(), "https://mail.example.invalid:8443/forgot-password");
+    assert!(server_password_reset_target(Some(&door), Some("https://elsewhere.example.invalid/api")).is_err());
+    assert!(server_password_reset_target(Some(&door), None).is_err());
+    assert!(server_password_reset_target(None, Some(base)).is_err());
 }
 
 /// The configured server supplies the reference. Its answer must name the account shown by the window.

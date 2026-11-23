@@ -825,6 +825,34 @@ describe("a refused account meets 402 at a product door", () => {
     expect(body.error.message).toMatch(/nothing has been deleted/i);
   });
 
+  it("asks accounts without a plan to choose one at AI and mail doors", async () => {
+    const client = makeEntitlementsClient({
+      baseUrl: "https://plane.invalid", secret: "x".repeat(24), onCallFault: "unrecorded",
+      fetchImpl: async () => ({
+        status: 200,
+        json: async () => ({
+          entitlements: { reason: "no_subscription", syncEnabled: false, canAddMailbox: false, aiEnabled: false },
+          lifecycle: {
+            state: "closed", closedReason: null, trialEndsAt: null, graceUntil: null,
+            closedAt: null, erasureAt: null, erasedAt: null, formerlyPaid: false,
+          },
+        }),
+      }),
+    });
+    const { db, deps } = await depsWith(client);
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    for (const [path, message] of [
+      ["/account/ai", "Choose a plan to use AI."],
+      ["/mailboxes", "Choose a plan to use ohmail."],
+    ] as const) {
+      const res = await H(req("GET", path, { bearer: s.token }), deps);
+      expect(res.status).toBe(402);
+      expect(await res.json()).toMatchObject({ error: {
+        code: "subscription_required", message, details: { reason: "payment_required" },
+      } });
+    }
+  });
+
   it("passes the manage URL through when the port supplies one, and omits the key when not", async () => {
     const { db, deps } = await depsWith(refusing("suspended", "https://manage.example/t"));
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });

@@ -209,6 +209,8 @@ const EN = {
      says the setup sentence instead (`linksOutToBilling`). */
   cloudNoAccount: "No account yet?",
   cloudCreateAccount: "Create one in your browser",
+  forgotPassword: "Forgot your password?",
+  resetBrowserFailed: "The password reset page could not be opened in your browser.",
   cloudJoinNoBrowser: (machine: string) =>
     `This ${machine} would not open a browser. The page is at ohmail.app/join.`,
   cloudSetupOnWeb: "Mailboxes are connected in ohmail on the web. Sign in here once yours is connected.",

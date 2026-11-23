@@ -1,6 +1,6 @@
 import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { drafts, outboundSends, scheduledSendFiles } from "@trafficflow/db";
+import { bindDb, drafts, outboundSends, scheduledSendFiles } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
 import { SCHEDULED_FILES_PLAIN, type ScheduledFilesKeeping } from "@trafficflow/services/mail";
@@ -340,7 +340,7 @@ describe("the hosted door keeps a scheduled letter's files sealed until its pass
     expect(kept[0]!.rawB64).not.toBe(file.contentBase64);
     expect(w.spy.delivered, "a press scheduled to the hosted door dialled at once").toHaveLength(0);
 
-    await runScheduledSendPass(w.db as never, {
+    await runScheduledSendPass(bindDb(w.db as never, { account: null }), {
       openSendAdapter: w.spy.factory, now: () => new Date(Date.parse(SEND_AT) + 60_000),
       files: { open: sealed.sealer.open.bind(sealed.sealer), tidy: true },
     });

@@ -303,6 +303,8 @@
     "browserSignInFailed": "Die Anmeldung über den Browser ließ sich nicht starten.",
     "cloudNoAccount": "Noch kein Account?",
     "cloudCreateAccount": "Im Browser einen erstellen",
+    "forgotPassword": "Passwort vergessen?",
+    "resetBrowserFailed": "Die Seite zum Zurücksetzen des Passworts konnte im Browser nicht geöffnet werden.",
     "cloudJoinNoBrowser": "Dieser {machine} hat keinen Browser geöffnet. Die Seite liegt unter ohmail.app/join.",
     "cloudSetupOnWeb": "Postfächer werden in ohmail im Web verbunden. Melde dich hier an, sobald deines verbunden ist.",
     "cloudApproveHint": "Dein Browser öffnet ohmail.app. Bestätige diesen {machine} dort — hier musst du nichts eintippen.",

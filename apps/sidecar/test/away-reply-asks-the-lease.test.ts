@@ -9,7 +9,7 @@ import type {
 import type { LeaseIo, MetaFolderStamp, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messageInstances, messages, threads,
+  bindDb,   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messageInstances, messages, threads,
 } from "@trafficflow/db";
 import { runAwayResponderPass } from "@trafficflow/services";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -361,7 +361,7 @@ describe("an away reply asks the lease at the send boundary", () => {
     await a.db.update(mailboxes).set({ organizerRole: "organizer" })
       .where(eq(mailboxes.id, a.world.mailboxId));
     const later: OutboundMessage[] = [];
-    const out = await runAwayResponderPass(a.db as never, {
+    const out = await runAwayResponderPass(bindDb(a.db as never, { account: null }), {
       openSendAdapter: async () => ({
         send: async (m: OutboundMessage) => { later.push(m); return { providerMessageId: "p-1" }; },
         messageInSent: async () => false,

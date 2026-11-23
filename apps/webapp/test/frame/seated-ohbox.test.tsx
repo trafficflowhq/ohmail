@@ -37,7 +37,7 @@ import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
 import { LANDING_REST_MS } from "@ohmail/app-logic/reading/reader-seen";
 import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import {
-  mutationEffects, OhmailEngine,
+  mutationEffects, MutationRejectedError, OhmailEngine,
   type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
@@ -114,6 +114,7 @@ async function seat(o: {
   demo?: boolean;
   stageNotice?: NonNullable<FeatureEntry["notice"]>;
   roster?: MailboxFacts[];
+  beforeMutation?: (mutation: EngineMutation) => Promise<void>;
 }): Promise<Seated> {
   const store: MirrorStore = await storeWith(o.letters);
   const sent: EngineMutation[] = [];
@@ -132,6 +133,7 @@ async function seat(o: {
       },
       mutate: async (m: EngineMutation) => {
         sent.push(m);
+        if (o.beforeMutation) await o.beforeMutation(m);
         const changes = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++S.seq}` }).map((e) => ({
           type: e.type, op: e.entity === null ? "delete" : e.move ? "move" : "update",
           id: e.id, seq: ++S.seq, updatedAt: NOW.toISOString(), entity: e.entity, ...(e.move ? { move: e.move } : {}),
@@ -844,17 +846,49 @@ describe("the keyboard at the seated Ohbox", () => {
 
   it("a verb that takes the open row opens the next row, by the list's own path, and says so in the frame's slot", async () => {
     sized(1440, 900);
-    const s = await seat({ letters: [msg("m1"), msg("m2")], hash: "#/ohbox" });
+    let answer!: (refused?: boolean) => void;
+    const holdAnswer = () => {
+      const pending = new Promise<void>((resolve, reject) => {
+        answer = (refused) => refused ? reject(new MutationRejectedError("Park refused")) : resolve();
+      });
+      void pending.catch(() => undefined);
+      return pending;
+    };
+    let pending = holdAnswer();
+    const s = await seat({
+      letters: [msg("m1"), msg("m2")], hash: "#/ohbox",
+      beforeMutation: (m) => m.kind === "triage_set" && m.state === "set_aside" ? pending : Promise.resolve(),
+    });
     await waitFor(() => rows().length === 2, "the seated list");
     const [top, next] = rows().map((r) => /Subject (m\d)$/.exec(r.getAttribute("aria-label") ?? "")![1]!);
     await press(row(top!), "the first row");
     await waitFor(() => letterShown(top!), "the first letter open");
-    await press(within(reader()).getByRole("button", { name: "Park" }), "Park on the panel");
-    await waitFor(() => letterShown(next!), "the next row's letter opened");
-    expect(window.location.hash, "the address follows").toBe(`#/ohbox/m/${next}`);
-    expect(s.sent.filter((m) => m.kind === "triage_set").length, "one filing").toBe(1);
-    expect(inTheFramesSlot(), "the verb's answer is said in the frame's slot").toContain(en.ohbox.toastAside);
-    expect(inTheCapsule(), "and not in today's capsule").not.toContain(en.ohbox.toastAside);
+    try {
+      await press(within(reader()).getByRole("button", { name: "Park" }), "Park on the panel");
+      await waitFor(() => letterShown(next!), "the next row's letter opened");
+      expect(window.location.hash, "the address follows").toBe(`#/ohbox/m/${next}`);
+      expect(s.sent.filter((m) => m.kind === "triage_set").length, "one filing").toBe(1);
+      expect(inTheFramesSlot(), "the verb's answer is said in the frame's slot").toContain(en.ohbox.toastAside);
+      expect(inTheCapsule(), "and not in today's capsule").not.toContain(en.ohbox.toastAside);
+      await press(screen.getByRole("button", { name: /Undo/ }), "Undo Park while the server answers");
+      expect(parks(s)).toEqual([top]);
+      expect(s.sent.filter((m) => m.kind === "triage_set").map((m) => m.state)).toEqual(["set_aside"]);
+    } finally {
+      await act(async () => { answer(); });
+    }
+    await waitFor(() => rows().length === 2 && letterShown(top!), "Undo brought back the original letter");
+    expect(s.sent.filter((m) => m.kind === "triage_set").map((m) => m.state)).toEqual(["set_aside", "none"]);
+
+    pending = holdAnswer();
+    try {
+      await press(within(reader()).getByRole("button", { name: "Park" }), "Park on the panel again");
+      await waitFor(() => rows().length === 1 && parks(s).length === 2, "the row is parked again while the server answers");
+      await press(screen.getByRole("button", { name: /Undo/ }), "Undo before the refusal");
+    } finally {
+      await act(async () => { answer(true); });
+    }
+    await waitFor(() => rows().length === 2 && inTheFramesSlot().includes("Nothing changed"), "the refusal restores the row");
+    expect(s.sent.filter((m) => m.kind === "triage_set").map((m) => m.state)).toEqual(["set_aside", "none", "set_aside"]);
   }, 30_000);
 });
 

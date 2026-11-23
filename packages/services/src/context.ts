@@ -41,6 +41,10 @@ export type UnboundDb = Db & NothingBound;
  */
 export type ContextDb = BoundDb | UnboundDb;
 
+/** An internal pass discovers only IDs before it can bind the row's account. */
+export interface PassRosterRow { readonly accountId: string; readonly id: string }
+export type PassRoster = (limit: number, offset?: number, priority?: "recovery") => Promise<PassRosterRow[]>;
+
 /**
  * A context's handle for `accountId`, which the caller read from a row and never from a request:
  * bound to that account. No string names "no account": `""` is refused by the binder as any id
@@ -224,10 +228,23 @@ export interface ServiceContext {
 export function passContext(
   walk: UnboundDb, accountId: string, rest: Omit<ServiceContext, "db" | "accountId">,
 ): PassContext {
+  return { ...rest, db: rosterAccountDb(walk, { accountId }), accountId };
+}
+
+/** A pass keeps a plain walk even when it has no work or a separate roster callback. */
+export function assertPassWalk(walk: object): void {
   if (bindingOf(walk)?.keyed === true) {
-    throw new BindingRefusedError("a pass's context was asked on a handle that carries a key");
+    throw new BindingRefusedError("a pass cannot run on a keyed handle");
   }
-  return { ...rest, db: bindDb(walk, { account: accountId }), accountId };
+}
+
+/** Bind an account discovered by an internal pass, using its plain walk handle. */
+export function rosterAccountDb(walk: Db, row: Pick<PassRosterRow, "accountId">): BoundDb {
+  const binding = bindingOf(walk);
+  if (binding?.account !== null || binding.keyed) {
+    throw new BindingRefusedError("a pass needs a plain unbound handle to work for a roster account");
+  }
+  return dbFor(walk, row.accountId);
 }
 
 /** What {@link passContext} answers: a context whose handle is bound to its own account. */

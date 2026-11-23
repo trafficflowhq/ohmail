@@ -141,6 +141,8 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   { path: "/login", edge: true },
   { path: "/join", edge: true },
   { path: "/verify-email", edge: true },
+  { path: "/forgot-password", edge: true },
+  { path: "/reset-password", edge: true },
   { path: "/link-desktop", edge: true },
   // `/authorize-desktop` is the CONFIRMATION in front of the native sign-in. `GET /oauth/authorize`
   // used to mint a credential from an ambient cookie and redirect straight back to the app; it now

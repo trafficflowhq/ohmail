@@ -19,8 +19,8 @@
     },
     {
       "id": "the-token-lookups",
-      "account": "None for a look-up, keyed by the digest of the presented token or by the address being registered. At sign-up, the id the transaction generated for the new account. For a desktop approval's confirm and deny, the session's account, with the approval id's digest as key.",
-      "reason": "Credential and address look-ups name an exact row before ownership is known. The signup transaction binds the account it creates. Confirm and deny bind the pending approval by digest while keeping the signed-in account.",
+      "account": "None for a look-up, keyed by the digest of the presented token or by the sign-up or password reset address. At sign-up, the id the transaction generated for the new account. For a desktop approval's confirm and deny, the session's account, with the approval id's digest as key.",
+      "reason": "Credential and address look-ups name an exact row before its account is known. Password reset binds the account found by address for issuance and by token digest for completion. The signup transaction binds the account it creates. Confirm and deny bind the pending approval by digest while keeping the signed-in account.",
       "files": ["packages/services/src/auth/resolve-session.ts", "packages/services/src/auth/auth-service.ts"]
     },
     {

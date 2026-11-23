@@ -144,5 +144,6 @@
   "settingsSignatures",
   "settingsAbout",
   "write",
-  "readerInvitation"
+  "readerInvitation",
+  "passwordReset"
 ]

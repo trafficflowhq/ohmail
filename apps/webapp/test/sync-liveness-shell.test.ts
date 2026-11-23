@@ -78,6 +78,7 @@ const pageOf = (ids: string[], cursor: string, hasMore: boolean): Response =>
   );
 
 let syncUrls: string[] = [];
+let sse: boolean | undefined;
 let answer: Answer = () => emptyPage();
 let originalFetch: typeof globalThis.fetch;
 let visibility: DocumentVisibilityState = "visible";
@@ -91,6 +92,7 @@ function setVisibility(next: DocumentVisibilityState): void {
 beforeEach(() => {
   vi.useFakeTimers();
   syncUrls = [];
+  sse = undefined;
   answer = () => emptyPage();
   visibility = "visible";
   Object.defineProperty(document, "visibilityState", {
@@ -100,6 +102,9 @@ beforeEach(() => {
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(serveSignedInSync(async (input) => {
     const url = String(input);
+    if (url.endsWith("/hello")) {
+      return Response.json({ product: "ohmail", needsSetup: false, features: { sse } });
+    }
     /**
      * THE COLD-START READER IS NEITHER COUNTED NOR SERVED HERE.
      *
@@ -237,11 +242,7 @@ describe("EngineProvider is where the wake signal lives", () => {
   });
 
   it("attaches ONE EventSource on /events — the wake stream — and closes it with the shell", async () => {
-    // REVERSED by the realtime-wake slice: this test used to assert `seen == []` under the
-    // title "SSE is off in production and this slice does not use it". The client half now
-    // ships: a live web shell holds one wake stream while visible (the server's flag decides
-    // whether it answers; a refusal falls back to polling for the session — sync-wake.test.ts
-    // proves that half at the scheduler seam).
+    sse = true;
     (globalThis as Record<string, unknown>).EventSource = FakeEventSource;
     FakeEventSource.opened = [];
     FakeEventSource.closed = 0;
@@ -271,6 +272,21 @@ describe("EngineProvider is where the wake signal lives", () => {
     await tick(1_000);
     expect(FakeEventSource.opened).toHaveLength(3);
     expect(at(2).searchParams.get("stream"), "a new page reused the last page's name").not.toBe(name);
+  });
+
+  it("keeps syncing without ever opening an events stream when hello disables SSE", async () => {
+    sse = false;
+    (globalThis as Record<string, unknown>).EventSource = FakeEventSource;
+    FakeEventSource.opened = [];
+
+    await shell(null);
+    await tick(120_000);
+    await act(async () => { setVisibility("hidden"); });
+    await act(async () => { setVisibility("visible"); });
+    await tick(1_000);
+
+    expect(syncUrls.length).toBeGreaterThan(1);
+    expect(FakeEventSource.opened).toEqual([]);
   });
 
   it("the demo attaches NO EventSource — same run, same fake, so the control is real", async () => {

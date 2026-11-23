@@ -218,7 +218,7 @@ interface Exchange {
 const obj = (v: unknown): Record<string, unknown> | null =>
   (typeof v === "object" && v !== null && !Array.isArray(v)) ? v as Record<string, unknown> : null;
 
-/** The program's ten reasons, reduced to the two sentences the open app has. */
+/** The program's reasons, reduced to the open app's refusal codes. */
 function refusalOf(reason: unknown): AccessRefusal {
   return reason === "suspended" ? "suspended" : "payment_required";
 }
@@ -320,8 +320,15 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
 
   const url = typeof b.manageUrl === "string" && b.manageUrl.length > 0 ? b.manageUrl : undefined;
   if (!e.syncEnabled) {
+    // The plane's empty lifecycle also reads "closed". A dated closure, erasure or
+    // past payment takes precedence over the no-subscription reason.
+    const needsPlan = e.reason === "no_subscription" && (
+      lifecycle === null || (lifecycle.state === "closed" && lifecycle.closedReason === null
+        && lifecycle.closedAt === null && lifecycle.erasedAt === null && !lifecycle.formerlyPaid)
+    );
     return {
       ok: false, reason: refusalOf(e.reason),
+      ...(needsPlan ? { needsPlan: true as const } : {}),
       ...(url ? { manageUrl: url } : {}),
       ...(lifecycle ? { lifecycle } : {}),
       ...(trial ? { trial } : {}),

@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { dialect } from "@trafficflow/db/dialect";
 import { silentLogger, type Logger } from "@trafficflow/core";
-import { bridgeDb, bridgeTx, passContext, type Db, type UnboundDb } from "./context.js";
+import { bridgeDb, bridgeTx, assertPassWalk, rosterAccountDb, passContext, type PassRoster, type Db, type UnboundDb } from "./context.js";
 import type { MailContext } from "./mail/index.js";
 
 /**
@@ -64,6 +64,7 @@ export interface StorageNoticeMailer {
 }
 
 export interface StorageMailPassDeps {
+  roster?: PassRoster;
   port: EntitlementsPort;
   mail: StorageNoticeMailer | null;
   now: () => Date;
@@ -115,6 +116,7 @@ export function addonBytesOf(offer: StorageOffer): number {
 }
 
 export async function runStorageMailPass(walk: UnboundDb, deps: StorageMailPassDeps): Promise<StorageMailPassResult> {
+  assertPassWalk(walk);
   const log = deps.log ?? silentLogger;
   const clock = deps.clock ?? Date.now;
   const started = clock();
@@ -124,23 +126,35 @@ export async function runStorageMailPass(walk: UnboundDb, deps: StorageMailPassD
     read: 0, total: 0, due: 0, sent: { near: 0, full: 0 }, already: 0, off: 0, noOffer: 0, skipped: 0,
     unmailable: 0, faults: 0, capped: false,
   };
-  const rows = await tx.select({
+  const selectUsage = (db: Tx) => db.select({
     accountId: accountStorage.accountId, bytes: accountStorage.bytes, last: accountStorage.lastHuskedAt,
     keptFrom: accountStorage.keptFrom,
-  }).from(accountStorage).where(gt(accountStorage.bytes, 0))
-    .orderBy(desc(accountStorage.bytes)).limit(AT_CAP_READ_LIMIT);
+  }).from(accountStorage);
+  const ids = await deps.roster?.(AT_CAP_READ_LIMIT);
+  const rows: Awaited<ReturnType<typeof selectUsage>> = [];
+  if (ids) {
+    for (let i = 0; i < ids.length; i += 10) {
+      const slice = await Promise.all(ids.slice(i, i + 10).map(({ accountId }) =>
+        selectUsage(bridgeTx(rosterAccountDb(walk, { accountId })))
+          .where(and(eq(accountStorage.accountId, accountId), gt(accountStorage.bytes, 0)))));
+      rows.push(...slice.flat());
+    }
+  } else {
+    rows.push(...await selectUsage(tx).where(gt(accountStorage.bytes, 0))
+      .orderBy(desc(accountStorage.bytes)).limit(AT_CAP_READ_LIMIT));
+  }
   result.total = rows.length;
-  // The cached verdicts, bounded as the at-cap alert bounds them; the offer is asked per mail below.
   const { answered } = await inPlaneRounds(deps.port, rows, (r) => deps.port.access(r.accountId), AT_CAP_READ_BOUND);
   result.read = answered.length;
-  const holds = await storageHoldsOf(tx, answered.filter(([, v]) => v.ok).map(([r]) => r.accountId));
+  const holds = ids ? null : await storageHoldsOf(tx, answered.filter(([, v]) => v.ok).map(([r]) => r.accountId));
   const now = deps.now();
   for (const [row, verdict] of answered) {
     if (!verdict.ok || typeof verdict.limits.storageBytes !== "number") continue;
     const state = verdict.lifecycle?.state;
     if (state !== "trialing" && state !== "active") continue;
-    const limit = storageLimitFrom(verdict.limits.storageBytes, verdict.trialStorage ?? null,
-      holds.get(row.accountId) ?? null, now);
+    const scoped = bridgeTx(passContext(walk, row.accountId, { userId: null, now: deps.now, requestId: `storage-mail:${row.accountId}` }).db);
+    const hold = (holds ?? await storageHoldsOf(scoped, [row.accountId])).get(row.accountId) ?? null;
+    const limit = storageLimitFrom(verdict.limits.storageBytes, verdict.trialStorage ?? null, hold, now);
     const last = asDate(row.last);
     const level = storageMailLevelOf(
       { usedBytes: Number(row.bytes), lastEmptiedAt: last === null ? null : last.toISOString() }, limit.capBytes, now);
@@ -151,7 +165,7 @@ export async function runStorageMailPass(walk: UnboundDb, deps: StorageMailPassD
       break;
     }
     try {
-      await oneAccount(bridgeTx(passContext(walk, row.accountId, { userId: null, now: deps.now, requestId: `storage-mail:${row.accountId}` }).db), deps, result, log, {
+      await oneAccount(scoped, deps, result, log, {
         accountId: row.accountId, level, verdict, capBytes: limit.capBytes,
         limitReason: storageLimitReason(verdict.limits.storageBytes, limit), limitDropsAt: limit.dropsAt,
         usedBytes: Number(row.bytes), keptFrom: row.keptFrom === null ? null : String(row.keptFrom).slice(0, 7), now,

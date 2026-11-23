@@ -45,6 +45,7 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
     expiresIn: "24 hours",
     supportEmail: "support@ohmail.app",
   },
+  password_reset: { resetUrl: "https://app.ohmail.app/reset-password?token=fixture" },
   // The ONE template here that is not customer mail: it goes to the configured
   // operator address and carries counts and ages produced by the alert evaluator.
   operator_alert: {
@@ -167,6 +168,8 @@ const MAILS: Array<{ id: string; template: TemplateName; langs: Array<"en" | "de
   { id: "beta-invite", template: "invite", langs: ["en"], states: [["default", () => FIXTURES.invite]] },
   { id: "confirm-address", template: "email_verification", langs: ["en", "de"],
     states: [["default", (lang) => ({ ...FIXTURES.email_verification, locale: lang, expiresIn: date(lang, "24 hours", "24 Stunden") })]] },
+  { id: "reset-password", template: "password_reset", langs: ["en", "de"],
+    states: [["default", (locale) => ({ ...FIXTURES.password_reset, locale })]] },
   { id: "account-exists", template: "account_exists", langs: ["en", "de"], states: [["default", (lang) => ({ ...FIXTURES.account_exists, locale: lang })]] },
   { id: "connect-mailbox", template: "connect_reminder", langs: ["en", "de"],
     states: (["other", "gmail", "microsoft"] as const).map((provider) => [provider, (lang) => ({ ...FIXTURES.connect_reminder, locale: lang, provider })]) },
@@ -178,6 +181,9 @@ const MAILS: Array<{ id: string; template: TemplateName; langs: Array<"en" | "de
     ...FIXTURES.security_notice, kind: "sign_in_slowed", locale: lang, at: date(lang, "26 September 2026, 12:00 UTC", "26. September 2026, 12:00 UTC") })]] },
   { id: "second-step-failed", template: "security_notice", langs: ["en", "de"], states: [["default", (lang) => ({
     ...FIXTURES.security_notice, locale: lang, at: date(lang, "26 September 2026, 12:00 UTC", "26. September 2026, 12:00 UTC") })]] },
+  { id: "password-changed", template: "security_notice", langs: ["en", "de"], states: [["default", (locale) => ({
+    kind: "password_changed", locale, resetUrl: "https://app.ohmail.app/forgot-password",
+    at: date(locale, "26 September 2026, 12:00 UTC", "26. September 2026, 12:00 UTC") })]] },
   { id: "trial-ends", template: "lifecycle_notice", langs: ["en", "de"], states: [
     ["default", lifecycle({ kind: "trial_two_days" })],
     ["no-mailbox", lifecycle({ kind: "trial_two_days", noMailbox: true })],
@@ -330,13 +336,14 @@ describe("the dark block holds nothing a client could fetch", () => {
 });
 
 describe("templates — the set is closed and complete", () => {
-  it("is exactly the thirteen templates — eleven customer mails and two operator mails", () => {
+  it("is exactly the fourteen templates — twelve customer mails and two operator mails", () => {
     expect(ALL).toEqual([
       "waitlist_confirmation", "invite", "new_device_signin",
       // The sign-in throttle's notices, argued at the definition: a closed kind, a time and the
       // support address — no caller prose, no capsule (there is no password rotation to point at).
       "security_notice",
       "email_verification",
+      "password_reset",
       // The pager needs a second delivery path that shares no infrastructure with the webhook,
       // and the closed-set guarantee (no free-form body can become outbound mail) is untouched by it.
       "operator_alert",
@@ -359,7 +366,7 @@ describe("templates — the set is closed and complete", () => {
 
   it("the state table covers every template, and every state the brand kit draws", () => {
     expect([...new Set(STATES.map((s) => s.template))].sort()).toEqual([...ALL].sort());
-    expect(CUSTOMER).toHaveLength(52);
+    expect(CUSTOMER).toHaveLength(56);
   });
 
   it("the closed-set guarantee still holds: no template can carry a free-form body", () => {
@@ -687,6 +694,11 @@ describe("templates — escaping and URL validation", () => {
     for (const s of STATES.filter((x) => ["new_device_signin", "security_notice"].includes(x.template))) {
       const doc = new JSDOM(render(s).html).window.document;
       expect(doc.querySelector("a.k"), s.id).toBeNull();
+      if (s.id.startsWith("password-changed.")) {
+        expect([...doc.querySelectorAll("a")].map((a) => a.getAttribute("href")))
+          .toEqual(["https://app.ohmail.app/forgot-password"]);
+        continue;
+      }
       for (const a of doc.querySelectorAll("a")) expect(a.getAttribute("href"), s.id).toMatch(/\/settings\/devices$|^mailto:/);
     }
   });
@@ -696,7 +708,7 @@ describe("German says Mail and Konto, never E-Mail, Account or Nachricht", () =>
   const de = STATES.filter((s) => s.lang === "de");
 
   it("in every German mail", () => {
-    expect(de).toHaveLength(22);
+    expect(de).toHaveLength(24);
     for (const s of de) {
       const { subject, text } = render(s);
       for (const part of [subject, text]) {

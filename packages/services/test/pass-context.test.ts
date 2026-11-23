@@ -2,7 +2,10 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { bindDb, bindingOf } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { passContext } from "../src/index.js";
+import {
+  passContext, runAccountLifecyclePass, runAwayResponderPass, runOwedSentCopyPass, runScheduledSendPass,
+  runSendReconcilePass, runStorageMailPass,
+} from "../src/index.js";
 
 /**
  * ONE ROW OF A PASS GETS ITS OWN CONTEXT, BOUND TO ITS OWN ACCOUNT.
@@ -81,4 +84,12 @@ describe("passContext", () => {
     expect(said).not.toContain(A);
     expect(said).not.toContain(B);
   });
+});
+
+it("every system pass refuses a keyed walk before reading or claiming anything", async () => {
+  const keyed = bindDb(store, { account: null, key: randomUUID() });
+  for (const run of [runAccountLifecyclePass, runAwayResponderPass, runOwedSentCopyPass,
+    runScheduledSendPass, runSendReconcilePass, runStorageMailPass]) {
+    await expect(run(keyed, {} as never), run.name).rejects.toMatchObject({ code: "binding_refused" });
+  }
 });

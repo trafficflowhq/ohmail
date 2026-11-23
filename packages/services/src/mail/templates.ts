@@ -145,22 +145,17 @@ function invite(d: InviteData): MailDoc {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Passkeys make a password-reset mail unnecessary; these notices make an unrecognised sign-in, or an
- * attack on one, visible. They contain **no link that changes state** and no capsule: a "this was not
- * me" button in a mail is a phishing template with our branding on it. The reader is pointed at the
- * app's own device list, which they reach the way they always do.
- *
- * A security notice (`AuthService.drainSecurityNotices`): a closed KIND, a time and configuration,
- * nothing a caller wrote; in the account's own language.
+ * A security notice uses a closed kind, a time and the app's own links, in the account's language.
+ * The links lead to pages where the reader can act on their own account.
  */
-export interface SecurityNoticeData {
-  kind: "sign_in_slowed" | "factor_refused";
+export type SecurityNoticeData = {
   at: string;
-  devicesUrl: string;
-  supportEmail: string;
   /** The account's own (`account_settings.locale`), English when unset. */
   locale?: MailLocale;
-}
+} & (
+  | { kind: "sign_in_slowed" | "factor_refused"; devicesUrl: string; supportEmail: string }
+  | { kind: "password_changed"; resetUrl: string }
+);
 
 const SECURITY_COPY: Record<MailLocale, {
   slowed: { subject: string; title: string; lines: (devices: string) => Run[][] };
@@ -217,8 +212,23 @@ const SECURITY_COPY: Record<MailLocale, {
 
 function securityNotice(d: SecurityNoticeData): MailDoc {
   const lang = loc(d.locale);
-  const url = safeUrl(d.devicesUrl);
   const c = SECURITY_COPY[lang];
+  if (d.kind === "password_changed") {
+    const de = lang === "de";
+    const subject = de ? "Dein ohmail-Passwort wurde geändert" : "Your ohmail password was changed";
+    const resetUrl = safeUrl(d.resetUrl);
+    return {
+      lang,
+      subject,
+      title: `${subject}.`,
+      blocks: [de
+        ? p("Wenn du das nicht warst, ", { link: "setz es jetzt zurück", href: resetUrl }, " und melde alle Geräte ab.")
+        : p("If this was not you, ", { link: "reset it now", href: resetUrl }, " and sign out everywhere."),
+      { facts: [[c.time, d.at]] }, strong(NEVER[lang])],
+      footer: [line(COMPANY[lang])],
+    };
+  }
+  const url = safeUrl(d.devicesUrl);
   const slowed = d.kind === "sign_in_slowed";
   const lines = slowed ? c.slowed.lines(url) : c.refused.lines(url, d.supportEmail);
   return {
@@ -301,6 +311,33 @@ function emailVerification(d: EmailVerificationData): MailDoc {
     ],
     action: { label: de ? "Adresse bestätigen" : "Confirm this address", url },
     footer: [noButton(lang, url), human(lang, d.supportEmail), line(COMPANY[lang])],
+  };
+}
+
+export interface PasswordResetData {
+  resetUrl: string;
+  locale?: MailLocale;
+}
+
+function passwordReset(d: PasswordResetData): MailDoc {
+  const lang = loc(d.locale);
+  const de = lang === "de";
+  const subject = de ? "Setz dein ohmail-Passwort zurück" : "Reset your ohmail password";
+  const url = safeUrl(d.resetUrl);
+  return {
+    lang,
+    subject,
+    title: subject,
+    blocks: de ? [
+      p({ link: "Passwort zurücksetzen", href: url }),
+      p("Der Link funktioniert 30 Minuten lang und nur einmal."),
+      p("Wenn du ihn nicht angefordert hast, ignoriere diese Mail. Dein Passwort bleibt unverändert."),
+    ] : [
+      p({ link: "Reset your password", href: url }),
+      p("It works for 30 minutes and only once."),
+      p("If you did not ask for it, ignore this mail: your password stays as it is."),
+    ],
+    footer: [line(COMPANY[lang])],
   };
 }
 
@@ -805,6 +842,7 @@ export interface TemplateDataMap {
   new_device_signin: NewDeviceSignInData;
   security_notice: SecurityNoticeData;
   email_verification: EmailVerificationData;
+  password_reset: PasswordResetData;
   operator_alert: OperatorAlertData;
   operator_digest: OperatorDigestData;
   account_exists: AccountExistsData;
@@ -825,6 +863,7 @@ const RENDERERS: { [K in TemplateName]: (data: TemplateDataMap[K]) => RenderedEm
   new_device_signin: framed(newDeviceSignIn),
   security_notice: framed(securityNotice),
   email_verification: framed(emailVerification),
+  password_reset: framed(passwordReset),
   operator_alert: operatorAlert,
   operator_digest: operatorDigest,
   account_exists: framed(accountExists),

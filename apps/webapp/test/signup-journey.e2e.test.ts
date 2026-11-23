@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { createApp, apiRoutes, makeProbeHostGuard, type ApiDeps } from "@trafficflow/api";
@@ -292,6 +292,9 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
   });
 
   it("the account, the mailed link, an authenticator and the codes bring a stranger to the mailbox step", async () => {
+    await resetPasswordJourney("en");
+    await resetPasswordJourney("de");
+    await newWorld();
     await signUp(page, person);
     // This host operates no entitlements program, so the plan step answers "entitled" and moves on.
     await page.getByRole("heading", { name: en.onboarding.providerFirst, exact: true }).waitFor({ timeout: 30_000 });
@@ -496,4 +499,67 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await fresh.close();
     }
   }, 120_000);
+
+  async function resetPasswordJourney(locale: "en" | "de") {
+    await newWorld();
+    const text = (locale === "en" ? en : de).passwordReset;
+    const origin = `http://localhost:${webPort}`;
+    const fresh = await browser!.newContext();
+    try {
+      await fresh.addCookies([{ name: "ohmail.locale", value: locale, url: origin }]);
+      const p = await fresh.newPage();
+      const email = personalAt("fixture.recovery", "family.example");
+      const registration = await p.request.post(`${origin}/api/auth/register`, {
+        headers: { origin }, data: { email, password: randomBytes(24).toString("base64url"), displayName: "Reader" },
+      });
+      expect(registration.status()).toBe(202);
+      await p.goto(`${origin}/login`);
+      await p.getByRole("link", { name: (locale === "en" ? en : de).login.forgotPassword }).click();
+      expect(new URL(p.url()).pathname).toBe("/forgot-password");
+      await p.getByRole("textbox", { name: text.emailLabel }).fill(email);
+      await p.getByRole("button", { name: text.send, exact: true }).click();
+      await p.getByText(text.expires, { exact: true }).waitFor();
+      const resend = async () => {
+        const [resent] = await Promise.all([
+          p.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/auth/password/reset")),
+          p.getByRole("button", { name: text.sendAgain }).click(),
+        ]);
+        expect(resent.status()).toBe(202);
+      };
+      await resend();
+      expect(world.mailer.ofTemplate("password_reset")).toHaveLength(1);
+      world.clock.advance(5 * 60_000);
+      await resend();
+      await p.getByText(text.expires, { exact: true }).waitFor();
+      const resetMails = world.mailer.ofTemplate("password_reset");
+      expect(resetMails).toHaveLength(2);
+      const mail = resetMails[1]!;
+      expect(mail.data.locale).toBe(locale);
+      const mailed = new URL(mail.data.resetUrl);
+      const openLink = () => p.goto(`${origin}${mailed.pathname}${mailed.search}`);
+      const response = await openLink();
+      expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
+      expect(response?.headers()["cache-control"]).toContain("no-store");
+      expect(response?.headers()["content-security-policy"]).toContain("'nonce-");
+      const password = randomBytes(24).toString("base64url");
+      const setPassword = async (repeat: string) => {
+        await p.getByLabel(text.passwordLabel, { exact: true }).fill(password);
+        await p.getByLabel(text.repeatLabel, { exact: true }).fill(repeat);
+        await p.getByRole("button", { name: text.setPassword, exact: true }).click();
+      };
+      await setPassword("a different phrase");
+      await p.getByText(text.mismatch, { exact: true }).waitFor();
+      expect(new URL(p.url()).searchParams.has("token")).toBe(false);
+      await setPassword(password);
+      await p.getByText(text.doneLine, { exact: true }).waitFor();
+      expect(await p.getByRole("link", { name: text.signIn }).getAttribute("href")).toBe("/login");
+      await openLink();
+      await setPassword(password);
+      await p.getByText(text.refusedLine, { exact: true }).waitFor();
+      await p.getByRole("link", { name: text.newLink }).click();
+      expect(new URL(p.url()).pathname).toBe("/forgot-password");
+    } finally {
+      await fresh.close();
+    }
+  }
 });

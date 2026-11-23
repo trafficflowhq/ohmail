@@ -65,6 +65,7 @@
     "joinInvite",
     "pairLanding",
     "verify",
+    "passwordReset",
     "authorizeDesktop",
     "approve",
     "linkDesktop",

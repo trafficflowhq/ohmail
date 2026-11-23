@@ -4,7 +4,7 @@ import { and, asc, eq, exists, gt, isNull, lt, sql } from "drizzle-orm";
 import { accounts, users, accountSettings, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import type { AccessLifecycle, AccessTrial, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
-import { bridgeTx, passContext, type Db, type UnboundDb } from "./context.js";
+import { bridgeTx, assertPassWalk, passContext, type Db, type PassContext, type PassRoster, type UnboundDb } from "./context.js";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import { deleteAccount } from "./account-deletion-service.js";
 import type { MailContext } from "./mail/index.js";
@@ -108,6 +108,7 @@ export interface LifecycleNoticeMailer {
 }
 
 export interface AccountLifecyclePassDeps {
+  roster?: PassRoster;
   /** The sign-in throttle keyer, so an erasure reaches the rows keyed by an address hash. */
   throttleKeys?: ThrottleKeys;
   /**
@@ -282,6 +283,7 @@ export function erasureDue(lc: AccessLifecycle, now: Date): boolean {
 export async function runAccountLifecyclePass(
   walk: UnboundDb, deps: AccountLifecyclePassDeps,
 ): Promise<AccountLifecyclePassResult> {
+  assertPassWalk(walk);
   const log = deps.log ?? silentLogger;
   const now = deps.now;
   const concurrency = deps.concurrency ?? 4;
@@ -314,8 +316,9 @@ export async function runAccountLifecyclePass(
   let after: string | null = deps.after ?? null;
   let done: string | null = after;
   let chunks = 0;
+  let offset = 0;
   for (;;) {
-    const page: Array<{ id: string }> = await walk
+    const selected: { id: string }[] = deps.roster ? await deps.roster(200, offset) : await walk
       .select({ id: accounts.id })
       .from(accounts)
       .where(and(
@@ -325,7 +328,11 @@ export async function runAccountLifecyclePass(
       ))
       .orderBy(asc(accounts.id))
       .limit(200);
-    if (page.length === 0) break;
+    if (selected.length === 0) break;
+    offset += selected.length;
+    const cursor = after;
+    const page = deps.roster && cursor !== null ? selected.filter((row) => row.id > cursor) : selected;
+    if (page.length === 0) continue;
     after = page[page.length - 1]!.id;
 
     for (let i = 0; i < page.length; i += concurrency) {
@@ -338,9 +345,15 @@ export async function runAccountLifecyclePass(
       done = chunk[chunk.length - 1]!.id;
       chunks += 1;
       await Promise.all(chunk.map(async ({ id }) => {
-        result.accounts += 1;
         const ofAccount = passContext(walk, id, { userId: null, now, requestId: `lifecycle:${id}` });
         try {
+          if (deps.roster) {
+            const [recipient] = await ofAccount.db.select({ id: users.id }).from(users)
+              .innerJoin(accounts, eq(users.accountId, accounts.id))
+              .where(and(eq(users.accountId, id), isNull(accounts.erasedAt))).limit(1);
+            if (!recipient) return;
+          }
+          result.accounts += 1;
           // AN ANSWER OR NOTHING: a notice sent on a remembered verdict can tell somebody who
           // subscribed again that their account is closing. An unanswered read skips the account
           // whole, and the next pass asks again; what it owes is claimed then, once, by the PK.
@@ -431,13 +444,28 @@ export type EraseOneOutcome =
 export async function eraseOneDueAccount(
   walk: UnboundDb, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, asked: string,
 ): Promise<EraseOneOutcome> {
-  const log = deps.log ?? silentLogger;
+  assertPassWalk(walk);
   const now = deps.now;
   const [named] = await walk.select({ id: accounts.id }).from(accounts)
     .where(eq(accounts.id, asked)).limit(1);
   if (!named) return "not_due";
-  const ctx = passContext(walk, named.id, { userId: null, now, requestId: randomUUID() });
-  const { db, accountId } = ctx;
+  return eraseDueAccount(passContext(walk, named.id, { userId: null, now, requestId: randomUUID() }), deps);
+}
+
+/** The shared-secret route supplies its validated target UUID. */
+export function eraseRequestedAccount(
+  walk: UnboundDb, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, accountId: string,
+): Promise<EraseOneOutcome> {
+  return eraseDueAccount(passContext(walk, accountId.toLowerCase(), { userId: null, now: deps.now, requestId: randomUUID() }), deps);
+}
+
+/** Recheck eligibility and the delivered warning under the account before erasing it. */
+async function eraseDueAccount(
+  ctx: PassContext,
+  deps: Pick<AccountLifecyclePassDeps, "port" | "log" | "throttleKeys">,
+): Promise<EraseOneOutcome> {
+  const { db, accountId, now } = ctx;
+  const log = deps.log ?? silentLogger;
   const [row] = await db.select({ erasedAt: accounts.erasedAt }).from(accounts)
     .where(eq(accounts.id, accountId)).limit(1);
   if (!row) return "not_due";
