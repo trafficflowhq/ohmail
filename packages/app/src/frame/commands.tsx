@@ -105,6 +105,7 @@ export interface FrameInner {
   readonly readerOpen?: number;
   readonly readerPosition: { current: ReaderPosition | null };
   readonly searchQuery: { current: string };
+  readonly ohboxSearchPosition: { current: { address: string; top: number } | null };
   /** Whether the whole rail stands over the app, and its setter (`commands.rail` is the same setter). */
   readonly railOpen: readonly [boolean, Dispatch<SetStateAction<boolean>>];
   /** The parts whose selection's bar stands now, by their own id. */
@@ -153,6 +154,10 @@ export function useDragFeed(): Feed<Dragging | null> {
 /** Search text kept for the lifetime of this account’s frame. */
 export function useSearchQuery() {
   return useInner().searchQuery;
+}
+
+export function useOhboxSearchPosition() {
+  return useInner().ohboxSearchPosition;
 }
 
 export function useCalendarInvitation() {

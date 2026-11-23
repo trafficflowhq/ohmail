@@ -56,7 +56,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { schema } from "@trafficflow/db/cloud";
 import { allowCookieAuthForRequest } from "./cookie-auth.js";
 import {
-  serverConfigOf, BODY_MAX_BYTES, SELF_HOST_SEND_MAX_TOTAL_BYTES,
+  serverConfigOf, configuredAiProvider, BODY_MAX_BYTES, SELF_HOST_SEND_MAX_TOTAL_BYTES,
   type ServerConfig, type StorageConfig,
 } from "./config.js";
 import { wiringOf, type Wiring } from "./differences.js";
@@ -608,7 +608,9 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
   // The model's two ports, built on first use: a client is a closure and a retry policy no
   // health probe needs.
   let ports: ReturnType<typeof serverAiPorts> | null = null;
-  const ai = (): ReturnType<typeof serverAiPorts> => (ports ??= serverAiPorts(aiEnvOf(cfg), onUsage));
+  const ai = (): ReturnType<typeof serverAiPorts> => (
+    ports ??= serverAiPorts(aiEnvOf(cfg), onUsage, fetch, cfg.ai?.kind === "metered-anthropic")
+  );
   // No adapter injected: a screener or approval decision leaves `folder_state` pending and the
   // ORGANIZER applies the IMAP move — one organizer per mailbox, and this program never opens IMAP
   // to apply organization. Suggestions are generated only on `POST /screener/suggest` over an
@@ -657,11 +659,9 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
 
 /** The model block as the provider reader's shape: the shipped Anthropic models, or the operator's choice. */
 function aiEnvOf(cfg: Wiring): { ai: AiProviderEnv | null; aiTimeoutMs: number | null } {
-  if (cfg.ai === null) return { ai: null, aiTimeoutMs: null };
-  if (cfg.ai.kind === "operator") return { ai: cfg.ai.env, aiTimeoutMs: cfg.ai.timeoutMs };
   return {
-    ai: { provider: "anthropic", apiKey: cfg.ai.apiKey, baseUrl: null, allowPrivate: false, classifyModel: null, draftModel: null },
-    aiTimeoutMs: null,
+    ai: configuredAiProvider(cfg.ai),
+    aiTimeoutMs: cfg.ai?.kind === "operator" ? cfg.ai.timeoutMs : null,
   };
 }
 
@@ -682,6 +682,7 @@ export function serverAiPorts(
   cfg: Pick<ServerConfig, "ai" | "aiTimeoutMs">,
   onUsage: (r: AnthropicCallReport) => void,
   fetchImpl: typeof fetch = fetch,
+  streamDrafts = false,
 ): { classifier?: ClassifierPort; drafter?: DraftPort } {
   const ai = cfg.ai;
   if (ai === null) return {};
@@ -694,7 +695,7 @@ export function serverAiPorts(
     });
     return {
       classifier: makeHaikuClassifier({ client: client(suggestMs), ...(ai.classifyModel ? { model: ai.classifyModel } : {}) }),
-      drafter: makeSonnetDrafter(client(draftMs), ai.draftModel ? { model: ai.draftModel } : {}),
+      drafter: makeSonnetDrafter(client(draftMs), { model: ai.draftModel ?? undefined, stream: streamDrafts }),
     };
   }
   return {

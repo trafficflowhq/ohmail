@@ -71,14 +71,14 @@ export function StoragePane({ facts, linksOut, change, mail }: {
         limit: size(facts.limitBytes), cap: size(facts.planLimitBytes), date: storageDayName(facts.limitDropsAt, locale), b,
       });
     }
-    return offer !== null
+    return offer?.current
       ? t.rich("storagePlanKeepsNamed", { plan: t("storagePlanName", { plan: offer.current.plan }), limit: size(facts.limitBytes), b })
       : t.rich("storagePlanKeeps", { limit: size(facts.limitBytes), b });
   };
   const price = (amount: number, interval = offer?.interval) => (offer === null ? "" : t(interval === "year" ? "storagePriceYear" : "storagePriceMonth", {
     price: formatStoragePrice(amount, offer.currency, locale),
   }));
-  const fitChanges = offer !== null && storageFitIsChange(offer);
+  const fit = offer !== null && storageFitIsChange(offer) ? offer.fit : null;
   const changes = linksOut && change !== null && offer !== null && offer.canChange;
   const refill = storageRefillOf(roster);
 
@@ -154,9 +154,9 @@ export function StoragePane({ facts, linksOut, change, mail }: {
       {offer !== null ? (
         <SettingsSheet title={t("storagePlansHead")}>
           {offer.plans.map((p) => {
-            const fitted = fitChanges && offer.fit.plan === p.plan;
+            const fitted = fit?.plan === p.plan ? fit : null;
             const extra = fitted ? storageFitExtraBytes(offer) : null;
-            const tag = fitted && offer.fit.keepsAll ? t("storageTagFits") : p.plan === offer.current.plan ? t("storageTagYours") : undefined;
+            const tag = fitted?.keepsAll ? t("storageTagFits") : p.plan === offer.current?.plan ? t("storageTagYours") : undefined;
             return (
               <SettingLine
                 key={p.plan}
@@ -167,9 +167,9 @@ export function StoragePane({ facts, linksOut, change, mail }: {
                 description={[
                   t("storageLetters", { count: estimatedEmails(p.roomBytes) }),
                   t("storageMailboxes", { count: p.mailboxes }),
-                  ...(extra === null ? [] : [linksOut
-                    ? t("storageFitWith", { extra: `+${size(extra)}`, room: size(offer.fit.roomBytes), price: price(offer.fit.amount) })
-                    : t("storageFitWithStore", { extra: `+${size(extra)}`, room: size(offer.fit.roomBytes) })]),
+                  ...(extra === null || fitted === null ? [] : [linksOut
+                    ? t("storageFitWith", { extra: `+${size(extra)}`, room: size(fitted.roomBytes), price: price(fitted.amount) })
+                    : t("storageFitWithStore", { extra: `+${size(extra)}`, room: size(fitted.roomBytes) })]),
                 ].join(" · ")}
               />
             );

@@ -145,10 +145,10 @@ export interface StorageOffer {
   currency: string;
   interval: (typeof PLAN_HINT_INTERVALS)[number];
   plans: StorageOfferPlan[];
-  /** The storage add-on: the room one unit adds, its price and how many one account may hold. */
+  /** One unit's room and price, with the unit cap. The price is quoted in `interval` when stated, else the plan interval. */
   addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
-  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" };
-  fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
+  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" } | null;
+  fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean } | null;
   canChange: boolean;
   reason: string | null;
 }
@@ -164,7 +164,7 @@ export interface StorageTold {
 export type AccessVerdict =
   | {
     ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices; trial?: AccessTrial;
-    trialStorage?: TrialStorageCarry; storageOffer?: StorageOffer; storageTold?: StorageTold;
+    trialStorage?: TrialStorageCarry; storageOffer?: StorageOffer | null; storageTold?: StorageTold;
     /** Current permission to use already admitted AI work, independent of remaining balance. */
     dispatchAiEnabled?: boolean;
     aiCredits?: { remaining: number; total?: number };

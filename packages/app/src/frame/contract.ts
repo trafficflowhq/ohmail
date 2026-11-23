@@ -237,8 +237,8 @@ export { NOTICE_RANK, type NoticeKind } from "./notice-rank.js";
  * reads nothing. `replace`: the address is replaced, not pushed, and Back does not come back to the one it replaced.
  */
 export interface GoHow {
-  /** Opening a dialog remembers its history entry. Dismiss returns to its opener, or uses the given route for a direct link. */
-  readonly history?: "open-dialog" | "dismiss-dialog";
+  /** A pushed dialog or preview can return to its opener on dismiss. Direct links replace the current entry. */
+  readonly history?: "open-dialog" | "dismiss-dialog" | "preview" | "dismiss-preview";
   readonly entered?: true;
   readonly replace?: true;
 }

@@ -17,7 +17,12 @@ import {
   runOwnVerb,
   type VerbWords,
 } from "@ohmail/app-logic/reader";
-import { ListMoveContext, type ListVisit, type ThreadReadWiring } from "@ohmail/app-logic/reading";
+import {
+  ListMeetingContext,
+  ListMoveContext,
+  type ListVisit,
+  type ThreadReadWiring,
+} from "@ohmail/app-logic/reading";
 import type { MessageAction, MoveTarget } from "@ohmail/app-logic/press/actions";
 import { useFrame } from "../../frame/commands.js";
 import { useOwnAddresses, usePressWhereOn, useResurfaceTime } from "../../frame/room.js";
@@ -119,6 +124,7 @@ export function useVerbs(
   /* The seam is taken only where an own verb may run: a list's visit runs every verb on the list's path. */
   const press = usePressWhereOn();
   const listMove = useContext(ListMoveContext);
+  const afterAction = useContext(ListMeetingContext)?.afterAction;
   const { commands, host, route } = useFrame();
   const answer = useAnswer();
   const drafter = useDrafter();
@@ -177,6 +183,7 @@ export function useVerbs(
       return;
     }
     if (listMove && action.startsWith("move:")) {
+      afterAction?.(message);
       listMove(message, action.slice("move:".length) as MoveTarget);
       return;
     }
@@ -197,8 +204,7 @@ export function useVerbs(
       return;
     }
     const acted = runOwnVerb(press, words, action, message, whenLabel);
-    /* The person's own Delete leaves the letter, as today's reader does; its Undo brings it back on reopening. */
-    if (action === "delete" && acted) commands.open(null);
+    if (acted && !afterAction?.(message) && action === "delete") commands.open(null);
   };
   const tagVerbs = useTagVerbs(message, press);
   const moves = (visit !== null || listMove !== null) && message !== null ? moveTargetsOf(message) : [];

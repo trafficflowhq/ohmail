@@ -1509,6 +1509,7 @@ const TABLE = {
   draftAiLetterLeft: "The draft is in Drafts.",
   draftAiFailedOpaque: "The draft was written but could not be loaded. Pressing again fetches the same one — it does not buy a second.",
   draftAiFailedOpaqueEarly: "Something went wrong on the server and no draft was made. Pressing again retries this request, and it is never charged twice.",
+  draftAiCreditsUsed: "The draft stopped. Your credits were used.",
   draftAiCreditsReturned: "This did not work. Your credits are back.",
   draftAiCreditsOwed: "This did not work. Your credits will be returned.",
   draftAiDeclined: "The model declined to draft this reply.",

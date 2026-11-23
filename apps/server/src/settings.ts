@@ -268,7 +268,7 @@ function loadEntitlements(env: NodeJS.ProcessEnv, metering: Chosen["metering"]):
  * The listed origins: `TF_AUTH_ORIGINS` + `TF_RP_ID`, the compiled cookie hosts, `TF_APP_URL`, and
  * with them how later accounts arrive (the bootstrap invite set, open sign-up and its cap).
  */
-function listedOrigins(env: NodeJS.ProcessEnv, environment: string): Settings["origin"] {
+function listedOrigins(env: NodeJS.ProcessEnv, environment: string, autoSuggestAtSignup: boolean): Settings["origin"] {
   const origins = csv(env.TF_AUTH_ORIGINS);
   // Read before the validator runs: each of these refuses in its own words.
   const inviteCodes = assertBootstrapInvites(env, environment);
@@ -283,6 +283,7 @@ function listedOrigins(env: NodeJS.ProcessEnv, environment: string): Settings["o
       inviteCodes,
       publicSignup: trimmed(env, "TF_PUBLIC_SIGNUP") === "1",
       publicSignupCap: cap,
+      autoSuggestAtSignup,
     });
   } catch {
     // The validator quotes what it refused, and a value pasted here can carry a password: the
@@ -490,7 +491,9 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
 
   // How later accounts arrive (`signup`) is read with the listed origins: one origin has pairing
   // invites and nothing to configure.
-  const origin = chosen.origin === "one-origin" ? oneOrigin(env) : listedOrigins(env, environment);
+  const origin = chosen.origin === "one-origin"
+    ? oneOrigin(env)
+    : listedOrigins(env, environment, chosen.ai === "metered");
 
   const database: DatabaseSettings = chosen.database === "owned"
     ? ownedDatabase(env)

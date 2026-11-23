@@ -22,15 +22,17 @@ export function SearchAbove({
   blank: ListBlank | null;
   children: ReactNode;
 }) {
+  const { afterAction } = model;
   const label = blank?.label;
   const hot = blank?.hot;
   const meeting: ListMeeting = useMemo(
     () => ({
       visit: null,
       archiveHit,
+      afterAction,
       blank: label === undefined || hot === undefined ? null : { label, hot },
     }),
-    [archiveHit, label, hot],
+    [archiveHit, afterAction, label, hot],
   );
   return (
     <SearchModelContext.Provider value={model}>

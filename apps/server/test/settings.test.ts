@@ -63,6 +63,11 @@ describe("a configuration says which service it is by the name that leads it", (
     expect(loadSettings(env(MANAGED_ENV), PROCESS_DOOR).managed).toBe(true);
   });
 
+  it("enables automatic Screener suggestions at signup for the managed service", () => {
+    expect(loadSettings(env(MANAGED_ENV), PROCESS_DOOR).origin.authConfig.autoSuggestAtSignup).toBe(true);
+    expect(loadSettings(env(PLAIN_ENV), PROCESS_DOOR).origin.authConfig.autoSuggestAtSignup).toBe(false);
+  });
+
   it("both leads refuse, and neither: a configuration that lost its lead never starts as the other service", () => {
     const both = refusal(env(PLAIN_ENV, MANAGED_ENV));
     expect(both).toContain("OHMAIL_ORIGIN");

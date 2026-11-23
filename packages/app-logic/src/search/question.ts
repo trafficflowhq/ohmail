@@ -90,8 +90,12 @@ export interface Question {
  * A person, unread and the days, held only where the host's server takes them: elsewhere the question is the words
  * and the facet. Undefined where nothing is set, so a question with none is the request this build always sent.
  */
-export function useQuestion(searchBy: SearchBy, pressed: Pressed): Question {
-  const [own, setNarrowing] = useState<SearchNarrowing>(NO_NARROWING);
+export function useQuestion(
+  searchBy: SearchBy,
+  pressed: Pressed,
+  initial: () => SearchNarrowing = () => NO_NARROWING,
+): Question {
+  const [own, setNarrowing] = useState(initial);
   const narrowing = searchBy === "people" ? own : NO_NARROWING;
   const storeFilters = useMemo((): ServerSearchFilters | undefined => {
     const both = { ...storeFiltersOf(pressed), ...filtersOf(narrowing, searchBy) };

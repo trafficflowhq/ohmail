@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useFrame } from "@ohmail/app/frame";
 import { message, mountShell, stubDom, unmountAll } from "./_draft-shell.js";
 
 function rect(top: number, height: number): DOMRect {
@@ -52,18 +53,18 @@ async function arrange(view: "receipts" | "reads", more = 0, { port = 860, at = 
     const id = `RC${String(5 + more - i).padStart(2, "0")}`;
     return message(id, { folder, date, arrivedAt: date, unread: true, subject: `Purchase ${id}` });
   });
-  const hit = letters[at]!;
-  const target = hit.id;
-  const { sent, el } = await mountShell("#/search", letters, [], {
-    prepareEngine(engine) {
-      const search = engine.search.bind(engine);
-      engine.search = (query, options) => ({
-        ...search(query, options),
-        items: [{ message: hit, score: 10, matches: [] }],
-        similar: [],
-        tier: "exact",
-        indexing: false,
-      });
+  const target = letters[at]!.id;
+  function ChooseStreamLetter() {
+    const { commands } = useFrame();
+    return (
+      <button type="button" onClick={() => commands.go({ place: news ? "news" : "receipts", open: target }, { entered: true })}>
+        Open stream letter
+      </button>
+    );
+  }
+  const { sent } = await mountShell("#/search", letters, [], {
+    places: {
+      search: { id: "search", body: "search", rail: null, panes: { kind: "wide", Wide: ChooseStreamLetter } },
     },
   });
   const heads = new Map<string, number>();
@@ -141,10 +142,8 @@ async function arrange(view: "receipts" | "reads", more = 0, { port = 860, at = 
   });
   const arrive = async (onLayout?: typeof whenLaidOut) => {
     whenLaidOut = onLayout;
-    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: hit.subject } });
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     await act(async () => {
-      fireEvent.click(within(el).getByText(hit.subject!));
+      fireEvent.click(screen.getByRole("button", { name: "Open stream letter" }));
       window.dispatchEvent(new Event("hashchange"));
       await vi.advanceTimersByTimeAsync(0);
     });

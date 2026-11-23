@@ -1345,24 +1345,29 @@ describe("access — the trialStorage block", () => {
   }
 });
 
-describe("access — the storage offer and the confirmed decrease (cloud 0057's open half)", () => {
+describe("access — the storage offer and the confirmed decrease", () => {
   const NEED = { expectedBytes: 12_500_000_000, expectedLetters: 500_000, importing: true };
   const OFFER = {
-    currency: "usd", interval: "month",
-    plans: [
-      { plan: "solo", mailboxes: 2, roomBytes: 2_000_000_000, amount: 900 },
-      { plan: "plus", mailboxes: 5, roomBytes: 5_000_000_000, amount: 1_500 },
-      { plan: "pro", mailboxes: 10, roomBytes: 10_000_000_000, amount: 2_900 },
-    ],
-    addon: { unitBytes: 10_000_000_000, amount: 1_000, maxUnits: 10 },
+    card: {
+      currency: "usd", interval: "month",
+      plans: [
+        { plan: "solo", mailboxes: 2, storageBytes: 2_000_000_000, priceMinor: 900 },
+        { plan: "plus", mailboxes: 5, storageBytes: 5_000_000_000, priceMinor: 1_500 },
+        { plan: "pro", mailboxes: 10, storageBytes: 10_000_000_000, priceMinor: 2_900 },
+      ],
+      storageUnit: { bytes: 10_000_000_000, priceMinor: 1_000, interval: "month", maxUnits: 10 },
+    },
     current: { plan: "solo", addonUnits: 0, roomBytes: 4_000_000_000, roomFrom: "now" },
-    fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, amount: 2_500, keepsAll: true },
+    fit: {
+      plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, mailboxes: 5,
+      planPriceMinor: 1_500, storagePriceMinor: 1_000, keepsAll: true,
+    },
     canChange: true, reason: null,
   };
   const withBlocks = (blocks: Record<string, unknown>): Record<string, unknown> =>
     ({ ...(wire("access-200-trialing") as Record<string, unknown>), ...blocks });
 
-  it("reads the billing program's nested offer and its monthly storage add-on on a yearly plan", async () => {
+  it("reads the billing program's nested offer and quotes its storage add-on for the year", async () => {
     const c = client([{ status: 200, body: withBlocks({ storageOffer: {
       card: {
         currency: "usd", interval: "year",
@@ -1370,7 +1375,7 @@ describe("access — the storage offer and the confirmed decrease (cloud 0057's 
         storageUnit: { bytes: 10_000_000_000, priceMinor: 1_000, interval: "month", maxUnits: 10 },
       },
       current: { ...OFFER.current, plan: "plus" },
-      fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, planPriceMinor: 15_000,
+      fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, mailboxes: 5, planPriceMinor: 15_000,
         storagePriceMinor: 1_000, keepsAll: true },
       canChange: true, reason: null,
     } }) }]);
@@ -1378,7 +1383,7 @@ describe("access — the storage offer and the confirmed decrease (cloud 0057's 
     expect(v.ok && v.storageOffer).toMatchObject({
       interval: "year", canChange: true,
       plans: [{ plan: "plus", mailboxes: 5, roomBytes: 5_000_000_000, amount: 15_000 }],
-      addon: { unitBytes: 10_000_000_000, amount: 1_000, interval: "month", maxUnits: 10 },
+      addon: { unitBytes: 10_000_000_000, amount: 12_000, interval: "year", maxUnits: 10 },
       fit: { amount: 27_000 },
     });
     expect(c.faults).toEqual([]);
@@ -1388,11 +1393,80 @@ describe("access — the storage offer and the confirmed decrease (cloud 0057's 
     const c = client([{ status: 200, body: withBlocks({ storageOffer: { ...OFFER, extra: "dropped" } }) }]);
     const v = await c.port.access(ACC, { fresh: true, storageNeed: NEED });
     expect(JSON.parse(c.bodies[0]!)).toEqual({ accountId: ACC, storageNeed: NEED });
-    expect(v.ok && v.storageOffer).toEqual(OFFER);
+    expect(v.ok && v.storageOffer).toEqual({
+      currency: "usd", interval: "month",
+      plans: [
+        { plan: "solo", mailboxes: 2, roomBytes: 2_000_000_000, amount: 900 },
+        { plan: "plus", mailboxes: 5, roomBytes: 5_000_000_000, amount: 1_500 },
+        { plan: "pro", mailboxes: 10, roomBytes: 10_000_000_000, amount: 2_900 },
+      ],
+      addon: { unitBytes: 10_000_000_000, amount: 1_000, interval: "month", maxUnits: 10 },
+      current: OFFER.current,
+      fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, amount: 2_500, keepsAll: true },
+      canChange: true, reason: null,
+    });
     expect(c.faults).toEqual([]);
     // A read without the need asks for nothing more than it always did.
     await c.port.access(ACC, { fresh: true });
     expect(JSON.parse(c.bodies[1]!)).toEqual({ accountId: ACC });
+  });
+
+  it("keeps an unpriced trial's card without a current plan, fit or storage unit", async () => {
+    const storageOffer = {
+      card: { ...OFFER.card, plans: [], storageUnit: null },
+      current: null, fit: null, canChange: false, reason: "no_subscription",
+    };
+    const c = client([{ status: 200, body: withBlocks({ storageOffer }) }]);
+    await expect(c.port.access(ACC, { storageNeed: NEED })).resolves.toMatchObject({
+      ok: true,
+      storageOffer: {
+        currency: "usd", interval: "month", plans: [], addon: null,
+        current: null, fit: null, canChange: false, reason: "no_subscription",
+      },
+    });
+    expect(c.faults).toEqual([]);
+  });
+
+  it("quotes the storage unit and the fitted price in the yearly plan's interval", async () => {
+    const storageOffer = {
+      ...OFFER,
+      card: {
+        ...OFFER.card, interval: "year",
+        plans: [{ ...OFFER.card.plans[1], priceMinor: 15_000 }],
+      },
+      fit: { ...OFFER.fit, planPriceMinor: 15_000, storagePriceMinor: 1_000 },
+    };
+    const c = client([{ status: 200, body: withBlocks({ storageOffer }) }]);
+    await expect(c.port.access(ACC, { storageNeed: NEED })).resolves.toMatchObject({
+      ok: true,
+      storageOffer: {
+        interval: "year",
+        plans: [{ plan: "plus", amount: 15_000 }],
+        addon: { amount: 12_000, interval: "year" },
+        fit: { addonUnits: 1, amount: 27_000 },
+      },
+    });
+    expect(c.faults).toEqual([]);
+  });
+
+  it("keeps the effective mailbox limit and credit allowance alongside an extended offer", async () => {
+    const trial = withBlocks({});
+    const storageOffer = {
+      ...OFFER,
+      card: { ...OFFER.card, mailboxUnit: { priceMinor: 300, interval: "month", maxUnits: 10 } },
+      current: { ...OFFER.current, addonMailboxes: 2 },
+      fit: { ...OFFER.fit, mailboxes: 7 },
+    };
+    const body = withBlocks({
+      storageOffer, balance: 40, creditAllowance: 100,
+      entitlements: { ...trial.entitlements as object, mailboxLimit: 4 },
+    });
+    const c = client([{ status: 200, body }]);
+    await expect(c.port.access(ACC, { storageNeed: NEED })).resolves.toMatchObject({
+      ok: true, limits: { mailboxes: 4 }, aiCredits: { remaining: 40, total: 100 },
+      storageOffer: { fit: { amount: 2_500 } },
+    });
+    expect(c.faults).toEqual([]);
   });
 
   it("a read carrying the need never rides a call in flight that did not ask", async () => {
@@ -1407,20 +1481,46 @@ describe("access — the storage offer and the confirmed decrease (cloud 0057's 
   });
 
   for (const [what, block, field] of [
-    ["a price that is not a whole count", { ...OFFER, fit: { ...OFFER.fit, amount: 25.5 } }, "storageOffer.fit"],
-    ["an unknown plan", { ...OFFER, plans: [{ plan: "gold", mailboxes: 1, roomBytes: 1, amount: 1 }] }, "storageOffer.plans"],
-    ["a currency that is not a code", { ...OFFER, currency: "US dollars" }, "storageOffer.currency"],
+    ["a price that is not a whole count", { ...OFFER, fit: { ...OFFER.fit, storagePriceMinor: 25.5 } }, "storageOffer.fit"],
+    ["an unknown plan", { ...OFFER, card: { ...OFFER.card, plans: [{ ...OFFER.card.plans[0], plan: "gold" }] } }, "storageOffer.card.plans"],
+    ["a currency that is not a code", { ...OFFER, card: { ...OFFER.card, currency: "US dollars" } }, "storageOffer.card.currency"],
+    ["an unreadable storage unit", { ...OFFER, card: { ...OFFER.card, storageUnit: { ...OFFER.card.storageUnit, interval: "year" } } }, "storageOffer.card.storageUnit"],
     ["a reason in prose", { ...OFFER, canChange: false, reason: "Your payment is overdue." }, "storageOffer.reason"],
     ["a block that is not an object", [OFFER], "storageOffer"],
   ] as const) {
     it(`${what} is a drift, named, read as no offer — and the verdict stands`, async () => {
-      const c = client([{ status: 200, body: withBlocks({ storageOffer: block }) }]);
+      const c = client([
+        { status: 200, body: withBlocks({ storageOffer: OFFER }) },
+        { status: 200, body: withBlocks({ storageOffer: block, balance: 42, creditAllowance: 100 }) },
+      ]);
+      await c.port.access(ACC, { storageNeed: NEED });
       const v = await c.port.access(ACC, { fresh: true, storageNeed: NEED });
-      expect(v.ok).toBe(true);
-      expect("storageOffer" in v).toBe(false);
-      expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field }]);
+      expect(v).toMatchObject({
+        ok: true, limits: { mailboxes: 1, storageBytes: 5_000_000_000, aiEnabled: true },
+        aiCredits: { remaining: 42, total: 100 }, storageOffer: null,
+      });
+      expect(await c.port.access(ACC)).toEqual(v);
+      expect(c.port.accessFaults!()).toBe(0);
+      expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field, verdictKept: true }]);
     });
   }
+
+  it("uses the last verdict when a required entitlement is unreadable, even with an offer", async () => {
+    const trial = withBlocks({});
+    const bad = withBlocks({
+      storageOffer: OFFER,
+      entitlements: { ...trial.entitlements as object, mailboxLimit: "unknown" },
+    });
+    const c = client([
+      { status: 200, body: withBlocks({ storageOffer: OFFER }) },
+      { status: 200, body: bad },
+    ]);
+    const held = await c.port.access(ACC, { storageNeed: NEED });
+    expect(held).toMatchObject({ ok: true, storageOffer: { fit: { amount: 2_500 } } });
+    await expect(c.port.access(ACC, { storageNeed: NEED })).resolves.toEqual(held);
+    expect(c.port.accessFaults!()).toBe(1);
+    expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field: "entitlements.mailboxLimit" }]);
+  });
 
   it("the confirmed decrease rides every answer; one that cannot be read is a drift and none", async () => {
     const told = { planBytesLimit: 2_000_000_000, at: "2026-11-07T10:00:00.000Z" };

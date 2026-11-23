@@ -48,7 +48,7 @@ export function SearchResults({
       data-index={i}
       aria-setsize={placed ? model.setSize : undefined}
       aria-posinset={placed ? i + 1 : undefined}
-      aria-current={i === model.cursor ? "true" : undefined}
+      aria-current={(openId === null ? i === model.cursor : hit.message.id === openId) ? "true" : undefined}
       data-similar={similar ? "hit" : undefined}
     >
       <SearchHitRow
@@ -62,11 +62,24 @@ export function SearchResults({
       />
     </div>
   );
-  const sort = <SearchSort model={model} />;
-  const heading = (hot: boolean) => (
-    <GroupHeading count={count} aside={sort} hot={hot}>
-      {model.similar ? t("similarHead") : t("results")}
-    </GroupHeading>
+  const group = (rows: ReactNode[], similar: boolean, hot: boolean, leading: boolean, placed: boolean) => (
+    <Fragment key={similar ? "similar" : "exact"}>
+      <GroupHeading
+        count={leading ? count : undefined}
+        aside={leading ? <SearchSort model={model} /> : undefined}
+        hot={hot}
+      >
+        {similar ? t("similarHead") : t("results")}
+      </GroupHeading>
+      {similar && model.partsSaid ? <ListLine fine>{t("saidPart")}</ListLine> : null}
+      <Rows listLabel={similar && !placed ? t("similarHead") : t("aria")}>
+        {placed ? <div aria-hidden data-window-top="" style={{ height: model.window.padTop }} /> : null}
+        {rows}
+        {placed && model.window.padBottom > 0 ? (
+          <div aria-hidden style={{ height: model.window.padBottom }} />
+        ) : null}
+      </Rows>
+    </Fragment>
   );
 
   if (model.listing === "store") {
@@ -87,17 +100,7 @@ export function SearchResults({
         slots.push(item(s.hit, i, model.similar, true));
       }
     }
-    return (
-      <>
-        {heading(hot)}
-        {model.similarFrom !== null && model.partsSaid ? <ListLine fine>{t("saidPart")}</ListLine> : null}
-        <Rows listLabel={t("aria")}>
-          <div aria-hidden data-window-top="" style={{ height: model.window.padTop }} />
-          {slots}
-          {model.window.padBottom > 0 ? <div aria-hidden style={{ height: model.window.padBottom }} /> : null}
-        </Rows>
-      </>
-    );
+    return <>{group(slots, model.similar, hot, true, true)}</>;
   }
   /* THE DEVICE'S PAINT, whole: the matches under Results, then the closest words under their own heading. */
   const exact: ReactNode[] = [];
@@ -114,25 +117,8 @@ export function SearchResults({
   }
   return (
     <>
-      {exact.length > 0 ? (
-        <>
-          {heading(exactHot)}
-          <Rows listLabel={t("aria")}>{exact}</Rows>
-        </>
-      ) : null}
-      {near.length > 0 ? (
-        <Fragment key="similar">
-          <GroupHeading
-            hot={nearHot}
-            count={exact.length === 0 ? count : undefined}
-            aside={exact.length === 0 ? sort : undefined}
-          >
-            {t("similarHead")}
-          </GroupHeading>
-          {model.partsSaid ? <ListLine fine>{t("saidPart")}</ListLine> : null}
-          <Rows listLabel={t("similarHead")}>{near}</Rows>
-        </Fragment>
-      ) : null}
+      {exact.length > 0 ? group(exact, false, exactHot, true, false) : null}
+      {near.length > 0 ? group(near, true, nearHot, exact.length === 0, false) : null}
     </>
   );
 }

@@ -4,9 +4,10 @@ import { randomInt, randomUUID } from "node:crypto";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
-  markFenced, accountOfUser, assertBinding, bindDb, onServerPool, rebindTx, BINDING_KEY_MAX, type Tx,
+  markFenced, accountOfUser, assertBinding, bindDb, onServerPool, rebindTx, BINDING_KEY_MAX, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import { recordSettingsChange } from "../consent-seed.js";
 import { createLogger } from "@trafficflow/core/mail";
 import {
   credentials,
@@ -861,6 +862,12 @@ export class AuthService extends SessionLifecycle {
       await tx.insert(accounts).values({ id: accountId, name: b.displayName });
       // FENCED BY CREATION: no erasure can stamp a row before the transaction that inserts it commits.
       markFenced(accountDb, accountId);
+      if (this.cfg.autoSuggestAtSignup) {
+        const settingsTx = bridgeTx(accountDb) as LedgerTx;
+        const now = ctx.now();
+        await settingsTx.insert(accountSettings).values({ accountId, autoSuggestAt: now, updatedAt: now });
+        await recordSettingsChange(settingsTx, accountId);
+      }
       const [user] = await tx.insert(users).values({
         accountId, email, displayName: b.displayName,
         // #9 — a consumed ROW that PROVES control is the only thing that stamps: mailed invites

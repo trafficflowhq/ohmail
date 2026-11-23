@@ -35,6 +35,7 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   // acquires by being constructed. Every existing test therefore keeps its exact behaviour
   // without opting out of anything.
   publicSignup: false,
+  autoSuggestAtSignup: false,
   publicSignupCap: null,
   oauthClients: { "tf-macos": { redirectUris: ["trafficflow://auth"] } },
   accessTtlMs: 15 * MIN,

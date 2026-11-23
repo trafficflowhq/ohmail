@@ -1,7 +1,7 @@
 import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
-  carryBinding, claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, recordChanges,
+  carryBinding, claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, recordChanges, settleIdempotencyKey,
   threads, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -40,6 +40,7 @@ export interface DraftCreateIdempotency {
   key: string;
   requestHash: string;
   responseStatus: number;
+  pending?: boolean;
   /**
    * `draft` is the row MATERIALIZED IN-TX, for the route whose response is the DTO itself
    * (`POST /drafts` answers 201 + the draft): a replay hands back the stored JSON verbatim,
@@ -262,7 +263,8 @@ export class DraftsService {
         inTx = await materializeDraft(carryBinding(ctx.db, tx), ctx.accountId, row!.id);
         if (!inTx) throw new ServiceError("internal", 500, "draft vanished inside its own transaction");
         const draft = inTx;
-        const claimed = await claimIdempotencyKey(tx, {
+        const saveReceipt = opts.idempotency.pending ? settleIdempotencyKey : claimIdempotencyKey;
+        const claimed = await saveReceipt(tx, {
           accountId: ctx.accountId,
           key: opts.idempotency.key,
           requestHash: opts.idempotency.requestHash,

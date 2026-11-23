@@ -3,6 +3,7 @@
  * (`SearchPerson`) and its days (`SearchDates`), how every pass ends (`SearchVerdict`), what stands in each slot of
  * the one list (`SearchSlot`), and the model the behaviour hands back (`SearchListModel`). No markup.
  */
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import type { RefObject } from "react";
 import type {
   AddressBookEntry,
@@ -94,7 +95,16 @@ export interface SearchListInput {
   readonly scope: StorageScope | false;
   readonly query: string;
   readonly onQuery: (q: string) => void;
-  readonly onOpen: (hit: SearchHit) => void;
+  readonly onOpen: (hit: SearchHit, words: Readonly<Record<string, string>>, entered?: boolean) => void;
+  readonly onRefine?: (words: Readonly<Record<string, string>>) => void;
+  /** Routing and deletes held for Undo by the shared reader. */
+  readonly holds?: { readonly held: ReadonlySet<string>; readonly places: ReadonlyMap<string, Folder> };
+  readonly linkWords?: Readonly<Record<string, string>>;
+  readonly openId?: string | null;
+  /** Arrow and letter keys follow the preview when the list is beside it. */
+  readonly walkPreview?: boolean;
+  readonly closePreview?: () => void;
+  readonly dismissPreview?: () => void;
   /** Escape's second press: back to where Search was opened; `none` stops at clearing the box. */
   readonly onExit: (() => void) | "none";
   /** The box, where the caret is put back. */
@@ -197,6 +207,7 @@ export interface SearchListModel {
   setDate(date: SearchDates | null): void;
   /** A result pressed: the host opens it. */
   open(hit: SearchHit): void;
+  afterAction(message: EngineMessage): boolean;
   /** The person typed: the text handed on; a pressed facet is let go, but for the place and the files where a person may be set. */
   type(q: string): void;
   /** Enter: the question is asked at once. */

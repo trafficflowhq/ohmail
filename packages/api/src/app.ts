@@ -1,6 +1,7 @@
 import { isUuid } from "@trafficflow/services/mail";
 import { ownerCookieValue } from "./cookies.js";
 import type { ApiDeps } from "./deps.js";
+import { draftStream } from "./draft-stream.js";
 import { errorResponse } from "./responses.js";
 import { firstMisshapenQuery } from "./query-bounds.js";
 import { matchRoute, type Handler, type Route, type RouteParams } from "./router.js";
@@ -258,5 +259,8 @@ async function dispatch(
   }
   const composed = pipelineFor(m.route)
     .reduceRight<Handler>((next, mw) => mw(next, m.route), m.route.handler);
-  return { res: await composed(req, deps, m.params), route: m.route };
+  const run = () => composed(req, deps, m.params);
+  const streamDraft = req.headers.get("accept") === "application/x-ndjson" &&
+    (m.route.pattern === "/messages/:id/draft" || m.route.pattern === "/drafts/from-text");
+  return { res: await (streamDraft ? draftStream(deps, run) : run()), route: m.route };
 }

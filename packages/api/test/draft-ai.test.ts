@@ -25,6 +25,53 @@ function mockDrafter(): DraftPort & { calls: number; inputs: DraftInput[] } {
 }
 
 describe("POST /messages/:id/draft — AI draft-from-history (Phase 3b)", () => {
+  it("streams provisional words, then returns the saved draft and replays its receipt", async () => {
+    let finish!: () => void;
+    const writing = new Promise<void>((resolve) => { finish = resolve; });
+    let calls = 0;
+    const drafter: DraftPort = {
+      async draft(_input, options) {
+        calls++;
+        options?.onPreview?.("Hello");
+        await writing;
+        return { body: "Hello again.", subject: "Re: Hello", rationale: "" };
+      },
+    };
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
+    const session = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: session.accountId });
+    const { id } = await seedMessage(db, { accountId: session.accountId, mailboxId });
+    const buy = () => H(req("POST", `/messages/${id}/draft`, {
+      bearer: session.token, headers: { Accept: "application/x-ndjson", "Idempotency-Key": "one-live-draft" },
+    }), deps);
+
+    const pending = buy();
+    let first: Response;
+    let remaining: Promise<ReadableStreamReadResult<Uint8Array>>;
+    try {
+      first = await pending;
+      expect(first.headers.get("content-type")).toBe("application/x-ndjson");
+      expect(first.headers.get("x-ohmail-account")).toBe(session.accountId);
+      const reader = first.body!.getReader();
+      const preview = await reader.read();
+      expect(JSON.parse(new TextDecoder().decode(preview.value))).toEqual({ type: "preview", text: "Hello" });
+      expect(await db.select({ id: drafts.id }).from(drafts)).toEqual([]);
+      remaining = reader.read();
+    } finally {
+      finish();
+    }
+    const result = JSON.parse(new TextDecoder().decode((await remaining!).value));
+
+    const replay = await buy();
+    expect(replay.status).toBe(202);
+    expect(replay.headers.get("x-sync-seq")).toBeTruthy();
+    expect(result).toEqual({
+      type: "result", status: 202, body: { draftId: expect.any(String) }, syncSeq: replay.headers.get("x-sync-seq"),
+    });
+    expect(await replay.json()).toEqual(result.body);
+    expect(calls).toBe(1);
+  });
+
   it("202 { draftId }, echoes X-Sync-Seq, stores a 'draft' (never sent), visible in /sync creates", async () => {
     const drafter = mockDrafter();
     const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });

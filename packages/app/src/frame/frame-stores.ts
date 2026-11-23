@@ -35,6 +35,7 @@ export function useFrameStores(address: FrameHost["device"]["address"]) {
     entered: createFeed<EnteredTarget | null>(null),
     readerPosition: { current: null as ReaderPosition | null },
     searchQuery: { current: "" },
+    ohboxSearchPosition: { current: null as { address: string; top: number } | null },
     bars: createFeed<readonly string[]>([]),
     owed: owedFeed(),
     offers: createOfferStore(),

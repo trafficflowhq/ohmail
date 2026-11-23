@@ -50,11 +50,11 @@ it("keeps the pressed Search hit when the individual lookup returns a different 
   const { address, hit, open } = await pressArchiveHit(async () => ({ state: "ready", message: wrong }));
   expect(open()?.textContent).toContain(hit.subject);
   expect(open()?.textContent).not.toContain(wrong.subject);
-  expect(address.read()).toBe(`#/search/m/${hit.id}`);
+  expect(address.read()).toBe(`#/search/m/${hit.id}?q=An+archive+result`);
 });
 
 it("closes the pressed Search hit when the individual lookup confirms it is missing", async () => {
   const { address, open } = await pressArchiveHit(async () => ({ state: "missing" }));
   expect(open()).toBeNull();
-  expect(address.read()).toBe("#/search");
+  expect(address.read()).toBe("#/search?q=An+archive+result");
 });

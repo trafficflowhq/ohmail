@@ -145,8 +145,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
   /* Send + Done, asked at every render of the letter as the Ohbox shows it: null where it has nothing to finish. */
   useReplyVerbs(reply, gate, () => then("send"));
   /* The drafter writes replies: a forward's note is never drafted into; a host with no draft wire offers none. */
-  const draft = useDraftOffer(reply.messageId);
-  const drafted = forward ? null : draft;
+  const drafted = useDraftOffer(reply.messageId, forward);
   const label = replyLabel(t, reply.audience);
   useForwardAsksWhom(forward, reply.messageId, sheet, t("to"));
   const notice = drafted?.notice ?? null;
@@ -171,6 +170,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
         reply
         going={going}
         drafting={drafted?.drafting}
+        draftPreview={drafted?.preview}
         tabs={drafted?.tabs}
         status={
           <Status at="one" send={reply.send} held={reply.held} locked={null} onResolve={w.resolveHeldSend} />

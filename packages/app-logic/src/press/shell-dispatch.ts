@@ -74,6 +74,7 @@ export interface UndoLink {
 
 /** The messages a mutation names — what an Undo of it brings back. */
 function messageIdsOf(m: EngineMutation): string[] {
+  if ("release" in m && m.release) return m.release.messageIds;
   const r = m as { messageId?: unknown; messageIds?: unknown };
   if (typeof r.messageId === "string") return [r.messageId];
   return Array.isArray(r.messageIds) ? r.messageIds.filter((x): x is string => typeof x === "string") : [];
@@ -116,7 +117,7 @@ export interface ShellDispatch {
   toastWithUndo: (
     sentence: string,
     inverses: readonly EngineMutation[] | (() => EngineMutation[]),
-    held?: { cancel: () => boolean; undone: string },
+    held?: { cancel?: () => boolean; undone: string },
   ) => void;
   /** A deferred observation carries the engine that saw it and offers no success or Undo. */
   mutateAndReport: (
@@ -453,7 +454,7 @@ export function useShellDispatch({
   const toastWithUndo = useStableCallback((
     sentence: string,
     given: readonly EngineMutation[] | (() => EngineMutation[]),
-    held?: { cancel: () => boolean; undone: string },
+    held?: { cancel?: () => boolean; undone: string },
     claim?: UndoClaim,
     owner?: { engine: OhmailEngine; signal: AbortSignal },
   ) => {
@@ -468,7 +469,7 @@ export function useShellDispatch({
       if (owner?.signal.aborted) return;
       /* THE CANCEL GOES FIRST, and synchronously: the window is racing a timer, and a cancel
          behind an awaited dispatch is a cancel that can lose to it. */
-      const cancelled = held ? held.cancel() : false;
+      const cancelled = held?.cancel?.() === true;
       const inverses = typeof offer === "function" ? undoInOrder(offer()) : offer;
       if (inverses.length === 0) {
         toast(cancelled && held ? held.undone : t("ohbox.toastUndoExpired"));
@@ -485,7 +486,10 @@ export function useShellDispatch({
         /* THE MAIL CAME BACK. Only a cancel that TOOK may add "and no rule was made" — past the
            window the rule is on its way and the honest sentence is the plain one. */
         // An Undo stands as a press does: applied, or queued for retry and landing on the next drive.
-        if (outs.some(stands)) { toast(cancelled && held ? held.undone : t("ohbox.toastUndone")); return; }
+        if (outs.some(stands)) {
+          toast(held && (cancelled || !held.cancel) ? held.undone : t("ohbox.toastUndone"));
+          return;
+        }
         // Every inverse replaced by a newer press for the same thing: that press says the sentence.
         if (outs.length > 0 && tally.silent === outs.length) return;
         if (tally.refused === 0 && organizerWaits(outs) > 0) { toast(queuedSentence(tally.holder)); return; }
@@ -494,7 +498,7 @@ export function useShellDispatch({
     };
     toast(sentence, {
       action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire,
-      ...(held && typeof offer !== "function" && offer.length > 0 ? { undoDuringFade: true } : {}),
+      ...(held?.cancel && typeof offer !== "function" && offer.length > 0 ? { undoDuringFade: true } : {}),
       ...(claim ? { claim } : {}), ...(owner ? { signal: owner.signal } : {}),
     });
   });

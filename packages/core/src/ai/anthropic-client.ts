@@ -252,6 +252,70 @@ function eitherSignal(a: AbortSignal, b: AbortSignal): AbortSignal {
   return both.signal;
 }
 
+interface AnthropicAnswer {
+  content?: unknown;
+  usage?: unknown;
+  model?: unknown;
+  stop_reason?: unknown;
+  stop_details?: unknown;
+}
+
+/** Read Anthropic's SSE messages and retain the same final result as the JSON API. */
+async function streamedAnswer(response: Response, onText: (delta: string) => void): Promise<AnthropicAnswer> {
+  if (!response.body) throw new Error("Missing model response stream");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const result: AnthropicAnswer = {};
+  let buffer = "";
+  let text = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("Incomplete model response stream");
+      buffer += decoder.decode(value, { stream: true });
+      let end: number;
+      while ((end = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, end).trimEnd();
+        buffer = buffer.slice(end + 1);
+        if (!line.startsWith("data:")) continue;
+        const event = JSON.parse(line.slice(5)) as {
+          type: string;
+          message?: AnthropicAnswer;
+          content_block?: { type?: string; text?: string };
+          delta?: { type?: string; text?: string; stop_reason?: unknown; stop_details?: unknown };
+          usage?: Record<string, unknown>;
+        };
+        switch (event.type) {
+          case "message_start":
+            Object.assign(result, event.message);
+            break;
+          case "content_block_start":
+          case "content_block_delta": {
+            const block = event.type === "content_block_start" ? event.content_block : event.delta;
+            if ((block?.type === "text" || block?.type === "text_delta") && block.text) {
+              text += block.text;
+              onText(block.text);
+            }
+            break;
+          }
+          case "message_delta":
+            if (event.delta?.stop_reason !== undefined) result.stop_reason = event.delta.stop_reason;
+            if (event.delta?.stop_details !== undefined) result.stop_details = event.delta.stop_details;
+            result.usage = { ...(result.usage as object | undefined), ...event.usage };
+            break;
+          case "message_stop":
+            return { ...result, content: [{ type: "text", text }] };
+          case "error":
+            throw new Error("The model provider interrupted the response stream");
+        }
+      }
+    }
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
 /**
  * Build a live client. Constructing it performs NO I/O and validates nothing about the key
  * beyond its presence — key SHAPE is a config concern, asserted at boot by
@@ -300,7 +364,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
   return {
     messages: {
       async create(
-        params: unknown, call?: { signal?: AbortSignal } & AiCallOptions,
+        params: unknown, call?: { signal?: AbortSignal; onText?: (delta: string) => void } & AiCallOptions,
       ): Promise<{ content: unknown; usage?: unknown; stop_reason?: unknown; stop_details?: unknown }> {
         const startedAt = now();
         const guarded = Boolean(call?.beforeDispatch);
@@ -321,7 +385,8 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
           typeof (params as { model?: unknown } | null)?.model === "string"
             ? (params as { model: string }).model
             : "unknown";
-        const body = JSON.stringify(params);
+        const onText = call?.onText;
+        const body = JSON.stringify(onText ? { ...params as object, stream: true } : params);
         let attempt = 0;
         let lastStatus: number | null = null;
         let lastRequestId: string | null = null;
@@ -368,13 +433,20 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
             const requestId = response.headers.get("request-id");
             lastRequestId = guarded && !/^req_[A-Za-z0-9]{1,64}$/.test(requestId ?? "") ? null : requestId;
             if (response.ok) {
-              const parsed = (await response.json().catch((err: unknown) => {
-                if (!guarded) throw err;
-                throw new AnthropicApiError(status, null, lastRequestId,
-                  "The model provider returned an unreadable response.");
-              })) as {
-                content?: unknown; usage?: unknown; model?: unknown; stop_reason?: unknown; stop_details?: unknown;
-              };
+              let parsed: AnthropicAnswer;
+              try {
+                parsed = onText
+                  ? await streamedAnswer(response, onText)
+                  : await response.json() as AnthropicAnswer;
+              } catch (err) {
+                if (!onText) {
+                  if (!guarded) throw err;
+                  throw new AnthropicApiError(status, null, lastRequestId,
+                    "The model provider returned an unreadable response.");
+                }
+                lastError = new AnthropicTransportError("The model provider returned an incomplete stream.");
+                break;
+              }
               const usage = readUsage(parsed.usage);
               const model = typeof parsed.model === "string" ? parsed.model : requestedModel;
               const stopReason = typeof parsed.stop_reason === "string" ? parsed.stop_reason : null;

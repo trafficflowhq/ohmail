@@ -53,6 +53,8 @@ export interface AuthConfig {
    * that 409 tells the caller a fact about themselves.
    */
   publicSignup: boolean;
+  /** Start the automatic Screener watermark with the new account on managed deployments. */
+  autoSuggestAtSignup: boolean;
   /**
    * The capacity valve. `null` = uncapped. When {@link publicSignup} is on and the deployment
    * already holds this many accounts, the OPEN path answers `signup_capacity` (503) and the

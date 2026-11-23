@@ -131,30 +131,3 @@ export function readerMessageFor(
   if (offMirror?.id === readerFor) return offMirror;
   return null;
 }
-
-export type SearchScreenerSegment = ScreenerSegmentId;
-export type SearchOpenTarget =
-  Exclude<OpenTarget, { kind: "ohbox" }> | { readonly kind: "ohbox"; readonly id: string };
-
-/** What the decision reads, each answered at the press. */
-export interface SearchOpenFacts {
-  /** The Screener row that speaks for the letter's sender in that segment, else null. */
-  readonly rowFor: (m: EngineMessage, segment: SearchScreenerSegment) => string | null;
-  /** Where the consent cutline presents each letter (`null`: History); absent where no partition stands. */
-  readonly placeOf?: ReadonlyMap<string, Folder | null>;
-  /** The letters parked in a bottom pile. */
-  readonly parked?: ReadonlySet<string>;
-  /** Whether the pile's own list holds the letter. */
-  readonly holds?: (view: "ohbox" | "reads" | "receipts", id: string) => boolean;
-  /**
-   * The folder entity whose view can show this letter, or null: mailbox-scoped (two mailboxes may both have a
-   * `Projects`), and only where the presented mirror holds the row under that folder. Absent: the reader.
-   */
-  readonly folderTargetFor?: (m: EngineMessage, folder: Folder) => string | null;
-}
-
-export function openTargetOf(m: EngineMessage, facts: SearchOpenFacts): SearchOpenTarget {
-  const { rowFor, placeOf, parked, holds, folderTargetFor } = facts;
-  const target = openTargetFor(m, false, rowFor, placeOf, parked, holds, folderTargetFor);
-  return target.kind === "ohbox" ? { kind: "ohbox", id: target.id } : target;
-}

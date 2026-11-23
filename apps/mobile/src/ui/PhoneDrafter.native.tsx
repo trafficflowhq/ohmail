@@ -15,6 +15,7 @@ const WORDS = {
   "draftReply.letterLeft": "draftAiLetterLeft",
   "draftReply.failedOpaque": "draftAiFailedOpaque",
   "draftReply.failedOpaqueEarly": "draftAiFailedOpaqueEarly",
+  "draftReply.creditsUsed": "draftAiCreditsUsed",
   "draftReply.creditsReturned": "draftAiCreditsReturned",
   "draftReply.creditsOwed": "draftAiCreditsOwed",
   "draftReply.declined": "draftAiDeclined",

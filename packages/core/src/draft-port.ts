@@ -59,6 +59,8 @@ export interface DraftResult {
  */
 export interface DraftCallOptions extends AiCallOptions {
   signal?: AbortSignal;
+  /** The body written so far, before the final structured response is validated. */
+  onPreview?: (body: string) => void;
 }
 
 /** Injected into the drafting dependencies; absent on a deployment that offers no drafts. */

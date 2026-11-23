@@ -264,8 +264,8 @@ describe("a search result opens from the keyboard", () => {
         .map((cap) => cap.textContent).join("");
 
     expect(capsFor(messages.search.keyOpen), "the sheet does not list opening a result").toBe("↵");
-    expect(capsFor(messages.search.keyNext)).toBe("↓");
-    expect(capsFor(messages.search.keyPrev)).toBe("↑");
+    expect(capsFor(messages.search.keyNext)).toBe("↓j");
+    expect(capsFor(messages.search.keyPrev)).toBe("↑k");
     expect(capsFor(messages.search.keyClose)).toBe("esc");
   });
 });

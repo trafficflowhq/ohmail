@@ -327,7 +327,7 @@ export interface Routes {
   "POST /rules": { params: None; body: CreateRuleBody; answer: RuleDTO | (RuleDTO & { travel: RuleTravel }) | RuleQueuedAnswer };
   "PATCH /rules/:id": { params: Id; body: PatchRuleBody; answer: RuleDTO | (RuleDTO & { travel: RuleTravel }) | RuleQueuedAnswer };
   /** 204 a rule gone; 202 a delete asked for. The body names a published rule's key, at its address only. */
-  "DELETE /rules/:id": { params: Id; body: { key: RuleKeyAddress }; answer: null | RuleQueuedAnswer };
+  "DELETE /rules/:id": { params: Id; body: { key?: RuleKeyAddress; release?: CreateRuleBody["release"] }; answer: null | RuleQueuedAnswer };
 
   // ── drafts and sending ──────────────────────────────────────────────────────
   "POST /drafts": { params: None; body: CreateDraftBody; answer: DraftDTO };

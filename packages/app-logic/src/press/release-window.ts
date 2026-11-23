@@ -15,7 +15,7 @@ export interface ScreenerReleaseWindow {
   toastWithUndo: (
     sentence: string,
     inverses: readonly EngineMutation[],
-    held?: { cancel: () => boolean; undone: string },
+    held?: { cancel?: () => boolean; undone: string },
   ) => void;
   /** The rules a press past the gate plans over (`pressRules`), the routing window's; unset, the local rows. */
   planOver?: { current: ((reader: EntityReader) => readonly RuleDTO[]) | null };

@@ -51,7 +51,7 @@ export interface StorageNoticeMail {
   expectedBytes: number;
   importing: boolean;
   keptFrom: string | null;
-  fit: StorageOffer["fit"];
+  fit: NonNullable<StorageOffer["fit"]>;
   /** The storage the fitted choice adds on top of its plan's own room. */
   addonBytes: number;
   currency: string;
@@ -108,8 +108,10 @@ const asDate = (v: Date | string | null): Date | null => (v === null ? null : ne
 
 /** The room the fitted choice's storage units add: its room past its plan's own. */
 export function addonBytesOf(offer: StorageOffer): number {
-  const plan = offer.plans.find((p) => p.plan === offer.fit.plan);
-  return plan === undefined ? 0 : Math.max(0, offer.fit.roomBytes - plan.roomBytes);
+  const { fit } = offer;
+  if (!fit) return 0;
+  const plan = offer.plans.find((p) => p.plan === fit.plan);
+  return plan === undefined ? 0 : Math.max(0, fit.roomBytes - plan.roomBytes);
 }
 
 export async function runStorageMailPass(walk: UnboundDb, deps: StorageMailPassDeps): Promise<StorageMailPassResult> {
@@ -203,7 +205,7 @@ async function oneAccount(
   const reading = await storageReadingOf(tx, o.accountId);
   const asked = await deps.port.access(o.accountId, { fresh: true, storageNeed: reading.need });
   const offer = asked.ok ? asked.storageOffer : undefined;
-  if (!offer || !offer.canChange) { result.noOffer += 1; return; }
+  if (!offer?.canChange || !offer.fit) { result.noOffer += 1; return; }
   if (!(await claim(tx, o))) { result.already += 1; return; }
   const recipients = await tx.select({ email: users.email }).from(users).where(eq(users.accountId, o.accountId));
   const [settings] = await tx.select({ locale: accountSettings.locale }).from(accountSettings)

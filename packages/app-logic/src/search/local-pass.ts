@@ -128,6 +128,7 @@ export function useDevicePaint(
   pressed: Pressed,
   storeReady: boolean,
   narrowing: SearchNarrowing,
+  openId: string | null | undefined,
 ): DevicePaint {
   const exactRaw = result?.items ?? NO_HITS;
   const similarRaw = result?.similar ?? NO_HITS;
@@ -138,12 +139,12 @@ export function useDevicePaint(
     [similarRaw, similarOn, sort, storeReady],
   );
   const shownExact = useMemo(
-    () => (storeReady ? NO_HITS : applyNarrowing(applyFilter(merged, pressed), narrowing)),
-    [merged, pressed, storeReady, narrowing],
+    () => (storeReady ? NO_HITS : applyNarrowing(applyFilter(merged, pressed), narrowing, openId)),
+    [merged, pressed, storeReady, narrowing, openId],
   );
   const shownSimilar = useMemo(
-    () => (storeReady ? NO_HITS : applyNarrowing(applyFilter(mergedSimilar, pressed), narrowing)),
-    [mergedSimilar, pressed, storeReady, narrowing],
+    () => (storeReady ? NO_HITS : applyNarrowing(applyFilter(mergedSimilar, pressed), narrowing, openId)),
+    [mergedSimilar, pressed, storeReady, narrowing, openId],
   );
   const shown = useMemo(() => [...shownExact, ...shownSimilar], [shownExact, shownSimilar]);
   return { merged, mergedSimilar, shownExact, shown, similarOn };

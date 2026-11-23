@@ -1,5 +1,5 @@
 import {
-  AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, PLAN_HINT_INTERVALS, PLAN_HINT_PLANS, UNMETERED_ACCESS,
+  AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, PLAN_HINT_PLANS, UNMETERED_ACCESS,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type AccessTrial, type ActionPrices,
   type TrialStorageCarry, type StorageNeed, type StorageOffer, type StorageOfferPlan, type StorageTold,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
@@ -131,6 +131,8 @@ export interface ContractFault {
   status: number;
   /** The field that failed to parse, or `"body"` when the whole shape was wrong. */
   field: string;
+  /** The failure was confined to an optional block and the access verdict was kept. */
+  verdictKept?: true;
 }
 
 /**
@@ -389,82 +391,58 @@ const REASON_WORD = /^[a-z][a-z_]{0,31}$/;
  */
 function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
   if (raw === undefined || raw === null) return null;
-  let o = obj(raw);
+  const o = obj(raw);
   if (!o) return { bad: "storageOffer" };
-  if (o.card !== undefined) {
-    const flattened = flattenStorageOffer(o);
-    if (flattened === null || "bad" in flattened) return flattened;
-    o = flattened.offer;
-  }
-  if (typeof o.currency !== "string" || !/^[a-z]{3}$/.test(o.currency)) return { bad: "storageOffer.currency" };
-  if (!(PLAN_HINT_INTERVALS as readonly unknown[]).includes(o.interval)) return { bad: "storageOffer.interval" };
-  if (!Array.isArray(o.plans) || o.plans.length === 0 || o.plans.length > PLAN_HINT_PLANS.length) {
-    return { bad: "storageOffer.plans" };
+  const card = obj(o.card);
+  if (!card) return { bad: "storageOffer.card" };
+  if (typeof card.currency !== "string" || !/^[a-z]{3}$/.test(card.currency)) return { bad: "storageOffer.card.currency" };
+  if (card.interval !== "month" && card.interval !== "year") return { bad: "storageOffer.card.interval" };
+  // Storage prices arrive monthly. The offer quotes everything in the plan's interval.
+  const months = card.interval === "year" ? 12 : 1;
+  if (!Array.isArray(card.plans) || card.plans.length > PLAN_HINT_PLANS.length) {
+    return { bad: "storageOffer.card.plans" };
   }
   const plans: StorageOfferPlan[] = [];
-  for (const raw of o.plans) {
-    const p = obj(raw);
+  for (const item of card.plans) {
+    const p = obj(item);
     if (!p || !isPlan(p.plan) || plans.some((q) => q.plan === p.plan) || !isCount(p.mailboxes)
-      || !isCount(p.roomBytes) || !isCount(p.amount)) return { bad: "storageOffer.plans" };
-    plans.push({ plan: p.plan, mailboxes: p.mailboxes, roomBytes: p.roomBytes, amount: p.amount });
+      || !isCount(p.storageBytes) || !isCount(p.priceMinor)) return { bad: "storageOffer.card.plans" };
+    plans.push({ plan: p.plan, mailboxes: p.mailboxes, roomBytes: p.storageBytes, amount: p.priceMinor });
   }
   let addon: StorageOffer["addon"] = null;
-  if (o.addon !== undefined && o.addon !== null) {
-    const a = obj(o.addon);
-    if (!a || !isCount(a.unitBytes) || a.unitBytes === 0 || !isCount(a.amount) || !isCount(a.maxUnits)) {
-      return { bad: "storageOffer.addon" };
+  if (card.storageUnit !== null) {
+    const unit = obj(card.storageUnit);
+    if (!unit || !isCount(unit.bytes) || unit.bytes === 0 || !isCount(unit.priceMinor)
+      || unit.interval !== "month" || !isCount(unit.maxUnits)) {
+      return { bad: "storageOffer.card.storageUnit" };
     }
-    if (a.interval !== undefined && a.interval !== "month" && a.interval !== "year")
-      return { bad: "storageOffer.addon.interval" };
-    addon = {
-      unitBytes: a.unitBytes, amount: a.amount, maxUnits: a.maxUnits,
-      ...(a.interval === undefined ? {} : { interval: a.interval }),
-    };
+    const amount = unit.priceMinor * months;
+    if (!isCount(amount)) return { bad: "storageOffer.card.storageUnit" };
+    addon = { unitBytes: unit.bytes, amount, maxUnits: unit.maxUnits, interval: card.interval };
   }
-  const c = obj(o.current);
-  if (!c || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
-    || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")) return { bad: "storageOffer.current" };
-  const f = obj(o.fit);
-  if (!f || !isPlan(f.plan) || !isCount(f.addonUnits) || !isCount(f.roomBytes) || !isCount(f.amount)
-    || typeof f.keepsAll !== "boolean") return { bad: "storageOffer.fit" };
+  let current: StorageOffer["current"] = null;
+  if (o.current !== null) {
+    const c = obj(o.current);
+    if (!c || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
+      || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")) return { bad: "storageOffer.current" };
+    current = { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom };
+  }
+  let fit: StorageOffer["fit"] = null;
+  if (o.fit !== null) {
+    const f = obj(o.fit);
+    if (!f || !isPlan(f.plan) || !isCount(f.addonUnits) || !isCount(f.roomBytes) || !isCount(f.mailboxes)
+      || !isCount(f.planPriceMinor) || !isCount(f.storagePriceMinor)
+      || typeof f.keepsAll !== "boolean") return { bad: "storageOffer.fit" };
+    const amount = f.planPriceMinor + f.storagePriceMinor * months;
+    if (!isCount(amount)) return { bad: "storageOffer.fit" };
+    fit = { plan: f.plan, addonUnits: f.addonUnits, roomBytes: f.roomBytes, amount, keepsAll: f.keepsAll };
+  }
   if (typeof o.canChange !== "boolean") return { bad: "storageOffer.canChange" };
   const reason = o.reason ?? null;
   if (reason !== null && (typeof reason !== "string" || !REASON_WORD.test(reason))) return { bad: "storageOffer.reason" };
   return {
-    currency: o.currency, interval: o.interval as StorageOffer["interval"], plans, addon,
-    current: { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom },
-    fit: { plan: f.plan, addonUnits: f.addonUnits, roomBytes: f.roomBytes, amount: f.amount, keepsAll: f.keepsAll },
+    currency: card.currency, interval: card.interval, plans, addon, current, fit,
     canChange: o.canChange, reason,
-  };
-}
-
-/** The billing program quotes the plan and the monthly storage units separately. */
-function flattenStorageOffer(
-  offer: Record<string, unknown>,
-): { offer: Record<string, unknown> } | null | { bad: string } {
-  const card = obj(offer.card);
-  if (!card || !Array.isArray(card.plans)) return { bad: "storageOffer.card" };
-  // The app's offer describes a change from a current plan to a quoted fit.
-  if (offer.current === null || offer.fit === null) return null;
-  const unit = obj(card.storageUnit);
-  if (card.storageUnit !== null && (!unit || unit.interval !== "month"))
-    return { bad: "storageOffer.card.storageUnit" };
-  const fit = obj(offer.fit);
-  if (!fit || !isCount(fit.planPriceMinor) || !isCount(fit.storagePriceMinor))
-    return { bad: "storageOffer.fit" };
-  const months = card.interval === "year" ? 12 : 1;
-  return {
-    offer: {
-      ...offer,
-      currency: card.currency,
-      interval: card.interval,
-      plans: card.plans.map((raw: unknown) => {
-        const plan = obj(raw);
-        return plan && { ...plan, roomBytes: plan.storageBytes, amount: plan.priceMinor };
-      }),
-      addon: unit && { unitBytes: unit.bytes, amount: unit.priceMinor, maxUnits: unit.maxUnits, interval: unit.interval },
-      fit: { ...fit, amount: fit.planPriceMinor + months * fit.storagePriceMinor },
-    },
   };
 }
 
@@ -549,9 +527,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   const report = cfg.onContractFault ?? ((f: ContractFault) => {
     console.warn(
       `[entitlements] the program answered ${f.status} on ${f.path} with an unreadable `
-      + `\`${f.field}\`. This is a CONTRACT DRIFT between the two sides, not a verdict: the call `
-      + "took the fault path (last known verdict, else allow), so nothing is locked out and "
-      + "nothing is metered on it.");
+      + `\`${f.field}\`. `
+      + (f.verdictKept
+        ? "The storage offer was dropped and the access verdict was kept."
+        : "The call took the fault path (last known verdict, else allow)."));
   });
   const reportCall = typeof cfg.onCallFault === "function" ? cfg.onCallFault : ((f: CallFault) => {
     console.warn(
@@ -582,8 +561,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   const usageRecordedIn = (res: Exchange): boolean =>
     res.bodyIsJson && typeof obj(res.body)?.usageRecorded === "number";
   /** A reporter that throws must not replace the answer with its own failure. */
-  const named = (path: string, status: number, field: string): void => {
-    try { report({ path, status, field }); } catch { /* observability is never load-bearing */ }
+  const named = (path: string, status: number, field: string, verdictKept?: true): void => {
+    try { report({ path, status, field, ...(verdictKept ? { verdictKept } : {}) }); }
+    catch { /* observability is never load-bearing */ }
   };
   const callFault = async (
     path: EntitlementsPath, status: number | null, startedAt: number, attempts: number, flight?: Flight,
@@ -724,17 +704,17 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
         const priced = card !== null && !("bad" in card);
         if (priced) pricesStated = true;
-        const carry = read.ok ? trialStorageOf(obj(res.body)?.trialStorage) : null;
+        const carry = read.ok ? trialStorageOf(body?.trialStorage) : null;
         if (carry !== null && "bad" in carry) named("/v1/access", res.status, carry.bad);
         const carried = carry !== null && !("bad" in carry);
-        const offer = read.ok ? storageOfferOf(obj(res.body)?.storageOffer) : null;
-        if (offer !== null && "bad" in offer) named("/v1/access", res.status, offer.bad);
-        const told = read.ok ? storageToldOf(obj(res.body)?.storageTold) : null;
+        const offer = read.ok ? storageOfferOf(body?.storageOffer) : null;
+        if (offer !== null && "bad" in offer) named("/v1/access", res.status, offer.bad, true);
+        const told = read.ok ? storageToldOf(body?.storageTold) : null;
         if (told !== null && "bad" in told) named("/v1/access", res.status, told.bad);
         const verdict: AccessVerdict = read.ok
           ? {
             ...read, ...(aiCredits ? { aiCredits } : {}), ...(priced ? { prices: card } : {}), ...(carried ? { trialStorage: carry } : {}),
-            ...(offer !== null && !("bad" in offer) ? { storageOffer: offer } : {}),
+            ...(offer !== null ? { storageOffer: "bad" in offer ? null : offer } : {}),
             ...(told !== null && !("bad" in told) ? { storageTold: told } : {}),
           }
           : read;

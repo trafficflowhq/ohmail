@@ -120,6 +120,11 @@ async function mount(
     }
     const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
     writes.push({ method, path, ...(body === undefined ? {} : { body }) });
+    for (const id of body?.release?.messageIds ?? []) {
+      const moved = { ...mail.get(id)!, folder: body.release.to };
+      mail.set(id, moved);
+      note("moves", "message", id, moved);
+    }
     if (method === "POST" && path === "/api/rules") {
       const created = rule("r-new", body.kind, body.match, body.destination, body.priority);
       standing.set(created.id, created);
@@ -183,7 +188,7 @@ async function mount(
   };
   const press = (label: string) =>
     click(within(frame.getByRole("toolbar", { name: copy.place.panel })).getByRole("button", { name: label }));
-  return { shell, frame, open, segment, press, writes, standing, copy };
+  return { shell, frame, open, segment, press, writes, standing, mail, copy };
 }
 
 async function click(button: HTMLElement): Promise<void> {
@@ -213,6 +218,11 @@ const createAddressRule = {
   body: { kind: "sender", match: PRESSED, destination: "INBOX", applyRetro: true },
 };
 const retarget = (id: string) => ({ method: "PATCH", path: `/api/rules/${id}`, body: { destination: "INBOX" } });
+const withRelease = (
+  write: { method: string; path: string; body: Record<string, unknown> }, id: string, from: Folder,
+) => ({
+  ...write, body: { ...write.body, release: { messageIds: [id], from, to: "INBOX" } },
+});
 const move = (id: string, folder: Folder, pressRule = false) => ({
   method: "POST", path: `/api/messages/${id}/move`, body: { folder, ...(pressRule ? { pressRule: true } : {}) },
 });
@@ -237,7 +247,7 @@ const screenedMail = () => [msg("p1", PRESSED, SCREENED), msg("o1", OTHER, SCREE
 const spamMail = () => [msg("p1", PRESSED, SPAM), msg("o1", OTHER, SPAM, 8)];
 
 describe("Allow on a screened-out sender", () => {
-  it("held by a DOMAIN rule: an address rule for them alone, the domain rule untouched, and the sentence names it", async () => {
+  it("writes an address rule with the release and names the domain rule that still stands", async () => {
     const s = await mount(screenedMail(), [rule("r-dom", "domain", DOMAIN, SCREENED)]);
     await s.segment(s.copy.segScreened);
     await s.open("p1");
@@ -247,14 +257,15 @@ describe("Allow on a screened-out sender", () => {
     }));
     await commit();
 
-    expect(ruleWrites(s.writes)).toEqual([createAddressRule]);
+    expect(ruleWrites(s.writes)).toEqual([withRelease(createAddressRule, "p1", SCREENED)]);
     expect(rulesTouched(s.writes, "r-dom"), "the domain rule was rewritten by one sender's press").toEqual([]);
-    expect(moves(s.writes)).toEqual([move("p1", "INBOX", true)]);
+    expect(moves(s.writes)).toEqual([]);
+    expect(s.mail.get("p1")?.folder).toBe("INBOX");
     expect(decided(s.standing, PRESSED)).toBe("INBOX");
     expect(decided(s.standing, OTHER), "another sender at the domain was released").toBe(SCREENED);
   });
 
-  it("held by their OWN rule: that rule is retargeted, nothing is created", async () => {
+  it("retargets their existing rule with the release", async () => {
     const s = await mount(screenedMail(), [
       rule("r-own", "sender", PRESSED, SCREENED), rule("r-other", "sender", OTHER, SCREENED),
     ]);
@@ -266,8 +277,9 @@ describe("Allow on a screened-out sender", () => {
     }));
     await commit();
 
-    expect(ruleWrites(s.writes)).toEqual([retarget("r-own")]);
-    expect(moves(s.writes)).toEqual([move("p1", "INBOX", true)]);
+    expect(ruleWrites(s.writes)).toEqual([withRelease(retarget("r-own"), "p1", SCREENED)]);
+    expect(moves(s.writes)).toEqual([]);
+    expect(s.mail.get("p1")?.folder).toBe("INBOX");
     expect(decided(s.standing, PRESSED)).toBe("INBOX");
     expect(decided(s.standing, OTHER)).toBe(SCREENED);
   });
@@ -360,27 +372,29 @@ describe("Not spam → Ohbox on a sender marked spam this session (the pinned re
     return s;
   }
 
-  it("a DOMAIN-scoped spam decision: an address rule for them alone, the domain rule stays", async () => {
+  it("writes an address rule with the release and preserves the domain spam rule", async () => {
     const s = await pinned("domain");
     await s.press(s.copy.pileOhbox);
     expect(lastToast()).toBe(fill(en.screener.toastNotSpamOhboxAddress, { sender: PRESSED, domain: DOMAIN }));
     await commit();
 
-    expect(ruleWrites(s.writes)).toEqual([createAddressRule]);
+    expect(ruleWrites(s.writes)).toEqual([withRelease(createAddressRule, "h1", SPAM)]);
     expect(rulesTouched(s.writes, "r-promoted"), "the domain spam rule was rewritten by one sender's rescue").toEqual([]);
-    expect(moves(s.writes)).toEqual([move("h1", "INBOX", true)]);
+    expect(moves(s.writes)).toEqual([]);
+    expect(s.mail.get("h1")?.folder).toBe("INBOX");
     expect(decided(s.standing, PRESSED)).toBe("INBOX");
     expect(decided(s.standing, OTHER), "another sender at the domain was rescued").toBe(SPAM);
   });
 
-  it("a sender-scoped spam decision: their own rule is retargeted", async () => {
+  it("retargets their sender rule with the release from Spam", async () => {
     const s = await pinned("sender");
     await s.press(s.copy.pileOhbox);
     expect(lastToast()).toBe(fill(en.screener.toastNotSpamOhbox, { sender: PRESSED }));
     await commit();
 
-    expect(ruleWrites(s.writes)).toEqual([retarget("r-promoted")]);
-    expect(moves(s.writes)).toEqual([move("h1", "INBOX", true)]);
+    expect(ruleWrites(s.writes)).toEqual([withRelease(retarget("r-promoted"), "h1", SPAM)]);
+    expect(moves(s.writes)).toEqual([]);
+    expect(s.mail.get("h1")?.folder).toBe("INBOX");
     expect(decided(s.standing, PRESSED)).toBe("INBOX");
   });
 
@@ -434,7 +448,7 @@ describe("a Move out of a domain rule's pile holds an address rule, and Undo tak
 });
 
 describe("releaseRules, the one ladder all three presses and the phone's mirror read", () => {
-  it("their own rule AND a domain rule: only their own is retargeted, the domain rule stays", async () => {
+  it("retargets only the sender rule when both rules stand", async () => {
     const { releaseRules } = await import("@ohmail/app-logic/press/sender-screening");
     const both = [rule("r-own", "sender", PRESSED, SCREENED), rule("r-dom", "domain", DOMAIN, SCREENED)];
     const store = await mirror(screenedMail(), both);
@@ -446,7 +460,7 @@ describe("releaseRules, the one ladder all three presses and the phone's mirror 
     await s.open("p1");
     await s.press(s.copy.pileOhbox);
     await commit();
-    expect(ruleWrites(s.writes)).toEqual([retarget("r-own")]);
+    expect(ruleWrites(s.writes)).toEqual([withRelease(retarget("r-own"), "p1", SCREENED)]);
     expect(decided(s.standing, OTHER)).toBe(SCREENED);
   });
 

@@ -150,8 +150,7 @@ export function useStorePass(
 }
 
 /**
- * THE STORE'S LIST IS A WINDOW over the walker's slots: the pages on screen are asked for, and the cursor stays on
- * screen (a slot outside the rendered slice is scrolled to, when the cursor moves and only then).
+ * THE STORE'S LIST IS A WINDOW over the walker's slots. Ask for the pages on screen.
  */
 export function useStoreWindow(
   walker: StoreSearchWalker,
@@ -159,23 +158,10 @@ export function useStoreWindow(
   storeLength: number,
   rev: number,
   scrollerRef: RefObject<HTMLElement | null>,
-  cursor: number,
 ): ListWindow {
   const win = useListWindow({ scrollerRef, count: storeLength });
   useEffect(() => {
     if (storeReady) walker.want(win.visibleStart, win.visibleEnd);
   }, [walker, storeReady, win.visibleStart, win.visibleEnd, rev]);
-  /* The window as this render measured it, read by the effect below without making it run on every render. */
-  const measured = useRef(win);
-  measured.current = win;
-  useEffect(() => {
-    const el = scrollerRef.current;
-    const w = measured.current;
-    if (!storeReady || !el || cursor < 0) return;
-    const top = w.offsetOf(cursor);
-    if (top < el.scrollTop || top > el.scrollTop + el.clientHeight - w.rowHeight) {
-      el.scrollTop = Math.max(0, top - w.rowHeight);
-    }
-  }, [cursor, storeReady, scrollerRef]);
   return win;
 }

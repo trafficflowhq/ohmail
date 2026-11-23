@@ -2,9 +2,10 @@
  * THE ACTS ON A SENDER'S RULE: members of `EngineMutation` (`acts.ts`).
  */
 import type { Folder } from "./base.js";
+import type { ScreenerRuleRelease } from "./requests.js";
 import type { RuleKeyAddress } from "./organizing.js";
 
-export type RuleAct =
+export type RuleAct = (
   /**
    * Revoke a rule, and change where one files — the undo for the consent gate. Engine
    * mutations, not `app/api-client` calls: the surface ships in the public desktop mirror,
@@ -36,6 +37,8 @@ export type RuleAct =
       /** A rule of the organizer's copy with no row here, by its key: relayed, nothing written here. */
       key?: RuleKeyAddress;
       destination: Folder;
+      /** Restore a paused sender rule on Undo of a Screener release. */
+      enabled?: false;
       /** Absent keeps the stored priority; set only to lift an address rule over its domain's. */
       priority?: number;
       /**
@@ -115,4 +118,5 @@ export type RuleAct =
        * constant (`sender-screening.ts#RETRO_DEFAULT_ON`).
        */
       applyRetro?: boolean;
-    };
+    }
+) & { release?: ScreenerRuleRelease };

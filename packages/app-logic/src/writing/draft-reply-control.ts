@@ -19,6 +19,8 @@ export interface DraftReplyControl {
    */
   offered: true;
   phase: DraftReplyPhase;
+  /** Provisional text for this message while the draft is being written. */
+  preview?: string;
   /** The message the offer is about, so a stale offer cannot be confirmed against another. */
   messageId: string | null;
   /** What one press costs, in CREDITS. Stated before {@link confirm} is reachable. */

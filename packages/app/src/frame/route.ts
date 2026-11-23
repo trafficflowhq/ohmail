@@ -10,6 +10,7 @@ import {
   type PlaceId,
   type Route,
 } from "./contract.js";
+import { SEARCH_LINK_FIELDS } from "@ohmail/app-logic/search";
 import { CALENDAR_HOME, isCalendarPlace } from "./product.js";
 
 /** Each place's address, the way it is written today. */
@@ -163,6 +164,15 @@ function placeOf(path: string, query: string): Route {
     if (mailbox !== null) words.mailbox = mailbox;
     return route("ohbox", { stage: { id: "firstRun", words } });
   }
+  if (path === "search") {
+    const params = new URLSearchParams(query);
+    const words: Record<string, string> = {};
+    for (const key of SEARCH_LINK_FIELDS) {
+      const value = params.get(key);
+      if (value) words[key] = value;
+    }
+    return route("search", { words });
+  }
   return route(PLAIN.get(path) ?? "ohbox");
 }
 
@@ -193,6 +203,8 @@ export function fragmentOf(to: Route): string {
     to.open !== null && LISTS_LETTERS.has(to.place) ? `/${to.wholeThread ? "t" : "m"}/${to.open}` : "";
   const head = ADDRESS[to.place];
   switch (to.place) {
+    case "search":
+      return `#/${head}${tail}${queryOf(Object.fromEntries(SEARCH_LINK_FIELDS.map((key) => [key, to.words[key] ?? ""])))}`;
     case "tags":
       return to.sub === null ? `#/${head}${tail}` : `#/${head}/${to.sub}${tail}`;
     case "folder":

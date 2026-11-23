@@ -156,6 +156,7 @@ export interface LetterWords {
 
 /** The one-press draft (today's `DraftReplyControl`). */
 export interface WriteDraftControl {
+  readonly preview?: string;
   /** The host has a draft wire; false: no draft control is drawn. */
   readonly offered: boolean;
   readonly phase: "closed" | "offered" | "running";

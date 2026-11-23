@@ -253,6 +253,7 @@ export function DesktopSubscription({
   const { href, show, followed } = useMintedPage();
   const change = useDesktopStorageChange(openStorage);
   const addon = storageOffer?.addon;
+  const current = storageOffer?.current;
   /** The pane can be left mid-press; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -290,7 +291,7 @@ export function DesktopSubscription({
   return (
     <SettingsSheet title={t("webBillingTitle")}>
       {failed ? <p className="acct-warn" role="alert">{t("subscriptionManageFailed")}</p> : null}
-      {storageOffer?.canChange && addon && storageOffer.current.addonUnits < addon.maxUnits ? (
+      {storageOffer?.canChange && addon && current && current.addonUnits < addon.maxUnits ? (
         <SettingLine label={t("storageAddonName")} tag={t("storageTagAddon")}>
           <Button kind="two" size="s" icon="plus" onPress={change.press}>{t("storageAddStorage")}</Button>
         </SettingLine>

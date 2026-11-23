@@ -46,6 +46,8 @@ export interface OffMirrorLetter {
 export interface ListMeeting {
   readonly offMirror?: OffMirrorLetter;
   readonly archiveHit?: EngineMessage | null;
+  /** The list follows the reader's action if it removes this result. True takes over closing an acted-on letter. */
+  readonly afterAction?: (message: EngineMessage) => boolean;
   readonly visit: ListVisit | null;
   readonly blank: ListBlank | null;
 }

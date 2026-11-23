@@ -60,13 +60,15 @@ export function storeFiltersOf(pressed: Pressed): ServerSearchFilters | undefine
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
+export function matchesFolder(message: EngineMessage, filter: Filter): boolean {
+  return filter.exactPath
+    ? message.folder === filter.raw
+    : folderKeyOf(message.folder) === (filter.raw === undefined ? filter.label : folderKeyOf(filter.raw));
+}
+
 /** One pressed facet holds for a letter. */
 function holds(m: EngineMessage, filter: Filter): boolean {
-  if (filter.group === "folder") {
-    return filter.exactPath
-      ? m.folder === filter.raw
-      : folderKeyOf(m.folder) === (filter.raw === undefined ? filter.label : folderKeyOf(filter.raw));
-  }
+  if (filter.group === "folder") return matchesFolder(m, filter);
   if (filter.group === "from") {
     return filter.raw !== undefined
       ? m.from.address.toLowerCase() === filter.raw.toLowerCase()
@@ -298,7 +300,7 @@ export function useFacets({
       count: counts.get(pick.raw)!,
     }));
   }, [apart, engine, messageStamp, serverPlaces]);
-  if (!apart) return groups;
+  if (!apart) return withPressed(groups, pressed);
   const inventory: SearchFacetGroup = {
     group: "folder",
     items: places.map((place) => {

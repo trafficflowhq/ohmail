@@ -14,14 +14,16 @@ import type { DraftReplyRead, DraftReplyWire } from "@ohmail/app-logic/writing/d
  */
 export const CLOUD_WIRE: DraftReplyWire = {
   configured: () => apiConfigured(),
-  create: (id, idempotencyKey) => api<AnswerOf<"POST /messages/:id/draft">>(`/messages/${id}/draft`, {
+  create: (id, idempotencyKey, onDraftPreview) => api<AnswerOf<"POST /messages/:id/draft">>(`/messages/${id}/draft`, {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
+    onDraftPreview,
   }),
   read: (draftId) => api<DraftReplyRead>(`/drafts/${draftId}`),
-  fromText: (body, idempotencyKey) => api<AnswerOf<"POST /drafts/from-text">>("/drafts/from-text", {
+  fromText: (body, idempotencyKey, onDraftPreview) => api<AnswerOf<"POST /drafts/from-text">>("/drafts/from-text", {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
+    onDraftPreview,
     body,
   }),
 };

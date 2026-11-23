@@ -82,6 +82,8 @@ export interface ComposerProps {
   fill?: boolean;
   /** A draft is being written: the text is held and a line runs along the editor's top. */
   drafting?: boolean;
+  /** Plain preview text while the draft purchase is in flight. */
+  draftPreview?: string;
   /** It is on its way: the ink ring steps back. */
   going?: boolean;
   /** A file is held over the letter. Left out: the part sees it itself. */
@@ -142,6 +144,7 @@ export function Composer(props: ComposerProps) {
         },
       }
     : {};
+  const showDraftPreview = props.drafting && (props.draftPreview !== undefined || Boolean(props.placeholder));
   return (
     <section
       ref={props.ref}
@@ -162,7 +165,8 @@ export function Composer(props: ComposerProps) {
         {marks ? <ComposerMarks {...marks} /> : null}
         {tabs}
         <AfterComposerTextSlot>
-          <div className="oh-composer-text">
+          <div className="oh-composer-text" data-preview={showDraftPreview ? "" : undefined}>
+            {showDraftPreview ? <div className="oh-composer-preview">{props.draftPreview}</div> : null}
             {props.placeholder ? (
               <span className="oh-composer-placeholder" aria-hidden="true" data-words={props.placeholder} />
             ) : null}

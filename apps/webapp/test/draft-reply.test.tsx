@@ -47,7 +47,7 @@ function mount(wire: Exclude<Parameters<typeof useDraftReply>[0]["wire"], "none"
     control = useDraftReply({
       onDraft: (draft, messageId) => drafts.push({ draft, messageId }), wire, t: useTranslations(),
     })!;
-    return <p>{control.phase}</p>;
+    return <p>{control.phase}{control.preview}</p>;
   }
 
   root = createRoot(host);
@@ -113,6 +113,26 @@ describe("the cost is named before anything is spent", () => {
 });
 
 describe("one press is one purchase", () => {
+  it("shows provisional words before the stored draft is ready, then hands over the final draft once", async () => {
+    let complete!: (receipt: { draftId: string }) => void;
+    let progress: ((text: string) => void) | undefined;
+    const h = mount({
+      ...CLOUD_WIRE,
+      create: (_id, _key, preview) => {
+        progress = preview;
+        return new Promise((resolve) => { complete = resolve; });
+      },
+      read: async () => ({ body: "A complete draft." }),
+    });
+    act(() => h.control.press("m1", typed("My words")));
+    act(() => progress?.("A complete"));
+    expect(host.textContent).toContain("A complete");
+    expect(h.drafts).toEqual([]);
+    await act(async () => complete({ draftId: "d1" }));
+    expect(host.textContent).not.toContain("A complete");
+    expect(h.drafts).toEqual([{ draft: { text: "A complete draft.", html: "" }, messageId: "m1" }]);
+  });
+
   it("POSTs with an Idempotency-Key, then READS the draft and hands it over", async () => {
     const h = mount();
     fetchMock
@@ -126,6 +146,7 @@ describe("one press is one purchase", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(1, "/messages/m1/draft", {
       method: "POST",
       headers: { "Idempotency-Key": "key-1-1111-1111-1111-111111111111" },
+      onDraftPreview: expect.any(Function),
     });
     // The draft is READ, not waited for on the mirror — the row exists by the time 202 lands.
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/drafts/d1");

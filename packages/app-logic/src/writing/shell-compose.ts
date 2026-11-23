@@ -1896,6 +1896,7 @@ export function useShellCompose({
   const sendReply = useStableCallback((messageId: string, andDone: SendAndDonePlan | null = null) => {
     const withDone = <T extends object>(o: T): T => (andDone !== null ? { ...o, andDone } : o);
     if (messageId !== replyTo) return;
+    if (replyMode !== "forward" && draftReply?.preview !== undefined && draftReply.messageId === messageId) return;
     // A forward of a row the mirror does not hold reads the row its open resolved (`openForward`).
     const fwdGate = replyMode === "forward" && forwardGate?.id === messageId ? forwardGate : null;
     const parent = reader.get<EngineMessage>("message", messageId)
@@ -3018,6 +3019,7 @@ export function useShellCompose({
    * rebuilt.
    */
   const sendCompose = useStableCallback((sendAt?: string) => {
+    if (draftReply?.preview !== undefined && draftReply.messageId === NEW_LETTER) return;
     /**
      * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — the form's own state, the server-confirmed map, and
      * the SAME `composeFrom.mailboxId` the block was handed — sealed at this press by `withSignature`, so a send

@@ -55,6 +55,7 @@ afterEach(async () => {
 async function mount(letter: EngineMessage, standing: RuleEntity, segment = copy.segScreened) {
   let sequence = 2;
   let current = letter;
+  const namedRules = new Map([[standing.id, standing]]);
   const writes: Write[] = [];
   const changes: SyncResponse["changes"] = {
     creates: [
@@ -81,25 +82,32 @@ async function mount(letter: EngineMessage, standing: RuleEntity, segment = copy
     }
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     writes.push({ method, path, body });
+    const place = (folder: Folder) => {
+      const from = current.folder;
+      current = { ...current, folder };
+      changes.moves.push({ type: "message", op: "move", id: letter.id, seq: ++sequence, updatedAt: ISO, entity: current, move: { from, to: folder } });
+    };
+    if (body?.release?.messageIds.includes(letter.id)) place(body.release.to);
+    if (method === "POST" && path === `/api/messages/${letter.id}/move`) {
+      place(body.folder);
+      return Response.json(current, { headers: { "x-sync-seq": String(sequence), "X-Ohmail-Account": ACCOUNT } });
+    }
     const seq = ++sequence;
     const headers = { "x-sync-seq": String(seq), "X-Ohmail-Account": ACCOUNT };
-    if (method === "POST" && path === `/api/messages/${letter.id}/move`) {
-      const from = current.folder;
-      current = { ...current, folder: body.folder };
-      changes.moves.push({ type: "message", op: "move", id: letter.id, seq, updatedAt: ISO, entity: current, move: { from, to: current.folder } });
-      return Response.json(current, { headers });
-    }
-    if (method === "PATCH" && path === `/api/rules/${standing.id}`) {
-      const entity = { ...standing, destination: body.destination };
-      changes.updates.push({ type: "rule", op: "update", id: standing.id, seq, updatedAt: ISO, entity });
+    const ruleId = path.split("/").at(-1)!;
+    if (method === "PATCH" && namedRules.has(ruleId)) {
+      const entity = { ...namedRules.get(ruleId)!, destination: body.destination };
+      namedRules.set(ruleId, entity);
+      changes.updates.push({ type: "rule", op: "update", id: ruleId, seq, updatedAt: ISO, entity });
       return Response.json(entity, { headers });
     }
-    if (method === "DELETE" && path === `/api/rules/${standing.id}`) {
-      changes.deletes.push({ type: "rule", op: "delete", id: standing.id, seq, updatedAt: ISO, entity: null });
+    if (method === "DELETE" && namedRules.delete(ruleId)) {
+      changes.deletes.push({ type: "rule", op: "delete", id: ruleId, seq, updatedAt: ISO, entity: null });
       return new Response(null, { status: 204, headers });
     }
     if (method === "POST" && path === "/api/rules") {
       const entity = rule("r-new", body.match, body.destination, body.kind);
+      namedRules.set(entity.id, entity);
       changes.creates.push({ type: "rule", op: "create", id: entity.id, seq, updatedAt: ISO, entity });
       return Response.json(entity, { status: 201, headers });
     }
@@ -141,42 +149,66 @@ function move(id: string, folder: Folder, pressRule = false): Write {
 }
 const windowCloses = () => tick(UNDO_MS + 100);
 
+function release(messageId: string, from: Folder, to: Folder) {
+  return { messageIds: [messageId], from, to };
+}
+
 describe("a release from Screened out", () => {
-  it("moves the mail at once, holds the rule change, and writes it when the window closes", async () => {
+  it("writes the rule and moves the mail in one request", async () => {
     const s = await mount(message("m1", OWN, SCREENED), rule("r1", OWN, SCREENED));
     await s.press(copy.pileOhbox);
-    expect(s.moves()).toEqual([move("m1", "INBOX", true)]);
-    expect(s.rules(), "the rule was written at the press").toEqual([]);
+    const write = {
+      method: "PATCH", path: "/api/rules/r1",
+      body: { destination: "INBOX", release: release("m1", SCREENED, "INBOX") },
+    };
+    expect(s.moves()).toEqual([]);
+    expect(s.rules()).toEqual([write]);
     expect(s.undoButton()).toBeTruthy();
     expect(s.reportText()).toBe("Ohbox — 1 held from out@one.test released. Their rule now files future mail here too");
     expect(s.row(), "the released sender is still on the shelf").toBeNull();
     await windowCloses();
-    expect(s.rules()).toEqual([{ method: "PATCH", path: "/api/rules/r1", body: { destination: "INBOX" } }]);
+    expect(s.rules()).toEqual([write]);
   });
 
-  it("Undo moves the mail back, and the rule is never written", async () => {
+  it("Undo restores the rule and moves the mail back in one request", async () => {
     const s = await mount(message("m1", OWN, SCREENED), rule("r1", OWN, SCREENED));
     await s.press(copy.pileOhbox);
-    expect(s.moves()).toEqual([move("m1", "INBOX", true)]);
     await s.undo();
     expect(s.reportText()).toBe(messages.screening.toastRoutingUndoneRules.replace(/\.$/, ""));
     await windowCloses();
-    expect(s.moves()).toEqual([move("m1", "INBOX", true), move("m1", SCREENED, true)]);
-    expect(s.rules(), "Undo left the rule change to be written").toEqual([]);
+    expect(s.moves()).toEqual([]);
+    expect(s.rules()).toEqual([
+      { method: "PATCH", path: "/api/rules/r1", body: {
+        destination: "INBOX", release: release("m1", SCREENED, "INBOX"),
+      } },
+      { method: "PATCH", path: "/api/rules/r1", body: {
+        destination: SCREENED, applyRetro: false, keepProvenance: true, restoreProvenance: "promoted",
+        release: release("m1", "INBOX", SCREENED),
+      } },
+    ]);
   });
 });
 
 describe("a release from a domain rule", () => {
-  it("writes the address rule that walks their past mail when the window closes, and no other", async () => {
+  it("writes the sender exception with the release and removes it on Undo", async () => {
     const s = await mount(message("m3", MEMBER, SCREENED), rule("r3", DOMAIN, SCREENED, "domain"));
     await s.press(copy.pileOhbox);
-    expect(s.moves()).toEqual([move("m3", "INBOX", true)]);
-    expect(s.rules()).toEqual([]);
-    await windowCloses();
-    expect(s.rules()).toEqual([{
+    expect(s.moves()).toEqual([]);
+    const created = {
       method: "POST", path: "/api/rules",
-      body: expect.objectContaining({ kind: "sender", match: MEMBER, destination: "INBOX", applyRetro: true }),
-    }]);
+      body: {
+        kind: "sender", match: MEMBER, destination: "INBOX", applyRetro: true,
+        release: release("m3", SCREENED, "INBOX"),
+      },
+    };
+    expect(s.rules()).toEqual([created]);
+    await s.undo();
+    await windowCloses();
+    expect(s.moves()).toEqual([]);
+    expect(s.rules()).toEqual([
+      created,
+      { method: "DELETE", path: "/api/rules/r-new", body: { release: release("m3", "INBOX", SCREENED) } },
+    ]);
   });
 });
 

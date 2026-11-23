@@ -49,7 +49,7 @@ it("pressing the row's open control opens exactly that message", async () => {
   const position = window.history.length;
   await click(controls[0], "the second hit's open control");
 
-  expect(window.location.hash).toMatch(/^#\/(?!address\/).*\/m\/b(?:\?|$)/);
+  expect(window.location.hash).toBe("#/search/m/b?q=invoice");
   expect(window.history.length).toBe(position + 1);
   expect(letterShown(document, "b")).not.toBeNull();
   expect(letterShown(document, "a")).toBeNull();
