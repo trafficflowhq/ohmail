@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Page } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { DoorSheet } from "../doors/stage/DoorSheet.js";
-import { Said } from "../doors/stage/Said.js";
+import { Said } from "../text/Said.js";
 import { useLive } from "./answers.js";
 import type { PhonePairAnswer, PhonePairFacts, SaidRefusal } from "./contract.js";
 import { useDoorWords, type DoorWords } from "./namespace.js";

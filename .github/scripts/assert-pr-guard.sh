@@ -17,7 +17,7 @@
 #
 # The admitted typefaces. The list is read from the BASE commit, never from the head and never from a
 # checked-out file, so no pull request admits its own font. A header line, then one row a file: its path
-# (`.woff2` alone), the sha256 of its bytes, the path of its licence text. A font file is admitted when
+# (web `.woff2` or shared native `.ttf`), the sha256 of its bytes, the path of its licence text. A font file is admitted when
 # its path and its sha256 are one row's, it is a regular file, and that row's licence text is a regular
 # file of the head's tree. The rows are a set of pairs: a new version of a file is a second row for the
 # same path, and the old row leaves in or after the pull request that removes the old bytes. So the
@@ -70,7 +70,7 @@ else fail "neither sha256sum nor shasum is here"; fi
 
 # The admitted set: the rows of the BASE's list, each kept as "<path>\t<sha256>\t<licence>" between line feeds.
 list=.github/scripts/admitted-fonts.tsv
-row_re=$'^([A-Za-z0-9][A-Za-z0-9._/-]*\\.woff2)\t([0-9a-f]{64})\t([A-Za-z0-9][A-Za-z0-9._/-]*)$'
+row_re=$'^([A-Za-z0-9][A-Za-z0-9._/-]*\\.(woff2|ttf))\t([0-9a-f]{64})\t([A-Za-z0-9][A-Za-z0-9._/-]*)$'
 rows=$'\n' known=$'\n' count=0 listed=no
 if git cat-file -e "$base:$list" 2>/dev/null; then
   listed=yes
@@ -84,8 +84,11 @@ if git cat-file -e "$base:$list" 2>/dev/null; then
       [ "$line" = $'path\tsha256\tlicence' ] || fail "$at: the header is not path, sha256 and licence with a tab between"
       continue
     fi
-    [[ $line =~ $row_re ]] || fail "$at: not a row (the path of a .woff2, the sha256 of its bytes in 64 lower-case digits and the path of its licence text, a tab between)"
-    p=${BASH_REMATCH[1]} sum=${BASH_REMATCH[2]} lic=${BASH_REMATCH[3]}
+    [[ $line =~ $row_re ]] || fail "$at: not a row (the path of a WOFF2 or shared TrueType file, the sha256 of its bytes in 64 lower-case digits and the path of its licence text, a tab between)"
+    p=${BASH_REMATCH[1]} sum=${BASH_REMATCH[3]} lic=${BASH_REMATCH[4]}
+    if [ "${BASH_REMATCH[2]}" = ttf ]; then
+      [[ $p =~ ^packages/tokens/fonts/[a-z0-9-]+\.ttf$ ]] || fail "$at: a TrueType file belongs in the shared font directory"
+    fi
     case "/$p/$lic/" in */../*) fail "$at: a path with a .. segment" ;; esac
     if is_font "$lic"; then fail "$at: the licence text is itself a file of a font kind"; fi
     case "$rows" in *$'\n'"$p"$'\t'"$sum"$'\t'*) fail "$at: this path and sha256 are a row already" ;; esac

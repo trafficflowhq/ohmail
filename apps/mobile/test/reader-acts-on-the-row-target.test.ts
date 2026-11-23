@@ -313,7 +313,7 @@ describe("an open that is not a row press shows the message it names", () => {
     expect(threadRow(p.engine), "the premise: x2's conversation opens at a1, without x2").toEqual({ members: ["a1"], target: "a1" });
     const link = { id: "x2", as: "conversation" };
     expect(mount(w, link.id)).toBe("x2");
-    expect(routeParams("app/message/[id].tsx"), "the route reads nothing from the link but its id").toEqual(["id"]);
+    expect(routeParams("app/message/[id].tsx"), "the route reads the message id and member selection, never as").toEqual(["id", "member"]);
   });
 
   it("CONTROL: a search hit or a plain link shows itself", async () => {
@@ -533,7 +533,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
   });
 });
 
-/* ── the wiring, read in source: the row is asked at the press, and a link carries only an id ── */
+/* ── the wiring, read in source: the row is asked at the press, and a link names a message ── */
 const MOBILE = fileURLToPath(new URL("..", import.meta.url));
 const read = (rel: string): string => readFileSync(`${MOBILE}${rel}`, "utf8");
 function sourcesUnder(dir: string): string[] {
@@ -562,8 +562,8 @@ describe("the row is asked at the press and nowhere else", () => {
     expect(withoutCommentsAndLiterals(read("app/(tabs)/index.tsx"))).toMatch(/openRow\(\s*w\.rowOpenTarget\(\s*m\.id\s*\)\s*\)/);
   });
 
-  it("the message route reads only its id; CONTROL: a list reads its own open param", () => {
-    expect(routeParams("app/message/[id].tsx")).toEqual(["id"]);
+  it("the message route reads its id and member selection; CONTROL: a list reads its own open param", () => {
+    expect(routeParams("app/message/[id].tsx")).toEqual(["id", "member"]);
     expect(routeParams("src/ui/list-detail.tsx")).toEqual(["open"]);
   });
 });

@@ -6,7 +6,7 @@
 import type { ReactNode } from "react";
 import { Button, Dot, Page, Sentence, Tag } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
-import { Said, SaidTrail, SaidWith } from "../stage/Said.js";
+import { Said, SaidTrail, SaidWith } from "../../text/Said.js";
 import { WayButton } from "../stage/way.js";
 import { Progress, refusalOf, SignOutAgain, type StepProps } from "./parts.js";
 

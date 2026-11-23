@@ -38,11 +38,6 @@
   margin: 0 0 var(--s3);
 }
 
-/* A part of a sentence and the dot after it never part at a line's end. */
-.way-nb {
-  white-space: nowrap;
-}
-
 /* A code a person carries, in the sentence's own weight, its figures set apart. */
 .way-code {
   font-variant-numeric: tabular-nums;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Dialog } from "@ohmail/ui/base";
 import { ActionPanel, SettingNote } from "@ohmail/ui/mail";
+import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { subjectOf } from "@ohmail/app-logic/mailboxes/connect/subject";
 import { FILER_OF_SERVICE, webFilerOf } from "@ohmail/app-logic/mailboxes/pane/organizer";
@@ -115,7 +116,7 @@ function Listed(
   const importingSole = ground.importing && live === 1;
 
   return (
-    <div className="mbx-pane">
+    <div className="mbx-pane" role="group" aria-label={say({ key: filerKey("heading", filer) })}>
       <PaneLines model={model} />
       {groups.map(({ shown, superseded }) => (
         <Row

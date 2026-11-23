@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Menu, MenuItem, Page, Sentence, Slot, Tag } from "@ohmail/ui/base";
-import { SaidWith } from "../../doors/stage/Said.js";
+import { SaidWith } from "../../text/Said.js";
 import { NONE } from "../../host/index.js";
 import { useText } from "../../text/index.js";
 import { Next, StepForm, refusalOf, stepTop, type StepProps } from "./parts.js";

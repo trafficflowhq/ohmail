@@ -8,8 +8,8 @@
 import { useState, type ReactNode } from "react";
 import { Button, Page, type PageLinePart } from "@ohmail/ui/base";
 import { DoorForm } from "../doors/stage/DoorForm.js";
-import { SaidWith } from "../doors/stage/Said.js";
-import { SentenceBlank } from "../doors/stage/SentenceBlank.js";
+import { SaidWith } from "../text/Said.js";
+import { SentenceBlank } from "../text/SentenceBlank.js";
 import { useLive } from "./answers.js";
 import type { PhoneDoorConfig, PhoneServerAnswer, SaidRefusal } from "./contract.js";
 import { useDoorWords } from "./namespace.js";

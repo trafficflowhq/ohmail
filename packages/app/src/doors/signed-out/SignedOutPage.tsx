@@ -9,7 +9,7 @@ import { NONE, type None } from "../../host/contract.js";
 import { useText } from "../../text/index.js";
 import { ColdMark } from "../stage/ColdMark.js";
 import { REASON_SAID } from "../stage/reasons.js";
-import { Said } from "../stage/Said.js";
+import { Said } from "../../text/Said.js";
 import type { SignedOutDoor } from "./door.js";
 export function SignedOutPage({
   door,

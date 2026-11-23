@@ -4,7 +4,7 @@
  */
 import type { ReactNode } from "react";
 import { Button, Page } from "@ohmail/ui/base";
-import { Said } from "../stage/Said.js";
+import { Said } from "../../text/Said.js";
 import type { NoPageDoor } from "./door.js";
 
 /** A button says its words without the catalogue's closing full stop: on a capsule it is no sentence's end. */

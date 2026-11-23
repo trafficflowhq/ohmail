@@ -261,11 +261,14 @@ it("returns from Calendar to the open conversation at its reading position on th
     await reader.getByRole("group", { name: /^32 messages,/ }).waitFor();
     await reader.getByRole("button", { name: /history/i }).first().waitFor();
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
-    const initial = await reader.locator("[data-reading-scroll]").evaluate((element) => element.scrollTop);
-    await reader.hover();
-    await page.mouse.wheel(0, 1000);
+    const scrollport = reader.locator("[data-reading-scroll]");
+    const initial = await scrollport.evaluate((element) => element.scrollTop);
+    // The conversation opens at the newest letter, near the end of the scrollport.
+    expect(initial).toBeGreaterThan(500);
+    await scrollport.hover();
+    await page.mouse.wheel(0, -1000);
     await page.waitForFunction((top) =>
-      document.querySelector("[data-reading-scroll]")!.scrollTop > top + 500, initial);
+      document.querySelector("[data-reading-scroll]")!.scrollTop < top - 500, initial);
     await page.waitForTimeout(400); // Let the squares settle after the scroll.
 
     const recording = await page.evaluateHandle(() => {

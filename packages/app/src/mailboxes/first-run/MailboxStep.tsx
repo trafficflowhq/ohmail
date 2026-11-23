@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 import { Button, Dot, Page, Sentence, Tag } from "@ohmail/ui/base";
 import { SettingLine } from "@ohmail/ui/mail";
 import { DoorSheet } from "../../doors/stage/DoorSheet.js";
-import { SaidTrail } from "../../doors/stage/Said.js";
+import { SaidTrail } from "../../text/Said.js";
 import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
 import { useLocale } from "../../text/index.js";

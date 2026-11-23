@@ -1,8 +1,8 @@
 import { useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Text } from "../../text/index.js";
 import { PASSWORD_MIN, type Blanks } from "./fields.js";
-import { SaidWith } from "./Said.js";
-import { SentenceBlank } from "./SentenceBlank.js";
+import { SaidWith } from "../../text/Said.js";
+import { SentenceBlank } from "../../text/SentenceBlank.js";
 
 /** An account's three blanks, in the order its sentence says them. */
 export type AccountField = "name" | "email" | "password";

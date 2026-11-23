@@ -213,7 +213,7 @@ describe("a plain Send files nothing", () => {
     await confirm();
     expect(kinds(), "a plain Send spent the pin").toEqual(["mail_send"]);
     expect(idsInGroup("Resurfaced"), "a plain Send filed the resurfaced row").toContain(id);
-    expect(host!.textContent).not.toContain("Sent · marked done");
+    expect(host!.textContent).not.toContain(messages.reply.toastSentAndDone);
   });
 
   it("⌘↩ on a pinned row is the same plain Send", async () => {
@@ -295,7 +295,7 @@ describe("CONTROL: Send + Done still files, and Undo restores", () => {
     expect(seen[0]!.messageIds).toEqual([id]);
     expect(seen[0]!.via).toBeUndefined();
     expect(idsInGroup("Resurfaced")).not.toContain(id);
-    expect(host!.textContent).toContain("Sent · marked done");
+    expect(host!.textContent).toContain(messages.reply.toastSentAndDone);
     const undo = undoPress();
     expect(undo, "no Undo on the Send + Done pill").toBeTruthy();
     await act(async () => { undo!.click(); });
@@ -314,6 +314,6 @@ describe("CONTROL: Send + Done still files, and Undo restores", () => {
     await confirm();
     expect(kinds()).toContain("mark_seen");
     expect(idsInGroup("Resurfaced")).not.toContain(id);
-    expect(host!.textContent).toContain("Sent · marked done");
+    expect(host!.textContent).toContain(messages.reply.toastSentAndDone);
   });
 });

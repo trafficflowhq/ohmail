@@ -13,7 +13,7 @@ import { AccountSentence, accountWanted, useWanted } from "../stage/AccountSente
 import { ColdMark } from "../stage/ColdMark.js";
 import { DoorForm } from "../stage/DoorForm.js";
 import { refusalOf, SignOutAgain } from "../stage/pending.js";
-import { Said } from "../stage/Said.js";
+import { Said } from "../../text/Said.js";
 import { Steps } from "../stage/Steps.js";
 import type { InviteDoor, InviteField, InviteState } from "./door.js";
 

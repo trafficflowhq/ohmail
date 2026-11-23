@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { Button, Page } from "@ohmail/ui/base";
 import { NONE, type None } from "../../host/contract.js";
 import { useText } from "../../text/index.js";
-import { Said } from "../stage/Said.js";
+import { Said } from "../../text/Said.js";
 import type { SubscribedDoor } from "./door.js";
 
 export function SubscribedPage({ door }: { door: SubscribedDoor | None }): ReactNode {

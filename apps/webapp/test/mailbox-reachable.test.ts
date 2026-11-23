@@ -110,9 +110,10 @@ async function fillConnect(closed = false) {
   const { view } = state;
   const copy = messages.onboarding!;
   const pane = within(view.getByRole("region", { name: messages.settings!.mailboxes }));
+  expect(pane.getByRole("group", { name: messages.mailboxes!.modeCloud })).toBeTruthy();
   await click(pane.getByRole("button", { name: messages.mailboxes!.connect }));
   type(view.getByLabelText(copy.address!), ADDRESS);
-  await click(view.getByRole("button", { name: messages.providerPicker!.otherLabel }));
+  await click(view.getByRole("button", { name: messages.providerPicker!.otherShort }));
   type(view.getByLabelText(copy.imapHost!), "imap.example.test");
   type(view.getByLabelText(copy.smtpHost!), "smtp.example.test");
   type(view.getByLabelText(copy.password!), PASSWORD);
@@ -190,11 +191,8 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
   });
 
   it("each pane NAMES ITS MODE — Cloud here, local on the desktop", () => {
-    // One mode per install, never both in parallel (the project's design notes: per-install, not
-    // per-mailbox). Both panes head themselves from the catalogue and from the SAME key on the
-    // hosted door — `mailboxes.modeCloud` — so a desktop install on that door and a browser tab
-    // cannot end up calling the same thing by two names. The desktop's local heading is its own
-    // key because the state has no counterpart on a hosted account.
+    // Both panes name the same hosted mode from the catalogue. The web settings column
+    // shows the Mailboxes heading and names the mode on the accessible group.
     //
     // This used to assert the desktop's English LITERAL, which is what the pane was made of: a
     // dozen hardcoded sentences the catalogue could not reach, so a German install read the one
@@ -208,10 +206,10 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
        byte-for-byte what it was; both halves are pinned here because a heading and its key drift
        apart the moment only one of them is asserted. */
     expect(messages.mailboxes!.modeSelfhost).toBe("Mailboxes on this server");
-    // Both panes take the heading from the filer table's `heading` row, by the build or the door.
+    // Both panes name the mode from the filer table's `heading` row, by the build or the door.
     expect([filerKey("heading", "cloud"), filerKey("heading", "server"), filerKey("heading", "computer")])
       .toEqual(["modeCloud", "modeSelfhost", "desktopModeLocal"]);
-    expect(read(`${PANE}/MailboxesPane.tsx`)).toMatch(/say\(\{ key: filerKey\("heading", filer\) \}\)/);
+    expect(read(`${PANE}/MailboxesPane.tsx`)).toMatch(/aria-label=\{say\(\{ key: filerKey\("heading", filer\) \}\)\}/);
     const desktop = read("../../desktop/src/DesktopMailboxes.tsx");
     expect(desktop).toMatch(/filerSentence\("heading", filer\)/);
     expect(desktop).not.toContain("Local mailboxes on this computer");

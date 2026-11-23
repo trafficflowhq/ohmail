@@ -11,7 +11,7 @@ import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
 import { Break, DoorLine, Fact, Heavy, Note } from "../stage/DoorLine.js";
 import { Facts } from "../stage/DoorSheet.js";
-import { Said, SaidWith } from "../stage/Said.js";
+import { Said, SaidWith } from "../../text/Said.js";
 import { StepUpDialog } from "../step-up/StepUpDialog.js";
 import type { DeleteAccountDoor, DeleteAccountState } from "./door.js";
 import "./placement.css";

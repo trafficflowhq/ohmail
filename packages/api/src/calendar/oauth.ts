@@ -14,8 +14,12 @@ import type { Route } from "../router.js";
 import { readBody } from "../routes/shared.js";
 
 const PROVIDERS = ["google", "microsoft"] as const;
-const STATE = /^[A-Za-z0-9_-]{43}$/;
-const CODE = /^[A-Za-z0-9._~/-]{1,8192}$/;
+export const CALENDAR_OAUTH_STATE_CHARS = 43;
+export const CALENDAR_OAUTH_CODE_MAX_CHARS = 8192;
+export const CALENDAR_OAUTH_ERROR_MAX_CHARS = 128;
+export const CALENDAR_OAUTH_ERROR_DESCRIPTION_MAX_CHARS = 4096;
+const STATE = new RegExp(`^[A-Za-z0-9_-]{${CALENDAR_OAUTH_STATE_CHARS}}$`);
+const CODE = new RegExp(`^[A-Za-z0-9._~/-]{1,${CALENDAR_OAUTH_CODE_MAX_CHARS}}$`);
 const calendarPath = (provider: CalendarOAuthProvider) => `/calendar/oauth/${provider}`;
 
 const consentRefusals = {
@@ -92,8 +96,13 @@ function bounce(deps: ApiDeps, params: URLSearchParams): Response {
 }
 
 function classifyRefusal(provider: CalendarOAuthProvider, query: URLSearchParams, error: string): ConsentRefusal {
+  if (error.length > CALENDAR_OAUTH_ERROR_MAX_CHARS) return "consent_failed";
   if (provider === "microsoft") {
-    return classifyConsentFailure(error, query.get("error_description"), query.get("error_subcode"));
+    const description = query.get("error_description");
+    const subcode = query.get("error_subcode");
+    if ((description?.length ?? 0) > CALENDAR_OAUTH_ERROR_DESCRIPTION_MAX_CHARS ||
+        (subcode?.length ?? 0) > CALENDAR_OAUTH_ERROR_MAX_CHARS) return "consent_failed";
+    return classifyConsentFailure(error, description, subcode);
   }
   return error === "access_denied" ? "consent_declined" : "consent_failed";
 }

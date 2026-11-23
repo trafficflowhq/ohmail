@@ -11,7 +11,7 @@ import { Button, Page } from "@ohmail/ui/base";
 import { useText, type Text } from "../../text/index.js";
 import { Break, DoorLine, Fact, Heavy, Note, useLinePlace } from "../stage/DoorLine.js";
 import { Way, Ways } from "../stage/DoorSheet.js";
-import { Said } from "../stage/Said.js";
+import { Said } from "../../text/Said.js";
 import type { WallDoor, WallHeadline, WallStanding, WallState } from "./door.js";
 import "./placement.css";
 

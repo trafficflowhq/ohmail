@@ -40,7 +40,11 @@ async function inputsOf(borders: Borders, entry: { files: string[] } | { planted
   const result = await build({
     absWorkingDir: ROOT,
     ...("files" in entry
-      ? { entryPoints: entry.files, outdir: "out" }
+      ? {
+          // Keep extensions in output names since a stylesheet and component can share a stem.
+          entryPoints: entry.files.map((file) => ({ in: file, out: file })),
+          outdir: "out",
+        }
       : { stdin: { contents: entry.planted, resolveDir: join(ROOT, borders.folder, "src"), loader: "ts" as const } }),
     bundle: true,
     write: false,

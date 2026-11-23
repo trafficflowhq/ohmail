@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { Button, Page } from "@ohmail/ui/base";
 import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
-import { Said } from "../stage/Said.js";
+import { Said } from "../../text/Said.js";
 import { WayButton, type DoorWay } from "../stage/way.js";
 import { AccountStep, InviteStep, SentStep, VerifyStep } from "./AccountSteps.js";
 import type { JoinDoor } from "./door.js";

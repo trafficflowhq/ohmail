@@ -1,21 +1,19 @@
 /** @vitest-environment jsdom */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, within } from "@testing-library/react";
 import { ThemeProvider } from "@ohmail/ui";
+import { createTranslator } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FactorSlot } from "@ohmail/app/account";
+import type { FactorSlot, StorageFigures } from "@ohmail/app/account";
 import { StoragePane } from "../../../../packages/app/src/account/storage/StoragePane.js";
 import { useStorage } from "../../../../packages/app/src/account/storage/use-storage.js";
-import { storageFactsOf } from "../../app/shell/storage-state";
-import { published, serve, Words, type Server } from "./storage-harness";
+import { formatStoragePrice, storageFactsOf } from "../../app/shell/storage-state";
+import { de, en, published, serve, Words, type Server } from "./storage-harness";
 import { BLOCKS, open, ROSTER } from "./storage-fixtures";
 
 /**
- * THE SAME WORDS AS THE SHIPPED SHARED PANE (`app/shell/StoragePane.tsx`) on every form of the storage block: what the
- * new pane says over the web's filling is what the shipped pane said over the same block, word for word and figure
- * for figure, in English and in German, where the build links out and where it may not. Three things the shipped
- * pane draws are not compared here, each for its reason: the section's name (the column's head says it now), the bar
- * (a picture, hidden from the reader in the shipped pane, waiting for the kit's part), and the table's shape (held
- * row by row below, each figure named by its column).
+ * The visible Storage sentences must match the catalogue and the fixture-derived figures
+ * in English and German, with and without plan links. The shipped pane supplies the table
+ * comparison. The usage line and plan figures are also checked in their own controls.
  */
 
 let roster: unknown[] | null = ROSTER;
@@ -40,6 +38,8 @@ const wordsOf = (nodes: readonly string[]) =>
     .join(" ")
     .split(/[^\p{L}\p{N}%]+/u)
     .filter(Boolean);
+const words = (...parts: string[]) => wordsOf(parts).join(" ");
+const visibleText = (parts: readonly string[]) => parts.join(" ").replace(/\s+/g, " ").trim();
 function textNodes(root: Node, skip: (el: Element) => boolean): string[] {
   const out: string[] = [];
   const walk = (node: Node) => {
@@ -50,10 +50,15 @@ function textNodes(root: Node, skip: (el: Element) => boolean): string[] {
   walk(root);
   return out;
 }
-const counted = (words: readonly string[]) => {
-  const seen = new Map<string, number>();
-  for (const word of words) seen.set(word, (seen.get(word) ?? 0) + 1);
-  return seen;
+const tableOf = (container: HTMLElement) => {
+  const table = container.querySelector('[role="table"]');
+  return {
+    table,
+    heads: [...(table?.querySelectorAll('[role="columnheader"]') ?? [])].map((th) => th.textContent ?? ""),
+    rows: [...(table?.querySelectorAll('[role="row"]:not([data-head])') ?? [])].map((tr) =>
+      [...tr.querySelectorAll('[role="cell"]')].map((td) => td.textContent ?? ""),
+    ),
+  };
 };
 
 /** The shipped shared pane over the block, as the browser (links out) or a store's build (may not) drew it. */
@@ -74,14 +79,11 @@ async function shipped(raw: Record<string, unknown>, linksOut: boolean, lang: "e
   );
   const decorative = (el: Element) => el.matches('[aria-hidden="true"], .oh-scalebar');
   const title = container.querySelector("h2");
-  const table = container.querySelector('[role="table"]');
+  const { table, heads, rows } = tableOf(container);
   const said = {
     outside: wordsOf(textNodes(container, (el) => decorative(el) || el === title || el === table)),
-    all: wordsOf(textNodes(container, (el) => decorative(el) || el === title)),
-    heads: [...container.querySelectorAll('[role="columnheader"]')].map((th) => th.textContent ?? ""),
-    rows: [...container.querySelectorAll('[role="row"]:not([data-head])')].map((tr) =>
-      [...tr.querySelectorAll('[role="cell"]')].map((td) => td.textContent ?? ""),
-    ),
+    heads,
+    rows,
   };
   cleanup();
   return said;
@@ -110,9 +112,104 @@ it("plots account-wide expected storage independently of the mailbox total", asy
   });
 });
 
+const storageText = (locale: "en" | "de") =>
+  createTranslator({ locale, messages: locale === "en" ? en : de, namespace: "settings" });
+type StorageText = ReturnType<typeof storageText>;
+
+function usageWords(t: StorageText, { used, room, tag }: StorageFigures) {
+  const of = room.kind === "held"
+    ? t("storageFigureHeld", { date: room.until })
+    : t(room.kind === "trial" ? "storageFigureTrial" : "storageFigureOf", { limit: room.limit });
+  const tagText = tag?.kind === "percent" ? t("storageTagPercent", { percent: tag.percent })
+    : tag?.kind === "full" ? t("storageTagFull") : "";
+  return [used, of, tagText];
+}
+
+function estimateWords(t: StorageText, needs: NonNullable<StorageFigures["needs"]>) {
+  const { letters, size, average } = needs;
+  return needs.importing
+    ? t("storageImportProgress", { stored: needs.importing.stored, expected: letters, size, average: average.size })
+    : t("storageNeedsAverage", { count: letters, size, average: average.size });
+}
+
+function planWords(t: StorageText, plan: StorageFigures["plan"]): [string, string][] {
+  if (plan.kind === "until") return [
+    [t("storageYouKeep"), t("storageLimitUntil", { limit: plan.limit, date: plan.date })],
+    [t("storageYourPlanKeeps"), t("storageFromThen", { limit: plan.cap })],
+  ];
+  const label = plan.kind === "keeps" && plan.plan
+    ? t("storageNamedPlanKeeps", { plan: t("storagePlanName", { plan: plan.plan }) })
+    : t("storageYourPlanKeeps");
+  return [[label, plan.kind === "trial" ? plan.cap : plan.limit]];
+}
+
+function offerWords(t: StorageText, { lines, addon }: NonNullable<StorageFigures["plans"]>, linksOut: boolean) {
+  return [
+    t("storagePlansHead"),
+    ...lines.flatMap(({ plan, tag, letters, mailboxes, room, price }) => [
+      t("storagePlanName", { plan }),
+      tag === "yours" ? t("storageTagYours") : tag === "keepsAll" ? t("storageTagFits") : "",
+      t("storagePlanFacts", { count: letters, mailboxes }),
+      room,
+      linksOut ? price ?? "" : "",
+    ]),
+    ...(addon ? [
+      t("storageAddonName"), t("storageTagAddon"),
+      t("storageAddonFacts", { count: addon.letters }), addon.unit,
+      linksOut ? addon.price ?? "" : "",
+    ] : []),
+  ];
+}
+
+function expectedProse(t: StorageText, figures: StorageFigures, linksOut: boolean) {
+  const { bar, needs, kept, plan, plans } = figures;
+  return visibleText([
+    ...usageWords(t, figures),
+    bar.limit.said,
+    bar.plan?.said ?? "",
+    t("storageScaleStart"),
+    bar.rest ? t(bar.rest.kind === "toCome" ? "storageBarImporting" : "storageBarOut") : "",
+    bar.expected ? t("storageBarExpected", { size: bar.expected.said }) : bar.scale,
+    ...(needs ? [estimateWords(t, needs), needs.complete ? "" : t("storageIncomplete")] : []),
+    ...(kept?.kind === "from" ? [t("storageKeptFromLabel"), kept.month] : []),
+    kept?.kind === "some" ? t("storageKeptSome", { count: kept.count }) : "",
+    kept?.refills ? t("storageRefill") : "",
+    t("storageWhatCountsHead"), t("storageCountsText"),
+    t("storageAttachments"), t("storageNeverCounted"),
+    ...planWords(t, plan).flat(),
+    ...(plans ? offerWords(t, plans, linksOut) : []),
+    linksOut ? "" : t("storageManageAtSite"),
+    t("storageMail"), t("storageMailSub"),
+    linksOut && plans?.mayChange ? t("storageChangePlan") : "",
+    linksOut && plans?.mayChange && plans.addon ? t("storageAddStorage") : "",
+  ]);
+}
+
+function expectProseFigures(container: HTMLElement, prose: string, figures: StorageFigures, t: StorageText) {
+  const view = within(container);
+  const value = (name: string) =>
+    view.getByRole("group", { name }).querySelector(".oh-settingline-text")?.textContent;
+  const { used, limit, needs, kept, plan } = figures;
+  const figureLine = container.querySelector(".oh-figureline");
+  const figureText = figureLine ? words(...textNodes(figureLine, () => false)) : "";
+  expect(figureText, "used storage, room and usage tag").toBe(words(...usageWords(t, figures)));
+  expect(view.getByRole("img", { name: t("storageOf", { used, limit }) })).toBeTruthy();
+
+  if (needs) {
+    expect(words(prose), "message count and estimated size").toContain(words(estimateWords(t, needs)));
+  }
+  if (kept?.kind === "from") {
+    expect(value(t("storageKeptFromLabel"))).toBe(kept.month);
+  } else if (kept?.kind === "some") {
+    expect(words(prose)).toContain(words(t("storageKeptSome", { count: kept.count })));
+  }
+
+  for (const [label, expected] of planWords(t, plan)) expect(value(label)).toBe(expected);
+}
+
 /** The new pane over the web's real filling, the block published to the tab's feed as the shell's read would. */
 async function anew(raw: Record<string, unknown>, body: "pane" | "facts", lang: "en" | "de") {
-  const { useStorageDoor } = await import("../../app/(product)/mailbox/storage-door");
+  const { storageFiguresOf, useStorageDoor } = await import("../../app/(product)/mailbox/storage-door");
   function Body() {
     return <StoragePane model={useStorage(useStorageDoor(null))} body={body} factor={NO_FACTOR} />;
   }
@@ -123,36 +220,31 @@ async function anew(raw: Record<string, unknown>, body: "pane" | "facts", lang: 
       <Body />
     </Words>,
   );
-  const said = {
-    words: wordsOf(textNodes(container, () => false)),
-    lines: screen.queryAllByRole("group").map((g) => g.textContent ?? ""),
-  };
+  const { table, heads, rows } = tableOf(container);
+  const prose = visibleText(textNodes(container, (el) => el.matches('[aria-hidden="true"]') || el === table));
+  const t = storageText(lang);
+  const figures = storageFiguresOf(storageFactsOf(raw)!, {
+    locale: lang,
+    roster: ROSTER,
+    price: (amount, offer) => t(offer.interval === "year" ? "storagePriceYear" : "storagePriceMonth", {
+      price: formatStoragePrice(amount, offer.currency, lang),
+    }),
+  });
+  expectProseFigures(container, prose, figures, t);
+  expect(prose, "visible prose outside the table").toBe(expectedProse(t, figures, body === "pane"));
   cleanup();
-  return said;
+  return { heads, rows };
 }
 
-describe("the new pane says what the shipped shared pane said", () => {
+describe("the Storage pane checks figures and pins the rendered wording", () => {
   for (const [name, raw] of Object.entries(BLOCKS)) {
     for (const lang of ["en", "de"] as const) {
       for (const linksOut of [true, false]) {
         it(`${name}, ${lang}, ${linksOut ? "where the build links out" : "where it may not"}`, async () => {
           const old = await shipped(raw, linksOut, lang);
           const now = await anew(raw, linksOut ? "pane" : "facts", lang);
-          // Every word the shipped pane said outside its picture and its table, as often as it said it.
-          const have = counted(now.words);
-          expect([...counted(old.outside)].filter(([word, n]) => (have.get(word) ?? 0) < n)).toEqual([]);
-          // No word of its own: whatever the new pane says, the shipped pane said somewhere.
-          const known = new Set(old.all);
-          expect([...new Set(now.words)].filter((word) => !known.has(word))).toEqual([]);
-          // The table, row by row: the mailbox (or the total), then each of its figures named by its column.
-          const columns = old.heads.slice(1);
-          for (const [first, ...figures] of old.rows) {
-            const at = now.lines.indexOf(first!);
-            expect(at, `${first} has its line`).toBeGreaterThanOrEqual(0);
-            expect(now.lines.slice(at + 1, at + 1 + figures.length)).toEqual(
-              figures.map((figure, i) => `${columns[i]}${figure}`),
-            );
-          }
+          expect(now.heads).toEqual(old.heads);
+          expect(now.rows).toEqual(old.rows);
         });
       }
     }

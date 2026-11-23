@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, type ReactNode, type RefObject } from "react";
 import { Field } from "@ohmail/ui/base";
-import { SentenceBlank } from "../../doors/stage/SentenceBlank.js";
+import { SentenceBlank } from "../../text/SentenceBlank.js";
 import { secretOf } from "@ohmail/app-logic/mailboxes/connect/secret";
 import type { PasswordHandle } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 
