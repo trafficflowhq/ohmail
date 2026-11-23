@@ -24,9 +24,11 @@ import { cookieFromJar, HOST_PREFIX } from "./cookie-jar.js";
 /** The cookie the API sets beside the session. Kept identical to the API's own constant. */
 export const OWNER_COOKIE = "tf_owner";
 
-/** Compare the browser's live marker to the account already confirmed by the page request. */
-export function ownerMatchesBeforePaint(owner: string): string {
-  return `(${cookieFromJar.toString()})(document.cookie,${JSON.stringify(OWNER_COOKIE)},${JSON.stringify(HOST_PREFIX)})===${JSON.stringify(owner)}`;
+/** Read the same owner marker in the blocking appearance script. */
+export function ownerBeforePaint(expected: string | null): string {
+  const read = `(${cookieFromJar.toString()})(document.cookie,${JSON.stringify(OWNER_COOKIE)},${JSON.stringify(HOST_PREFIX)})`;
+  const matches = expected === null ? "" : `&&id===${JSON.stringify(expected)}`;
+  return `(function(id){return id!==null&&id!==${JSON.stringify(OWNER_SIGNED_OUT)}&&${OWNER_SHAPE}.test(id)${matches}?id:null})(${read})`;
 }
 
 /**

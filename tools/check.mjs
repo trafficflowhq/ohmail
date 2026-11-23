@@ -249,7 +249,38 @@ function references(root) {
   });
 }
 
+function retirementBase(root, base) {
+  if (!base) return base;
+  const next = "refs/remotes/origin/next";
+  const nextCommit = () => git(root, "rev-parse", "--verify", `${next}^{commit}`).trim();
+  let commit;
+  try {
+    commit = nextCommit();
+  } catch {
+    if (!git(root, "remote").split("\n").includes("origin")) return base;
+    try {
+      git(
+        root,
+        "fetch",
+        "--depth=1",
+        "--no-tags",
+        "--no-recurse-submodules",
+        "origin",
+        `refs/heads/next:${next}`,
+      );
+      commit = nextCommit();
+    } catch {
+      return base;
+    }
+  }
+  if (git(root, "rev-parse", "HEAD").trim() === commit) return base;
+  // A promotion carries retirements already checked on next, even with a different first parent.
+  const tree = git(root, "rev-parse", "--verify", `${commit}^{tree}`).trim();
+  return git(root, "rev-parse", "HEAD^{tree}").trim() === tree ? commit : base;
+}
+
 function retirement(root, files, base) {
+  const censusBase = retirementBase(root, base);
   const { rows, refusals } = parseRetirement(read(root, "tools/retirement.tsv"));
   const tests = files.filter(isSuiteTest);
   const tracked = new Set(files);
@@ -259,8 +290,10 @@ function retirement(root, files, base) {
     if (!texts.has(rel)) texts.set(rel, read(root, rel));
     return texts.get(rel);
   };
-  const deleted = base
-    ? git(root, "diff", "--name-only", "--diff-filter=D", "-M", base, "HEAD").split("\n").filter(isSuiteTest)
+  const deleted = censusBase
+    ? git(root, "diff", "--name-only", "--diff-filter=D", "-M", censusBase, "HEAD")
+        .split("\n")
+        .filter(isSuiteTest)
     : [];
   return [
     ...refusals,
@@ -271,7 +304,7 @@ function retirement(root, files, base) {
       deleted,
       verdictExists: (rel) => existsSync(path.join(root, rel)),
       tree: textOf,
-      base: base ? (rel) => showAt(root, base, rel) : undefined,
+      base: censusBase ? (rel) => showAt(root, censusBase, rel) : undefined,
     }),
   ];
 }

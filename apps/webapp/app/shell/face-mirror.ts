@@ -69,13 +69,18 @@ export function currentFaceOwner(): string | null {
   return readOwner();
 }
 
-/** Only the account confirmed for this document can initialize its face from storage. */
-export function accountThemeDoor(confirmedOwner: string | null): StorageDoor {
+/** A remembered owner can supply colours while confirmation is pending. Only the confirmed owner can write. */
+export function accountThemeDoor(confirmedOwner: string | null, rememberedOwner?: string | null): StorageDoor {
   return {
     ...faceMirrorDoor(THEME_STORAGE, confirmedOwner),
     get(key) {
-      if (key === FACE_ACCOUNT_KEY && (confirmedOwner === null || readOwner() !== confirmedOwner
-        || THEME_STORAGE.get(FACE_ACCOUNT_OWNER_KEY) !== confirmedOwner)) return null;
+      if (key === FACE_ACCOUNT_KEY) {
+        const live = readOwner();
+        // Read the live marker here, including during hydration when the request had no owner.
+        const expected = confirmedOwner ?? rememberedOwner;
+        if (live === null || (expected !== null && live !== expected)
+          || THEME_STORAGE.get(FACE_ACCOUNT_OWNER_KEY) !== live) return null;
+      }
       return THEME_STORAGE.get(key);
     },
   };

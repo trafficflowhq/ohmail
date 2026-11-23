@@ -5,7 +5,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/headline-dark.svg">
-    <img src="docs/assets/readme/headline-light.svg" alt="Consent first, fast and fun mail. and calendar." width="620" />
+    <img src="docs/assets/readme/headline-light.svg" alt="Consent-first, automated mail. and calendar." width="620" />
   </picture>
 </p>
 

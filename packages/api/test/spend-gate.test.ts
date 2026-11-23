@@ -381,6 +381,12 @@ const CEREMONY = [
   // knows must not wait on a verified address. One scrypt per attempt, bounded by the sign-in
   // lockout, and step-up gated besides.
   "POST /auth/password",
+  // Password recovery starts without a session. Reset mail is bounded by the per-IP
+  // verification limiter and the recipient's unsolicited mail quota.
+  "POST /auth/password/reset",
+  // Completion proves control of the mailbox with a live, single-use link before changing
+  // the credential. A session would prevent recovery after losing the password.
+  "POST /auth/password/reset/complete",
   "POST /auth/refresh",
   // The web's sign-out door, `POST /auth/logout`'s class and reasoning: leaving, one lookup and two
   // updates and an audit row, no work. Sorted after `refresh` (`refresh` < `refresh/logout`).
@@ -986,11 +992,12 @@ describe("the route table declares what every handler causes", () => {
     // it makes, so it joins the gated remainder and no exempt list moves.
     // 267 -> 268: `POST /pair/handoff` (mail 0209), a phone app's handoff of its sign-in to its sibling. `ceremony`,
     // so it joins `CEREMONY` and this total together and the gated remainder is unchanged.
+    // 268 -> 270: the two password recovery routes are both ceremonies.
     const conditionalDiscard = apiRoutes.filter((r) => key(r) === CONDITIONAL_DISCARD);
     expect(conditionalDiscard.map((r) => ({
       cost: r.cost, public: r.options?.public === true, anonymous: r.options?.anonymous === true,
     }))).toEqual([{ cost: "work", public: false, anonymous: false }]);
-    expect(apiRoutes.filter((r) => key(r) !== CONDITIONAL_DISCARD)).toHaveLength(268);
+    expect(apiRoutes.filter((r) => key(r) !== CONDITIONAL_DISCARD)).toHaveLength(270);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1234,9 +1241,10 @@ describe("the route table declares what every handler causes", () => {
     // 266 -> 267 with an invitation's answer by mail, a `connection`: the remainder grows by one.
     // 267 -> 268 with a phone app's handoff, a `ceremony`: the total and `CEREMONY` grow by one each, the remainder
     // does not move.
+    // 268 -> 270: both recovery routes join `CEREMONY`, leaving the gated remainder unchanged.
     expect(gated.filter((r) => key(r) === CONDITIONAL_DISCARD).map(key)).toEqual([CONDITIONAL_DISCARD]);
     expect(gated.filter((r) => key(r) !== CONDITIONAL_DISCARD)).toHaveLength(
-      268 - UNAUTHENTICATED.length - CEREMONY.length - READ.length,
+      270 - UNAUTHENTICATED.length - CEREMONY.length - READ.length,
     );
 
     expect(gated.length).toBeGreaterThan(50);

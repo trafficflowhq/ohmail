@@ -396,6 +396,40 @@ export function pgDialect(): Dialect {
     // Truncated, not formatted: formatting every row costs more than the grouping it serves.
     monthBucket: (instant: SQL): SQL => sql`date_trunc('month', ${instant} at time zone 'UTC')`,
 
+    lockedMonths: async (db, instant, where, zone) => {
+      const d = pgDialect();
+      const [policy] = await d.exec(db, sql`select pg_catalog.row_security_active('messages')`);
+      if (policy?.[0] !== true) return null;
+
+      let normalized = "UTC";
+      try {
+        normalized = /^[+-]/.test(zone) ? new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone : zone;
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+      }
+
+      // The account policy hides the arrival expression from index conditions. Choose each
+      // month's newest row and count its messages in one pass over the account.
+      const read = (zoneName: string) => {
+        const timeZone = /^[+-]/.test(zoneName) ? sql`${zoneName}::interval` : sql`${zoneName}::text`;
+        return d.exec(db, sql`
+          select distinct on (bucket) ${d.castInt(sql`count(*) over (partition by bucket)`)} as c,
+            instant as d, id, to_char(bucket, 'YYYY-MM') as month
+          from (
+            select m.id, ${instant} as instant, date_trunc('month', ${instant} at time zone ${timeZone}) as bucket
+            from messages m where ${where}
+          ) dated
+          order by bucket, instant desc nulls last, id desc`);
+      };
+      try {
+        return await read(normalized);
+      } catch (error) {
+        const failure = error as { code?: string; cause?: { code?: string } } | null;
+        if (normalized === "UTC" || (failure?.code ?? failure?.cause?.code) !== "22023") throw error;
+        return read("UTC");
+      }
+    },
+
     // IMMUTABLE throughout — `timestamptz - timestamptz` and an interval literal — so it indexes.
     arrivalKey: (date: SQL, arrivedAt: SQL): SQL => sql`(case when ${arrivedAt} is null then coalesce(${date}, 'epoch'::timestamptz) when ${date} is null then ${arrivedAt} when ${date} <= ${arrivedAt} and ${arrivedAt} - ${date} <= interval '48 hours' then ${date} else ${arrivedAt} end)`,
 

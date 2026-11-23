@@ -846,6 +846,13 @@ export interface Dialect {
   monthBucket(instant: SQL): SQL;
 
   /**
+   * Count and choose the newest message in each reader-local month under the account policy.
+   * The caller supplies the dated key and account filter for the messages alias `m`.
+   * Returns count, instant, id and month, or null when the policy is inactive.
+   */
+  lockedMonths(db: unknown, instant: SQL, where: SQL, zone: string): Promise<unknown[][] | null>;
+
+  /**
    * THE ARRIVAL KEY — the one order every store read of messages takes, and `sortAtOf(date,
    * arrivedAt) ?? date ?? epoch` in SQL: the header while it lies at most 48 h before a known
    * arrival (never after it), else the arrival; an undated row with no arrival at the epoch, as the client's `tsOf` reads

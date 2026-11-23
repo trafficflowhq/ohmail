@@ -148,6 +148,13 @@ export const MIGRATION_ALLOWANCES: readonly MigrationAllowance[] = [
     shipped: "c332f3198566c98f00cabcffb334f6cd48d3a14ed728af5749e6f76ff96d53cd",
     reason: REPLAY_GUARD_REASON,
   },
+  {
+    journal: "cloud",
+    tag: "0106_security_notice_recipients",
+    recorded: "ea2373a2a699f73a9451f000141f8d6b5286bdd7e63c3519bbe92d670f318b18",
+    shipped: "6868a3224192c76c19c1a506ff77cfd02df729023e0073494663fc4610a7287d",
+    reason: REPLAY_GUARD_REASON,
+  },
 ] as const;
 
 /** The allowance admitting exactly this drift, or null. Every field must match. */

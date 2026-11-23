@@ -113,6 +113,8 @@ export interface ConnectConfig {
   accountId: string;
   /** Override the identity probe's deadline (tests). Absent, {@link IDENTITY_PROBE_DEADLINE_MS}. */
   identityDeadlineMs?: number;
+  /** Override the engine's live mutation and replay deadlines in tests. */
+  outboxReplayDeadlineMs?: number;
   /**
    * The standalone arm: the engine in this app, instead of a server on the network. Present ⇒
    * this install organizes its own mailbox and the transport is a call into
@@ -804,6 +806,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     // Every drain carries the client's complete type vocabulary — the cellular rule above.
     types: MOBILE_SYNC_TYPES,
     uuid: deps.uuid,
+    outboxReplayDeadlineMs: config.outboxReplayDeadlineMs,
     // No wake signal attached: this build polls /sync, on the connection layer's cadence
     // (`net/drain-cadence.ts`). `attachWakeSignal` stays the seam a push wake would feed later.
     //

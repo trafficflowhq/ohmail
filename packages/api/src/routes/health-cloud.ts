@@ -266,6 +266,8 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["mailbox_oauth_ceremonies", "purpose"],
   ["mailbox_oauth_device_ceremonies", "purpose"],
   ["cal_push_channels", "created_at"],
+  // The password reset notice claim reads both recipient columns, added in one ALTER TABLE.
+  ["auth_throttle", "notice_account_id"],
 ] as const;
 
 /**
@@ -403,7 +405,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * A VALIDATE-only one carries none: cloud 0045_attachment_staging_digest_validate flips only
  * `convalidated`, which no class sees. The tag names the newest PROVABLE entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0105_calendar_sign_in";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0106_security_notice_recipients";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

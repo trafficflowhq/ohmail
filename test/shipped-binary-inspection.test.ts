@@ -65,17 +65,17 @@ function blocks(): Map<string, { block: string; reads: string }> {
 const BLOCKS = blocks();
 
 /** Runs one job's block against a planted binary, and answers with the shell's own status. */
-function run(job: string, contents: string): { code: number; err: string } {
+function run(job: string, contents: string): { code: number; err: string; out: string } {
   const dir = mkdtempSync(join(tmpdir(), "ohmail-inspect-"));
   writeFileSync(join(dir, "bin"), contents);
   const policy = JSON.stringify(policyOf(OVERLAY[job]!));
   writeFileSync(join(dir, "check.sh"), `set -euo pipefail\nBIN=bin\nWINDOW_CSP=${policy}\n${BLOCKS.get(job)!.block}\n`);
   try {
-    execFileSync("bash", ["check.sh"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    return { code: 0, err: "" };
+    const out = execFileSync("bash", ["check.sh"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return { code: 0, err: "", out };
   } catch (e) {
     const x = e as { status?: number; stderr?: string };
-    return { code: x.status ?? -1, err: x.stderr ?? "" };
+    return { code: x.status ?? -1, err: x.stderr ?? "", out: "" };
   }
 }
 
@@ -103,6 +103,32 @@ describe("every platform job reads its shipped binary", () => {
         const glued = "https://tailscale.com/downloadpublishedOHMAIL_BUILD_COMMITNODE_EXTRA_CA_CERTS";
         expect(run(job, `${CSP}\n${FEED}\n${CLOUD}\n${glued}\n`).code).toBe(0);
       });
+
+      it("finds the password reset, calendar setup and hosted origin beside other literals", () => {
+        const binary = [
+          CSP,
+          FEED,
+          "https://ohmail.app/forgot-passwordsetuphttps://ohmail.app/login?next=join",
+          "https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud",
+          "https://ohmail.appohmail: diagnostic text",
+        ].join("\0");
+        const { code, err, out } = run(job, binary);
+        expect(err).toBe("");
+        expect(code).toBe(0);
+        expect(out.split("\n")).toContain("https://ohmail.app/forgot-password");
+        expect(out.split("\n")).toContain("https://ohmail.app");
+        expect(out).not.toMatch(/forgot-passwordsetup|appohmail:/);
+
+        const unlisted = [
+          "https://ohmail.app/forgot-password-extra",
+          "https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud&extra=1",
+          "https://ohmail.app.example.com",
+        ];
+        const refused = run(job, [binary, ...unlisted].join("\0"));
+        expect(refused.code).toBe(1);
+        for (const url of unlisted) expect(refused.err).toContain(`unexpected first-party URL: ${url}`);
+      });
+
       it("refuses a first-party URL nobody named", () => {
         const { code, err } = run(job, `${CSP}\n${FEED}\n${CLOUD}\nhttps://beacon.ohmail.app/t\n`);
         expect(code).not.toBe(0);

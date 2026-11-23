@@ -1,1 +1,1 @@
-ALTER TABLE "auth_throttle" ADD COLUMN "notice_account_id" uuid, ADD COLUMN "notice_user_id" uuid;
+ALTER TABLE "auth_throttle" ADD COLUMN IF NOT EXISTS "notice_account_id" uuid, ADD COLUMN IF NOT EXISTS "notice_user_id" uuid;
