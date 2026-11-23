@@ -894,6 +894,9 @@ describe("the Rust side", () => {
     const engine = read("src-tauri/src/engine.rs");
     const call = engine.indexOf("allocator_arenas::apply_to_engine(&mut command)");
     expect(call, "engine.rs must put the cap on the command it spawns").toBeGreaterThan(-1);
+    expect(call, "the Node options must come before the engine script").toBeLessThan(
+      engine.indexOf(".args(&launch.args)"),
+    );
     expect(call, "the cap must be on the command BEFORE it is spawned").toBeLessThan(
       engine.indexOf("let mut child = match command.spawn()"),
     );

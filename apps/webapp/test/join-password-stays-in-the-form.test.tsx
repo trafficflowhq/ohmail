@@ -10,6 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { getByLabelText } from "@testing-library/dom";
 import { PROVIDERS } from "../app/shell/providers.js";
 
 const J = en.join;
@@ -110,10 +111,7 @@ async function atTheMailboxStep() {
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
   /** A field, by the name its label gives it, anywhere on the page (the factor's dialog too). */
-  const blank = (name: string) => {
-    const label = [...document.querySelectorAll("label")].find((l) => l.textContent === name);
-    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
-  };
+  const blank = (name: string) => getByLabelText<HTMLInputElement>(document.body, name);
   const type = async (name: string, value: string) => {
     const input = blank(name);
     expect(input, `no field named ${name}`).toBeTruthy();
@@ -129,7 +127,7 @@ async function atTheMailboxStep() {
     await act(async () => { button!.click(); });
     await settle();
   };
-  const heading = () => host.querySelector("h1")?.textContent ?? null;
+  const heading = () => host.querySelector("h1")?.textContent?.trim() ?? null;
   const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
   return { host, blank, type, press, heading, dialog };
 }
@@ -162,7 +160,7 @@ function clean(held: boolean): void {
 describe("a password typed at the sign-up's mailbox step", () => {
   it("is in the one field and in the connect's two `pass`, through the wizard's no, a refusal that repeats it, the second factor and the connect; then it is gone", async () => {
     const ui = await atTheMailboxStep();
-    expect(ui.heading()).toBe(J.step_mailbox_title);
+    expect(ui.heading()).toBe(en.onboarding.providerFirst);
     await ui.type(J.mailboxAddress, ADDRESS);
     await ui.press(FASTMAIL.label);
     await ui.type(J.appPasswordLabel, MARKER);
@@ -228,7 +226,7 @@ describe("a password typed at the sign-up's mailbox step", () => {
     await ui.press(J.connectMailbox);
     expect(connects()).toHaveLength(1);
     // The account reads as entitled, so the wizard is back on the mailbox step, its form mounted anew and empty of it.
-    expect(ui.heading()).toBe(J.step_mailbox_title);
+    expect(ui.heading()).toBe(en.onboarding.providerFirst);
     clean(false);
   });
 });

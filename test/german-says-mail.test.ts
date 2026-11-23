@@ -3,9 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import desktopDe from "../packages/app/messages/desktop.de.json";
 
 /**
- * GERMAN SAYS MAIL, NOT POST, AND ACCOUNT, NOT KONTO.
+ * GERMAN MAIL AND ACCOUNT WORDING.
  *
  * German-speaking people who use a mail app write "Mail" and "Mails" ("deine Mails", "neue Mail")
  * and call their ohmail sign-in an "Account". "Post" for mail read like a word-for-word rendering of
@@ -29,7 +30,8 @@ import ts from "typescript";
  *  - anything built on "Postfach" (Postfach, Postfächer, Postfach-Passwort, IMAP-Postfach, …): it
  *    names the mailbox itself, which is the ordinary German word for it;
  *  - "Postgres": the database's name;
- *  - "Konto" where it means an account somewhere else, never the ohmail one: the AI provider's
+ *  - "Konto" on the desktop installation account label, as in the shared desktop catalogue;
+ *  - "Konto" where it means an account somewhere else: the AI provider's
  *    billing account (Anthropic, OpenAI, OpenCode), the mail provider's account password, and the
  *    account a forwarded verification or security mail is about (THIRD_PARTY_KONTO).
  *
@@ -184,10 +186,15 @@ describe("German says Mail, not Post", () => {
   });
 });
 
-describe("German says Account for the ohmail account, not Konto", () => {
-  it("the web catalogue (de.json): Konto only for somebody else's account", () => {
-    const found = readDe()
-      .filter(([key]) => !(key in THIRD_PARTY_KONTO))
+describe("German account wording", () => {
+  it("the web catalogue matches the desktop installation label and uses Account elsewhere for ohmail", () => {
+    const catalogue = new Map(readDe());
+    const installAccountKey = "desktopDoor.installAccount";
+    const desktopLabel = desktopDe.desktopDoor.installAccount;
+    expect(desktopLabel).toBe("Konto");
+    expect(catalogue.get(installAccountKey)).toBe(desktopLabel);
+    const found = [...catalogue]
+      .filter(([key]) => key !== installAccountKey && !(key in THIRD_PARTY_KONTO))
       .flatMap(([key, value]) => kontoWords(value).map((w) => `${key}: ${w}`));
     expect(found, `the ohmail account is an Account in German:\n  ${found.join("\n  ")}`).toEqual([]);
   });

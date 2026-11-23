@@ -154,6 +154,10 @@ export const forgetAccess: () => void = () => {};
  */
 export const accessStorage: (a: AccountAccess | null | undefined) => StorageFacts | null = () => null;
 
+/** The hosted account's AI credit balance is unavailable through the local client. */
+export const accessAiCredits: (a: AccountAccess | null | undefined) => { remaining: number; total?: number } | null =
+  () => null;
+
 /**
  * The account-header negotiation, for the shared shell's types. Always `null` here — "nobody has
  * asked" — which is the honest value: this door has no `/hello` to ask and no answers to check,
@@ -625,6 +629,7 @@ export interface ConsentStateWire {
     blockAutoUnsubscribeAt?: string | null;
     locale?: string | null;
     resurfaceTime?: string | null;
+    draftReplies?: boolean;
     counts?: {
         decidedSenders: number;
         activeUndecidedSenders: number;
@@ -729,6 +734,7 @@ export const push: {
 
 export const consent: {
     state: () => Promise<ConsentStateWire>;
+    setDraftReplies: (draftReplies: boolean, expectedOwner?: string) => Promise<{ draftReplies: boolean }>;
     setAutoSuggest: (enabled: boolean) => Promise<{
         autoSuggestAt: string | null;
         autoActAt?: string | null;

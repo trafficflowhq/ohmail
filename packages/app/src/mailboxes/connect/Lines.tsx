@@ -126,14 +126,15 @@ export function Acts({ d, manual }: { d: Drawn; manual?: boolean }): ReactNode {
 }
 
 /** The ways out a mount hands in: later, and a mail to support that carries the tile's id and a closed word alone. */
-export function WaysOut({ d }: { d: Drawn }): ReactNode {
+export function WaysOut({ d, showLater = true }: { d: Drawn; showLater?: boolean }): ReactNode {
   const { ask, form, text } = d;
-  if (!ask.later && !ask.help) return null;
+  const later = showLater ? ask.later : undefined;
+  if (!later && !ask.help) return null;
   const join = text("join");
   return (
     <SettingActs>
-      {ask.later ? (
-        <Button kind="quiet" onPress={ask.later}>
+      {later ? (
+        <Button kind="quiet" onPress={later}>
           {join("later")}
         </Button>
       ) : null}

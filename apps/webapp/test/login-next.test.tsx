@@ -162,12 +162,12 @@ describe("the continuation stays off the form", () => {
     expect(host.textContent).not.toContain("Sign in, and your account page opens.");
   });
 
-  it("leaves the sign-out reason on the signed-out page", async () => {
+  it("shows the sign-out reason beside the sign-in form", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     sessionStorage.setItem("ohmail.signed-out-reason", "expired");
     await mount("/account/manage");
     expect(status()).toEqual([]);
-    expect(host.textContent).not.toContain(messages.resume.expiredBody);
+    expect(host.textContent).toContain(messages.resume.expiredBody);
     expect(host.querySelector("#login-email")).not.toBeNull();
   });
 });

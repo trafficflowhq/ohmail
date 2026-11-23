@@ -73,7 +73,7 @@ async function atTheMailboxStep(flavor: "managed" | "selfhost") {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  expect(host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
+  expect(host.querySelector("h1")?.textContent?.trim()).toBe(en.onboarding.providerFirst);
   /* The step is the one connect form: its two ways out are presses, and where each leads is where the browser is sent. */
   const probes = mailboxProbes(host, en, act);
   /** Where a press of this exit sends the browser, or `null` where the exit is not offered. */
@@ -124,7 +124,7 @@ describe("the mailbox step's exits", () => {
 
   it("Do this later opens the app with the setup marked as offered", async () => {
     const ui = await atTheMailboxStep("managed");
-    expect(await ui.leadsTo(en.join.later)).toBe("/?setup=later");
+    expect(await ui.leadsTo(en.onboarding.providerLater)).toBe("/?setup=later");
   });
 
   it("on ohmail Cloud, a mail to support names the provider and the refusal's code, nothing typed", async () => {
@@ -141,7 +141,7 @@ describe("the mailbox step's exits", () => {
 
   it("a self-hosted server has no ohmail support to write to, so that exit is not offered", async () => {
     const ui = await atTheMailboxStep("selfhost");
-    expect(await ui.leadsTo(en.join.later)).toBe("/?setup=later");
+    expect(await ui.leadsTo(en.onboarding.providerLater)).toBe("/?setup=later");
     expect(ui.probes.button(en.join.mailboxWriteUs)).toBeNull();
     expect(ui.host.querySelector('a[href^="mailto:"]')).toBeNull();
   });

@@ -236,8 +236,11 @@ export function MessageActions({
   shownId.current = m.id;
 
   /** Every Reply and Reply all press: a kept reply is resumed, or said to be in Drafts (`replyOpen`). */
+  const availableReply = useRef(replyTo);
+  availableReply.current = replyTo;
   const replyTarget = useRef(replyTo);
   const openReply = (all: boolean) => {
+    const replyTo = availableReply.current;
     replyTarget.current = replyTo;
     setOpen(replyOpen(a.keptReply(replyTo.id), all ? "replyAll" : "reply"));
   };

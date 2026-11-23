@@ -125,8 +125,12 @@ const textarea = (): HTMLTextAreaElement =>
   });
 const buttonNamed = (label: string): HTMLButtonElement | undefined =>
   within(host!).queryByRole<HTMLButtonElement>("button", { name: label }) ?? undefined;
-const saveButton = (locale: "en" | "de"): HTMLButtonElement =>
-  buttonNamed((locale === "de" ? GERMAN : en).settings.screening.save)!;
+const findSave = (locale: "en" | "de") =>
+  buttonNamed((locale === "de" ? GERMAN : en).settings.screening.save);
+const saveButton = (locale: "en" | "de") =>
+  within(host!).getByRole<HTMLButtonElement>("button", {
+    name: (locale === "de" ? GERMAN : en).settings.screening.save,
+  });
 
 /** Type into the controlled textarea the way React reads it — set the value, then dispatch input. */
 async function typeInto(value: string): Promise<void> {
@@ -183,10 +187,10 @@ describe("the prefilled default, in the reader's language", () => {
   });
 });
 
-describe("an untouched prefill writes NOTHING — in either language", () => {
+describe("an untouched prefill offers no Save and writes nothing — in either language", () => {
   it("leaves Save inert under English, and PATCHes nothing on open", async () => {
     await show("en");
-    expect(saveButton("en").disabled).toBe(true);
+    expect(findSave("en")).toBeUndefined();
     expect(patchBodies).toEqual([]);
   });
 
@@ -201,16 +205,16 @@ describe("an untouched prefill writes NOTHING — in either language", () => {
     await show("de");
     expect(textarea().value).not.toBe(stored.defaultBar);
     expect(
-      saveButton("de").disabled,
+      findSave("de"),
       "Save armed on an untouched German prefill — opening Settings would offer to store the twin",
-    ).toBe(true);
+    ).toBeUndefined();
     expect(patchBodies).toEqual([]);
   });
 
   it("treats EITHER language's default as unchanged — pasting the English one into a German box", async () => {
     await show("de");
     await typeInto(SERVER_DEFAULT);
-    expect(saveButton("de").disabled).toBe(true);
+    expect(findSave("de")).toBeUndefined();
   });
 
   /**
@@ -223,7 +227,7 @@ describe("an untouched prefill writes NOTHING — in either language", () => {
     expect(textarea().value).toBe(GERMAN_DEFAULT);
     await show("en");
     expect(textarea().value).toBe(SERVER_DEFAULT);
-    expect(saveButton("en").disabled).toBe(true);
+    expect(findSave("en")).toBeUndefined();
     expect(patchBodies).toEqual([]);
   });
 
@@ -278,6 +282,6 @@ describe("what a save actually writes", () => {
     await press(buttonNamed(GERMAN.settings.screening.reset)!);
     expect(patchBodies).toEqual([{ ohboxBar: null }]);
     expect(textarea().value).toBe(GERMAN_DEFAULT);
-    expect(saveButton("de").disabled).toBe(true);
+    expect(findSave("de")).toBeUndefined();
   });
 });

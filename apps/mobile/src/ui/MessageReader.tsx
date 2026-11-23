@@ -47,7 +47,7 @@ import { Sheet, SheetRow } from "./Sheet";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import {
   MARK_HOLD_MS, RAIL_HIT_SLOP, RAIL_MORE, RAIL_PITCH, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railItemsMemo, readerChromeOverlap, slotOf,
-  readerGroups, type RailItem,
+  readerGroups, replyMemberId, type RailItem,
 } from "./reader-marks";
 import { endIdleVisit, hideVisit, showVisit, visitKnew, visitRecordFor } from "./visit-records";
 import { MARK_RING, MarkRing, MarkSheet, MarkSquare, ringRest, useMarkHold, useSquaresWindow, type MarkHold } from "./MarkSquare";
@@ -531,6 +531,7 @@ export function MessageReader({
   /** Continuity: the offset survives the remounts a posture change forces (`pane-memory`). */
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => anchor.reached(e.nativeEvent.contentOffset.y);
   const { above, below } = readerGroups(m);
+  const replyId = replyMemberId(m, selectMember);
   const unplaced = shouldLand.current && anchor.holding && !placed;
   /** The opened html message's history row, when its frame found a history. */
   const openedHistory = frameHistory !== null && frameHistory.id === m.id ? frameHistory.at : null;
@@ -874,7 +875,7 @@ export function MessageReader({
           and "no longer here" over the reader's own act would read as a failure. */}
       <MessageActions
         m={m}
-        replyTo={newestId === id ? m : w.message(newestId) ?? m}
+        replyTo={replyId === id ? m : w.message(replyId) ?? m}
         onDeleted={onClose}
         onBack={onClose}
         inPane={inPane}

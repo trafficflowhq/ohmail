@@ -157,7 +157,7 @@ describe("a preset imposes the hosts it has, and only those", () => {
       fireEvent.click(group.getByRole("button", { name: label }));
       expect(group.getByRole("button", { name: label, pressed: true })).toBeTruthy();
       fireEvent.click(group.getByRole("button", { name: P.otherLabel }));
-      expect(group.getByRole("button", { name: P.otherLabel, pressed: true })).toBeTruthy();
+      expect(getByRole(view.container, "heading", { name: messages.join.manualTitle })).toBeTruthy();
       return {
         imapHost: getByLabelText<HTMLInputElement>(view.container, O.imapHost).value,
         smtpHost: getByLabelText<HTMLInputElement>(view.container, O.smtpHost).value,

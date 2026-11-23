@@ -61,7 +61,7 @@ import { alreadyHolds, sameAudience, sameCancellationAudience } from "../write-c
 import { dayOfSeries, recordOf, ruleOfRecurrence, seriesOfRecord, type SeriesClock } from "./convert.js";
 import { graphBaseOf, insideBase } from "./graph.js";
 import { graphAuthorization, stamp, type MicrosoftDeps } from "./reader.js";
-import { dateOfTime, priorDate, recurrenceFor } from "./recurrence-write.js";
+import { dateOfTime, priorDate, recurrenceFor } from "../repeat-shapes.js";
 
 type Refusal = {
   readonly ok: false;

@@ -29,6 +29,7 @@ import { readThreadOrder } from "./thread-order.js";
 import { useOwnGone } from "../frame/own-gone.js";
 import { READER_DOM } from "./read-dom.js";
 
+const NO_LETTERS: readonly EngineMessage[] = [];
 const ignoreControls = (): void => {};
 
 function StreamConversation({
@@ -138,7 +139,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     const newestFirst = readThreadOrder(host.session.scope) === "top";
     const chronological = thread?.messages ?? [message];
     const members = newestFirst ? [...chronological].reverse() : chronological;
-    useConversationBodies(thread ? (chronological.at(-1)?.id ?? message.id) : null, chronological);
+    useConversationBodies(thread?.messages.at(-1)?.id ?? null, thread?.messages ?? NO_LETTERS);
     const letters = (current: string | null) =>
       members.map((m) => (
         <Letter
@@ -161,7 +162,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     return (
       <PartsContext.Provider value={parts}>
         <StreamConversation
-          key={addressed && conversation === undefined ? "open" : "card"}
+          key={addressed ? "open" : "card"}
           messages={members}
           openedId={message.id}
           scroller={scroller}

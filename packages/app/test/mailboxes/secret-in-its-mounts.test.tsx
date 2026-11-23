@@ -193,7 +193,7 @@ describe("a password typed at the first run's mailbox step", () => {
     );
     await settle();
     type(O.address, ADDRESS);
-    press(words(P.otherLabel));
+    press(words(P.otherShort));
     type(O.imapHost, HOST_A);
     type(O.smtpHost, HOST_B);
     type(O.password, MARKER);

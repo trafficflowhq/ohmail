@@ -407,7 +407,7 @@
     "installNameMac": "ohmail auf dem Mac",
     "installNameWindows": "ohmail auf Windows",
     "installThisComputer": "Dieser Computer",
-    "installAccount": "Account",
+    "installAccount": "Konto",
     "installUnreachable": "Nicht erreichbar",
     "installConnectionUnknown": "Unbekannt",
     "installMailboxCount": "{count} · {role, select, reader {liest} other {organisiert}}",

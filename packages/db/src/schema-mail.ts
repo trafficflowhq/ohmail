@@ -2542,7 +2542,6 @@ export const messageInvitations = pgTable("message_invitations", {
   startsAt: timestamp("starts_at", { withTimezone: true }),
   organizer: text("organizer"),
   invitedAddress: text("invited_address"),
-  proposal: jsonb("proposal").$type<import("@ohmail/wire").InvitationProposal>(),
   /**
    * On a REQUEST, the answer this mailbox gave on record (`accepted`, `tentative`, `declined`) and
    * when; on a REPLY, the answer the letter carries. Written by the door in `message-invitations.ts`.
@@ -2552,6 +2551,9 @@ export const messageInvitations = pgTable("message_invitations", {
   /** The letter's DTSTAMP: it orders one revision's letters (a cancellation and a new invitation). */
   stampedAt: timestamp("stamped_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  proposal: jsonb("proposal").$type<import("@ohmail/wire").InvitationProposal>(),
+  // Cloud holds the event identity and may know of an earlier revision that is absent here.
+  hostedDetails: jsonb("hosted_details").$type<Pick<import("@ohmail/wire").MessageInvitationDTO, "calendarEventId" | "previous">>(),
 }, (t) => ({
   pk: primaryKey({ name: "message_invitations_pk", columns: [t.accountId, t.messageId] }),
   byUid: index("message_invitations_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),

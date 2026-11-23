@@ -3223,7 +3223,6 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             command.creation_flags(0x0800_0000);
         }
         command
-            .args(&launch.args)
             // Piped, all three, and each for its own reason. stdin because the write end must
             // belong to this process and nothing else — that is the graceful stop and the orphan
             // defence at once. stdout because it is the frame stream. stderr because inheriting
@@ -3241,11 +3240,13 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         for (key, value) in &launch.env {
             command.env(key, value);
         }
-        // HOW MANY ALLOCATOR ARENAS THE ENGINE MAY HAVE. On this command and not in the shell's own
+        // THE ENGINE'S MEMORY SETTINGS: how many allocator arenas it may have, and how soon its JavaScript engine
+        // collects after its heap grows. On this command and not in the shell's own
         // environment: glibc reads the variable when a process starts, so the child gets it and
         // this process does not. Capping it here was measured to be a redistribution rather than a
         // saving in the WEBVIEW's process, which is why that half does not exist.
         crate::allocator_arenas::apply_to_engine(&mut command);
+        command.args(&launch.args);
         // THE WITNESS, taken for this spawn and handed to this engine alone ([`witness`]).
         let held = plan_data_dir(&launch).and_then(|dir| witness::take(&dir).map(|file| (dir, file)));
         if let Some((_, file)) = &held {

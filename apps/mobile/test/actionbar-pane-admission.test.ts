@@ -33,7 +33,7 @@
  */
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DECKS } from "../src/copy";
 import {
@@ -65,15 +65,15 @@ let webOrder: { id: string; seg: string | null }[];
 /** bar-density's verb tokens → this app's `ReaderVerbId`s — the census's own map. */
 const NAME: Record<string, string> = { rall: "replyAll", fwd: "forward", screen: "screening" };
 beforeAll(async () => {
-  const url = pathToFileURL(join(APP, "..", "..", "packages", "app-logic", "src", "lists", "bar-density.ts")).href;
-  const density = (await import(url)) as {
+  const densityPath = resolve(APP, "../../packages/app-logic/src/lists/bar-density.ts");
+  const density = (await import(densityPath)) as {
     admitVerbs: typeof webAdmit;
     BAR_VERB_ORDER: readonly { verb: string; seg: string | null }[];
   };
   webAdmit = density.admitVerbs;
   webOrder = density.BAR_VERB_ORDER.map((v) => ({ id: NAME[v.verb] ?? v.verb, seg: v.seg }));
-  const fit = pathToFileURL(join(APP, "..", "..", "packages", "ui", "src", "mail", "Reading", "fit-panel.ts")).href;
-  webFit = ((await import(fit)) as { fitPanel: (wrap: unknown) => string[] }).fitPanel;
+  const fitPath = resolve(APP, "../../packages/ui/src/mail/Reading/fit-panel.ts");
+  webFit = ((await import(fitPath)) as { fitPanel: (wrap: unknown) => string[] }).fitPanel;
 });
 
 /* ── the web's floor: the new reader's action panel (`packages/app/src/reader/actions/panel-verbs.ts`)

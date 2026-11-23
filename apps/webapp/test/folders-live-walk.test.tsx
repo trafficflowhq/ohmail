@@ -15,7 +15,7 @@ import {
  *     no Folders group, nothing to collapse. The flag is the authority; entities are data.
  *  2. FLAG ON: the rail grows the Folders group under Tags, with the folder and its unread
  *     count; pressing the row routes to `#/folder/<id>` and the view lists the folder's mail
- *     in the standard New / Earlier grouping, read in place.
+ *     in one list, with unread mail above earlier read mail and each row's read state exposed.
  *  3. HISTORY IS A LENS: an old, read message from an unscreened sender that lives in a user
  *     folder appears in History wearing its folder as the place badge — and it is still in its
  *     folder's own list, because a lens never empties the place it looks at.
@@ -120,10 +120,12 @@ describe("flag on — the rail group, the view, the lens", () => {
     expect(window.location.hash).toBe("#/folder/fd1");
     expect(getByRole(el, "heading", { name: "Acme" })).toBeDefined();
     expect(getByTitle(el, /Projects \/ Acme$/)).toBeDefined();
-    const fresh = getByRole(el, "region", { name: "New" });
-    const earlier = getByRole(el, "region", { name: "Earlier" });
-    expect(within(fresh).getByRole("option", { name: /subject of fm-new/ })).toBeDefined();
-    expect(within(earlier).getByRole("option", { name: /subject of fm-old/ })).toBeDefined();
+    const list = within(getByRole(el, "listbox", { name: "Acme" }));
+    const unread = list.getByRole("option", { name: /subject of fm-new/ });
+    const read = list.getByRole("option", { name: /subject of fm-old/ });
+    expect(list.getAllByRole("option")).toEqual([unread, read]);
+    expect(unread.getAttribute("aria-description")).toBe("unread");
+    expect(read.getAttribute("aria-description")).toBe("read");
   });
 
   it("History shows the folder-filed old read mail, badged with its folder — and the folder keeps it", async () => {
@@ -133,11 +135,12 @@ describe("flag on — the rail group, the view, the lens", () => {
     await goHash("#/history");
     const history = getByRole(el, "listbox", { name: "History" });
     const row = within(history).getByRole("option", { name: /subject of fm-old/ });
+    expect(textOf(row)).toContain("Projects/Acme");
 
     // The lens never empties the place it looks at: the folder's list still holds the row.
     await goHash("#/folder/fd1");
-    expect(within(getByRole(el, "region", { name: "Earlier" }))
-      .getByRole("option", { name: /subject of fm-old/ })).toBeDefined();
-    expect(textOf(row)).toContain("Projects/Acme");
+    const list = within(getByRole(el, "listbox", { name: "Acme" }));
+    const read = list.getByRole("option", { name: /subject of fm-old/ });
+    expect(read.getAttribute("aria-description")).toBe("read");
   });
 });

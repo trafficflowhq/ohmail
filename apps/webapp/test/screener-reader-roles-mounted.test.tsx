@@ -256,7 +256,7 @@ describe("screenerMode — what the Screener may do on this install", () => {
       ]);
       const list = within(shell).getByRole("listbox", { name: copy.title });
       const pendingHeading = copy.pendingHeading.replace("{name}", holder);
-      expect(within(list).getByText(pendingHeading)).toBeTruthy();
+      expect(within(list).getByRole("heading", { name: `${pendingHeading} 1 sender` })).toBeTruthy();
       const queued = within(list).getByRole("group", { name: pendingHeading });
       expect(within(queued).getByRole("option").getAttribute("data-id")).toBe(heldId);
       expect(within(list).getAllByRole("option").filter((row) => row.getAttribute("data-id") === heldId))

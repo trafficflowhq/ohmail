@@ -97,7 +97,7 @@ describe("an address's own seat, over the mail ground", () => {
       expect(address.read()).toBe("#/cal/week");
       const views = within(await screen.findByRole("group", { name: "View" }));
       expect(views.getByRole("button", { name: "Week" }).getAttribute("aria-pressed")).toBe("true");
-      fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+      fireEvent.click(screen.getByRole("button", { name: "After" }));
       expect(address.read()).toMatch(/^#\/cal\/week\/\d{4}-\d{2}-\d{2}$/);
       if (start === "a different address") {
         const other = `#/address/${encodeURIComponent(LETTERS[3]!.from.address)}`;

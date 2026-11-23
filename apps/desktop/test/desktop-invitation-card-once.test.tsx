@@ -115,8 +115,8 @@ async function until(done: () => boolean, ms = 4_000): Promise<void> {
   }
 }
 
-describe("the desktop reading pane: one event card, above the mail", () => {
-  it("a Google invitation's two calendar parts draw one card before the body", async () => {
+describe("the desktop reading pane: one event card, after the mail", () => {
+  it("a Google invitation's two calendar parts draw one card after the body and before the files", async () => {
     const host = await openInDesktop(GOOGLE);
     await until(() => host.querySelector("button.oh-file-main") !== null && host.querySelector(".ics-card") !== null);
     // Settle past the arrival: a second card would land with the same texts.
@@ -126,9 +126,10 @@ describe("the desktop reading pane: one event card, above the mail", () => {
     const body = host.querySelector("[data-read-body]");
     expect(body, "the premise: the pane drew the body").not.toBeNull();
     expect(body!.contains(cards[0]!)).toBe(false);
-    expect(cards[0]!.compareDocumentPosition(body!) & Node.DOCUMENT_POSITION_FOLLOWING, "the card is under the body").toBeTruthy();
+    expect(body!.compareDocumentPosition(cards[0]!) & Node.DOCUMENT_POSITION_FOLLOWING, "the card is after the body").toBeTruthy();
     const tiles = host.querySelectorAll("button.oh-file-main");
     expect(tiles, "invite.ics is listed twice, or the file left the strip").toHaveLength(1);
+    expect(cards[0]!.compareDocumentPosition(tiles[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(tiles[0]!.querySelector(".oh-file-title")?.textContent).toBe("invite.ics");
   });
 

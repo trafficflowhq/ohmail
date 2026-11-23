@@ -495,9 +495,10 @@ async function materializeRows(
    * "include"`) carries them too, so `MessageService.delete`'s echo cannot disagree with the row
    * the client already holds. One store answers a boolean and the other 0/1, normalised below.
    */
-  const earlierInvitation = (column: "start_raw" | "starts_at") => sql`
-    case when ${messageInvitations.method} = 'REQUEST' and ${messageInvitations.sequence} > 0 then (
-      select earlier.${sql.identifier(column)} from ${messageInvitations} earlier
+  const earlierInvitation = (column: SQL) => sql`
+    case when ${messageInvitations.hostedDetails} is null
+      and ${messageInvitations.method} = 'REQUEST' and ${messageInvitations.sequence} > 0 then (
+      select ${column} from ${messageInvitations} earlier
       join ${messages} letter on letter.id = earlier.message_id and letter.account_id = earlier.account_id
       where earlier.account_id = ${messageInvitations.accountId}
         and earlier.mailbox_id = ${messageInvitations.mailboxId}
@@ -513,8 +514,8 @@ async function materializeRows(
     fs: prefixed(folderState, "fs"),
     st: prefixed(messageStates, "st"),
     inv: prefixed(messageInvitations, "inv"),
-    previousStart: earlierInvitation("start_raw").as("inv_previous_start"),
-    previousAt: earlierInvitation("starts_at").mapWith(messageInvitations.startsAt).as("inv_previous_at"),
+    previousStart: earlierInvitation(sql`earlier.start_raw`).as("inv_previous_start"),
+    previousAt: earlierInvitation(sql`earlier.starts_at`).mapWith(messageInvitations.startsAt).as("inv_previous_at"),
     tagId: sql<string | null>`${messageTags.tagId}`.as("mt_tag_id"),
     awaySentAt: sql`${awayReplies.sentAt}`.mapWith(awayReplies.sentAt).as("ar_sent_at"),
     autoReply: sql<unknown>`case when ${autoReplyByUsWhere(d, {

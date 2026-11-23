@@ -128,17 +128,18 @@ describe("a typed password", () => {
     fill();
     expect(onThePage()).toEqual({ markup: false, fields: ["password"] });
 
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(screen.getByText(M.probe_auth)).toBeTruthy();
     expect(onThePage()).toEqual({ markup: false, fields: ["password"] });
-    press(J.mailboxWriteUs);
+    press("Setup");
+    fireEvent.click(screen.getByRole("menuitem", { name: J.mailboxWriteUs }));
     expect(helped).toEqual([{ provider: "imap", reason: "auth" }]);
 
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     fireEvent.click(screen.getByRole("switch", { name: M.insecureConsentLabelBoth }));
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(JSON.stringify(view.asks.map((ask) => ask.line))).not.toContain("MARKER");
@@ -162,7 +163,7 @@ describe("a typed password", () => {
     const { door, calls } = fakeDoor({ connect: [echo] });
     draw(door, { purpose: { kind: "join" } });
     fill();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     expect(screen.getByText(M.probe_unknown)).toBeTruthy();
     expect(onThePage()).toEqual({ markup: false, fields: ["password"] });
@@ -232,7 +233,7 @@ describe("a typed password", () => {
     const { door, calls } = fakeDoor({ connect: [WINDOW_CLOSED] });
     const view = draw(door, { purpose: { kind: "join" }, kept });
     fill();
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     view.unmount();
     expect(document.documentElement.outerHTML).not.toContain("MARKER");
@@ -308,10 +309,10 @@ describe("the form's markup", () => {
     const before = inMarkup();
     fill();
     const typed = [inMarkup(), field().hasAttribute("value"), field().value === MARKER];
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     const refused = [inMarkup(), field().hasAttribute("value"), field().value === MARKER];
-    press(J.connectMailbox);
+    press(J.manualConnect);
     await settle();
     // What was typed is looked for and never printed: each reading is a yes or a no.
     expect({ before, typed, refused, connected: inMarkup() }).toEqual({

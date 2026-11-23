@@ -76,14 +76,13 @@ const choose = async (label: string) => {
 };
 
 describe("the pane exists exactly where the shell wired it", () => {
-  it("wired: a Folders entry directly after Tags, whose pane is the intro plus the node", async () => {
-    const { container: host } = mountSettings(folders({ on: false, setFoldersEnabled: async () => false }));
+  it("wired: a Folders entry directly after Tags, whose pane offers the master switch", async () => {
+    mountSettings(folders({ on: false, setFoldersEnabled: async () => false }));
     const labels = navLabels();
     expect(labels).toContain("Folders");
     expect(labels.indexOf("Folders")).toBe(labels.indexOf("Tags") + 1);
     await choose("Folders");
-    expect(screen.getByRole("switch")).toBeTruthy();
-    expect(host.textContent).toContain("the real folders on your mail server, not a copy");
+    expect(screen.getByRole("switch", { name: "Use folders", checked: false })).toBeTruthy();
   });
 
   it("not wired: no entry, no pane", async () => {
@@ -101,11 +100,10 @@ describe("the pane exists exactly where the shell wired it", () => {
   });
 
   it("German reads German — the pane copy comes from the catalogue", async () => {
-    const { container: host } = mountSettings(folders({ on: false, setFoldersEnabled: async () => false }), "de");
+    mountSettings(folders({ on: false, setFoldersEnabled: async () => false }), "de");
     expect(navLabels()).toContain("Ordner");
     await choose("Ordner");
-    expect(host.textContent).toContain("die echten Ordner auf deinem Mailserver, keine Kopie");
-    expect(host.textContent).toContain("Ordner verwenden");
+    expect(screen.getByRole("switch", { name: "Ordner verwenden", checked: false })).toBeTruthy();
   });
 });
 
@@ -121,7 +119,7 @@ describe("the switch shows the stored value, never the hoped-for one", () => {
     const { container: host, mountOver } = mount(folders({ on: false, setFoldersEnabled }));
     const sw = within(host).getByRole("switch");
     expect(sw.getAttribute("aria-checked")).toBe("false");
-    expect(host.textContent).toContain("Your folders stay hidden");
+    expect(within(host).getByRole("switch", { name: "Use folders", checked: false })).toBe(sw);
 
     await act(async () => { sw.click(); });
     expect(calls).toEqual([true]);
@@ -135,7 +133,7 @@ describe("the switch shows the stored value, never the hoped-for one", () => {
     mountOver(folders({ on: true, setFoldersEnabled }));
     const sw2 = within(host).getByRole("switch");
     expect(sw2.getAttribute("aria-checked")).toBe("true");
-    expect(host.textContent).toContain("show in the menu");
+    expect(within(host).getByRole("switch", { name: "Use folders", checked: true })).toBe(sw2);
   });
 
   it("a refused write says so instead of moving the switch", async () => {
@@ -169,8 +167,8 @@ describe("the per-mailbox list (FOLDERS-SPEC.md §17)", () => {
     // mb-1 participates (no exception), mb-2 is the stored exception.
     expect(switches[1]!.getAttribute("aria-checked")).toBe("true");
     expect(switches[2]!.getAttribute("aria-checked")).toBe("false");
-    expect(host.textContent).toContain("Folders show");
-    expect(host.textContent).toContain("Folders hidden");
+    expect(switches[1]!.getAttribute("aria-label")).toEqual(MBS[0]!.address);
+    expect(switches[2]!.getAttribute("aria-label")).toEqual(MBS[1]!.address);
   });
 
   it("with the master OFF, or one mailbox, or no setter: no list — the master is the only switch", async () => {
@@ -251,7 +249,7 @@ describe("the per-mailbox list (FOLDERS-SPEC.md §17)", () => {
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: {}, mailboxesKnown: true, setMailboxFoldersEnabled: async () => ({}),
     }), "de");
-    expect(host.textContent).toContain("Ordner werden gezeigt");
-    expect(host.textContent).not.toContain("Folders show");
+    expect(within(host).getByRole("switch", { name: "Ordner verwenden", checked: true })).toBeTruthy();
+    expect(within(host).queryByRole("switch", { name: "Use folders" })).toBeNull();
   });
 });

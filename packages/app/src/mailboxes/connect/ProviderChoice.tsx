@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } fro
 import { Blank } from "@ohmail/ui/base";
 import type { Drawn } from "./drawn.js";
 import type { ConnectFormProps } from "./contract.js";
+import { WaysOut } from "./Lines.js";
 import { ProviderTiles } from "./ProviderTiles.js";
 
 export function ProviderChoice({
@@ -29,14 +30,17 @@ export function ProviderChoice({
     tiles.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus();
   }, [returning]);
   return page(
-    <ProviderTiles
-      ref={tiles}
-      form={form}
-      picker={text("providerPicker")}
-      bridgeHere={door.localServerWait}
-      query={address ? "" : query}
-      onPick={onPick}
-    />,
+    <>
+      <ProviderTiles
+        ref={tiles}
+        form={form}
+        picker={text("providerPicker")}
+        bridgeHere={door.localServerWait}
+        query={address ? "" : query}
+        onPick={onPick}
+      />
+      <WaysOut d={drawn} showLater={false} />
+    </>,
     null,
     <span onBlur={form.lookUp}>
       <Blank

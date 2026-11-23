@@ -49,6 +49,17 @@ export function railItemsOf(m: RailSource): RailItem[] {
   ];
 }
 
+/** Reply uses the selection, the latest incoming message, or the open letter if they are all ours. */
+export function replyMemberId(m: Pick<RailSource, "id" | "ownMail" | "earlier">, selectMember: boolean): string {
+  if (selectMember) return m.id;
+  for (let i = m.earlier.length - 1; i >= 0; i--) {
+    const member = m.earlier[i]!;
+    if (!member.later && !m.ownMail) break;
+    if (!member.mine) return member.id;
+  }
+  return m.id;
+}
+
 const hasFile = (x: { attachments?: readonly WorldAttachment[] }): boolean => x.attachments?.some((a) => !a.inline) === true;
 
 /** What {@link railItemsOf} reads of a message, flat: the same facts answer the same array. */

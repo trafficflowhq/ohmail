@@ -16,6 +16,7 @@ import { NOW, S, act, consentTransport, engineOver, setup, storeWith, teardown, 
 
 const h = React.createElement;
 const t = messages.onboarding;
+const organizeTitle = t.organizeLast.replace("<window></window>", t.windowYear).replace(/\.$/, "");
 
 const UNDECIDED: MailboxFacts = {
   id: "mb1", address: "me@example.invalid", status: "connected", errorCode: null,
@@ -61,7 +62,7 @@ async function launch(roster: MailboxFacts[], hash: string): Promise<void> {
 }
 
 const theQuestion = (): HTMLElement | null =>
-  [...document.querySelectorAll<HTMLElement>("h1, h2, [role=heading]")].find((el) => el.textContent?.trim() === t.mapTitle) ?? null;
+  [...document.querySelectorAll<HTMLElement>("h1, h2, [role=heading]")].find((el) => el.textContent?.trim() === organizeTitle) ?? null;
 const settle = async (n = 40): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
 };

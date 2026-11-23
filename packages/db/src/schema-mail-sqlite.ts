@@ -2104,6 +2104,8 @@ export const messageInvitations = sqliteTable("message_invitations", {
   stampedAt: integer("stamped_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   proposal: text("proposal", { mode: "json" }).$type<import("@ohmail/wire").InvitationProposal>(),
+  // Cloud holds the event identity and may know of an earlier revision that is absent here.
+  hostedDetails: text("hosted_details", { mode: "json" }).$type<Pick<import("@ohmail/wire").MessageInvitationDTO, "calendarEventId" | "previous">>(),
 }, (t) => ({
   pk: primaryKey({ name: "message_invitations_pk", columns: [t.accountId, t.messageId] }),
   byUid: index("message_invitations_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),

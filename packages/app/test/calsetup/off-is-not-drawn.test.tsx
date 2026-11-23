@@ -74,7 +74,7 @@ describe("the ways drawn", () => {
       await act(async () => undefined);
       expect(capsules()).toEqual([]);
       expect(screen.queryByLabelText(/password/i)).toBeNull();
-      expect(screen.getByText("No calendar can be connected from here")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "No calendar can be connected from here" })).toBeTruthy();
       cleanup();
     }
   });
@@ -92,6 +92,6 @@ describe("the ways drawn", () => {
     await act(async () => undefined);
     expect(capsules()).toEqual([]);
     expect(screen.queryByLabelText(/password/i)).toBeNull();
-    expect(screen.getByText("No calendar can be connected from here")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "No calendar can be connected from here" })).toBeTruthy();
   });
 });
