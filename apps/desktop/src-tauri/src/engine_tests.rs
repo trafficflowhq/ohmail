@@ -4099,16 +4099,16 @@ fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
     });
     let server = "https://server.example.invalid/api";
     let door = self_hosted(server);
-    let origin = server_settings_origin(Some(&door), server).unwrap();
+    let origin = server_settings_origin(Some(&door), server, "mailboxes").unwrap();
     assert_eq!(origin, "https://server.example.invalid");
-    assert!(server_settings_origin(Some(&door), "https://other.example.invalid/api").is_none());
-    assert!(server_settings_origin(Some(&paired_door(Some(FIXTURE_PIN))), server).is_none());
-    assert!(server_settings_origin(None, server).is_none());
+    assert!(server_settings_origin(Some(&door), "https://other.example.invalid/api", "mailboxes").is_none());
+    assert!(server_settings_origin(Some(&paired_door(Some(FIXTURE_PIN))), server, "mailboxes").is_none());
+    assert!(server_settings_origin(None, server, "mailboxes").is_none());
 
     let loopback = "http://localhost:28611/api";
-    assert_eq!(server_settings_origin(Some(&self_hosted(loopback)), loopback).as_deref(), Some("http://localhost:28611"));
+    assert_eq!(server_settings_origin(Some(&self_hosted(loopback)), loopback, "mailboxes").as_deref(), Some("http://localhost:28611"));
     let managed = "https://api.ohmail.app";
-    assert!(server_settings_origin(Some(&self_hosted(managed)), managed).is_none());
+    assert!(server_settings_origin(Some(&self_hosted(managed)), managed, "mailboxes").is_none());
     let local = Config::Local(crate::config::LocalDoor {
         imap_host: "imap.example.invalid".to_string(),
         imap_user: "someone".to_string(),
@@ -4118,7 +4118,7 @@ fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
         address: None,
         pending: false,
     });
-    assert!(server_settings_origin(Some(&local), server).is_none());
+    assert!(server_settings_origin(Some(&local), server, "mailboxes").is_none());
     assert!(link_for("server-mailboxes").is_none());
     const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
     assert!(server_settings_request("mailboxes", Some(GOOD), None).is_err());
@@ -4131,6 +4131,21 @@ fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
         assert_eq!(server_settings_pane(&format!("server-{name}")), Some(name));
     }
     assert_eq!(server_settings_pane("server-other"), None);
+
+    for pane in ["calendar-google", "calendar-microsoft"] {
+        assert!(link_for(pane).is_none());
+        assert_eq!(server_settings_pane(&format!("server-{pane}")), Some(pane));
+        assert_eq!(
+            server_settings_origin(Some(&self_hosted(managed)), managed, pane).as_deref(),
+            Some("https://ohmail.app"),
+        );
+        assert!(server_settings_origin(Some(&door), managed, pane).is_none());
+        assert!(server_settings_origin(Some(&door), server, pane).is_none());
+        assert_eq!(
+            server_settings_request(pane, None, None).unwrap().url,
+            format!("/auth/session?settingsPane={pane}"),
+        );
+    }
 
     let reference = "a".repeat(96);
     let answer = |account: &str, reference: &str| EngineResponse {

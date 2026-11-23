@@ -9,6 +9,7 @@ import { Button, EndDot, Page, Sentence } from "@ohmail/ui/base";
 import {
   offeredWays,
   calendarOAuthResultOf,
+  isCalendarOAuthProvider,
   stepOf,
   waysSaid,
   type CalendarWay,
@@ -26,16 +27,16 @@ import { WayStep } from "./WayStep.js";
 
 /** What our server lists, read once while the port stands; null until it answers. */
 function useWays(port: ReturnType<typeof useSetupPort>): readonly CalendarWay[] | null {
-  const [said, setSaid] = useState<readonly CalendarWay[] | null>(null);
+  const [said, setSaid] = useState<{ port: typeof port; ways: readonly CalendarWay[] } | null>(null);
   useEffect(() => {
     if (port === NONE) return;
     let live = true;
-    void waysSaid(port).then((ways) => live && setSaid(ways));
+    void waysSaid(port).then((ways) => live && setSaid({ port, ways }));
     return () => {
       live = false;
     };
   }, [port]);
-  return port === NONE ? [] : said;
+  return port === NONE ? [] : said?.port === port ? said.ways : null;
 }
 
 export function CalSetupStage({ route }: PaneProps) {
@@ -51,6 +52,7 @@ export function CalSetupStage({ route }: PaneProps) {
   const offered = port === NONE || said === null ? (port === NONE ? [] : null) : offeredWays(said, port);
   const at = stepOf(words, offered ?? []);
   const result = calendarOAuthResultOf(words.oauth);
+  const via = isCalendarOAuthProvider(words.via) ? words.via : undefined;
 
   const go = (next: Readonly<Record<string, string>>) =>
     commands.go({
@@ -71,10 +73,13 @@ export function CalSetupStage({ route }: PaneProps) {
   if (port === NONE || at.step === "way") {
     return (
       <WayStep
+        key={via}
         offered={offered}
+        via={via}
         leave={leave}
         pick={(way) => go({ step: "signin", way })}
         startOAuth={port === NONE ? undefined : port.startOAuth}
+        oauthInBrowser={port !== NONE && port.oauthInBrowser === true}
         status={result === null ? undefined : t(`oauth.${result}`)}
         busy={result === "connecting"}
       />

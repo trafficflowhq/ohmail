@@ -6554,16 +6554,23 @@ fn server_settings_pane(key: &str) -> Option<&'static str> {
         "server-devices" => Some("devices"),
         "server-storage" => Some("storage"),
         "server-mailboxes" => Some("mailboxes"),
+        "server-calendar-google" => Some("calendar-google"),
+        "server-calendar-microsoft" => Some("calendar-microsoft"),
         _ => None,
     }
 }
 
 #[cfg(feature = "local-engine")]
-fn server_settings_origin(config: Option<&Config>, server: &str) -> Option<String> {
+fn server_settings_origin(config: Option<&Config>, server: &str, pane: &str) -> Option<String> {
     let config = config?;
     let Config::Cloud(cloud) = config else { return None };
     if cloud.cloud_url != server || config.is_identity_pending() || config.is_door_pending() {
         return None;
+    }
+    if matches!(pane, "calendar-google" | "calendar-microsoft") {
+        return (cloud.cloud_url == config::MANAGED_CLOUD_BASE
+            && matches!(cloud.flavor.as_deref(), None | Some("managed")))
+            .then(|| "https://ohmail.app".to_string());
     }
     config::self_hosted_origin(config)
 }
@@ -6879,7 +6886,7 @@ fn open_link(
             if shell.pending_door.lock().expect("pending door").is_some() {
                 return Err(moved());
             }
-            let origin = server_settings_origin(shell.paths.config().as_ref(), server).ok_or_else(moved)?;
+            let origin = server_settings_origin(shell.paths.config().as_ref(), server, pane).ok_or_else(moved)?;
             (shell.engine(), origin)
         };
         let response = engine.request(request)?;
@@ -6887,7 +6894,7 @@ fn open_link(
         let _door = shell.door.lock().expect("shell door");
         if shell.pending_door.lock().expect("pending door").is_some()
             || !Arc::ptr_eq(&engine, &shell.engine())
-            || server_settings_origin(shell.paths.config().as_ref(), server).as_deref() != Some(origin.as_str())
+            || server_settings_origin(shell.paths.config().as_ref(), server, pane).as_deref() != Some(origin.as_str())
         {
             return Err(moved());
         }

@@ -1,4 +1,4 @@
-export const SETTINGS_HANDOFF_PANES = ["account", "security", "devices", "storage", "mailboxes"] as const;
+export const SETTINGS_HANDOFF_PANES = ["account", "security", "devices", "storage", "mailboxes", "calendar-google", "calendar-microsoft"] as const;
 export type SettingsHandoffPane = (typeof SETTINGS_HANDOFF_PANES)[number];
 export const SETTINGS_HANDOFF = "settingsHandoff";
 
@@ -11,5 +11,8 @@ export function settingsLogin(reference: string): string {
 }
 
 export function settingsDestination(reference: string, pane: SettingsHandoffPane): string {
-  return `/?${SETTINGS_HANDOFF}=${encodeURIComponent(reference)}#/settings/${pane}`;
+  const route = pane === "calendar-google" || pane === "calendar-microsoft"
+    ? `/cal/cal-setup?via=${pane.slice("calendar-".length)}`
+    : `/settings/${pane}`;
+  return `/?${SETTINGS_HANDOFF}=${encodeURIComponent(reference)}#${route}`;
 }

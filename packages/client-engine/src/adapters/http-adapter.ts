@@ -944,6 +944,13 @@ export class HttpAdapter implements EngineAdapter {
     return this.readAnswer<"GET /calendar/settings">(res);
   }
 
+  async patchCalendarSettings(body: RequestOf<"PATCH /calendar/settings">): Promise<CalendarSettingsWire> {
+    const res = await this.call("PATCH /calendar/settings", { body });
+    if (!res.ok) throw await this.rejectionOf(res);
+    this.noteSeq(res);
+    return this.readAnswer<"PATCH /calendar/settings">(res);
+  }
+
   /**
    * `POST /sync/pull` — the worker doorbell. See {@link EngineAdapter.requestPull}. UNDER A DEADLINE, like the body
    * and attachment reads and for a sharper reason: the ring is the FIRST await of every pull gesture, so a stalled

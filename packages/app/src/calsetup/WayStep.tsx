@@ -6,6 +6,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { Blank, Button, Dot, EndDot, Page, Sentence } from "@ohmail/ui/base";
 import {
   isCalendarOAuthProvider,
+  type CalendarOAuthProvider,
   type CalendarOAuthResult,
   type CalendarSetupPort,
   type CalendarWay,
@@ -18,13 +19,24 @@ export interface WayStepProps {
   readonly leave: ReactNode;
   readonly pick: (way: CalendarWay) => void;
   readonly startOAuth?: CalendarSetupPort["startOAuth"];
+  readonly oauthInBrowser?: boolean;
+  readonly via?: CalendarOAuthProvider;
   readonly status?: string;
   readonly busy?: boolean;
 }
 
-export function WayStep({ offered, leave, pick, startOAuth, status, busy = false }: WayStepProps) {
+export function WayStep({
+  offered,
+  leave,
+  pick,
+  startOAuth,
+  oauthInBrowser,
+  via,
+  status,
+  busy = false,
+}: WayStepProps) {
   const t = useText("calsetup");
-  const [typed, setTyped] = useState("");
+  const [typed, setTyped] = useState<string | null>(null);
   const [startResult, setStartResult] = useState<CalendarOAuthResult | null>(null);
   const asking = useRef(false);
   const press = async (way: CalendarWay) => {
@@ -45,7 +57,8 @@ export function WayStep({ offered, leave, pick, startOAuth, status, busy = false
     }
   };
   const result = startResult === null ? status : t(`oauth.${startResult}`);
-  const words = typed.trim().toLowerCase();
+  const input = typed ?? (via && offered?.includes(via) ? via : "");
+  const words = input.trim().toLowerCase();
   const fits = (way: CalendarWay) =>
     words === "" ||
     t(`way.${way}`)
@@ -82,7 +95,9 @@ export function WayStep({ offered, leave, pick, startOAuth, status, busy = false
                 keyHint={way === first ? "↵" : undefined}
                 onPress={() => void press(way)}
               >
-                {t(`way.${way}`)}
+                {oauthInBrowser && isCalendarOAuthProvider(way)
+                  ? t("way.inBrowser", { provider: t(`way.${way}`) })
+                  : t(`way.${way}`)}
               </Button>
             ))}
           </div>
@@ -97,7 +112,7 @@ export function WayStep({ offered, leave, pick, startOAuth, status, busy = false
               label={t("way.label")}
               placeholder=""
               size={6}
-              value={typed}
+              value={input}
               onChange={setTyped}
               onEnter={() => first && void press(first)}
             />

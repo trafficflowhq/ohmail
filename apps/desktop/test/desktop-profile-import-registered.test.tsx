@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AheadSet } from "@ohmail/client-engine";
+import type { CalendarWay } from "@ohmail/app-logic/calendar/setup";
 import { pressAndHear, type CalendarAct, type CalendarPort } from "@ohmail/app-logic/calendar";
 import { CALENDAR_NOTICES_KEY } from "@ohmail/app-logic/notices/browser-channels";
 import { NONE } from "@ohmail/app/host";
@@ -16,6 +17,9 @@ import { DOOR_COPY } from "../src/door-copy.js";
 import { profileImportPath } from "../src/local-profile-import.js";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+// Match the desktop bundle's intl alias so the shared hooks see DesktopLocale's provider.
+vi.mock("next-intl", async () => vi.importActual("use-intl"));
 
 let drawnCalendar: CalendarPort | typeof NONE = NONE;
 vi.mock("@ohmail/app/frame", async () => {
@@ -56,12 +60,15 @@ interface RegisteredDoor {
   candidate?: () => Promise<Record<string, unknown>>;
   defaultMail?: "not-default";
   calendarSnapshot?: unknown;
+  calendarSetup?: { enabled: boolean; ways: CalendarWay[] };
+  browserPlaces?: RequestBody[];
   alerts?: AheadSet[];
   openings?: Array<(value: unknown) => void>;
   calendarRequests?: Array<number | undefined>;
   calendarWrites?: Array<{ url: string; body: unknown; key: string | undefined; session: number | undefined }>;
 }
 interface RequestBody {
+  key?: string;
   set?: AheadSet;
   event?: string;
   handler?: number;
@@ -100,6 +107,9 @@ async function answer(door: RegisteredDoor, method: string, url: string): Promis
   if (method === "POST" && url === profile) return encode(200, RECEIPT);
   if (method === "POST" && url === `${profile}/decline`) return encode(200, { dismissed: true });
   if (url === "/health") return encode(200, { signedIn: true });
+  if (url === "/auth/session" && door.status?.accountId) {
+    return encode(200, { user: { accountId: door.status.accountId }, scope: "full" });
+  }
   if (/^\/mailboxes(?:\?|$)/.test(url)) {
     return encode(200, { items: [{
       ...MB, status: "connected", lastSyncAt: CONNECTED, initialImportCompletedAt: CONNECTED,
@@ -112,10 +122,16 @@ async function answer(door: RegisteredDoor, method: string, url: string): Promis
   if (url.startsWith("/sync")) {
     return encode(200, { changes: EMPTY_CHANGES, cursor: "MA", hasMore: false, serverTime: CONNECTED });
   }
-  if (url === "/calendar/settings" && door.calendarSnapshot) return encode(200, {
-    enabledAt: CONNECTED, secondZone: null, weekNumbers: false, dayFromMinute: null,
-    dayToMinute: null, newEventsCalendarId: null,
+  if (url === "/calendar/settings" && (door.calendarSnapshot || door.calendarSetup)) return encode(200, {
+    ...(door.calendarSetup?.enabled === false ? { enabledAt: null, unconfigured: true } : { enabledAt: CONNECTED }),
+    secondZone: null, weekNumbers: false, dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null,
   });
+  if (url === "/calendar/connect" && door.calendarSetup) return encode(200, {
+    ways: door.calendarSetup.enabled ? door.calendarSetup.ways : [], connections: [],
+  });
+  if (url === "/calendar/connections" && method === "POST" && door.calendarSetup) {
+    return encode(202, connection());
+  }
   if (door.calendarWrites && method === "POST") {
     if (url === "/calendar/writes") return encode(200, { write: null, events: [] });
     if (url === "/calendar/proposals") return encode(200, { status: "sent" });
@@ -140,6 +156,7 @@ async function mountRegisteredWindow(door: RegisteredDoor = {}): Promise<void> {
         door.alerts?.push(request.set);
         return request.set.alerts.map(({ id }) => id);
       }
+      if (command === "open_link" && request?.key) door.browserPlaces?.push(request);
       if (command !== "engine_request") return null;
       const method = (request?.method ?? "GET").toUpperCase();
       const url = request?.url ?? "";
@@ -147,6 +164,9 @@ async function mountRegisteredWindow(door: RegisteredDoor = {}): Promise<void> {
       const raw = request?.body?.length ? new TextDecoder().decode(Uint8Array.from(request.body)) : "";
       const body = raw ? JSON.parse(raw) : null;
       asked.push({ method, url, body });
+      if (url === "/calendar/settings" && method === "PATCH" && door.calendarSetup) {
+        door.calendarSetup.enabled = body.enabled;
+      }
       if (method === "POST" && url.startsWith("/calendar/")) {
         door.calendarWrites?.push({
           url, body, key: Object.fromEntries(request?.headers ?? [])["idempotency-key"], session: request?.expectedCalendarSession,
@@ -296,6 +316,8 @@ it("schedules a mirrored calendar reminder from the native mail frame and withdr
     openings,
     calendarRequests,
   });
+  expect(drawnCalendar).toMatchObject({ setup: { connect: expect.any(Function), ways: expect.any(Function) } });
+  expect(drawnCalendar === NONE ? undefined : drawnCalendar.setup?.startOAuth).toBeUndefined();
   expect(alerts.filter(({ alerts: entries }) => entries.length > 0)).toEqual([
     {
       scope: MB.id,
@@ -336,6 +358,66 @@ it("schedules a mirrored calendar reminder from the native mail frame and withdr
   await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
   await act(async () => { window.location.hash = "#/cal/week/2026-11-16/e/appointment"; });
   await waitFor(() => expect(window.location.hash).toBe("#/ohbox"));
+});
+
+const managedCalendar: EngineStatus = {
+  ...STANDALONE, mode: "cloud", flavor: "managed", cloudUrl: "https://api.example.invalid",
+  accountId: MB.id, noticeDocument: 1, noticeSession: 2,
+};
+
+it("connects an iCloud calendar from empty desktop settings before Calendar is configured", async () => {
+  vi.stubGlobal("innerWidth", 1440);
+  const calendarRequests: Array<number | undefined> = [];
+  const calendarWrites: NonNullable<RegisteredDoor["calendarWrites"]> = [];
+  await mountRegisteredWindow({
+    status: managedCalendar,
+    calendarSetup: { enabled: false, ways: ["icloud", "caldav", "ics"] },
+    calendarRequests,
+    calendarWrites,
+  });
+  const desktop = within(hostEl);
+  await click(await desktop.findByRole("button", { name: "Calendar" }));
+  const firstStep = within(await desktop.findByRole("region", { name: "Calendar" }));
+  await click(firstStep.getByRole("button", { name: "Connect a calendar" }));
+  expect(window.location.hash).toBe("#/cal/calendars/calaccounts");
+  await click(desktop.getByRole("button", { name: "Add a calendar account" }));
+  const ways = within(await desktop.findByRole("group", { name: "Ways to connect a calendar" }));
+  expect(ways.getAllByRole("button")).toHaveLength(3);
+  expect(ways.getByRole("button", { name: "Another CalDAV server" })).toBeTruthy();
+  expect(ways.getByRole("button", { name: "A subscription" })).toBeTruthy();
+  expect(asked.filter(({ method, url }) => method === "PATCH" && url === "/calendar/settings"))
+    .toEqual([{ method: "PATCH", url: "/calendar/settings", body: { enabled: true } }]);
+  await click(ways.getByRole("button", { name: "iCloud" }));
+  fireEvent.change(desktop.getByLabelText("Apple Account email address"), { target: { value: MB.address } });
+  fireEvent.change(desktop.getByLabelText("App-specific password"), { target: { value: ["fixture", "apple"].join("-") } });
+  await click(desktop.getByRole("button", { name: "Connect" }));
+  await waitFor(() => expect(calendarWrites).toHaveLength(1));
+  expect(calendarWrites[0]).toMatchObject({
+    url: "/calendar/connections", session: 2, key: expect.any(String), body: { way: "icloud" },
+  });
+  expect(calendarRequests.every((session) => session === 2)).toBe(true);
+});
+
+it("offers configured calendar OAuth providers from the enabled account's first step", async () => {
+  vi.stubGlobal("innerWidth", 1440);
+  const browserPlaces: RequestBody[] = [];
+  await mountRegisteredWindow({
+    status: managedCalendar,
+    calendarSetup: { enabled: true, ways: ["icloud", "caldav", "ics", "google", "microsoft"] },
+    browserPlaces,
+  });
+  const desktop = within(hostEl);
+  await click(await desktop.findByRole("button", { name: "Calendar" }));
+  const firstStep = within(await desktop.findByRole("region", { name: "Calendar" }));
+  await click(await firstStep.findByRole("button", { name: "Connect a calendar" }));
+  await click(await desktop.findByRole("button", { name: "Add a calendar account" }));
+  const ways = within(await desktop.findByRole("group", { name: "Ways to connect a calendar" }));
+  await click(ways.getByRole("button", { name: "Google Calendar (opens in browser)" }));
+  await click(ways.getByRole("button", { name: "Microsoft Outlook (opens in browser)" }));
+  expect(browserPlaces).toEqual(["server-calendar-google", "server-calendar-microsoft"].map((key) => ({
+    key, expectedServer: managedCalendar.cloudUrl, expectedAccount: MB.id,
+  })));
+  expect(asked.some(({ method, url }) => method === "PATCH" && url === "/calendar/settings")).toBe(false);
 });
 
 it("creates, edits, moves, deletes, answers and proposes times on the hosted ohmail account", async () => {

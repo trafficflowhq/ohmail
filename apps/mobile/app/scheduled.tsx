@@ -120,12 +120,6 @@ export function ScheduledRow({ row }: { row: WorldScheduled }) {
    */
   const [asking, setAsking] = useState(false);
   const theme = useTheme();
-  const locale = useLocale();
-  const appointment = theme.mail && row.sendAt && Number.isFinite(Date.parse(row.sendAt))
-    ? new Date(row.sendAt).toLocaleString(locale, {
-      weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-    })
-    : row.when;
 
   return (
     <View style={{ paddingHorizontal: 18, paddingVertical: 12, gap: 4 }}>
@@ -152,8 +146,8 @@ export function ScheduledRow({ row }: { row: WorldScheduled }) {
           numberOfLines={theme.mail ? undefined : 1}
         >
           {!row.cancellable ? Copy.scheduledNotSent
-            : appointment === null ? Copy.scheduledWhenUnknown
-              : Copy.scheduledWhen(appointment)}
+            : row.when === null ? Copy.scheduledWhenUnknown
+              : Copy.scheduledWhen(row.when)}
         </Txt>
       </View>
       {theme.mail ? null : <Txt variant="caption" tone="ink3" numberOfLines={1}>

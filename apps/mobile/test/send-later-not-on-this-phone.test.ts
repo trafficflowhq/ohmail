@@ -91,11 +91,12 @@ describe("send later, where an appointment can be kept and where it cannot", () 
     expect(COMPOSER, "the composer decides for itself instead of asking the predicate")
       .toContain("standalone: w.standalone, forward, hasAttachments: attachments.length > 0, filesKept: filesKept?.kept === true,");
     expect(COMPOSER, "the Send later button is not gated on the predicate")
-      .toMatch(/\{laterOffered \?\s*\(\s*<Button\s+label=\{Copy\.sendLater\}/);
-    /* THE OLD FORM IS GONE. A button left on `!forward` would be green on every case above and
-       still offered on a phone — the defect this file exists for, invisible to a predicate test. */
-    expect(COMPOSER, "the button still renders on the pre-widening condition")
-      .not.toMatch(/\{!forward \?\s*\(\s*<Button\s+label=\{Copy\.sendLater\}/);
+      .toMatch(/const laterButton = laterOffered \?\s*\(\s*<Button\s+label=\{Copy\.sendLater\}/);
+    expect(COMPOSER).toContain("{inline ? null : laterButton}");
+    expect(COMPOSER).toContain("{closeButton}{laterButton}{doneButton}{sendButton}");
+    expect(COMPOSER, "the inline menu button is not gated on the predicate")
+      .toMatch(/\{replyMenu && inline && laterOffered \?\s*\(\s*<Button\s+label=\{Copy\.sendLater\}/);
+    expect(COMPOSER.match(/\blabel=\{Copy\.sendLater\}/g)).toHaveLength(2);
   });
 
   it("THE SENTENCE IS RENDERED in both places a person looks for the control", () => {

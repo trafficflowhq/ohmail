@@ -2,7 +2,7 @@
  * SETTINGS › CALENDAR ACCOUNTS: one compact sheet an account, opened in place, read from the mirror on every version.
  * A control stands only where the setup's port has its door: no port, no Add, no Sign in again, no switch.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CalendarSquare } from "@ohmail/ui/calendar";
 import { Empty } from "@ohmail/ui/base";
 import {
@@ -26,7 +26,7 @@ import { NONE } from "../../host/index.js";
 import type { PaneBodyProps } from "../../settings/contract.js";
 import { useText } from "../../text/index.js";
 import { useCalendarMirror, useSetupPort } from "../../calsetup/index.js";
-import { useCalendarSettings } from "../settings-read.js";
+import { useCalendarSettings, type SettingsRead } from "../settings-read.js";
 import { useWhen } from "../when.js";
 import { AccountLines } from "./AccountLines.js";
 
@@ -83,7 +83,11 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
     const empty = (
       <>
         {useCalendar}
-        <Empty label={t("accounts.none")} act={add} />
+        <EmptyAccounts
+          settings={settings}
+          canConnect={doors.connect !== NONE}
+          onConnect={() => setup({ step: "way" })}
+        />
       </>
     );
     return sheet ? sheet(empty) : empty;
@@ -148,6 +152,43 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
       {foot}
     </>
   );
+}
+
+function EmptyAccounts({
+  settings,
+  canConnect,
+  onConnect,
+}: {
+  settings: SettingsRead;
+  canConnect: boolean;
+  onConnect: () => void;
+}) {
+  const t = useText("calsettings");
+  const { host } = useFrame();
+  const report = useReport();
+  const connecting = useRef(false);
+  const { said, save } = settings;
+  const enabled = Boolean(said?.enabledAt);
+  const connect = async () => {
+    if (connecting.current) return;
+    if (!enabled && save !== NONE) {
+      const address = host.device.address.read();
+      connecting.current = true;
+      const done = await save({ enabled: true });
+      connecting.current = false;
+      if (host.device.address.read() !== address) return;
+      if (!done) {
+        report(t("notSaved"));
+        return;
+      }
+    }
+    onConnect();
+  };
+  const add =
+    canConnect && said !== null && (enabled || save !== NONE)
+      ? { label: t("accounts.add"), icon: "plus" as const, onPress: () => void connect() }
+      : undefined;
+  return <Empty label={t("accounts.none")} act={add} />;
 }
 
 function accountFacts(

@@ -6586,6 +6586,7 @@
     "way": {
       "sentence": "Mein Kalender ist bei <way></way>",
       "label": "Wo dein Kalender ist",
+      "inBrowser": "{provider} (öffnet im Browser)",
       "group": "Wege, einen Kalender zu verbinden",
       "none": "Von hier kann kein Kalender verbunden werden",
       "icloud": "iCloud",

@@ -185,13 +185,15 @@ const PINNED: Record<string, { calls: number; why: string }> = {
       + "phone's own zone read uses the same constructor and formats nothing. Every message stamp "
       + "in this file goes through the rule; neither of these is a message's date.",
   },
+  "apps/mobile/src/ui/MailFoundEvents.tsx": {
+    calls: 1,
+    why: "A suggested calendar event shows its event day in UTC so it stays on the same day in every device time zone.",
+  },
   "apps/mobile/src/ui/day-stamp.ts": {
-    calls: 5,
-    why: "The phone twin of `format.ts`'s `dayStamp`, and pinned for the same reason: the day a "
-      + "standing fact became true — a closure's date on the wall and its strips — with no clock "
-      + "on it. Its second call is the reduced-ICU fallback on a runtime that refuses the locale. "
-      + "The third is `monthStamp`: the month text is kept from, in the emptied-text notice. The "
-      + "last two are `longDayStamp` and its fallback: the day a trial's storage floor ends.",
+    calls: 6,
+    why: "The phone's `dayStamp` labels account dates in weekday and medium formats, with a "
+      + "fallback on runtimes that refuse the locale. `longDayStamp` and its fallback label "
+      + "the day a trial's storage floor ends. `monthStamp` labels the month text is kept from.",
   },
   "packages/app-logic/src/text/format.ts": {
     calls: 2,

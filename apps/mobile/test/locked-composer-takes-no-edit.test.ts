@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { editWhileIdle } from "../src/ui/compose-edit";
 import type { ComposerPhase } from "../src/ui/send-cancel";
 
@@ -30,9 +31,22 @@ describe("the locked composer takes no edit", () => {
   });
 
   it("all four of the sheet's text fields take their change through it", () => {
-    const inputs = SHEET.split(/<(?:TextInput|RecipientInput)\b/).slice(1).map((chunk) => chunk.slice(0, chunk.indexOf("/>")));
-    const fields = inputs.filter((i) => /value=\{(to|subject|body|sigText)\}/.test(i));
-    expect(fields.map((f) => /value=\{(\w+)\}/.exec(f)![1]).sort(), "a composer field moved out of reach").toEqual(["body", "sigText", "subject", "to"]);
-    for (const f of fields) expect(f, "a composer field takes a change outside idle").toContain("onChangeText={editWhileIdle(phase, ");
+    const tree = ts.createSourceFile("MessageActions.tsx", SHEET, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const fields: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isJsxSelfClosingElement(node) && ["TextInput", "RecipientInput"].includes(node.tagName.getText(tree))) {
+        const props = node.attributes.properties.filter(ts.isJsxAttribute);
+        const value = props.find((prop) => prop.name.getText(tree) === "value")?.initializer?.getText(tree);
+        const field = /^\{(to|subject|body|sigText)\}$/.exec(value ?? "")?.[1];
+        if (field) {
+          fields.push(field);
+          const change = props.find((prop) => prop.name.getText(tree) === "onChangeText");
+          expect(change?.getText(tree), `${field} takes a change outside idle`).toMatch(/^onChangeText=\{editWhileIdle\(phase, /);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    expect(fields.sort(), "a composer field moved out of reach").toEqual(["body", "sigText", "subject", "to"]);
   });
 });

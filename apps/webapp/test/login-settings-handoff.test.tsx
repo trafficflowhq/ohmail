@@ -38,10 +38,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("prompts the other account on the same server and opens Devices only for the intended account", async () => {
+it.each([
+  { pane: "devices", path: "/settings/devices" },
+  { pane: "calendar-google", path: "/cal/cal-setup?via=google" },
+  { pane: "calendar-microsoft", path: "/cal/cal-setup?via=microsoft" },
+])("prompts another browser account and only continues to $pane for the intended account", async ({ pane, path }) => {
   const reference = "a".repeat(96);
   const verify = vi.fn(async () => session.account === "account-a"
-    ? Response.json({ account: "account-a", pane: "devices" })
+    ? Response.json({ account: "account-a", pane })
     : Response.json({}, { status: 409 }));
   vi.stubGlobal("fetch", verify);
   const mount = async () => render(
@@ -62,8 +66,34 @@ it("prompts the other account on the same server and opens Devices only for the 
   session.account = "account-a";
   await mount();
   await waitFor(() => expect(router.replace).toHaveBeenCalledWith(
-    `/?settingsHandoff=${reference}#/settings/devices`,
+    `/?settingsHandoff=${reference}#${path}`,
   ));
+});
+
+it.each(["google", "microsoft"])("refuses another account at the calendar handoff (%s)", async (provider) => {
+  const reference = "a".repeat(96);
+  const check = vi.fn(async () => session.account === "account-a"
+    ? Response.json({ account: session.account, pane: `calendar-${provider}` })
+    : Response.json({}, { status: 409 }));
+  vi.stubGlobal("fetch", check);
+  const login = `/login?settingsHandoff=${reference}`;
+  const destination = `/?settingsHandoff=${reference}#/cal/cal-setup?via=${provider}`;
+
+  const mount = () => render(
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+      <SettingsHandoffGate reference={reference} />
+    </NextIntlClientProvider>,
+  );
+  window.history.replaceState(null, "", destination);
+  mount();
+  await waitFor(() => expect(router.replace).toHaveBeenCalledWith(login));
+  expect(screen.queryByRole("region")).toBeNull();
+
+  cleanup();
+  session.account = "account-a";
+  mount();
+  expect((await screen.findByRole("region")).textContent).toBe("account-a");
+  expect(window.location.hash).toBe(`#/cal/cal-setup?via=${provider}`);
 });
 
 it("checks the reference again at the mailbox destination before mounting Settings", async () => {

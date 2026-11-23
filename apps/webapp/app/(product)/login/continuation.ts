@@ -1,7 +1,6 @@
 /**
  * WHERE A SIGN-IN CONTINUES when `/login` was opened with `?next=`. The value is a NAME from a closed
- * set and never an address: `manage` and `join` are the names, and anything else continues to the app,
- * so no link can send a sign-in anywhere this table does not list. Read once from the URL the page was
+ * set. Anything else continues to the app, so a link can only choose a destination listed here. Read once from the URL the page was
  * served for; the approval page's own return is a separate door (`approve/approval-return.ts`).
  */
 
