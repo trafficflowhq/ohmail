@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -60,6 +61,7 @@ afterEach(async () => {
   Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
   setActiveFormatZone(null);
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 const settle = async (): Promise<void> => {
@@ -67,7 +69,7 @@ const settle = async (): Promise<void> => {
 };
 
 /** The real provider over a probe, the real strip under it. `managed`: the host's own word. */
-async function mount(opts: { managed?: boolean; locale?: "en" | "de"; variant?: "rail" } = {}): Promise<HTMLElement> {
+async function mount(opts: { managed?: boolean; locale?: "en" | "de" } = {}): Promise<HTMLElement> {
   const store = new MemoryMirrorStore();
   await store.load();
   const engine = new OhmailEngine({
@@ -155,18 +157,21 @@ describe("the strip says new mail is late, for as long as the server says so", (
     expect(slotSays(el)).toBe("");
   });
 
-  it("is a calm status with nothing to press and no way to dismiss it, in both placements", async () => {
+  it.each([["bar", 390], ["rail", 1440]] as const)("is a calm status with one quiet Hide in the %s", async (placement, width) => {
+    vi.stubGlobal("innerWidth", width);
     served = [row({ behind: true, since: ago(50 * MIN) })];
-    for (const variant of [undefined, "rail"] as const) {
-      const el = await mount(variant ? { variant } : {});
-      expect(notice(el), "not a status region").not.toBeNull();
-      expect(el.querySelector('[role="alert"]')).toBeNull();
-      expect(notice(el)!.querySelectorAll("a, button, [role='button']")).toHaveLength(0);
-      // Standing still: nothing is running, so nothing spins.
-      expect(notice(el)!.querySelector('[role="progressbar"], svg')).toBeNull();
-      await act(async () => { root!.unmount(); });
-      root = null;
-    }
+    const el = await mount();
+    const status = within(el).getByRole("status");
+    expect(status.getAttribute("data-place")).toBe(placement);
+    expect(el.querySelector('[role="alert"]')).toBeNull();
+    const hide = within(status).getByRole<HTMLButtonElement>("button", { name: "Hide" });
+    expect([...status.querySelectorAll("a, button, [role='button']")]).toEqual([hide]);
+    expect(hide.getAttribute("data-kind")).toBe("quiet");
+    // Standing still: nothing is running, so nothing spins.
+    expect(status.querySelector('[role="progressbar"], svg, img, picture, [role="img"]')).toBeNull();
+    await act(async () => { hide.click(); });
+    expect(notice(el)).toBeNull();
+    expect(slotSays(el)).toBe("");
   });
 
   it("with no time on record it says so without one", async () => {

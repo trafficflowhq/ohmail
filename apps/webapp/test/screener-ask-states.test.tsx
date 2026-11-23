@@ -52,13 +52,14 @@ describe("the ask well's state", () => {
       phase: "running", size: 50, quote: { senders: 40, credits: 40 },
       notice: "3 of 40 suggested…", progress: { done: 3, total: 40 },
     });
-    expect(dialog().getByRole("status").textContent).toBe("3 of 40 suggested…");
-    expect(dialog().queryByRole("button", { name: /^Suggest for / })).toBeNull();
-    expect(dialog().getAllByText("3 of 40 suggested…", { exact: true })).toHaveLength(1);
-    expect(dialog().queryByText("40 senders · 40 credits", { exact: true })).toBeNull();
-    for (const rung of dialog().queryAllByRole<HTMLButtonElement>("button", { name: /^(?:10|25|50|All 74)$/ })) {
-      expect(rung.disabled).toBe(true);
-    }
+    const tools = within(screen.getByRole("group", { name: messages.screener.bulkAria }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(tools.getByRole("status").textContent).toBe("3 of 40 suggested…");
+    expect(screen.getAllByText("3 of 40 suggested…", { exact: true })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Suggest for / })).toBeNull();
+    expect(screen.queryByText("40 senders · 40 credits", { exact: true })).toBeNull();
+    expect(screen.queryByRole("group", { name: S.aria })).toBeNull();
+    expect(screen.queryAllByRole("button", { name: /^(?:10|25|50|All 74)$/ })).toHaveLength(0);
     expect(control.choose).not.toHaveBeenCalled();
   });
 

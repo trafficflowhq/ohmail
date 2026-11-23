@@ -53,6 +53,7 @@ const NO_FILES: Record<string, string> = {
   "packages/app/src/reader/entry.tsx#PreviewBody": "the collapsed stream preview only; an expanded card goes through OpenCard to Letter and its strip",
   "packages/app/src/reader/body/LetterBody.tsx#LetterBody": "the body the hosts hand the reader; the letter that draws it draws the strip",
   "apps/mobile/src/ui/MailBodyFrame.tsx#MailBodyFrame": "the reader's frame; its host, MessageReader, draws the tiles",
+  "apps/mobile/src/ui/MessageActions.tsx#ComposeSheet": "a bounded reply-history excerpt for composing; original files stay with the original message",
   "apps/mobile/src/ui/DraftReader.tsx#DraftReader": "the person's own unsent draft; its files are the composer's",
   "apps/mobile/src/ui/AccountWall.tsx#AccountWall": "not a message: `plan.body` is the account wall's own sentence",
 };
@@ -183,6 +184,7 @@ describe("the phone: every body mount draws AttachmentTiles, or is named", () =>
       "apps/mobile/src/ui/AccountWall.tsx#AccountWall",
       "apps/mobile/src/ui/DraftReader.tsx#DraftReader",
       "apps/mobile/src/ui/MailBodyFrame.tsx#MailBodyFrame",
+      "apps/mobile/src/ui/MessageActions.tsx#ComposeSheet",
       "apps/mobile/src/ui/MessageReader.tsx#MessageReader",
       "apps/mobile/src/ui/SenderDetail.tsx#SenderDetail",
     ]);

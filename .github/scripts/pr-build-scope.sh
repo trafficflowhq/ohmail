@@ -58,7 +58,7 @@ desktop() {
 android() {
   case "$1" in
     .github/workflows/android.yml | apps/mobile/*) return 0 ;;
-    .github/scripts/assert-*.sh | .github/scripts/firebase-inert-allowlist.txt) return 0 ;;
+    .github/scripts/assert-*.sh | .github/scripts/firebase-inert-allowlist.txt | .github/scripts/play-upload.mjs) return 0 ;;
   esac
   shared "$1"
 }

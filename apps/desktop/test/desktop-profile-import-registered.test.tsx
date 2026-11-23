@@ -19,7 +19,11 @@ import { profileImportPath } from "../src/local-profile-import.js";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 // Match the desktop bundle's intl alias so the shared hooks see DesktopLocale's provider.
-vi.mock("next-intl", async () => vi.importActual("use-intl"));
+vi.mock("next-intl", async () => {
+  const actual = await vi.importActual("next-intl") as Record<string, unknown>;
+  const desktop = await vi.importActual<typeof import("use-intl")>("use-intl");
+  return { ...actual, ...desktop };
+});
 
 let drawnCalendar: CalendarPort | typeof NONE = NONE;
 vi.mock("@ohmail/app/frame", async () => {

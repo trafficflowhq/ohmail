@@ -65,6 +65,11 @@ export function keyedCredentialDb(
     : bindDb(ctx.db, { account: ctx.accountId, key });
 }
 
+/** Registration starts on the unowned credential handle before it creates the account. */
+export function registrationContext(ctx: ServiceContext): ServiceContext {
+  return { ...ctx, db: ctx.credentialDb ?? ctx.db, accountId: "" };
+}
+
 /** Account work after a credential identifies its owner. The request's session stays on the caller's context. */
 export function credentialContext(ctx: ServiceContext, accountId: string): ServiceContext {
   if (ctx.accountId === accountId) return ctx;

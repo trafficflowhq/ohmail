@@ -603,13 +603,13 @@ describe("a hit opened from Search reads in a folder's column and in the sheet",
     expect(glances()).toEqual([["k1"]]);
   }, 60_000);
 
-  it("a click on a hit in a folder: the folder's column reads it", async () => {
+  it("a click on a hit in a folder: Search's column reads it", async () => {
     answerConsentWith({ foldersEnabledAt: ISO });
     const k1 = kettle({ folder: "Projects" });
     await mountThread([k1, msg("k0", 30, { threadId: "t-k0", folder: "Projects" }), folder]);
     await search(entity(k1));
     await click(hit(), "the hit");
-    expect(window.location.hash).toContain("#/folder/fd1");
+    expect(window.location.hash).toBe("#/search/m/k1?q=harbour");
     expect(letterShown(document, "k1"), "the column shows it").not.toBeNull();
     await dwell();
     await dwell();

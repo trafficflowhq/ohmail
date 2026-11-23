@@ -48,6 +48,7 @@ const NO_DOOR: IfContext = {
   "github.event.pull_request.head.repo.full_name": null, "github.head_ref": null, "github.event.pull_request.user.type": null,
   "github.event.pull_request.author_association": null, "github.actor": null, "github.triggering_actor": null,
   "github.event.pull_request.draft": null, "github.base_ref": null, "github.event.action": null,
+  "inputs.play_version_code": "", "github.event.deleted": false,
 };
 /** A maintainer's own pull request from a branch of this repository, ready unless `draft`. */
 const LANE = (head = "pr/lane-x", draft = false): IfContext => ({
@@ -92,7 +93,7 @@ const graphRun = (event: string, ref: string, scope: string): IfContext => ({
 });
 const ran = (r: Record<string, JobResult>) => Object.keys(r).filter((id) => r[id] === "success").sort();
 /** The script runs with nothing of the caller's run: under CI it would otherwise write to the job's own output. */
-const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", LC_ALL: "C" };
+const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir(), TMPDIR: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", LC_ALL: "C" };
 
 /** The script's answer for a list of paths, and a CHANGELOG.md diff when given. */
 function scope(paths: string[], changelog?: string): { desktop: string; android: string; selfhost: string; out: string } {
@@ -411,6 +412,7 @@ describe("pr-build-scope.sh answers the paths each build reads", () => {
     ["the root test program", ["test/tsconfig.test-dirs.json"], "true", "true"],
     ["the engine's type program", ["tools/tsconfig.engine.json"], "true", "true"],
     ["this script", [".github/scripts/pr-build-scope.sh"], "true", "true"],
+    ["the Play upload script", [".github/scripts/play-upload.mjs"], "false", "true"],
     ["the CI retry wrapper", [".github/scripts/retry-infra.sh"], "true", "true"],
     ["nothing", [], "false", "false"],
     ["a changelog fragment", ["changelog.d/x.md"], "false", "false"],

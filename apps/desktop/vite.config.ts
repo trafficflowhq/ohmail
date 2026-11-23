@@ -946,6 +946,7 @@ export default defineConfig({
       { find: "@ohmail/app/write/editor/commands", replacement: r("../../packages/app/src/write/editor/commands.ts") },
       { find: "@ohmail/app/write/editor/marks", replacement: r("../../packages/app/src/write/editor/marks.ts") },
       { find: "@ohmail/app/write", replacement: r("../../packages/app/src/write/index.ts") },
+      { find: "@ohmail/app/settings/ai/budget", replacement: r("../../packages/app/src/settings/ai/budget.ts") },
       { find: "@ohmail/app/settings/ai", replacement: r("../../packages/app/src/settings/ai/index.ts") },
       { find: "@ohmail/app/settings/browser", replacement: r("../../packages/app/src/settings/browser/index.ts") },
       { find: "@ohmail/app/settings/away", replacement: r("../../packages/app/src/settings/away/index.ts") },

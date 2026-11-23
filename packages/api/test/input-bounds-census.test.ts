@@ -276,7 +276,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // The storage mails (cloud 0057), the same bucket: a scheduler's shared secret and no body, query
   // or path parameter. One run mails at most `STORAGE_MAILS_PER_RUN` accounts (`runStorageMailPass`).
   "GET /internal/storage-mails/run",
-  "GET /auth/session",
   "POST /auth/2fa/webauthn/register/options",
   "POST /auth/2fa/totp/enroll",
   "DELETE /auth/2fa/totp",
@@ -489,6 +488,8 @@ interface Disposition {
  * usually arrives beside a free-text name.
  */
 const CENSUS: Readonly<Record<string, Disposition>> = {
+  // The handoff wrapper accepts one closed-set pane or one size-checked encrypted reference.
+  "GET /auth/session": { scalarsOnly: true },
   // ── the wall's nightly sweep and its erase door (cloud 0040): a scheduler's shared secret and
   // ONE uuid each — `?after=` the keyset position the sweep goes on from, `?account=` the one
   // account the door is asked about; anything but a canonical uuid is a 400. Neither is a count.
@@ -1469,8 +1470,7 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "calendar/oauth.ts#error": "length-capped",
   "calendar/oauth.ts#error_description": "length-capped",
   "calendar/oauth.ts#error_subcode": "length-capped",
-  // routes/settings-handoff.ts: mint calls isPane before encrypting. PANES contains only
-  // account, security, devices, storage and mailboxes.
+  // routes/settings-handoff.ts: the host's Settings or Calendar pane list is checked before minting.
   "routes/settings-handoff.ts#settingsPane": "closed-set",
   // routes/settings-handoff.ts: check matches 1–10 digits, an underscore and 40–700
   // base64url characters, at most 711 characters altogether, before decrypting.
@@ -1581,13 +1581,16 @@ describe("SECTION 2 — every query parameter this API reads has a stated bound"
     // the key provider, so a census entry alone cannot pass over an unbounded reader.
     const handoff = readFileSync(resolve(API_SRC, "routes/settings-handoff.ts"), "utf8");
     expect(handoff, "the Settings pane vocabulary").toContain(
-      'const PANES = ["account", "security", "devices", "storage", "mailboxes"] as const;',
+      'const SETTINGS_PANES = ["account", "security", "devices", "storage", "mailboxes"];',
     );
-    expect(handoff, "the Settings pane membership check").toContain(
-      'const isPane = (value: unknown): value is Pane => PANES.some((pane) => pane === value);',
+    expect(handoff, "the Calendar pane vocabulary").toContain(
+      'const CALENDAR_PANES = ["calendar-google", "calendar-microsoft"];',
     );
+    expect(handoff, "the Settings wrapper hands in its own vocabulary").toContain("return withHandoff(route, SETTINGS_PANES);");
+    expect(handoff, "the Calendar wrapper hands in its own vocabulary").toContain("return withHandoff(route, CALENDAR_PANES);");
+    expect(handoff, "mint receives the selected vocabulary").toContain("if (pane !== null) return mint(pane, deps, panes);");
     expect(handoff, "the pane is refused before minting").toMatch(
-      /if \(!isPane\(pane\)\) return answer\(400, \{\}\);\s*const account = session\.accountId;\s*const \{ ciphertext, keyVersion \} = await deps\.keyProvider\.encrypt\(/,
+      /if \(!panes\.includes\(pane\)\) return answer\(400, \{\}\);\s*const account = session\.accountId;\s*const \{ ciphertext, keyVersion \} = await deps\.keyProvider\.encrypt\(/,
     );
     expect(handoff, "the handoff reference is bounded before decrypting").toContain(String.raw`const match = /^(\d{1,10})_([A-Za-z0-9_-]{40,700})$/.exec(reference);
   if (!match) return answer(410, {});`);
@@ -1670,6 +1673,10 @@ type ArrayOrigin =
  * its expression is one the file already uses.
  */
 const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>> = {
+  "screener-rule-release.ts :: release.messageIds": {
+    origin: { caller: "the request's message ids, validated and capped at SCREENER_RELEASE_MOVE_MAX (500) by readRelease" },
+    count: 2,
+  },
   // The calendar's builders for the sync feed: the ids of one feed page's changes of one kind.
   "calendar/feed.ts :: [...ids]": {
     origin: { bounded: "one feed page's changes of one calendar kind — at most the page's own row limit (`MAX_LIMIT`, 2 000)" },
