@@ -1372,7 +1372,7 @@ describe("the Rust side", () => {
     expect(engine).toMatch(
       /fn open_link\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*key: String,\s*challenge: Option<String>,\s*request: Option<String>,\s*expected_server: Option<String>,\s*expected_account: Option<String>,\s*\) -> Result<\(\), String> \{/,
     );
-    expect(engine).toContain("let origin = server_settings_origin(shell.paths.config().as_ref(), server).ok_or_else(moved)?;");
+    expect(engine).toContain("let origin = server_settings_origin(shell.paths.config().as_ref(), server, pane).ok_or_else(moved)?;");
     expect(engine).toContain("let target = server_settings_target(&origin, account, response)?;");
     expect(engine).toMatch(/fn is_request_id\(value: &str\) -> bool/);
     expect(engine).toMatch(/fn open_target\(key: &str, challenge: Option<&str>, request: Option<&str>\)/);

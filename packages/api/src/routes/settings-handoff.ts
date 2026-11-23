@@ -2,9 +2,8 @@ import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
 import { json } from "./shared.js";
 
-const PANES = ["account", "security", "devices", "storage", "mailboxes"] as const;
-type Pane = (typeof PANES)[number];
-const isPane = (value: unknown): value is Pane => PANES.some((pane) => pane === value);
+const SETTINGS_PANES = ["account", "security", "devices", "storage", "mailboxes"];
+const CALENDAR_PANES = ["calendar-google", "calendar-microsoft"];
 const PURPOSE = "ohmail/settings-handoff/1";
 const LIFETIME_MS = 5 * 60_000;
 
@@ -14,10 +13,10 @@ function answer(status: number, body: unknown): Response {
   return response;
 }
 
-async function mint(pane: string, deps: ApiDeps): Promise<Response> {
+async function mint(pane: string, deps: ApiDeps, panes: readonly string[]): Promise<Response> {
   const session = deps.session;
   if (session?.scope !== "full" || session.via !== "bearer") return answer(401, {});
-  if (!isPane(pane)) return answer(400, {});
+  if (!panes.includes(pane)) return answer(400, {});
   const account = session.accountId;
   const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(JSON.stringify({
     purpose: PURPOSE, account, pane, expires: deps.now().getTime() + LIFETIME_MS,
@@ -25,7 +24,7 @@ async function mint(pane: string, deps: ApiDeps): Promise<Response> {
   return answer(200, { account, reference: `${keyVersion}_${ciphertext}` });
 }
 
-async function check(reference: string, deps: ApiDeps): Promise<Response> {
+async function check(reference: string, deps: ApiDeps, panes: readonly string[]): Promise<Response> {
   const match = /^(\d{1,10})_([A-Za-z0-9_-]{40,700})$/.exec(reference);
   if (!match) return answer(410, {});
   let payload: { purpose?: unknown; account?: unknown; pane?: unknown; expires?: unknown } | null;
@@ -34,7 +33,8 @@ async function check(reference: string, deps: ApiDeps): Promise<Response> {
   } catch {
     return answer(410, {});
   }
-  if (payload?.purpose !== PURPOSE || typeof payload.account !== "string" || !isPane(payload.pane) ||
+  if (payload?.purpose !== PURPOSE || typeof payload.account !== "string" ||
+      typeof payload.pane !== "string" || !panes.includes(payload.pane) ||
       typeof payload.expires !== "number" || payload.expires <= deps.now().getTime()) {
     return answer(410, {});
   }
@@ -46,6 +46,15 @@ async function check(reference: string, deps: ApiDeps): Promise<Response> {
 
 /** The self-hosted session route also issues and checks short-lived routing references. */
 export function withSettingsHandoff(route: Route): Route {
+  return withHandoff(route, SETTINGS_PANES);
+}
+
+/** Managed desktop delegates calendar sign-in to the browser for the same account. */
+export function withCalendarHandoff(route: Route): Route {
+  return withHandoff(route, CALENDAR_PANES);
+}
+
+function withHandoff(route: Route, panes: readonly string[]): Route {
   if (route.method !== "GET" || route.pattern !== "/auth/session") return route;
   return {
     ...route,
@@ -54,8 +63,8 @@ export function withSettingsHandoff(route: Route): Route {
       const pane = search.get("settingsPane");
       const reference = search.get("settingsHandoff");
       if (pane !== null && reference !== null) return answer(400, {});
-      if (pane !== null) return mint(pane, deps);
-      if (reference !== null) return check(reference, deps);
+      if (pane !== null) return mint(pane, deps, panes);
+      if (reference !== null) return check(reference, deps, panes);
       return route.handler(request, deps, params);
     },
   };

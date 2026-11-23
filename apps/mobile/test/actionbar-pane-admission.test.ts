@@ -104,9 +104,9 @@ const CHAR_DP = 6.95;
 const en = DECKS.en;
 /** Which bar verbs render an icon, read off `barSpec`'s own case lines — never a copy here. */
 const SPEC = [...read("src/ui/MessageActions.tsx").matchAll(
-  /case "(\w+)": return \{ id,( icon: "\w+",)? label: Copy\.(\w+)/g,
+  /case "(\w+)": return \{ id,([^{}\n]*?)label: Copy\.(\w+)/g,
 )].reduce<Record<string, { iconed: boolean; key: string }>>((m, hit) => {
-  m[hit[1]!] = { iconed: hit[2] !== undefined, key: hit[3]! };
+  m[hit[1]!] = { iconed: /\bicon:/.test(hit[2]!), key: hit[3]! };
   return m;
 }, {});
 const capsuleW = (label: string, iconed: boolean) => label.length * CHAR_DP + 24 + (iconed ? 18 : 0);

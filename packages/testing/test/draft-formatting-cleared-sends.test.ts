@@ -191,15 +191,24 @@ describe("a draft whose formatting was removed", () => {
     expect([w.delivered[1]!.text, w.delivered[1]!.html ?? null]).toEqual(["plain", null]);
   });
 
-  it("control, the phone: a row made plain is one it edits, and its keep and send deliver plain text", async () => {
+  it("the phone preserves supported formatting and keeps and sends a cleared draft as plain text", async () => {
     const w = await world();
     const id = await w.boldDraft();
     await w.engine.syncOnce();
-    expect(draftEditOf(w.engine.read().get<EngineDraft>("draft", id)!), "a formatted row is not the phone's to edit").toBeNull();
+    expect(draftEditOf(w.engine.read().get<EngineDraft>("draft", id)!)?.html).toBe(BOLD);
+
+    const codeMarkup = "<p><code>bold</code></p>";
+    expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "bold", html: codeMarkup })).status).toBe("confirmed");
+    await w.engine.syncOnce();
+    const formatted = w.engine.read().get<EngineDraft>("draft", id)!;
+    expect(formatted.html).toBe(codeMarkup);
+    expect(draftEditOf(formatted), "the phone cannot preserve inline code").toBeNull();
     expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "plain now", html: null })).status).toBe("confirmed");
     await w.engine.syncOnce();
-    expect(draftEditOf(w.engine.read().get<EngineDraft>("draft", id)!)).not.toBeNull();
-    // The phone's keep and send arms carry no html key (apps/mobile/src/state/live.ts).
+    const edit = draftEditOf(w.engine.read().get<EngineDraft>("draft", id)!);
+    expect(edit).toMatchObject({ mailboxId: w.mailboxId });
+    expect(edit).not.toHaveProperty("html");
+    // Keep and Send for a draft already stored as plain text omit the HTML field.
     expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "from the phone" })).status).toBe("confirmed");
     const r = await w.engine.mutate(withSignature(w.send(id, "from the phone", undefined), "Anna"));
     expect(r.status, r.error?.message).toBe("confirmed");

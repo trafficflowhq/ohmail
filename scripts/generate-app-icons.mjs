@@ -1,6 +1,6 @@
 // Requires npm ci and rsvg-convert (librsvg2-bin on Debian/Ubuntu, librsvg on macOS).
 // Run: node scripts/generate-app-icons.mjs [--store-dir <graphics directory>]
-// Edit the mark beside its font licence in packages/tokens/fonts/app-icon-mark.svg.
+// Edit the mark in packages/tokens/source/app-icon-mark.svg.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const { ink, sheet, hot } = design.faces.paper.light;
 const cobalt = design.accents.cobalt.paper.light.hot;
 const darkPaper = design.faces.paper.dark;
-const source = readFileSync(join(root, "packages/tokens/fonts/app-icon-mark.svg"), "utf8");
+const source = readFileSync(join(root, "packages/tokens/source/app-icon-mark.svg"), "utf8");
 const marks = {
   mail: { width: 1374, height: 714, dot: hot },
   cal: { width: 1559, height: 1520, dot: cobalt },

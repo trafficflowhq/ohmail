@@ -38,11 +38,9 @@ describe("draft from your text where the host answers none", () => {
     );
     const w = await mountWriting({ messages: [message("m1")], hash: "#/ohbox", sheet: ["m1"], draftWire: wire });
     await act(async () => w.now().openReply("m1"));
-    await rounds(6);
-    /* Write's reply text is its rich editor: the words are typed into it as a person types them. */
-    await act(async () => {
-      typeInto(screen.getByRole("textbox", { name: W.reply.text }), "noon ok, bring the glaze");
-    });
+    const body = await screen.findByRole("textbox", { name: W.reply.text });
+    await act(async () => typeInto(body, "noon ok, bring the glaze"));
+    expect(body.textContent).toContain("noon ok, bring the glaze");
     await rounds(2);
     expect(screen.queryByRole("button", { name: W.draft.fromText })).toBeNull();
     expect(screen.getByRole("button", { name: W.draft.verb })).toBeTruthy();

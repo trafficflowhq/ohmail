@@ -53,8 +53,9 @@ export interface CalendarSetupPort {
    * is a new ask with a new connection id.
    */
   readonly connect: ((ask: ConnectAsk) => Promise<ConnectAnswer>) | "none";
-  /** Opens the provider's sign-in in this browser, where the host can handle its return. */
+  /** Opens the provider's sign-in, or the browser setup if the host delegates it there. */
   readonly startOAuth?: (provider: CalendarOAuthProvider) => Promise<CalendarOAuthResult | void>;
+  readonly oauthInBrowser?: boolean;
   /**
    * A new sign-in for the connection the ask names. A rejection means the ask was not sent and the connection is as
    * it was.

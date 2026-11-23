@@ -208,6 +208,17 @@ describe("Calendar accounts", () => {
     expect(screen.getByText("Club")).toBeTruthy();
   });
 
+  it("waits for calendar settings before offering Add", async () => {
+    mountPane(
+      "accounts",
+      setupPort(async () => ["ics"]),
+      mirror(),
+    );
+    await act(async () => undefined);
+    expect(document.body.textContent).toContain("No calendar account");
+    expect(screen.queryByRole("button", { name: "Add a calendar account" })).toBeNull();
+  });
+
   it("says there is no account, and offers Add only where connecting has a door", async () => {
     mountPane("accounts", SHUT, mirror(SAID));
     await act(async () => undefined);

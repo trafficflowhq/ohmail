@@ -21,7 +21,7 @@
  */
 
 import {
-  CLIENT_HEADER, clientHeaderValue, HttpAdapter, OhmailEngine, retryingRead, updateAnswerOf, type UpdateAnswer,
+  CLIENT_HEADER, clientHeaderValue, HttpAdapter, OhmailEngine, retryingRead, updateAnswerOf, type UpdateAnswer, type CalendarSetupTransport,
   type WindowSearchPhases, type WindowSyncFailure,
 } from "@ohmail/client-engine";
 import type { CalendarWriteTransport } from "@ohmail/client-engine/calendar-writes";
@@ -978,6 +978,15 @@ export function readDesktopCalendarSettings(session: number) {
     baseUrl: "",
     fetch: (url, init) => bridgeFetch(url, { ...init, expectedCalendarSession: session }),
   }).calendarSettings();
+}
+
+/** Calendar setup uses the same native session binding as the calendar's event writes. */
+export function desktopCalendarSetup(session: number): CalendarSetupTransport {
+  const adapter = new HttpAdapter({
+    baseUrl: "",
+    fetch: (url, init) => requestOverBridge(url, init, session),
+  });
+  return { ...adapter.calendarSetupTransport(), saveCalendarSettings: (body) => adapter.patchCalendarSettings(body) };
 }
 
 /** Bind the shared calendar write client to the native account session that opened it. */

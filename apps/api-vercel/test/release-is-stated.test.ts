@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -12,8 +13,8 @@ interface Config {
   releaseVersion: () => string;
   RELEASE_VAR: string;
 }
-/** The config, imported by URL as `server-external-packages.test.ts` does: it is a `.mjs` with no declaration file. */
-const config = (): Promise<Config> => import(/* @vite-ignore */ new URL("../next.config.mjs", import.meta.url).href) as Promise<Config>;
+/** The config, imported by path as `server-external-packages.test.ts` does: it is a `.mjs` with no declaration file. */
+const config = (): Promise<Config> => import(/* @vite-ignore */ fileURLToPath(new URL("../next.config.mjs", import.meta.url))) as Promise<Config>;
 
 const manifest = (): { version?: unknown } =>
   JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown };

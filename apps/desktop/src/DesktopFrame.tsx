@@ -21,6 +21,7 @@ import { calendar as calendarEntry, calendarNoticePlace } from "@ohmail/app/cale
 import { NO_PANE_PARTS } from "@ohmail/app/mail";
 import { AwaySettings, awayFeedOver, useAwayNotice } from "@ohmail/app/settings/away";
 import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
+import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
 import { readerZone } from "@ohmail/app-logic/reader";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useMailState } from "@ohmail/app-logic/mail-state";
@@ -44,7 +45,7 @@ import { desktopFileShell } from "../../webapp/app/shell/open-attachment";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
 import { readSearchBy } from "@ohmail/app-logic/search";
-import { bridgeFetch, desktopCalendarWrites, readDesktopCalendarSettings, type EngineStatus } from "./bridge-fetch.js";
+import { bridgeFetch, desktopCalendarSetup, desktopCalendarWrites, readDesktopCalendarSettings, type EngineStatus } from "./bridge-fetch.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { useDefaultMailNotice } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
@@ -434,6 +435,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
 
   const draftReply = useMemo(() => draftReplyOverBridgeFor(status), [status]);
   const { noticeDocument, noticeSession } = status;
+  const managed = isManagedDoor(status);
   const noticeEmitter = useMemo(() => {
     return desktopEmitterFor(noticeDocument === undefined || noticeSession === undefined
       ? null : { document: noticeDocument, session: noticeSession });
@@ -451,10 +453,20 @@ export function DesktopFrame(p: DesktopFrameProps) {
       engine, transport, mayRun, online: window,
       clock: { uuid: () => crypto.randomUUID(), now: Date.now },
       settings: () => readDesktopCalendarSettings(noticeSession),
+      setup: {
+        ...calendarSetupPortOf(desktopCalendarSetup(noticeSession), () => engine.syncOnce(), () => crypto.randomUUID()),
+        ...(managed ? {
+          oauthInBrowser: true,
+          startOAuth: async (provider) => {
+            if (p.liveNoticeScope?.() !== p.scope) return "start_failed";
+            await openServerPane(provider === "google" ? "calendar-google" : "calendar-microsoft");
+          },
+        } : {}),
+      },
       held: () => engine.calendarHeld(),
       load: NONE,
     });
-  }, [hostedAccount, p.sessionRefused, noticeSession, p.engine, p.scope, p.liveNoticeScope]);
+  }, [hostedAccount, managed, p.sessionRefused, noticeSession, p.engine, p.scope, p.liveNoticeScope, openServerPane]);
   useLayoutEffect(() => {
     if (calendar === NONE) return;
     const stop = calendar.activate();
@@ -538,7 +550,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
     },
     features,
     notifications: { ...desktopNotificationHost, emitter: noticeEmitter, liveNoticeScope: p.liveNoticeScope },
-    frame: calendar !== NONE && isManagedDoor(status) ? { ...frame, calendar: calendarEntry }
+    frame: calendar !== NONE && managed ? { ...frame, calendar: calendarEntry }
       : calendarNotice === null ? frame : {
       ...frame,
       calendar: { ...calendarEntry, notice: { fragment: calendarNotice.fragment, place: calendarNoticePlace } },

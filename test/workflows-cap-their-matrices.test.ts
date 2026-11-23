@@ -138,7 +138,8 @@ describe("the hosted jobs each event starts", () => {
       "github.event.pull_request.user.type": pr ? "User" : null, "github.event.pull_request.author_association": pr ? "OWNER" : null,
       "github.event.pull_request.draft": null, "github.base_ref": pr ? "main" : null, "github.event.action": null, "github.event.release.tag_name": null, "inputs.verify_only": null,
       "needs.changes.outputs.desktop": "true", "needs.changes.outputs.android": "true", "needs.changes.outputs.selfhost": "true",
-      "needs.version.outputs.promote_public": "yes", ...PLAN, ...extra,
+      "needs.version.outputs.promote_public": "yes",
+      "github.event.deleted": false, "inputs.play_version_code": "", ...PLAN, ...extra,
     };
   };
   const hosted = (event: string, ref: string, more: Partial<RunEvent> = {}, extra: IfContext = {}, wfs = WORKFLOWS) =>
@@ -231,8 +232,29 @@ describe("the hosted jobs each event starts", () => {
     ]);
   });
 
-  it("an android-v* tag: 2, the build and the signing", () => {
-    expect(hosted("push", "refs/tags/android-v0.30.7")).toEqual(["android.yml: build @ubuntu-24.04", "android.yml: sign @ubuntu-24.04"]);
+  it("an Android tag builds, signs, then uploads to Play in its protected environment", () => {
+    const ref = "refs/tags/android-v2.0.0";
+    expect(hosted("push", ref, {}, { "github.event.deleted": false })).toEqual([
+      "android.yml: build @ubuntu-24.04", "android.yml: sign @ubuntu-24.04", "android.yml: play @ubuntu-24.04",
+    ]);
+    expect(hosted("push", ref, {}, { "github.event.deleted": true })).not.toContain("android.yml: play @ubuntu-24.04");
+    const android = WORKFLOWS["android.yml"] as { jobs: { play: { environment: string; permissions: unknown } } };
+    expect(android.jobs.play.environment).toBe("play-release");
+    expect(android.jobs.play.permissions).toEqual({ contents: "read" });
+  });
+
+  it("only a dispatch on an Android tag can promote an existing version without rebuilding", () => {
+    const input = { "inputs.play_version_code": "123" };
+    const promotion = (ref: string, ctx: IfContext = input) =>
+      hosted("workflow_dispatch", ref, {}, ctx).filter((job) => job.startsWith("android.yml:"));
+    const ref = "refs/tags/android-v2.0.0";
+    expect(promotion(ref)).toEqual(["android.yml: play @ubuntu-24.04"]);
+    expect(promotion(ref, { "inputs.play_version_code": "" })).toEqual([
+      "android.yml: build @ubuntu-24.04", "android.yml: sign @ubuntu-24.04",
+    ]);
+    expect(promotion(ref, { ...input, "github.repository": "fork/ohmail" })).toEqual([]);
+    expect(promotion("refs/tags/v2.0.0")).toEqual([]);
+    expect(promotion("refs/heads/next")).toEqual([APK]);
   });
 
   it("the nightly: 11, every platform, the APK, the search budget judged, the 2.0 transition on Postgres 17 and the self-host smoke", () => {

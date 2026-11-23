@@ -120,7 +120,7 @@ describe.skipIf(!PG_UP)("GET /mailboxes on the deployed host costs the same at a
     });
   }
 
-  async function counted(): Promise<{ status: number; items: number; statements: number; roundTrips: number; shape: string }> {
+  async function counted(): Promise<{ status: number; items: number; statements: number; roundTrips: number; bursts: number; shape: string }> {
     const req = (): Request => new Request("https://api.ohmail.app/mailboxes", { headers: { authorization: `Bearer ${token}` } });
     await (await handleApiRequest(req())).text();
     await settled();

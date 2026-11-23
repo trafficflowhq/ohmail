@@ -83,6 +83,25 @@ it("opens the calendar's first step before a signed-in account sets up Calendar"
   expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Another CalDAV server" })).toBeTruthy();
 });
 
+it("opens browser calendar setup with the chosen provider and waits for a press", async () => {
+  vi.stubGlobal("innerWidth", 1440);
+  const server = await prepareMailPage({
+    "GET /api/hello": hello,
+    "GET /api/calendar/settings": () => scopedSyncResponse({ ...calendarSettings, enabledAt: ISO }),
+    "GET /api/calendar/connect": () => scopedSyncResponse({ ways: ["icloud", "google", "microsoft"], connections: [] }),
+    "POST /api/calendar/oauth/microsoft/start": () => json({ error: { code: "oauth_unconfigured" } }, 503),
+  });
+  history.replaceState(null, "", "#/cal/cal-setup?via=microsoft");
+  await mountMailPage();
+
+  const ways = within(screen.getByRole("group", { name: "Ways to connect a calendar" }));
+  expect(ways.getAllByRole("button")).toHaveLength(1);
+  expect(server.on("POST /api/calendar/oauth/microsoft/start")).toHaveLength(0);
+  fireEvent.click(ways.getByRole("button", { name: "Microsoft Outlook" }));
+  await tick(0);
+  expect(server.on("POST /api/calendar/oauth/microsoft/start")).toHaveLength(1);
+});
+
 it("opens the week and returns to the same dated Month for an account with a calendar", async () => {
   vi.stubGlobal("innerWidth", 1440);
   const connection: CalendarConnectionRecord = {

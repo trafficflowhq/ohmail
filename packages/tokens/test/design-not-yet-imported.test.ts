@@ -28,6 +28,9 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 
 /** Who imports the design's subpaths, and how. `type` is erased before anything runs. */
 const MAY_IMPORT: Record<string, "type" | "value"> = {
+  "apps/mobile/src/theme/mail.tsx": "value", // Supplies the native mail palette and avatar colors.
+  "apps/mobile/src/theme/onboarding.ts": "value", // Supplies the native setup palette and touch typography.
+  "apps/mobile/src/theme/type.ts": "value", // Builds the Paper face's native typography from the design values.
   "packages/ui/src/motion/motion.ts": "type",
   "packages/ui/src/base/index.ts": "value",
   "packages/ui/src/base/tokens.ts": "value",

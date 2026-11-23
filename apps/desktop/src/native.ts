@@ -139,7 +139,9 @@ export async function openWeb(place: WebPlace, challenge?: string): Promise<void
   await shell.invoke(OPEN_COMMAND, challenge ? { key: place, challenge } : { key: place });
 }
 
-export type ServerSettingsPane = "account" | "security" | "devices" | "storage" | "mailboxes";
+export type ServerSettingsPane =
+  | "account" | "security" | "devices" | "storage" | "mailboxes"
+  | "calendar-google" | "calendar-microsoft";
 
 /** Ask the native shell to prepare a browser handoff for the account shown by this frame. */
 export async function openServerSettings(
