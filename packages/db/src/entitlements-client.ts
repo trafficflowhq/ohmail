@@ -389,8 +389,13 @@ const REASON_WORD = /^[a-z][a-z_]{0,31}$/;
  */
 function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
   if (raw === undefined || raw === null) return null;
-  const o = obj(raw);
+  let o = obj(raw);
   if (!o) return { bad: "storageOffer" };
+  if (o.card !== undefined) {
+    const flattened = flattenStorageOffer(o);
+    if (flattened === null || "bad" in flattened) return flattened;
+    o = flattened.offer;
+  }
   if (typeof o.currency !== "string" || !/^[a-z]{3}$/.test(o.currency)) return { bad: "storageOffer.currency" };
   if (!(PLAN_HINT_INTERVALS as readonly unknown[]).includes(o.interval)) return { bad: "storageOffer.interval" };
   if (!Array.isArray(o.plans) || o.plans.length === 0 || o.plans.length > PLAN_HINT_PLANS.length) {
@@ -409,7 +414,12 @@ function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
     if (!a || !isCount(a.unitBytes) || a.unitBytes === 0 || !isCount(a.amount) || !isCount(a.maxUnits)) {
       return { bad: "storageOffer.addon" };
     }
-    addon = { unitBytes: a.unitBytes, amount: a.amount, maxUnits: a.maxUnits };
+    if (a.interval !== undefined && a.interval !== "month" && a.interval !== "year")
+      return { bad: "storageOffer.addon.interval" };
+    addon = {
+      unitBytes: a.unitBytes, amount: a.amount, maxUnits: a.maxUnits,
+      ...(a.interval === undefined ? {} : { interval: a.interval }),
+    };
   }
   const c = obj(o.current);
   if (!c || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
@@ -425,6 +435,36 @@ function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
     current: { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom },
     fit: { plan: f.plan, addonUnits: f.addonUnits, roomBytes: f.roomBytes, amount: f.amount, keepsAll: f.keepsAll },
     canChange: o.canChange, reason,
+  };
+}
+
+/** The billing program quotes the plan and the monthly storage units separately. */
+function flattenStorageOffer(
+  offer: Record<string, unknown>,
+): { offer: Record<string, unknown> } | null | { bad: string } {
+  const card = obj(offer.card);
+  if (!card || !Array.isArray(card.plans)) return { bad: "storageOffer.card" };
+  // The app's offer describes a change from a current plan to a quoted fit.
+  if (offer.current === null || offer.fit === null) return null;
+  const unit = obj(card.storageUnit);
+  if (card.storageUnit !== null && (!unit || unit.interval !== "month"))
+    return { bad: "storageOffer.card.storageUnit" };
+  const fit = obj(offer.fit);
+  if (!fit || !isCount(fit.planPriceMinor) || !isCount(fit.storagePriceMinor))
+    return { bad: "storageOffer.fit" };
+  const months = card.interval === "year" ? 12 : 1;
+  return {
+    offer: {
+      ...offer,
+      currency: card.currency,
+      interval: card.interval,
+      plans: card.plans.map((raw: unknown) => {
+        const plan = obj(raw);
+        return plan && { ...plan, roomBytes: plan.storageBytes, amount: plan.priceMinor };
+      }),
+      addon: unit && { unitBytes: unit.bytes, amount: unit.priceMinor, maxUnits: unit.maxUnits, interval: unit.interval },
+      fit: { ...fit, amount: fit.planPriceMinor + months * fit.storagePriceMinor },
+    },
   };
 }
 

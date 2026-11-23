@@ -2,14 +2,18 @@
  * The hand-off shows how many senders still wait, or the reader's relationship to its organizer.
  * Open ohmail and the optional pairing action still end the setup run.
  */
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button, Page, Sentence } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { holderName } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import { readerHolder } from "@ohmail/app-logic/reading/reader-holder";
+import { useSetupPort } from "../../calsetup/use-setup-port.js";
+import { useSharedCalendarSettings } from "../../calsettings/settings-read.js";
+import { useFrame, useReport } from "../../frame/commands.js";
+import { useText } from "../../text/index.js";
 import { NONE } from "../../host/index.js";
 import { holderLines } from "./Elsewhere.js";
-import { Next, StepForm, stepTop, type StepProps } from "./parts.js";
+import { Next, refusalOf, StepForm, stepTop, type StepProps } from "./parts.js";
 import { HOLDER_MANAGED } from "./words.js";
 
 /** Work, by an organizer; a relationship, by a reader; the takeover under way, while it is. */
@@ -49,6 +53,44 @@ function Done({ run, say, service }: StepProps): ReactNode {
 
 export function Summary(props: StepProps): ReactNode {
   const { run, say, slots } = props;
+  const port = useSetupPort();
+  const settings = useSharedCalendarSettings();
+  const { commands, host, route } = useFrame();
+  const report = useReport();
+  const t = useText("calsettings");
+  const pending = useRef(false);
+  const [enabling, setEnabling] = useState(false);
+  const save = settings?.save ?? NONE;
+  const calendarOffered =
+    host.capabilities.products === "both" &&
+    port !== NONE &&
+    port.connect !== NONE &&
+    save !== NONE &&
+    !run.add &&
+    !run.rerun &&
+    run.mailbox !== null;
+
+  const setupCalendar = async () => {
+    if (pending.current || save === NONE) return;
+    const address = host.device.address;
+    const current = address.read();
+    pending.current = true;
+    setEnabling(true);
+    const enabled = await save({ enabled: true });
+    pending.current = false;
+    setEnabling(false);
+    if (address.read() !== current) return;
+    if (!enabled) {
+      report(t("notSaved"));
+      return;
+    }
+    run.acts.finish(() => {
+      if (address.read() === current) {
+        commands.go({ place: "week", stage: { id: "calSetup", words: { step: "way" } } }, { replace: true });
+      }
+    });
+  };
+  const busy = enabling || run.writes.busy;
   const organizing = run.facts.mailbox?.organizerRole !== "reader";
   const refused = run.agree.takeover === "refused";
   const name = holderName(run.facts) ?? say("mailboxes.readerHolderUnknown");
@@ -56,10 +98,12 @@ export function Summary(props: StepProps): ReactNode {
   const mailbox = run.mailbox;
   const waiting = run.about.queuedSenders;
   return (
-    <StepForm run={run} submit={run.acts.close}>
+    <StepForm run={run} submit={calendarOffered ? () => void setupCalendar() : run.acts.close}>
       <Page
         {...stepTop(run, say, { cancel: false })}
-        refusal={refused ? ([say("onboarding.doneTakeoverRefused", { name })] as const) : undefined}
+        refusal={
+          refusalOf(run, say) ?? (refused ? [say("onboarding.doneTakeoverRefused", { name })] : undefined)
+        }
         material={
           <div className="mbx-run-material">
             {refused && run.decide.reasked !== null ? (
@@ -75,9 +119,22 @@ export function Summary(props: StepProps): ReactNode {
         }
         acts={
           <>
-            <Next label={say("onboarding.doneOpen")} />
+            <Next
+              label={say(calendarOffered ? "onboarding.calendarSetUp" : "onboarding.doneOpen")}
+              disabled={busy}
+            />
+            {calendarOffered ? (
+              <Button
+                kind="two"
+                size="l"
+                disabled={busy}
+                onPress={() => run.acts.finish(() => commands.go({ place: route.place }, { replace: true }))}
+              >
+                {say("onboarding.calendarSkip")}
+              </Button>
+            ) : null}
             {pairs ? (
-              <Button kind="two" disabled={run.writes.busy} onPress={() => run.acts.goTo("pair")}>
+              <Button kind="two" disabled={busy} onPress={() => run.acts.goTo("pair")}>
                 {say("onboarding.pairOpen")}
               </Button>
             ) : null}

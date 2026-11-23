@@ -238,6 +238,22 @@ describe("The desktop's native Settings panes", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("draws the hosted AI allowance over the bridge with no browser request", async () => {
+    const { fetch } = mount("D-m", "#/settings/ai", {
+      respond: (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/account/ai") return Response.json({ aiEnabled: true });
+        if (path === "/account/access") return Response.json({
+          metered: true, access: "open", aiCredits: { remaining: 120, total: 150 },
+        });
+      },
+    });
+    const pane = within(await screen.findByRole("region", { name: en.settings.ai }));
+    await pane.findByText("120 of 150 left");
+    expect(screen.getByRole("region", { name: en.settings.ai }).querySelector("progress")?.max).toBe(150);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("changes the signed-in account's storage mail preference in Storage", async () => {
     const save = vi.fn();
     mount("D-m", "#/settings/storage", {

@@ -20,7 +20,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function pane(flavor: "selfhost" | "managed", ai: boolean): Promise<HTMLElement> {
+async function pane(flavor: "selfhost" | "managed", ai: boolean, hosted = false): Promise<HTMLElement> {
   helloAsked = 0;
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown) => {
@@ -47,7 +47,10 @@ async function pane(flavor: "selfhost" | "managed", ai: boolean): Promise<HTMLEl
   const root = createRoot(host);
   await act(async () => {
     root.render(React.createElement(NextIntlClientProvider, {
-      locale: "en", messages: en, timeZone: "UTC", children: React.createElement(AiSection),
+      locale: "en", messages: en, timeZone: "UTC", children: React.createElement(AiSection, hosted ? {
+        credits: { remaining: 120, total: 150, draftCost: 17 },
+        draftReplies: { enabled: true, set: vi.fn() },
+      } : {}),
     }));
   });
   for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -65,6 +68,23 @@ describe("Settings → AI and the server's model", () => {
   it("a self-hosted server with a model says nothing of the kind", async () => {
     const el = await pane("selfhost", true);
     expect(el.textContent).not.toContain(en.aiRefusal.noModel);
+  });
+
+  it("shows the quoted Draft reply price beside the switch and the budget meter below it", async () => {
+    const el = await pane("managed", true, true);
+    const draft = el.querySelector('[role="switch"][aria-label="Draft reply"]')?.closest(".oh-settingline");
+    expect(draft?.textContent).toContain("Draft reply");
+    expect(draft?.textContent).toContain("17 credits a draft");
+    expect(el.querySelector("progress")?.max).toBe(150);
+    expect(el.querySelector("progress")?.value).toBe(120);
+  });
+
+  it("aligns the Draft reply label with the main AI switch", async () => {
+    const el = await pane("managed", true, true);
+    const ai = el.querySelector(`[role="switch"][aria-label="${en.settings.aiLabel}"]`)?.closest(".oh-settingline");
+    const draft = el.querySelector('[role="switch"][aria-label="Draft reply"]')?.closest(".oh-settingline");
+    expect(ai).toBeTruthy();
+    expect(draft?.hasAttribute("data-sub")).toBe(ai?.hasAttribute("data-sub"));
   });
 
   it("the managed service asks no /hello and says nothing of the kind", async () => {

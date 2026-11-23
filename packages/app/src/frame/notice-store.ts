@@ -9,6 +9,8 @@ import { NOTICE_RANK, type FrameNotice } from "./contract.js";
 
 interface FedNotice extends SlotNotice {
   readonly feed: string;
+  readonly collapsible: boolean;
+  readonly failedSendIds?: readonly string[];
 }
 
 export interface NoticeStore {
@@ -40,10 +42,11 @@ function face(notices: readonly FrameNotice[]): string {
     notices.map((n) => [
       n.kind,
       n.id,
+      n.failedSendIds,
       n.title,
       n.hot,
       n.line,
-      n.acts?.map(({ label, busy, disabled }) => [label, busy, disabled]),
+      n.acts?.map(({ label, busy, disabled, kind }) => [label, busy, disabled, kind]),
       n.more,
     ]),
   );
@@ -90,7 +93,9 @@ export function createNoticeStore(): NoticeStore {
     latest.get(feed)?.[at]?.acts?.[act]?.onPress();
   const slotted = (feed: string, notice: FrameNotice, at: number): FedNotice => ({
     feed,
+    collapsible: notice.kind === "notSent" || notice.kind === "unsaved",
     id: noticeId(notice),
+    failedSendIds: notice.failedSendIds,
     rank: NOTICE_RANK[notice.kind],
     title: notice.title,
     progress: notice.kind === "firstSync",

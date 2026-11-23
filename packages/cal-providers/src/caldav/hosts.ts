@@ -5,7 +5,7 @@
  * address typed without TLS, the same address over TLS, which the discovery itself turns to). And
  * to an origin THAT SERVER NAMED IN THIS TURN, in one of three answers and in no other:
  *
- *   - a redirect answered to a request of the discovery (a start, the principal): the standard's
+ *   - a redirect answered to a request of the discovery (a start, the principal, a home named by the principal): the standard's
  *     own way for a server to say where its service lives (RFC 6764);
  *   - the address of the signed-in person's own resources, in a start's answer (RFC 5397);
  *   - the addresses of that person's calendar homes, in the answer about those resources (RFC 4791

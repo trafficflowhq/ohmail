@@ -11,7 +11,7 @@
  * answers 404: `calendarWays()` names no way there.
  */
 import type {
-  Assert, CalendarConnectBody, CalendarConnectionRecord, CalendarPatchBody, CalendarRecord, CalendarSettingsBody, CalendarSettingsWire, CalendarSignInBody, CalendarWay, Complete,
+  Assert, CalendarConnectBody, CalendarConnectionRecord, CalendarMailboxSource, CalendarPatchBody, CalendarRecord, CalendarSettingsBody, CalendarSettingsWire, CalendarSignInBody, CalendarWay, Complete,
 } from "@ohmail/wire";
 
 /** Every way this build knows, whether or not a server offers it. */
@@ -63,6 +63,8 @@ export interface CalendarConnectTransport {
 /** The connection and settings capabilities a host can hand to the calendar. */
 export type CalendarSetupTransport = Omit<CalendarConnectTransport, "calendarConnections"> & {
   calendarConnections?: CalendarConnectTransport["calendarConnections"];
+  icloudMailboxes?(): Promise<readonly CalendarMailboxSource[]>;
+  linkedMailboxIds?(): Promise<readonly string[]>;
   saveCalendarSettings?(body: CalendarSettingsBody): Promise<CalendarSettingsWire>;
 };
 

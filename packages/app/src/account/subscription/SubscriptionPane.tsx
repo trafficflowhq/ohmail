@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, Tag } from "@ohmail/ui/base";
 import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import type { PaneSheet } from "../../settings/contract.js";
+import type { StorageModel } from "../storage/model.js";
+import { useStorageChangeFeedback } from "../storage/StoragePlans.js";
 import { StorageInfo } from "../storage/StoragePane.js";
 import type { PlanName, Standing, SubscriptionModel } from "./model.js";
 import { readPlansOf, SubscriptionPayment, SubscriptionPlans } from "./SubscriptionPlans.js";
@@ -12,6 +14,14 @@ export interface SubscriptionPaneProps {
   readonly model: SubscriptionModel;
   readonly connectedCount?: number;
   readonly sheet?: PaneSheet;
+  readonly addStorage?: {
+    press: () => void;
+    busy: boolean;
+    unit?: string;
+    price?: string | null;
+    feedback?: Pick<StorageModel, "refusal" | "nothingRan">;
+    factor?: ReactNode;
+  };
   /** The way to Storage from the storage line: the place's own way between sections, or `null` where there is none. */
   readonly toStorage: (() => void) | null;
 }
@@ -22,14 +32,43 @@ export interface SubscriptionPaneProps {
  * press. Nothing is bought here. It holds no state and reaches nothing: it draws its model, and its verbs are the
  * model's.
  */
-export function SubscriptionPane({ model, toStorage, connectedCount, sheet }: SubscriptionPaneProps) {
+export function SubscriptionPane({
+  model,
+  toStorage,
+  connectedCount,
+  sheet,
+  addStorage,
+}: SubscriptionPaneProps) {
   const t = useText("settings");
   const own = useText("accountSubscription");
+  const storage = useStorageChangeFeedback(addStorage?.feedback);
   const [selection, select] = useState<PlanName>();
   const body = (
     <>
       <StandingSheet model={model} toStorage={toStorage} connectedCount={connectedCount} />
       <SubscriptionPlans model={model} selection={selection} select={select} />
+      {addStorage ? (
+        <SettingsSheet wants={storage.wants}>
+          {storage.note}
+          <SettingLine
+            label={t("storageAddonName")}
+            tag={t("storageTagAddon")}
+            value={addStorage.unit}
+            description={addStorage.price ?? undefined}
+          >
+            <Button
+              kind="two"
+              size="s"
+              icon="plus"
+              disabled={addStorage.busy || model.opening}
+              onPress={addStorage.press}
+            >
+              {t("storageAddStorage")}
+            </Button>
+          </SettingLine>
+        </SettingsSheet>
+      ) : null}
+      {addStorage?.factor}
       <SettingsSheet
         wants={model.failed ? { word: own("notOpened"), line: t("subscriptionManageFailed") } : undefined}
       >

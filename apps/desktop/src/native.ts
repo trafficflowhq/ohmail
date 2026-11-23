@@ -96,7 +96,7 @@ export const WEB_PLACES = [
   // holds no password, no authenticator secret, and a passkey ceremony needs a real browser
   // origin this window does not have. So the honest surface is a read-only list and a way out to
   // the browser, and this key is the way out.
-  "mailboxes",
+  "mailboxes", "calendar",
   // `devices` is Settings → Devices on the hosted door: the sessions signed into the account, the
   // pairing mint that puts its mail on a phone, and the take-back. Here for `mailboxes`' reason
   // said about a different pair of routes — `POST /pair` and `DELETE /devices/:id` are step-up

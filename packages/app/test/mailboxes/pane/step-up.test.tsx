@@ -57,6 +57,17 @@ async function removing(script: Parameters<typeof fakePane>[0]) {
 }
 
 describe("remove, behind the one dialog", () => {
+  it("says that the linked calendar stays when its source mailbox is removed", async () => {
+    const pane = fakePane({ list: [ok([row("mbx-a", A)])] });
+    drawPane(pane.wire, { calendarReuse: async (id) => id === "mbx-a" });
+    await settle();
+    open(A);
+    press(M.remove);
+    await settle();
+    expect(screen.getByText(/The calendar connection that uses this Apple ID stays/)).toBeTruthy();
+    expect(pane.writes()).toEqual([]);
+  });
+
   it("opens its confirmation and sends nothing until the confirm is pressed", async () => {
     const { pane } = await removing({});
     expect(screen.getByRole("heading", { name: M.removeTitle.replace("{address}", A) })).toBeTruthy();

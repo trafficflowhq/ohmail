@@ -22,6 +22,7 @@ import { IdempotencyRaceLost, ServiceError, sha256 } from "@trafficflow/services
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import { lookupIdempotent, replayOf } from "../idempotency.js";
+import { stepUpRefusal } from "../middleware.js";
 import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { readBody } from "../routes/shared.js";
@@ -39,11 +40,11 @@ function connectKeyOf(req: Request): string {
 
 /**
  * What a key is held to. NOT the body: the body holds a password or a subscription's address, and
- * a digest of it kept in the key's row would be a way to try guesses against either. The way and
- * the connection's id say which request this is; nothing typed is in it.
+ * a digest of it kept in the key's row would be a way to try guesses against either. The way,
+ * the connection's id and any source mailbox say which request this is.
  */
 const connectHashOf = (ask: CalendarConnectAsk): string =>
-  sha256(`POST\n/calendar/connections\n${ask.way}\n${ask.connectionId}`).toString("hex");
+  sha256(`POST\n/calendar/connections\n${ask.way}\n${ask.connectionId}${"fromMailbox" in ask ? `\n${ask.fromMailbox}` : ""}`).toString("hex");
 
 export const calendarConnectRoutes: Route[] = [
   {
@@ -82,6 +83,10 @@ export const calendarConnectRoutes: Route[] = [
     handler: async (req, deps) => {
       const key = connectKeyOf(req);
       const ask = parseConnectAsk(await readBody<unknown>(req));
+      if ("fromMailbox" in ask) {
+        const refusal = stepUpRefusal(deps);
+        if (refusal !== null) return refusal;
+      }
       const ctx = serviceContext(deps, req);
       const claim = { key, requestHash: connectHashOf(ask) };
       const found = await lookupIdempotent(deps.db, ctx.accountId, key, deps.now());

@@ -26,7 +26,7 @@ export type StorageRoster = ReadonlyArray<{
 export interface StorageSaying {
   readonly locale: string;
   readonly roster: StorageRoster;
-  readonly price: (amount: number, offer: StorageOffer) => string;
+  readonly price: (amount: number, offer: Pick<StorageOffer, "currency" | "interval">) => string;
 }
 
 /** The plan's sentence, in the three forms the shipped pane chose between (`StoragePane.tsx`). */
@@ -104,7 +104,11 @@ function plansOf(offer: StorageOffer, size: (bytes: number) => string, say: Stor
             unit: `+${size(offer.addon.unitBytes)}`,
             letters: estimatedEmails(offer.addon.unitBytes),
             most: offer.addon.maxUnits,
-            price: price(offer.addon.amount),
+            atLimit: offer.current.addonUnits >= offer.addon.maxUnits,
+            price: say.price(offer.addon.amount, {
+              currency: offer.currency,
+              interval: offer.addon.interval ?? offer.interval,
+            }),
           },
     mayChange: offer.canChange,
   };
@@ -209,7 +213,7 @@ export function useStorageDoor(scope: string | null, owner: string | null | unde
   );
   const figures = useMemo(() => {
     if (facts === null) return null;
-    const price = (amount: number, offer: StorageOffer) =>
+    const price: StorageSaying["price"] = (amount, offer) =>
       t(offer.interval === "year" ? "storagePriceYear" : "storagePriceMonth", {
         price: formatStoragePrice(amount, offer.currency, locale),
       });

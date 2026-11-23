@@ -54,6 +54,8 @@ export interface StageActions {
   forward(): void;
   /** Close setup: the stamp that closes the flow, then the route back. Cancel and finish alike. */
   close(): void;
+  /** Finish when the account's completion stamp is saved. A failed save stays on the current step. */
+  finish(next: () => void): void;
   /** Leave the stage without ending the run ("Open ohmail meanwhile"). */
   away(): void;
   escape(): void;
@@ -173,6 +175,13 @@ export function useStageActions(a: StageActionsInput): StageActions {
     goTo,
     forward,
     close,
+    finish: (next) => {
+      void writes
+        .run(() => verbs.complete(), undefined, { stayOnFailure: true })
+        .then((ok) => {
+          if (ok) next();
+        });
+    },
     away: () => input.leave(),
     escape: () => a.setConfirm((c) => (c === "cancel" ? null : "cancel")),
     restart: () => {

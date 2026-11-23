@@ -12,7 +12,7 @@ import { calendarRoutes } from "@trafficflow/api/calendar";
 import { createLogger } from "@trafficflow/core";
 import { CALENDAR_TABLES } from "@trafficflow/db/calendar";
 import {
-  calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calSettings, calWrites, changeLog, idempotencyKeys,
+  calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calSettings, calWrites, changeLog, idempotencyKeys, mailboxCredentials, mailboxes,
 } from "@trafficflow/db/mail";
 import type {
   CalendarConnectionRecord,
@@ -23,7 +23,7 @@ import type {
 import { deleteAccount, type Db } from "@trafficflow/services";
 import { calendarFeed } from "@trafficflow/services/calendar";
 import { CALENDAR_CONNECTION_CEILING, offeredWays } from "@trafficflow/services/calendar-connect";
-import { makeDeps, req, seedSession, FIXED_NOW, type SeededSession } from "./helpers.js";
+import { makeDeps, req, seedMailbox, seedSession, FIXED_NOW, type SeededSession } from "./helpers.js";
 
 /**
  * THE CALENDAR'S CONNECT DOOR, through the composed pipeline: what a person types is checked by
@@ -61,14 +61,14 @@ const portOf = (over: Partial<Port> = {}): Port => ({ policy: "cloud", ceremonie
 /** A value nobody wrote down: a fixture's sign-in is made at run time and never stands in this file. */
 const made = (tag: string): string => `${tag}${randomUUID().replaceAll("-", "")}`;
 
-async function rig(o: { port?: Port | null; on?: boolean; verified?: boolean } = {}) {
+async function rig(o: { port?: Port | null; on?: boolean; verified?: boolean; lastTwofaAt?: Date | null } = {}) {
   const { db, deps, clock } = await makeDeps();
   const lines: string[] = [];
   deps.logger = createLogger({ service: "api", level: "debug", sink: (l: string) => { lines.push(l); } });
   deps.services = {
     ...deps.services, calendar: calendarFeed, ...(o.port === null ? {} : { calendarConnect: o.port ?? portOf() }),
   } as never;
-  const s = await seedSession(db, { now: FIXED_NOW, ...(o.verified === false ? { emailVerified: false } : {}) });
+  const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: o.lastTwofaAt, ...(o.verified === false ? { emailVerified: false } : {}) });
   if (o.on !== false) await db.insert(calSettings).values({ accountId: s.accountId, enabledAt: FIXED_NOW });
   /** Every answer this rig gave, whole: status, headers and body. */
   const answers: string[] = [];
@@ -86,8 +86,8 @@ async function rig(o: { port?: Port | null; on?: boolean; verified?: boolean } =
     return res;
   };
   /** A second account in the same store, its calendar on. */
-  const other = async (): Promise<SeededSession> => {
-    const o2 = await seedSession(db, { now: FIXED_NOW });
+  const other = async (lastTwofaAt?: Date): Promise<SeededSession> => {
+    const o2 = await seedSession(db, { now: FIXED_NOW, lastTwofaAt });
     await db.insert(calSettings).values({ accountId: o2.accountId, enabledAt: FIXED_NOW });
     return o2;
   };
@@ -119,7 +119,7 @@ const connectionsOf = (db: Db, accountId: string) =>
     sourceHost: calConnections.sourceHost, nextPollAt: calConnections.nextPollAt, errorCode: calConnections.errorCode })
     .from(calConnections).where(eq(calConnections.accountId, accountId));
 const credentialsOf = (db: Db, accountId: string) =>
-  db.select({ connectionId: calCredentials.connectionId, kind: calCredentials.kind, secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion })
+  db.select({ connectionId: calCredentials.connectionId, kind: calCredentials.kind, secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion, meta: calCredentials.meta })
     .from(calCredentials).where(eq(calCredentials.accountId, accountId));
 const changesOf = async (db: Db, accountId: string): Promise<string[]> =>
   (await db.select({ kind: changeLog.entityType, op: changeLog.op }).from(changeLog).where(eq(changeLog.accountId, accountId))
@@ -150,6 +150,94 @@ const connect = async (r: Rig, body: unknown, as?: SeededSession): Promise<Calen
 };
 
 describe("POST /calendar/connections", () => {
+  async function source(r: Rig, options: { provider?: string; authKind?: string; host?: string } = {}) {
+    const mailboxId = await seedMailbox(r.db, { accountId: r.s.accountId, provider: options.provider ?? "icloud" });
+    if (options.authKind) await r.db.update(mailboxes).set({ authKind: options.authKind }).where(eq(mailboxes.id, mailboxId));
+    const sealed = await r.deps.keyProvider.encrypt(made("pw"));
+    await r.db.insert(mailboxCredentials).values({
+      accountId: r.s.accountId, mailboxId, transport: "imap", secretEnc: sealed.ciphertext,
+      keyVersion: sealed.keyVersion, meta: { host: options.host ?? "imap.mail.me.com" },
+    });
+    return mailboxId;
+  }
+
+  it("requires a recent second factor before reusing a mailbox sign-in and writes nothing while it is stale", async () => {
+    const r = await rig({ lastTwofaAt: new Date(0) });
+    const fromMailbox = await source(r);
+    const res = await r.ask("POST", "/calendar/connections", { way: "icloud", connectionId: randomUUID(), fromMailbox }, key());
+    expect(await errorOf(res)).toEqual([403, "step_up_required", null]);
+    expect(await connectionsOf(r.db, r.s.accountId)).toEqual([]);
+    expect(await credentialsOf(r.db, r.s.accountId)).toEqual([]);
+    expect(await changesOf(r.db, r.s.accountId)).toEqual([]);
+  });
+
+  it.each([
+    ["another provider", { provider: "imap" }],
+    ["OAuth sign-in", { authKind: "oauth" }],
+    ["a non-Apple IMAP host", { host: "imap.example.test" }],
+  ] as const)("omits %s and refuses it as a source even on the same account", async (_label, options) => {
+    const r = await rig({ lastTwofaAt: FIXED_NOW });
+    const fromMailbox = await source(r, options);
+    const list = await r.ask("GET", "/calendar/connect");
+    expect(((await list.json()) as CalendarConnectWire).icloudMailboxes ?? []).toEqual([]);
+    const res = await r.ask("POST", "/calendar/connections", { way: "icloud", connectionId: randomUUID(), fromMailbox }, key());
+    expect(res.status).toBe(404);
+    expect(await connectionsOf(r.db, r.s.accountId)).toEqual([]);
+  });
+
+  it("refuses to keep the copied sign-in if the source changed while sealing", async () => {
+    const r = await rig({ lastTwofaAt: FIXED_NOW });
+    const fromMailbox = await source(r);
+    const encrypt = r.deps.keyProvider.encrypt.bind(r.deps.keyProvider);
+    const replacement = await encrypt(made("replacement"));
+    vi.spyOn(r.deps.keyProvider, "encrypt").mockImplementationOnce(async (text) => {
+      await r.db.update(mailboxCredentials).set({ secretEnc: replacement.ciphertext })
+        .where(and(eq(mailboxCredentials.accountId, r.s.accountId), eq(mailboxCredentials.mailboxId, fromMailbox)));
+      return encrypt(text);
+    });
+    const res = await r.ask("POST", "/calendar/connections", { way: "icloud", connectionId: randomUUID(), fromMailbox }, key());
+    expect(res.status).toBe(409);
+    expect(await connectionsOf(r.db, r.s.accountId)).toEqual([]);
+    expect(await credentialsOf(r.db, r.s.accountId)).toEqual([]);
+  });
+
+  it("reports the source of a kept calendar connection while Calendar is off", async () => {
+    const r = await rig({ lastTwofaAt: FIXED_NOW });
+    const fromMailbox = await source(r);
+    const record = await connect(r, { way: "icloud", connectionId: randomUUID(), fromMailbox });
+    expect((await credentialsOf(r.db, r.s.accountId)).map(({ meta }) => meta)).toEqual([{ sourceMailboxId: fromMailbox }]);
+    await r.ask("PATCH", "/calendar/settings", { enabled: false });
+    const list = await r.ask("GET", "/calendar/connect");
+    expect(await list.json()).toMatchObject({ ways: [], linkedMailboxIds: [fromMailbox], connections: [{ id: record.id }] });
+  });
+
+  it("reuses only the session's own iCloud mailbox sign-in and keeps the password sealed", async () => {
+    const r = await rig({ lastTwofaAt: FIXED_NOW });
+    const other = await r.other(FIXED_NOW);
+    const fromMailbox = await seedMailbox(r.db, { accountId: r.s.accountId, provider: "icloud" });
+    const password = made("pw");
+    const user = made("usr");
+    const sealed = await r.deps.keyProvider.encrypt(password);
+    await r.db.insert(mailboxCredentials).values({
+      accountId: r.s.accountId, mailboxId: fromMailbox, transport: "imap",
+      secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion, meta: { host: "imap.mail.me.com", user },
+    });
+    const list = await r.ask("GET", "/calendar/connect");
+    const listOther = await r.ask("GET", "/calendar/connect", undefined, {}, other);
+    expect(((await list.json()) as CalendarConnectWire).icloudMailboxes?.map(({ id }) => id)).toEqual([fromMailbox]);
+    expect(((await listOther.json()) as CalendarConnectWire).icloudMailboxes).toBeUndefined();
+    const body = { way: "icloud", connectionId: randomUUID(), fromMailbox };
+    const foreign = await r.ask("POST", "/calendar/connections", body, key(), other);
+    const missing = await r.ask("POST", "/calendar/connections", { ...body, fromMailbox: randomUUID() }, key(), other);
+    expect(foreign.status).toBe(404);
+    expect(await foreign.text()).toBe(await missing.text());
+    expect(await credentialsOf(r.db, other.accountId)).toEqual([]);
+    expect(await connect(r, body)).toMatchObject({ provider: "caldav", serverHost: "caldav.icloud.com" });
+    const clear = await opened(r, r.s.accountId);
+    expect(clear.includes(password) && clear.includes(user)).toBe(true);
+    expect(r.answers.concat(r.lines).some((line) => line.includes(password) || line.includes(user))).toBe(false);
+  });
+
   it("takes the three ways, answers 202 with the record, and writes the connection, its sealed sign-in and one change", async () => {
     const r = await rig();
     const a = await connect(r, icloud());

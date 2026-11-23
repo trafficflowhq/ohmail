@@ -357,12 +357,19 @@ describe("a filing's arm, and the shell's own why", () => {
         receipts: { id: "receipts", body: "other", rail: null, panes: { kind: "wide", Wide: others } },
       },
     });
-    render(
+    const view = () => (
       <TextProvider locale="en" messages={FRAME_WORDS.en} timeZone="Europe/Zurich">
         <Frame host={made.host} />
-      </TextProvider>,
+      </TextProvider>
     );
-    return made;
+    const { rerender } = render(view());
+    return {
+      ...made,
+      refresh: (mail: MailState) => {
+        reasoned.mail = mail;
+        rerender(view());
+      },
+    };
   }
 
   it("says a blocked mailbox's reason and a stuck filing's why in the shell's words, and its act leads where they say", () => {
@@ -409,6 +416,38 @@ describe("a filing's arm, and the shell's own why", () => {
     reasoned.reason = { title: "something else", line: "a line" };
     mount();
     expect(status()).toEqual(["Signed out Start ohmail again to sign in."]);
+  });
+
+  it("keeps a calm connection notice hidden across places that do not feed it", () => {
+    reasoned.mail = ladder("behind");
+    reasoned.reason = null;
+    const made = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(status()).toEqual([]);
+    act(() => made.address.visit("#/receipts"));
+    act(() => made.address.visit("#/reads"));
+    expect(status()).toEqual([]);
+  });
+
+  it("keeps late mail hidden through a clear and return, then shows a different connection kind", () => {
+    reasoned.mail = ladder("behind");
+    reasoned.reason = null;
+    const made = mount();
+    expect(status()[0]).toContain("New mail is late");
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    made.refresh(ladder("quiet"));
+    expect(status()).toEqual([]);
+    made.refresh(ladder("behind"));
+    expect(status()).toEqual([]);
+
+    made.refresh(filing("stuck"));
+    expect(status()[0]).toContain("Filing is stuck");
+    expect(screen.getByRole("button", { name: "Mailboxes" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
+
+    made.refresh(ladder("behind"));
+    expect(status()[0]).toContain("New mail is late");
+    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy();
   });
 
   it("lets go of the reading when the part that fed it goes", () => {

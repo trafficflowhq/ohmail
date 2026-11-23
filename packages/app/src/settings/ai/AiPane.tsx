@@ -3,6 +3,7 @@ import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { AI_NAMESPACE } from "./namespace.js";
 import "./ai-credits.css";
+import type { AiCredits } from "./budget.js";
 import type { AiModel } from "./model.js";
 
 export interface AiPaneProps {
@@ -10,10 +11,9 @@ export interface AiPaneProps {
   /** The reader's sentence for a server with no model (`aiRefusal.noModel`), said after the switch's own. */
   readonly noModelSaid: string;
   readonly cloudModel?: boolean;
-  readonly credits?: { remaining: number; total?: number } | null;
+  readonly credits?: AiCredits | null;
   readonly toPlans?: () => void;
   readonly draftReplies?: { enabled: boolean; toggle(next: boolean): void };
-  readonly draftCost?: number;
   readonly phone?: boolean;
 }
 
@@ -29,11 +29,11 @@ export function AiPane({
   draftReplies,
   credits,
   toPlans,
-  draftCost,
   phone,
 }: AiPaneProps) {
   const t = useText("settings");
   const own = useText(AI_NAMESPACE);
+  const draftCost = credits?.draftCost;
   return (
     <>
       <SettingsSheet
@@ -67,7 +67,6 @@ export function AiPane({
           <SettingLine
             label={own("draftReply")}
             tag={draftCost === undefined ? undefined : own("draftCost", { credits: draftCost })}
-            sub
             off={model.enabled !== true || model.noModel}
             toggle={{ on: draftReplies.enabled, onChange: draftReplies.toggle }}
           />
@@ -78,7 +77,7 @@ export function AiPane({
               label={own("budget")}
               value={own(
                 credits.total === undefined ? "creditsBalance" : phone ? "creditsAmount" : "creditsLeft",
-                credits,
+                { remaining: credits.remaining, total: credits.total ?? 0 },
               )}
               off={model.enabled === false}
             />

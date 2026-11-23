@@ -107,6 +107,55 @@ function BrowserFactor({ open }: { open: () => Promise<unknown> }) {
   </>;
 }
 
+async function readHostedUser(request: ReturnType<typeof accountFetch>, accountId: string) {
+  const { scope: access, user } = await request<Session>("/auth/session");
+  if (access !== "full" || user?.accountId !== accountId) throw new AccountRefusal(401);
+  return user;
+}
+
+export function phoneSettingsFactor(
+  bridge: Bridge, config: Pick<ShellConfig, "scope" | "accountId">, pane: BrowserAccountPane,
+): FactorSlot {
+  const { scope } = config;
+  const request = accountFetch(bridge, scope);
+  const readUser = () => readHostedUser(request, config.accountId);
+  const verification: StepUpDoor = {
+    async factors() {
+      try {
+        const { twofaEnrolled } = await readUser();
+        return { ok: true, factors: {
+          passkey: false, code: twofaEnrolled?.totp === true, recovery: twofaEnrolled?.recoveryCodes === true,
+        } };
+      } catch {
+        return { ok: false, refusal: { word: "refused" } };
+      }
+    },
+    async verify(factor, code) {
+      if (factor === "passkey") return { ok: false, refusal: { word: "bad_passkey" } };
+      try {
+        await request(factor === "code" ? "/auth/step-up/totp" : "/auth/step-up/recovery-code", "POST", { code: code.trim() });
+        return { ok: true };
+      } catch (error) {
+        let refusal: StepUpRefusal = { word: "refused" };
+        if (error instanceof AccountRefusal) {
+          if (error.status === 423 || error.code === "account_locked") refusal = { word: "locked", minutes: minutesOf(error) };
+          else if (error.code === "sign_in_slowed") refusal = { word: "slowed" };
+          else if (error.status === 401) refusal = { word: factor === "code" ? "bad_code" : "bad_recovery" };
+        }
+        return { ok: false, refusal };
+      }
+    },
+  };
+  return (ask) => (
+    <StepUpDialog {...ask} door={verification} noFactor={
+      <BrowserFactor open={async () => {
+        await bridge.request("phone.account", { scope, do: "settingsPage", pane });
+        ask.onCancel();
+      }} />
+    } />
+  );
+}
+
 export function hostedSettingsPanes(bridge: Bridge, config: Pick<ShellConfig, "scope" | "setting" | "accountId" | "serverName">):
   Pick<MailPaneParts, "account" | "devices" | "invites" | "security"> {
   const { scope, setting } = config;
@@ -123,11 +172,7 @@ export function hostedSettingsPanes(bridge: Bridge, config: Pick<ShellConfig, "s
   const copy = (text: string) => browserClipboard(window)(text);
   const openServers = () => bridge.request("act", { act: "openServers" });
   const signOut = () => bridge.request("act", { act: "signOut" });
-  const readUser = async () => {
-    const { scope: access, user } = await request<Session>("/auth/session");
-    if (access !== "full" || user?.accountId !== config.accountId) throw new AccountRefusal(401);
-    return user;
-  };
+  const readUser = () => readHostedUser(request, config.accountId);
 
   async function pairs(grant: PairGrant) {
     const { items } = await native<{ items: PairRow[] }>({ do: "pairs" });
@@ -267,46 +312,11 @@ export function hostedSettingsPanes(bridge: Bridge, config: Pick<ShellConfig, "s
     }), [ref]);
   }
 
-  const verification: StepUpDoor = {
-    async factors() {
-      try {
-        const { twofaEnrolled } = await readUser();
-        return { ok: true, factors: {
-          passkey: false, code: twofaEnrolled?.totp === true, recovery: twofaEnrolled?.recoveryCodes === true,
-        } };
-      } catch {
-        return { ok: false, refusal: { word: "refused" } };
-      }
-    },
-    async verify(factor, code) {
-      if (factor === "passkey") return { ok: false, refusal: { word: "bad_passkey" } };
-      try {
-        await request(factor === "code" ? "/auth/step-up/totp" : "/auth/step-up/recovery-code", "POST", { code: code.trim() });
-        return { ok: true };
-      } catch (error) {
-        let refusal: StepUpRefusal = { word: "refused" };
-        if (error instanceof AccountRefusal) {
-          if (error.status === 423 || error.code === "account_locked") refusal = { word: "locked", minutes: minutesOf(error) };
-          else if (error.code === "sign_in_slowed") refusal = { word: "slowed" };
-          else if (error.status === 401) refusal = { word: factor === "code" ? "bad_code" : "bad_recovery" };
-        }
-        return { ok: false, refusal };
-      }
-    },
-  };
-  const factorFor = (pane: BrowserAccountPane): FactorSlot => (ask) => (
-    <StepUpDialog {...ask} door={verification} noFactor={
-      <BrowserFactor open={async () => {
-        await bridge.request("phone.account", { scope, do: "settingsPage", pane });
-        ask.onCancel();
-      }} />
-    } />
-  );
 
   return {
-    account: { useDoor: useAccountDoor, password: { useDoor: usePasswordDoor, factor: factorFor("account") } },
-    devices: { useDoor: useDevicesDoor, factor: factorFor("devices"), qr, End: phoneDevicesPane(bridge, true) },
-    invites: setting === "selfHosted" ? { useDoor: useInvitesDoor, factor: factorFor("invites"), qr } : unavailableInvites,
-    security: { useDoor: useSecurityDoor, factor: factorFor("security"), qr },
+    account: { useDoor: useAccountDoor, password: { useDoor: usePasswordDoor, factor: phoneSettingsFactor(bridge, config, "account") } },
+    devices: { useDoor: useDevicesDoor, factor: phoneSettingsFactor(bridge, config, "devices"), qr, End: phoneDevicesPane(bridge, true) },
+    invites: setting === "selfHosted" ? { useDoor: useInvitesDoor, factor: phoneSettingsFactor(bridge, config, "invites"), qr } : unavailableInvites,
+    security: { useDoor: useSecurityDoor, factor: phoneSettingsFactor(bridge, config, "security"), qr },
   };
 }

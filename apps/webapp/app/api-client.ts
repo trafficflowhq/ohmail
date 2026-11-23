@@ -9,6 +9,7 @@
  * (`test/onboarding.test.ts` forbids the sentences in source).
  */
 
+import { aiCreditsOf, type AiCredits } from "@ohmail/app/settings/ai/budget";
 import { csrfToken as readCsrfToken } from "./csrf";
 import { readSessionFamily, EXPECTED_ACCOUNT_HEADER, EXPECTED_FAMILY_HEADER } from "./signed-out-signal";
 import {
@@ -2618,12 +2619,8 @@ export type AccountAccess =
       storage?: unknown;
     };
 
-export function accessAiCredits(a: AccountAccess | null | undefined): { remaining: number; total?: number } | null {
-  if (!a?.metered || a.access !== "open" || !a.aiCredits || typeof a.aiCredits !== "object") return null;
-  const { remaining, total } = a.aiCredits as { remaining?: unknown; total?: unknown };
-  if (typeof remaining !== "number" || !Number.isSafeInteger(remaining) || remaining < 0) return null;
-  return typeof total === "number" && Number.isSafeInteger(total) && total > 0
-    ? { remaining, total } : { remaining };
+export function accessAiCredits(a: AccountAccess | null | undefined): AiCredits | null {
+  return a?.metered && a.access === "open" ? aiCreditsOf(a.aiCredits) : null;
 }
 
 /** The answer's storage block, narrowed (`shell/storage-state.ts`), or `null` where there is none. */

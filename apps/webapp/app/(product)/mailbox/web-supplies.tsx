@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useTimeZone, useTranslations } from "next-intl";
 import { NONE, type FrameSupplies, type GapLettersWire, type OrganizerNoticeWire, type HostContract, type HostDevice } from "@ohmail/app/host";
 import { calendar } from "@ohmail/app/calendar";
+import { StepUp } from "./StepUp";
 import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
 import { startCalendarOAuth } from "./calendar-oauth";
 import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
@@ -234,6 +235,7 @@ export function useWebHost(
       setSuggestionDismissed: transport.setSuggestionDismissed,
       setup: setup ? {
         ...calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()),
+        factor: (ask) => <StepUp {...ask} expectedOwner={scope} />,
         startOAuth: (provider) => startCalendarOAuth(provider, scope, () => readOwner() === scope && sessionMayAsk()),
       } : undefined,
       held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),

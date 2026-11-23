@@ -37,21 +37,23 @@ export type GatedAct =
 /** The door's answer to a gated press: taken, the factor asked, sign in again, or refused in the stage's words. */
 export type GatedOutcome = GatedAnswer<"refused">;
 
-export interface Gated {
-  readonly state: GatedState<GatedAct, "refused">;
+export interface Gated<A extends { readonly verb: string } = GatedAct> {
+  readonly state: GatedState<A, "refused">;
   /** The press, tried now; a second press while one is out or parked is not taken. */
-  press(act: GatedAct): void;
+  press(act: A): void;
   /** What the dialog is handed while the factor is asked, and `null` otherwise. */
   readonly ask: GatedAsk | null;
   /**
    * Whatever changes what the parked press would send: the slot empties and the dialog closes. A press still on its
    * way is remembered as moved under: no factor is asked for it. A dialog may restrict the withdrawal to its own verb.
    */
-  withdraw(verb?: GatedAct["verb"]): void;
+  withdraw(verb?: A["verb"]): void;
 }
 
-export function useGated(send: (run: GatedRun<GatedAct>) => Promise<GatedOutcome>): Gated {
-  const state = useRef<GatedState<GatedAct, "refused">>(GATED_IDLE);
+export function useGated<A extends { readonly verb: string }>(
+  send: (run: GatedRun<A>) => Promise<GatedOutcome>,
+): Gated<A> {
+  const state = useRef<GatedState<A, "refused">>(GATED_IDLE);
   /** What a press would send changed while one was on its way. */
   const moved = useRef(false);
   const [, redraw] = useReducer((n: number) => n + 1, 0);
@@ -65,7 +67,7 @@ export function useGated(send: (run: GatedRun<GatedAct>) => Promise<GatedOutcome
       state.current = GATED_IDLE;
     };
   }, []);
-  const step = useCallback((event: GatedEvent<GatedAct, "refused">): void => {
+  const step = useCallback((event: GatedEvent<A, "refused">): void => {
     if (!alive.current) return;
     const next = gatedStep(state.current, event);
     state.current = next.state;
@@ -83,7 +85,7 @@ export function useGated(send: (run: GatedRun<GatedAct>) => Promise<GatedOutcome
     void sender.current(next.run).then(answered, () => answered({ ok: false, word: "refused" }));
   }, []);
   const withdraw = useCallback(
-    (verb?: GatedAct["verb"]) => {
+    (verb?: A["verb"]) => {
       const pending = state.current;
       if (pending.at !== "asking" && pending.at !== "trying") return;
       if (verb !== undefined && pending.act.verb !== verb) return;

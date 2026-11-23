@@ -75,7 +75,7 @@ export function StoragePane({ facts, linksOut, change, mail }: {
       ? t.rich("storagePlanKeepsNamed", { plan: t("storagePlanName", { plan: offer.current.plan }), limit: size(facts.limitBytes), b })
       : t.rich("storagePlanKeeps", { limit: size(facts.limitBytes), b });
   };
-  const price = (amount: number) => (offer === null ? "" : t(offer.interval === "year" ? "storagePriceYear" : "storagePriceMonth", {
+  const price = (amount: number, interval = offer?.interval) => (offer === null ? "" : t(interval === "year" ? "storagePriceYear" : "storagePriceMonth", {
     price: formatStoragePrice(amount, offer.currency, locale),
   }));
   const fitChanges = offer !== null && storageFitIsChange(offer);
@@ -179,7 +179,7 @@ export function StoragePane({ facts, linksOut, change, mail }: {
               label={t("storageAddonName")}
               tag={t("storageTagAddon")}
               value={`+${size(offer.addon.unitBytes)}`}
-              figure={linksOut ? price(offer.addon.amount) : undefined}
+              figure={linksOut ? price(offer.addon.amount, offer.addon.interval) : undefined}
               description={[
                 t("storageLetters", { count: estimatedEmails(offer.addon.unitBytes) }),
                 t("storageAddonEach"),

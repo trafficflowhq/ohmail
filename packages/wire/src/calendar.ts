@@ -301,6 +301,12 @@ export interface CalendarSettingsBody {
  */
 export type CalendarWay = "icloud" | "caldav" | "ics" | "google" | "microsoft";
 
+/** A mailbox whose saved iCloud sign-in can be used for a new calendar connection. */
+export interface CalendarMailboxSource {
+  id: string;
+  address: string;
+}
+
 /**
  * `GET /calendar/connect`: where the account's connecting stands on this server.
  *
@@ -315,6 +321,9 @@ export type CalendarWay = "icloud" | "caldav" | "ics" | "google" | "microsoft";
 export interface CalendarConnectWire {
   ways: CalendarWay[];
   connections: CalendarConnectionRecord[];
+  icloudMailboxes?: CalendarMailboxSource[];
+  /** Mailboxes whose saved sign-in a retained calendar connection was created from. */
+  linkedMailboxIds?: string[];
 }
 
 /**
@@ -325,6 +334,7 @@ export interface CalendarConnectWire {
  */
 export type CalendarConnectBody =
   | { way: "icloud"; connectionId: string; user: string; password: string }
+  | { way: "icloud"; connectionId: string; fromMailbox: string }
   | { way: "caldav"; connectionId: string; server: string; user: string; password: string }
   | { way: "ics"; connectionId: string; address: string };
 

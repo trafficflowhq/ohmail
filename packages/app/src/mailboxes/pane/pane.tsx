@@ -3,6 +3,7 @@ import { useMemo, type ComponentType, type ReactNode } from "react";
 import { statusKey } from "@ohmail/app-logic/mailboxes/pane/rows";
 import { useEngine } from "@ohmail/app-logic/engine";
 import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
+import { useSetupPort } from "../../calsetup/use-setup-port.js";
 import { useFrame } from "../../frame/index.js";
 import { NONE, panesOf, type None } from "../../host/index.js";
 import type { PaneBodyProps, PaneSummary, SettingsPane } from "../../settings/contract.js";
@@ -63,6 +64,12 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
   function Body(_props: PaneBodyProps): ReactNode {
     const { host, route, commands } = useFrame();
     const engine = useEngine();
+    const setup = useSetupPort();
+    const links = setup === NONE ? undefined : setup.linkedMailboxIds;
+    const calendarReuse = useMemo(
+      () => links && (async (id: string) => (await links()).includes(id)),
+      [links],
+    );
     const mail = slots.mailState();
     const { refresh } = mail;
     const importing = mail.state.key === "importing";
@@ -89,6 +96,7 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
             slots.holdEdit ? (ask) => host.device.address.holdLeave(ask, "#/settings/mailboxes") : undefined
           }
           calendar={slots.calendar}
+          calendarReuse={calendarReuse}
           opened={here ? (route.words.mailbox ?? null) : null}
           stage={host.features.stages.firstRun !== NONE}
           subscriptionPane={panesOf(host).billing}

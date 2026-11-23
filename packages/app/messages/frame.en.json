@@ -326,6 +326,10 @@
       "write": "Write"
     },
     "notice": {
+      "hide": "Hide",
+      "collapse": "Collapse",
+      "show": "Show",
+      "sendFailed": "Message not sent",
       "more": "{count} more",
       "moreName": "{count, plural, one {# more notice} other {# more notices}}",
       "moreClose": "Close"

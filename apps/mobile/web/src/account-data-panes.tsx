@@ -5,7 +5,7 @@ import { TrialProgress } from "@ohmail/app/account/subscription";
 import { StorageExplanation, StorageInfo } from "@ohmail/app/account/storage";
 import { NONE, type AwayWire } from "@ohmail/app/host";
 import type { MailPaneParts } from "@ohmail/app/mail";
-import { AiPane, useAiDoor, type AiDoor } from "@ohmail/app/settings/ai";
+import { AiPane, aiCreditsOf, useAiDoor, type AiDoor } from "@ohmail/app/settings/ai";
 import { PhoneAwaySettings } from "@ohmail/app/settings/away";
 import { useLocale, useText } from "@ohmail/app/text";
 import { design, Empty, Tag } from "@ohmail/ui/base";
@@ -19,7 +19,7 @@ type Request = ReturnType<typeof accountFetch>;
 type AccountData = {
   metered: boolean;
   access?: "open" | "refused";
-  aiCredits?: { remaining: number; total?: number };
+  aiCredits?: unknown;
   trialProgress?: { day: number; total: number };
   lifecycle?: { state: keyof typeof STATE; trialEndsAt?: string | null };
   storage?: StorageUsage;
@@ -77,17 +77,14 @@ function PhoneAi({ request, readAccess, managed }: {
   }), [request, managed, refusal]);
   const { model, saveDraft } = useAiDoor(door);
 
-  const credits = access && access !== "failed" && access.access === "open" ? access.aiCredits : null;
-  const budget = credits && Number.isSafeInteger(credits.remaining) && credits.remaining >= 0
-    ? { remaining: credits.remaining, total: Number.isSafeInteger(credits.total) && credits.total! > 0 ? credits.total : undefined }
-    : null;
+  const credits = access && access !== "failed" && access.metered && access.access === "open"
+    ? aiCreditsOf(access.aiCredits) : null;
   return <AiPane
     phone
-    draftCost={budget ? DRAFT_REPLY_COST_CREDITS : undefined}
     model={model}
     noModelSaid={aiRefusal("noModel")}
     cloudModel={managed && model.enabled === true && model.problem === null}
-    credits={budget}
+    credits={credits && { ...credits, draftCost: credits.draftCost ?? DRAFT_REPLY_COST_CREDITS }}
     draftReplies={draftReplies !== null && setDraftReplies
       ? { enabled: draftReplies, toggle: (next) => saveDraft(() => setDraftReplies(next)) } : undefined}
   />;

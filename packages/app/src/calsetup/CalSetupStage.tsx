@@ -88,7 +88,7 @@ export function CalSetupStage({ route }: PaneProps) {
   if (at.step === "signin") {
     return (
       <SignInStep
-        key={`${at.way}:${at.again ?? ""}`}
+        key={`${host.session.scope}:${at.way}:${at.again ?? ""}`}
         way={at.way}
         again={at.again}
         port={port}

@@ -923,6 +923,18 @@ export class HttpAdapter implements EngineAdapter {
     return {
       calendarWays: this.calendarWays.bind(this),
       calendarConnections: this.calendarConnections.bind(this),
+      icloudMailboxes: async () => {
+        const answer = await this.call("GET /calendar/connect", {});
+        if (!answer.ok) return [];
+        const rows = (await this.readUntrusted<"GET /calendar/connect">(answer)).icloudMailboxes;
+        return Array.isArray(rows) ? rows.filter((row) => typeof row?.id === "string" && typeof row?.address === "string") : [];
+      },
+      linkedMailboxIds: async () => {
+        const answer = await this.call("GET /calendar/connect", {});
+        if (!answer.ok) throw await this.rejectionOf(answer, "read");
+        const ids = (await this.readUntrusted<"GET /calendar/connect">(answer)).linkedMailboxIds;
+        return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+      },
       connectCalendar: this.connectCalendar.bind(this),
       removeCalendarConnection: this.removeCalendarConnection.bind(this),
       checkCalendarConnection: this.checkCalendarConnection.bind(this),

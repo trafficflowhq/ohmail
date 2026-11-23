@@ -14,7 +14,7 @@ import type { FirstRunAbout, FirstRunGround, FirstRunRow, FirstRunVerbs } from "
 import { useAgree, type Agree } from "./use-agree.js";
 import { useCursor, type Cursor } from "./use-cursor.js";
 import { useDecide, type Decide } from "./use-decide.js";
-import { useGated, type Gated } from "./use-gated.js";
+import { useGated, type Gated, type GatedAct } from "./use-gated.js";
 import { useHolderWait, type HolderWait } from "./use-holder-wait.js";
 import { usePull, type Pull } from "./use-pull.js";
 import { useStageFacts } from "./use-stage-facts.js";
@@ -179,7 +179,7 @@ export function useFirstRun(input: FirstRunInput): FirstRun {
     takeover: agree.takeover,
   });
   const sendRef = useRef<StageActions["send"] | null>(null);
-  const gated = useGated((run) => sendRef.current!(run));
+  const gated = useGated<GatedAct>((run) => sendRef.current!(run));
   const acts = useStageActions({
     input,
     mailboxId,

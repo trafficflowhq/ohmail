@@ -2,6 +2,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FrameNotice } from "../../src/frame/contract.js";
+import type { SendLineItem } from "@ohmail/app-logic/writing/mail-send";
+import { sendNotices } from "../../src/mail/ground/send-notices.js";
 import { NoticeHost } from "../../src/frame/NoticeHost.js";
 import { createNoticeStore } from "../../src/frame/notice-store.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -69,6 +71,55 @@ describe("the one notice slot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restart" }));
     expect(first).not.toHaveBeenCalled();
     expect(latest).toHaveBeenCalledOnce();
+  });
+
+  it.each(["notSent", "unsaved"] as const)("keeps a collapsed %s notice until it resolves", (kind) => {
+    const store = slot();
+    const notice = { kind, title: "Waiting for you", line: "Details about the problem", hot: true } as const;
+    act(() => store.post("mail", [notice]));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse" }));
+    expect(shown()).toEqual([kind === "notSent" ? "Message not sentShow" : "Waiting for youShow"]);
+    expect(screen.queryByText(notice.line)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show", expanded: false }));
+    expect(screen.getByText(notice.line, { exact: false })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse" }));
+    act(() => store.post("mail", []));
+    expect(screen.queryByRole("status")).toBeNull();
+    act(() => store.post("mail", [notice]));
+    expect(screen.getByRole("button", { name: "Collapse" })).toBeTruthy();
+  });
+
+  it("expands a collapsed send notice when another failure arrives under the same notice", () => {
+    const store = slot();
+    const failed = (id: string): SendLineItem => ({
+      id,
+      key: "compose",
+      state: "ended",
+      to: null,
+      subject: null,
+      ended: { phase: "failed", reason: "refused" },
+      left: { rowId: id, aboutThisCompose: false },
+    });
+    const old = failed("first");
+    const another = failed("second");
+    const next = failed("third");
+    const post = (...items: SendLineItem[]) => {
+      const notices = sendNotices(
+        () => "Message not sent",
+        items,
+        () => {},
+        () => {},
+      );
+      act(() => store.post("mail", notices));
+    };
+    post(old, another);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse" }));
+    post(old);
+    expect(screen.getByRole("button", { name: "Show", expanded: false })).toBeTruthy();
+
+    post(old, next);
+    expect(screen.queryByRole("button", { name: "Show" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Collapse", expanded: true })).toBeTruthy();
   });
 
   it("says its line in German", () => {

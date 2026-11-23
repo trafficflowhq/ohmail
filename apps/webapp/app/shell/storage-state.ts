@@ -46,7 +46,7 @@ export interface StorageOffer {
   currency: string;
   interval: "month" | "year";
   plans: Array<{ plan: StoragePlanName; mailboxes: number; roomBytes: number; amount: number }>;
-  addon: { unitBytes: number; amount: number; maxUnits: number } | null;
+  addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
   current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" };
   fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
   canChange: boolean;
@@ -131,7 +131,11 @@ export function storageOfferOf(raw: unknown): StorageOffer | null {
   if (o.addon !== undefined && o.addon !== null) {
     const a = rec(o.addon);
     if (a === null || !isCount(a.unitBytes) || a.unitBytes === 0 || !isCount(a.amount) || !isCount(a.maxUnits)) return null;
-    addon = { unitBytes: a.unitBytes, amount: a.amount, maxUnits: a.maxUnits };
+    if (a.interval !== undefined && a.interval !== "month" && a.interval !== "year") return null;
+    addon = {
+      unitBytes: a.unitBytes, amount: a.amount, maxUnits: a.maxUnits,
+      ...(a.interval === undefined ? {} : { interval: a.interval }),
+    };
   }
   const c = rec(o.current);
   const f = rec(o.fit);

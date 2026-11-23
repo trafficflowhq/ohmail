@@ -86,20 +86,15 @@ function rowNotice(t: T, row: LineRow, open: (row: readonly SendLineItem[]) => v
     return named === null ? { title: sentence } : { title: named, line: sentence };
   };
   if (row.kind === "ended") {
-    if (one === null)
-      return {
-        kind: "notSent",
-        hot: true,
-        title: t("compose.notSentMany", { count: row.items.length }),
-        acts: [showAct],
-      };
-    const line = one.ended ? sendLine(one.ended, false) : null;
-    return {
+    const failure = {
       kind: "notSent",
       hot: true,
-      ...said(line ? sentenceOf(t, one, line.key) : t("reply.statusFailed")),
+      failedSendIds: row.items.map((item) => item.id),
       acts: [showAct],
-    };
+    } as const;
+    if (one === null) return { ...failure, title: t("compose.notSentMany", { count: row.items.length }) };
+    const line = one.ended ? sendLine(one.ended, false) : null;
+    return { ...failure, ...said(line ? sentenceOf(t, one, line.key) : t("reply.statusFailed")) };
   }
   if (row.kind === "queued")
     return one !== null

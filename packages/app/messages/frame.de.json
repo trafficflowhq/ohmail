@@ -326,6 +326,10 @@
       "write": "Schreiben"
     },
     "notice": {
+      "hide": "Ausblenden",
+      "collapse": "Einklappen",
+      "show": "Anzeigen",
+      "sendFailed": "Nachricht nicht gesendet",
       "more": "{count} weitere",
       "moreName": "{count, plural, one {# weiterer Hinweis} other {# weitere Hinweise}}",
       "moreClose": "Schließen"

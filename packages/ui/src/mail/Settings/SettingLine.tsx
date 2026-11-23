@@ -142,7 +142,15 @@ export function SettingLine(props: SettingLineProps) {
         ) : null}
         {figure ? <b className="oh-settingline-figure">{figure}</b> : null}
         {children}
-        {toggle ? <Switch label={label} on={toggle.on} onChange={toggle.onChange} disabled={off} /> : null}
+        {toggle ? (
+          <Switch
+            label={label}
+            describedBy={notes}
+            on={toggle.on}
+            onChange={toggle.onChange}
+            disabled={off}
+          />
+        ) : null}
       </span>
     </div>
   );

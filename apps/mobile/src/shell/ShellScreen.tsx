@@ -61,6 +61,7 @@ import { switchNative } from "../switch/switch-native";
 import type { SwitchNative } from "../switch/switch-port";
 import { siblingOf } from "../variant";
 import { APP } from "../variant-native";
+import { CALENDAR_WAYS } from "@ohmail/app-logic/calendar/setup";
 
 const sha256Hex = (text: string) =>
   Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, text, { encoding: Crypto.CryptoEncoding.HEX });
@@ -221,7 +222,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         const base = flavor === "managed" ? WEB_APP_URL : origin;
         const page = request.do === "deletePage"
           ? new URL("/account/delete", base)
-          : new URL(`/mailbox#/settings/${request.pane}`, base);
+          : new URL(request.pane === "calendar" ? `/mailbox#/cal/cal-setup?step=signin&way=${CALENDAR_WAYS[0]}` : `/mailbox#/settings/${request.pane}`, base);
         return Linking.openURL(page.href).then(() => ({}), () => ({ refused: "notReady" as const }));
       },
       act: async (a) => {
