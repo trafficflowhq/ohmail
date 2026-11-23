@@ -46,6 +46,7 @@ function methodBodies(): Map<string, string> {
 const PUBLIC_GRANTS: Readonly<Record<string, string>> = {
   "POST /auth/register": "the invite and the password mint an ENROLLMENT session only",
   "POST /auth/verify-email": "the mailed token plus the password",
+  "POST /auth/password/reset": "a reset link sent only to the address on the matched account",
   "POST /auth/login": "the password; the answer is a first-factor token, not a session",
   "POST /auth/desktop-claim": "the one-use code a step-up-gated browser minted",
   "POST /auth/desktop-approval": "an unbound request — nothing is granted until a stepped-up confirm",

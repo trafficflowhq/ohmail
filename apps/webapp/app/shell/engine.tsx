@@ -34,6 +34,7 @@ import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { accountCleanupOwed, finishRetiredComposeCleanup, isolateAccountScope, otherAccountCleanup, readIsolatedScope } from "../pending-sign-out-storage";
 import { listenBrowserSession, readSessionFamily } from "../signed-out-signal";
 import { waitForWakeSession } from "../session-refresh";
+import { serverHello } from "../hello";
 import { setDemoStorage } from "@ohmail/app-logic/storage/storage-owner";
 import { markStartup } from "@ohmail/app-logic/session/ui-vitals";
 import {
@@ -644,19 +645,31 @@ export function EngineProvider({
     // frames drain through this same scheduler. `cloudWakeStream()` decides
     // WHICH builds hold one (web live only); the scheduler decides WHEN
     // (visible only) and survives the stream's absence byte-identically.
-    return startSyncScheduler(engine, {
+    const wake = cloudWakeStream();
+    const handshake = new AbortController();
+    const stream = wake === null ? null : serverHello({ signal: handshake.signal }).then((hello) =>
+      hello?.features?.sse === false ? cloudWakeStream(undefined, false) : wake);
+    let openWake = wake;
+    const stop = startSyncScheduler(engine, {
       onStatus: onSyncStatus,
       // The strip's moving marks, and nothing else, read this — see `drain-mark.ts` for why it
       // is a store rather than a field on the status this component holds.
       onDraining: markDrain,
       ...(syncsWhileHidden() ? { visibility: null, online: null } : {}),
-      wake: cloudWakeStream(),
-      waitForWake: waitForWakeSession,
+      wake: stream === null ? null : () => openWake?.() ?? null,
+      waitForWake: async () => {
+        openWake = await stream;
+        return openWake === null || waitForWakeSession();
+      },
       // The service worker's push wake, heard by a tab with notifications on (web live only).
       pushWakes: cloudPushWakes(),
       // A return reads its delta first, then the rest a few at a time (web live only).
       lane: cloudLane(),
     });
+    return () => {
+      handshake.abort();
+      stop();
+    };
   }, [engine, live, onSyncStatus]);
 
   /**

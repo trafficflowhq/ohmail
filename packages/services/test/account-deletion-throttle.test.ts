@@ -58,10 +58,20 @@ describe("erasure and the sign-in throttle", () => {
     await db.insert(authThrottle).values([...myKeys, ...theirKeys].filter((k) => !k.startsWith("probe-rate:"))
       .map((key) => ({ key, failures: 1 })));
 
+    // These hashes belong to former addresses. Only the recorded account IDs can find the rows.
+    const myFormerAddress = `notice:ceiling:${keys.address("previous-erased")}`;
+    const theirFormerAddress = `notice:ceiling:${keys.address("previous-kept")}`;
+    await db.insert(authThrottle).values([
+      { key: myFormerAddress, failures: 1, noticeAccountId: mine.accountId, noticeUserId: mine.userId },
+      { key: theirFormerAddress, failures: 1, noticeAccountId: theirs.accountId, noticeUserId: theirs.userId },
+    ]);
+
     const ctx: ServiceContext = { db: dbFor(db, mine.accountId), accountId: mine.accountId, userId: mine.userId, now: () => NOW, requestId: "del" };
     await deleteAccount(ctx, { throttleKeys: keys });
 
     const left = new Set((await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key));
+    expect(left.has(myFormerAddress)).toBe(false);
+    expect(left.has(theirFormerAddress)).toBe(true);
     for (const k of myKeys) expect(left.has(k), `left behind: ${family(k)}`).toBe(false);
     for (const k of theirKeys) expect(left.has(k), `a neighbour's row went: ${family(k)}`).toBe(true);
   });

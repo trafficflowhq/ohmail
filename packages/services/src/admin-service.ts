@@ -541,7 +541,7 @@ const ADMIN_AUTH_EVENTS = [
   "recovery_used", "lockout", "enrollment_started", "email_verified", "desktop_link_issued",
   "desktop_approval_confirmed", "desktop_approval_denied", "desktop_approval_refused",
   "refresh_reuse_revoked", "refresh_recovered", "refresh_replayed", "refresh_expired",
-  "refresh_attempt_revoked", "password_changed", "password_change_refused", "session_reaped",
+  "refresh_attempt_revoked", "password_changed", "password_change_refused", "password_reset", "session_reaped",
   "refresh_reuse_acknowledged", "app_handoff_issued",
 ] as const satisfies readonly AuthAuditEvent["event"][];
 type MissingAuthEvent = Exclude<AuthAuditEvent["event"], (typeof ADMIN_AUTH_EVENTS)[number]>;

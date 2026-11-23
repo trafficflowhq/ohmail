@@ -17,6 +17,7 @@ import {
   watchWindowCanvas,
   onMenuCommand,
   onMenuNavigate,
+  openServerPasswordReset,
   openWeb,
   setBadge,
   commandOfMenuPayload,
@@ -533,14 +534,19 @@ describe("the browser handoff, at the window's edge", () => {
 
   it("omits the field entirely when there is no commitment to pass", async () => {
     const shell = shellAnswering();
+    const expectedServer = "https://mail.example.test/api";
     await openWeb("link-desktop");
     await openWeb("account");
+    await openWeb("forgot-password");
+    await openServerPasswordReset(expectedServer);
     /* Absent, not `undefined`. The shell's `Option<String>` and "no such parameter" are the same
        fact, and a caller that always sent the key would make the one page that takes one look like
        every page — which is what `desktop-mailboxes.test.ts` also pins from the other side. */
     expect(shell.asked).toEqual([
       { command: "open_link", payload: { key: "link-desktop" } },
       { command: "open_link", payload: { key: "account" } },
+      { command: "open_link", payload: { key: "forgot-password" } },
+      { command: "open_link", payload: { key: "server-forgot-password", expectedServer } },
     ]);
   });
 

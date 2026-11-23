@@ -123,7 +123,7 @@ export {
 export { readFlightOf } from "./read-flight.js";
 // The account's binding on a handle: the two types and the one function that mints them (`bound.ts`).
 export {
-  bindDb, rebindTx, carryBinding, bindingOf, poolKeyOf, assertBinding, refuseBound, onServerPool,
+  bindDb, doorKeyDb, isCredentialKey, rebindTx, carryBinding, bindingOf, poolKeyOf, assertBinding, refuseBound, onServerPool,
   BindingRefusedError, BindingFailedError, BINDING_KEY_MAX,
   type AccountBound, type NothingBound, type NoBinding, type Unbranded, type BindTo, type Binding,
 } from "./bound.js";

@@ -632,6 +632,7 @@ export async function deleteAccount(
     // Load it now's admission names the account itself, by its keyed hash (`live-body-admit.ts`).
     if (opts.throttleKeys) exact.push(`live-body:${opts.throttleKeys.client(accountId)}`);
     await drop("auth_throttle", tx.delete(authThrottle).where(or(
+      eq(authThrottle.noticeAccountId, accountId),
       ...(exact.length === 0 ? [] : [inArray(authThrottle.key, exact)]),
       ...prefixes.map((pattern) => like(authThrottle.key, pattern)),
       probeRowsOfAccount(accountId),

@@ -118,7 +118,7 @@ export const WEB_PLACES = [
   "privacy", "subprocessors",
   // The Cloud door's sign-up page and the setup behind a sign-in; both lead to the purchase step,
   // so their presses render only where `linksOutToBilling()` is true.
-  "join", "setup",
+  "join", "setup", "forgot-password",
 ] as const;
 
 export type WebPlace = (typeof WEB_PLACES)[number];
@@ -137,6 +137,13 @@ export async function openWeb(place: WebPlace, challenge?: string): Promise<void
   const shell = internals();
   if (!shell) return;
   await shell.invoke(OPEN_COMMAND, challenge ? { key: place, challenge } : { key: place });
+}
+
+/** The shell checks that this is still the configured server, then supplies the recovery path. */
+export async function openServerPasswordReset(expectedServer: string): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(OPEN_COMMAND, { key: "server-forgot-password", expectedServer });
 }
 
 export type ServerSettingsPane =

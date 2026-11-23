@@ -28,6 +28,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });
 
 const PW = "long-login-password";
+const WRONG_PW = [PW, "wrong"].join("-");
 const IP = "198.51.100.7";
 const IMAP = { host: "imap.example", port: 993, secure: true, user: "mila", pass: "mailbox-imap-password" };
 
@@ -188,7 +189,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     expect(rows[0]!.purpose).toBe("email_verify");
   });
 
-  it("A USED TOKEN IS REFUSED, and the second presentation is told nothing extra", async () => {
+  it("a replay acknowledges confirmation only with the correct password", async () => {
     const { deps, mailer } = await makeDeps(undefined, { publicSignup: true });
     const token = await openRegister(deps, mailer, "once@example.com");
 
@@ -201,8 +202,16 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     const second = await H(req("POST", "/auth/verify-email", {
       headers: { "x-forwarded-for": IP }, body,
     }), deps);
-    expect(second.status).toBe(400);
-    const reused = await envelope(second);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ status: "already_verified" });
+    expect(second.headers.has("set-cookie")).toBe(false);
+
+    const wrong = await H(req("POST", "/auth/verify-email", {
+      headers: { "x-forwarded-for": IP },
+      body: JSON.stringify({ token, password: WRONG_PW }),
+    }), deps);
+    expect(wrong.status).toBe(400);
+    const reused = await envelope(wrong);
     expect(reused.code).toBe("invalid_token");
 
     // And it is the SAME answer a token that never existed gets. "Already used" must not be
@@ -212,7 +221,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
       headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ token: "not-a-real-token-at-all", password: PW }),
     }), deps);
-    expect(never.status).toBe(second.status);
+    expect(never.status).toBe(wrong.status);
     expect(await envelope(never)).toEqual(reused);
   });
 

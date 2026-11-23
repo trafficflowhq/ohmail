@@ -15,7 +15,7 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { OutboundMessage } from "@trafficflow/core/adapters/imap";
 import type { SendAdapter } from "@trafficflow/core/mail";
 import {
-  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages, threads,
+  bindDb,   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages, threads,
 } from "@trafficflow/db";
 import { runAwayResponderPass } from "@trafficflow/services";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -137,7 +137,7 @@ function realSend(d: Desk, during?: () => Promise<void>) {
 }
 
 const pass = (d: Desk, send: ReturnType<typeof realSend>, stillOrganizing?: () => Promise<boolean>) =>
-  runAwayResponderPass(d.sidecar.db as never, {
+  runAwayResponderPass(bindDb(d.sidecar.db as never, { account: null }), {
     openSendAdapter: send.factory, mailboxIds: [d.sidecar.world.mailboxId],
     ...(stillOrganizing ? { stillOrganizing } : {}),
   });

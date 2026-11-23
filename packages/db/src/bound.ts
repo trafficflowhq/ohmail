@@ -14,6 +14,8 @@
  * has no role and no policy, and gets the type and the mark and no statement. No driver import
  * here, so every store can use it.
  */
+import type { SQL } from "drizzle-orm";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { BINDING_BRAND, IN_TRANSACTION_BRAND, SAVEPOINT_BRAND, SERVER_POOL_BRAND } from "./dialect/index.js";
 // From `logins.ts` and never `names.ts`: that one imports the staff role's grants, and this module
 // loads in a device's engine.
@@ -79,6 +81,8 @@ export class BindingFailedError extends Error {
 
 /** The longest key a binding carries; a keyed look-up compares a digest or an address, never more. */
 export const BINDING_KEY_MAX = 512;
+export const STAFF_DOOR_KEY = "ohmail:staff";
+export const PASS_DOOR_KEY = "ohmail:passes";
 
 /**
  * THE BINDER'S ONE STATEMENT, and the only text in the product that writes either name: the account
@@ -143,6 +147,7 @@ function accountRefusal(account: unknown): string | null {
 function keyRefusal(key: unknown): string | null {
   if (key === undefined || key === null) return null;
   if (typeof key !== "string") return `a key of type ${typeof key}, not a string`;
+  if (key.startsWith("ohmail:")) return "a reserved door key";
   if (key.length === 0) return "an empty key (no key is null)";
   if (key.length > BINDING_KEY_MAX) return `a key of ${key.length} characters, over ${BINDING_KEY_MAX}`;
   for (let i = 0; i < key.length; i++) {
@@ -157,6 +162,11 @@ function keyRefusal(key: unknown): string | null {
     }
   }
   return null;
+}
+
+/** Whether a presented lookup key can be bound through the credential entry point. */
+export function isCredentialKey(key: string): boolean {
+  return keyRefusal(key) === null;
 }
 
 /** The marks this copy minted: frozen, so a mark cannot be edited into another account. */
@@ -239,6 +249,29 @@ export function refuseBinding(db: object): void {
 export function bindDb<D extends object>(db: D, to: { readonly account: string; readonly key?: string | null }): Unbranded<D> & AccountBound;
 export function bindDb<D extends object>(db: D, to: { readonly account: null; readonly key?: string | null }): Unbranded<D> & NothingBound;
 export function bindDb(db: object, to: BindTo): object {
+  return bindHandle(db, to);
+}
+
+/** Open the staff entry point on a plain, unbound handle. */
+export function doorKeyDb<D extends NothingBound>(db: D, door: "staff"): D {
+  if (door !== "staff") refuse("unknown door");
+  return bindReservedDoor(db, STAFF_DOOR_KEY);
+}
+
+/** The database roster receives rows. The handle stays inside the binder. */
+export async function executePassRosterRead<Row extends Record<string, unknown>>(
+  db: NothingBound & Pick<PostgresJsDatabase, "execute">, statement: SQL,
+) {
+  return bindReservedDoor(db, PASS_DOOR_KEY).execute<Row>(statement);
+}
+
+function bindReservedDoor<D extends NothingBound>(db: D, key: string): D {
+  const held = bindingOf(db);
+  if (held?.account !== null || held.keyed) refuse("a reserved door requires a plain unbound handle");
+  return bindHandle(db, { account: null }, key) as D;
+}
+
+function bindHandle(db: object, to: BindTo, doorKey?: string): object {
   if (to === null || typeof to !== "object") refuse("no binding was named");
   const account = to.account;
   if (account !== null) {
@@ -270,7 +303,7 @@ export function bindDb(db: object, to: BindTo): object {
   if (unbindable.has(root)) refuse("this handle's factory refuses a binding");
   // A driver handle the factory did not register would be bound in type and plain on the wire.
   if (!doors.has(root) && hasDriverClient(root)) refuse("a postgres.js handle its factory did not register");
-  const key = to.key ?? null;
+  const key = doorKey ?? to.key ?? null;
   if (account === null && key === null) {
     const shared = nothingViews.get(root);
     if (shared !== undefined) return shared;

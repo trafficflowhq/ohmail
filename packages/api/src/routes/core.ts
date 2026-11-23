@@ -63,6 +63,7 @@ export const coreRoutes: Route[] = [
     // because the decision is the same one: `enrollment` (and the session cookies) for a user
     // with zero enrolled factors, a bare `{status:"verified"}` for one who already has a factor —
     // a mailed link plus a password must not skip a second factor somebody deliberately added.
+    // Acknowledging an earlier confirmation also returns a status without session cookies.
     method: "POST",
     pattern: "/auth/verify-email",
     relay: false,  /* resolves a credential from the request body */

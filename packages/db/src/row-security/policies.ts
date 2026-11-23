@@ -1,3 +1,4 @@
+import { PASS_DOOR_KEY } from "../bound.js";
 import { MAP_2_0, tablesOf } from "../transition/expected-counts.js";
 import { STAFF_ROLE, STAFF_SELECT_GRANTS } from "../staff-grants.js";
 import { HORIZONS, horizonVerbs, type Horizon } from "../horizons.js";
@@ -72,6 +73,45 @@ export const WORKER_WIDE_READ = [
   "account_closures", "account_storage", "account_storage_holds", "accounts", "cal_connections", "cal_push_channels",
   "credit_refund_obligations", "mailboxes", "pass_progress", "screener_suggest_owed",
 ] as const;
+
+/** A roster names the due rows the hosted API may discover before it binds an account. */
+export const PASS_ROSTERS = {
+  accounts: { using: "erased_at IS NULL", account: "id", id: "id", order: "id" },
+  account_storage: { using: "bytes > 0", account: "account_id", id: "account_id", order: "bytes DESC, account_id" },
+  away_responders: {
+    using: "enabled AND (enabled_at IS NULL OR ends_at < now() OR (starts_at IS NULL OR starts_at <= now()))",
+    account: "account_id", id: "id", order: "last_considered_at, enabled_at, account_id",
+  },
+  drafts: {
+    using: "send_at <= now() AND ((status = 'scheduled' AND (send_key IS NOT NULL OR (send_files > 0 AND send_at < now() - interval '25 hours'))) OR (send_key IS NOT NULL AND status IN ('draft', 'sending') AND send_at <= now() - interval '10 minutes'))",
+    account: "account_id", id: "id",
+    order: "(status <> 'scheduled'), row_number() OVER (PARTITION BY account_id, (status <> 'scheduled') ORDER BY send_at, id), send_at, id",
+    recoveryOrder: "(status = 'scheduled'), row_number() OVER (PARTITION BY account_id, (status = 'scheduled') ORDER BY send_at, id), send_at, id",
+  },
+  mailboxes: {
+    using: "smtp_max_size_bytes IS NULL AND status <> 'disabled' AND (smtp_size_probed_at IS NULL OR (smtp_size_probe_code = 'silent' AND smtp_size_probed_at <= now() - interval '30 days') OR (smtp_size_probe_code IS DISTINCT FROM 'silent' AND smtp_size_probed_at <= now() - interval '7 days'))",
+    account: "account_id", id: "id", order: "random()",
+  },
+  outbound_sends: {
+    using: "draft_id IS NOT NULL AND ((status = 'pending' AND created_at < now() - interval '10 minutes') OR (status = 'unverified' AND resolved_by IS NULL AND created_at > now() - interval '25 hours'))",
+    account: "account_id", id: "id",
+    order: "row_number() OVER (PARTITION BY account_id ORDER BY created_at, id), created_at, id",
+  },
+  outbound_sent_copies: {
+    using: "seq = 0 AND (next_attempt_at <= now() OR (files_until IS NOT NULL AND (files_next_attempt_at <= now() OR (files_until <= now() AND (files_next_attempt_at IS NULL OR files_next_attempt_at > now() + interval '5 minutes')))) OR (created_at < now() - interval '7 days' AND next_attempt_at > now() + interval '5 minutes'))",
+    account: "account_id", id: "send_id", order: "least(next_attempt_at, files_next_attempt_at), created_at, send_id",
+  },
+  sessions: {
+    using: "device_id IS NULL AND scope = 'full' AND revoked_at IS NULL AND refresh_expires_at < now() AND refresh_expires_at - last_seen_at < interval '100 days'",
+    account: "account_id", id: "id", order: "id",
+  },
+  users: {
+    using: "EXISTS (SELECT 1 FROM public.auth_throttle n WHERE n.failures = 1 AND n.key = 'notice:factor:' || users.id::text)",
+    account: "account_id", id: "id", order: "id",
+  },
+} as const;
+
+export type PassRosterTable = keyof typeof PASS_ROSTERS;
 
 /** The billing plane's five objects of `public`: four reads and one append. */
 export const PLANE_READS = ["account_storage", "accounts", "mailboxes", "staff_users"] as const;
@@ -176,6 +216,11 @@ export function policiesOfTable(table: string, carriesAccount: boolean = MAP_2_0
   }
   if ((WORKER_WIDE_READ as readonly string[]).includes(table)) {
     add("lock_worker_wide", "SELECT", [WORKER_ROLE], "true", null, "the worker schedules from every row");
+  }
+  const roster = PASS_ROSTERS[table as PassRosterTable];
+  if (roster !== undefined) {
+    const door = `${ACCOUNT_READER} IS NULL AND ${KEY_READER} = '${PASS_DOOR_KEY}'`;
+    add("lock_pass_roster", "SELECT", [API_ROLE], `${door} AND (${roster.using})`, null, "a system pass discovers due work before binding its account");
   }
   const horizon = HORIZONS.find((x) => x.table === table);
   if (horizon !== undefined) {

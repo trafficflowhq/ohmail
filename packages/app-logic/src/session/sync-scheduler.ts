@@ -1192,8 +1192,9 @@ export interface SyncSchedulerOptions {
    * the desktop build (its API is the local sidecar, which serves no `/events`), the demo
    * (never scheduled at all), and every environment with no `EventSource`. Called on start
    * and again on each return to visibility; after a refusal, at most once per {@link WAKE_STREAM_REASK_MS}.
+   * A factory that returns null switches this scheduler to polling.
    */
-  wake?: (() => WakeStreamLike) | null;
+  wake?: (() => WakeStreamLike | null) | null;
   /** Wait for the stream's credentials before dialing. A false answer leaves the poll in charge. */
   waitForWake?: () => Promise<boolean>;
   /**
@@ -1559,9 +1560,10 @@ export function startSyncScheduler(
     return identityHolds() && canReachNetwork();
   };
 
-  const openStream = (makeStream: () => WakeStreamLike): void => {
+  const openStream = (makeStream: () => WakeStreamLike | null): void => {
     try {
       const s = makeStream();
+      if (s === null) { streamDead = true; return; }
       stream = s;
       const watch = (): void => {
         if (streamWatchdog !== null) clearTimeout(streamWatchdog);

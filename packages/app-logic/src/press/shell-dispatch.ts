@@ -10,7 +10,7 @@
  * same question asked in different words, so they live together. Lifted out of `AppShell.tsx`
  * unchanged (ARCH-022); it closes over nothing derived from the mirror.
  */
-import type { EngineMutation } from "@ohmail/wire";
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { useLayoutEffect, useMemo, useRef, type MutableRefObject } from "react";
 import {
   deleteIntentKey,
@@ -84,6 +84,7 @@ type PressOwner = {
   engine: OhmailEngine;
   lifetime: AbortController;
   report?: AbortController;
+  parkReport?: AbortController;
   pendingUndo?: UndoClaim;
 };
 
@@ -456,7 +457,7 @@ export function useShellDispatch({
     given: readonly EngineMutation[] | (() => EngineMutation[]),
     held?: { cancel?: () => boolean; undone: string },
     claim?: UndoClaim,
-    owner?: { engine: OhmailEngine; signal: AbortSignal },
+    owner?: { engine: OhmailEngine; signal: AbortSignal; ready?: Promise<boolean> },
   ) => {
     // Several verbs' reversals name a row's pins more than once: each goes back up once, after the moves.
     const offer = typeof given === "function" ? given : undoInOrder(given);
@@ -496,8 +497,12 @@ export function useShellDispatch({
         toast(refusalSentence(tally.firstRefusal));
       });
     };
+    const ready = owner?.ready;
+    const take = ready === undefined ? fire : () => {
+      void ready.then((stood) => { if (stood) fire(); });
+    };
     toast(sentence, {
-      action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire,
+      action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: take,
       ...(held?.cancel && typeof offer !== "function" && offer.length > 0 ? { undoDuringFade: true } : {}),
       ...(claim ? { claim } : {}), ...(owner ? { signal: owner.signal } : {}),
     });
@@ -511,6 +516,7 @@ export function useShellDispatch({
       committedOwner.current = null;
       owner.lifetime.abort();
       owner.report?.abort();
+      owner.parkReport?.abort();
       if (owner.pendingUndo) door.drop(owner.pendingUndo);
     };
   }, [door, engine, scope]);
@@ -528,6 +534,31 @@ export function useShellDispatch({
       },
     };
   });
+  /**
+   * Park moves the row immediately. Show its Undo with the optimistic move, and send
+   * the inverse after the original write stands so a slow reply cannot reorder them.
+   */
+  const showParkUndo = (
+    sentence: string, inverses: readonly EngineMutation[], claim: UndoClaim, ready: Promise<boolean>,
+  ): boolean => {
+    const owner = committedOwner.current;
+    if (!owner) return false;
+    owner.parkReport?.abort();
+    const report = new AbortController();
+    owner.parkReport = report;
+    toastWithUndo(sentence, inverses, undefined, claim, {
+      engine: owner.engine, signal: report.signal,
+      ready: ready.then((stood) => {
+        if (!stood) report.abort();
+        return stood;
+      }),
+    });
+    return true;
+  };
+  const showsPark = (mutation: EngineMutation, read: EntityReader): boolean =>
+    mutation.kind === "triage_set" && mutation.state === "set_aside" &&
+    read.get<EngineMessage>("message", mutation.messageId)?.triage?.state === "set_aside";
+
   const mutateAndReport = useStableCallback<ShellDispatch["mutateAndReport"]>(
     (...[mutation, okSentence, owner]) => {
       /* Read before the dispatch — the inverse names the state this press is about to leave.
@@ -535,7 +566,10 @@ export function useShellDispatch({
       const inverses = okSentence !== null ? inverseMutations(engine.verbRead(), mutation) : [];
       // The undo is armed at the press: a `z` before the answer is kept for its offer (`undo-door.ts`).
       const claim = inverses.length > 0 ? door.expect() : undefined;
-      return dispatchPress(mutation, owner).then((out) => {
+      const answered = dispatchPress(mutation, owner);
+      const parkShown = claim !== undefined && okSentence !== null && (owner === undefined || owner === engine)
+        && showsPark(mutation, engine.verbRead()) && showParkUndo(okSentence, inverses, claim, answered.then(stands));
+      return answered.then((out) => {
         // A departing engine can finish its queue without reporting over the replacement frame.
         if (owner !== undefined && committedOwner.current?.engine !== owner) return out.kind === "silent" || stands(out);
         if (claim && (out.kind === "silent" || out.kind === "refused" || (out.kind === "queued" && out.wait === "organizer"))) {
@@ -545,7 +579,7 @@ export function useShellDispatch({
         if (out.kind === "silent") return true;
         if (out.kind === "refused") { toast(refusalSentence(out.refusal)); return false; }
         if (out.kind === "queued" && out.wait === "organizer") { toast(queuedSentence(out.holder)); return false; }
-        if (okSentence !== null) toastWithUndo(okSentence, inverses, undefined, claim);
+        if (!parkShown && okSentence !== null) toastWithUndo(okSentence, inverses, undefined, claim);
         return true;
       });
     },
@@ -593,7 +627,13 @@ export function useShellDispatch({
       const preRead = engine.verbRead();
       const inversesOf = mutations.map((mu) => inverseMutations(preRead, mu));
       const claim = inversesOf.some((i) => i.length > 0) ? door.expect() : undefined;
-      return Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
+      const answered = Promise.all(mutations.map((mu) => dispatchPress(mu)));
+      const painted = engine.verbRead();
+      const parkSentence = claim && mutations.every((mu, i) => inversesOf[i]!.length > 0 && showsPark(mu, painted))
+        ? say(mutations.length) : null;
+      const parkShown = claim !== undefined && parkSentence != null &&
+        showParkUndo(parkSentence, inversesOf.flat(), claim, answered.then((outs) => outs.every(stands)));
+      return answered.then((outs) => {
         const tally = tallyVerdicts(outs);
         const waiting = organizerWaits(outs);
         const stood = outs.filter(stands).length;
@@ -609,10 +649,9 @@ export function useShellDispatch({
         }
         /* Undo only when the WHOLE set stands: on a partial press the extra sentence below is
            the one left standing (the host renders one toast), and it must not wipe a live offer. */
-        if (sentence !== null && whole) {
-          toastWithUndo(sentence, outs.flatMap((o, i) => (stands(o) ? inversesOf[i]! : [])), undefined, claim);
-        } else if (sentence !== null) {
-          toast(sentence);
+        if (sentence !== null && !(parkShown && stood === outs.length)) {
+          if (whole) toastWithUndo(sentence, outs.flatMap((o, i) => (stands(o) ? inversesOf[i]! : [])), undefined, claim);
+          else toast(sentence);
         }
         /* THE PART THAT DID NOT HAPPEN, SAID BESIDE IT. One extra sentence at most, and only
            when the press was partial: a count of what stands is a true number under which four

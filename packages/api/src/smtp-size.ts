@@ -1,3 +1,4 @@
+import { assertPassWalk, rosterAccountDb } from "@trafficflow/services/mail";
 import { and, eq, exists, isNull, lte, or, sql } from "drizzle-orm";
 import { mailboxes, mailboxCredentials, type SmtpSizeProbeCode } from "@trafficflow/db";
 import {
@@ -312,8 +313,9 @@ export async function stampProbe(
  */
 export async function learnMissingSmtpSizes(
   deps: ApiDeps,
-  opts: { dial?: SmtpSizeDial; now?: () => Date } = {},
+  opts: { dial?: SmtpSizeDial; now?: () => Date; roster?: (limit: number) => Promise<{ id: string; accountId: string }[]> } = {},
 ): Promise<SmtpSizePassResult> {
+  assertPassWalk(deps.db);
   const dial = opts.dial ?? apiSmtpSizeDialFor(deps);
   const now = opts.now ?? ((): Date => new Date());
   // ONE clock read for the whole selection: the deadline's origin and both backoff cutoffs are the
@@ -333,9 +335,7 @@ export async function learnMissingSmtpSizes(
   // accepts — the failure appears only against real Postgres, where it appeared.
   const silentCutoff = new Date(started - SMTP_SIZE_RETRY_SILENT_MS);
   const failedCutoff = new Date(started - SMTP_SIZE_RETRY_FAILED_MS);
-  const rows = await deps.db.select({ id: mailboxes.id })
-    .from(mailboxes)
-    .where(and(
+  const due = and(
       isNull(mailboxes.smtpMaxSizeBytes),
       sql`${mailboxes.status} <> 'disabled'`,
       or(
@@ -345,8 +345,11 @@ export async function learnMissingSmtpSizes(
         and(sql`COALESCE(${mailboxes.smtpSizeProbeCode}, 'unknown') <> 'silent'`,
           lte(mailboxes.smtpSizeProbedAt, failedCutoff)),
       ),
-    ))
-    .orderBy(sql`random()`)
+  );
+  const rows: { id: string; accountId?: string }[] = opts.roster ? await opts.roster(SMTP_SIZE_BATCH)
+    : await deps.db.select({ id: mailboxes.id })
+      .from(mailboxes).where(due)
+      .orderBy(sql`random()`)
     .limit(SMTP_SIZE_BATCH);
 
   const out: SmtpSizePassResult = {
@@ -357,10 +360,16 @@ export async function learnMissingSmtpSizes(
     // The deadline, checked between mailboxes rather than inside one: a probe already in flight has
     // a timeout of its own, and abandoning it would leave the socket to be collected.
     if (now().getTime() - started > SMTP_SIZE_DEADLINE_MS) break;
+    const scoped = row.accountId === undefined ? deps : { ...deps, db: rosterAccountDb(deps.db, { accountId: row.accountId }) };
+    if (row.accountId !== undefined) {
+      const [stillDue] = await scoped.db.select({ id: mailboxes.id }).from(mailboxes)
+        .where(and(eq(mailboxes.id, row.id), eq(mailboxes.accountId, row.accountId), due)).limit(1);
+      if (!stillDue) continue;
+    }
     out.considered += 1;
     let target: ProbeTarget | undefined;
     try {
-      target = await smtpCredsFor(deps, row.id);
+      target = await smtpCredsFor(scoped, row.id);
     } catch {
       // A credential envelope this deployment cannot decrypt is one mailbox's problem. The reason
       // is NOT logged: a decryption failure's message is about key material, and this line already
@@ -373,7 +382,7 @@ export async function learnMissingSmtpSizes(
       // defect with an extra step. The cost is that a repaired envelope waits out the failed
       // backoff, and it is a cost the product does not actually pay: the repair a person performs
       // is re-entering a password, and that path writes `smtp_max_size_bytes` itself.
-      if (await stampProbe(deps, row.id, "no_credentials", undefined, now())) out.stamped += 1;
+      if (await stampProbe(scoped, row.id, "no_credentials", undefined, now())) out.stamped += 1;
       continue;
     }
     const res = await learnSmtpMaxSize({
@@ -408,7 +417,7 @@ export async function learnMissingSmtpSizes(
     // of the attempt that produced it.
     const code = probeCodeFor(res);
     if (code !== null
-        && await stampProbe(deps, row.id, code, target, now(),
+        && await stampProbe(scoped, row.id, code, target, now(),
           res.outcome === "learned" ? res.maxMessageBytes : undefined)) {
       out.stamped += 1;
     }

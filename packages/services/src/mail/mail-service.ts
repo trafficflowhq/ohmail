@@ -1,12 +1,14 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import type { Logger } from "@trafficflow/core";
 import { accountOfUser, users, type Tx } from "@trafficflow/db";
 import { authThrottle, loginTokens, type AlertDigest } from "@trafficflow/db/cloud";
-import { bridgeTx, type Db } from "../context.js";
+import { dialect } from "@trafficflow/db/dialect";
+import { bridgeTx, runInTransaction, type Db, type ServiceContext } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
 import { isLoopbackHostname } from "../auth/origins.js";
 import type { ThrottleKeys } from "../auth/throttle-keys.js";
 import { normalizeRecipient, type MailerPort, type MailSendResult } from "./port.js";
-import { mailLocaleOf, providerClassOf, type MailLocale, type WaitlistTier } from "./templates.js";
+import { mailLocaleOf, providerClassOf, type MailLocale, type SecurityNoticeData, type WaitlistTier } from "./templates.js";
 
 /**
  * The narrow context the mail path needs: a DB handle and a clock.
@@ -263,12 +265,15 @@ function assertLinkBase(name: string, raw: string, allowed: readonly string[]): 
 
 /** `login_tokens.purpose` for the mailed verification token. Never `'login'`. */
 export const EMAIL_VERIFY_PURPOSE = "email_verify";
+export const PASSWORD_RESET_PURPOSE = "password_reset";
+const PASSWORD_RESET_TTL_MS = 30 * 60_000;
 
 export interface MailServiceDeps {
   mailer: MailerPort;
   config: MailServiceConfig;
   /** The deployment's keyer: a recipient's slot is keyed by `address()`, never a plain digest. */
   throttleKeys: ThrottleKeys;
+  logger?: Pick<Logger, "warn">;
 }
 
 /**
@@ -435,24 +440,25 @@ export class MailService {
   }
 
   /**
-   * A security notice the sign-in throttle recorded (`AuthService.drainSecurityNotices`), never
-   * sent from a request. `transactional`: the recipient is the account's own address, read from
-   * `users`, in the account's language. Keyed on (recipient, kind, day) so a re-driven drain sends once.
+   * Transactional mail to the account's own address, in the account's language. A sign-in throttle
+   * notice is keyed once per kind and day for the drain. Each committed password change can send one.
    */
   async sendSecurityNotice(
-    ctx: MailContext, input: { to: string; kind: "sign_in_slowed" | "factor_refused"; at: Date; locale?: MailLocale },
+    ctx: MailContext, input: { to: string; kind: SecurityNoticeData["kind"]; at: Date; locale?: MailLocale },
   ): Promise<MailSendResult> {
     const locale = mailLocaleOf(input.locale) ?? "en";
-    return this.guarded(ctx, input.to, "transactional", (to) =>
-      this.deps.mailer.send(to, "security_notice", {
-        kind: input.kind,
-        locale,
-        at: formatUtc(input.at, locale),
-        devicesUrl: `${trimSlash(this.cfg.appUrl)}/settings/devices`,
-        supportEmail: this.cfg.supportEmail,
-      }, {
-        idempotencyKey: `security:${hashToken(`${to}|${input.kind}|${input.at.toISOString().slice(0, 10)}`)}`,
-      }));
+    return this.guarded(ctx, input.to, "transactional", (to) => {
+      const at = formatUtc(input.at, locale);
+      const app = trimSlash(this.cfg.appUrl);
+      if (input.kind === "password_changed") {
+        return this.deps.mailer.send(to, "security_notice", {
+          kind: input.kind, locale, at, resetUrl: `${app}/forgot-password`,
+        });
+      }
+      return this.deps.mailer.send(to, "security_notice", {
+        kind: input.kind, locale, at, devicesUrl: `${app}/settings/devices`, supportEmail: this.cfg.supportEmail,
+      }, { idempotencyKey: `security:${hashToken(`${to}|${input.kind}|${input.at.toISOString().slice(0, 10)}`)}` });
+    });
   }
 
   // ── 4. Email verification ─────────────────────────────────────────────────────
@@ -499,6 +505,53 @@ export class MailService {
         ...(locale ? { locale } : {}),
       });
     });
+  }
+
+  /** Claim the same mail budget for any address, then send only to the matched user's address. */
+  async issuePasswordReset(
+    ctx: ServiceContext,
+    input: { userId: string | null; to: string; locale?: MailLocale },
+    mint: (tx: Tx, userId: string, digest: string, now: Date, expiresAt: Date) => Promise<boolean>,
+    afterAnswer?: (work: Promise<unknown>) => void,
+  ): Promise<void> {
+    let warned = false;
+    const warn = (phase: "preparation" | "delivery"): void => {
+      if (warned) return;
+      warned = true;
+      // Only fixed fields cross the log boundary. A provider or driver can echo credentials.
+      this.deps.logger?.warn("password_reset_mail_failed", { phase });
+    };
+    const guarded = await this.guarded(ctx, input.to, "unsolicited", async (to) => {
+      const deliver = async (): Promise<void> => {
+        const userId = input.userId;
+        if (userId === null) return;
+        const raw = await runInTransaction(ctx, async (txCtx) => {
+          const tx = asTx(txCtx);
+          // The user lock serializes replacing a link with changing the account's password.
+          const [user] = await dialect(tx).forUpdate(tx.select({ email: users.email }).from(users)
+            .where(eq(users.id, userId)).limit(1));
+          if (!user || normalizeRecipient(user.email) !== to) return null;
+          const token = generateToken();
+          const now = txCtx.now();
+          const minted = await mint(tx, userId, hashToken(token), now, new Date(now.getTime() + PASSWORD_RESET_TTL_MS));
+          return minted ? token : null;
+        }, { fence: { accountId: ctx.accountId, onErased: () => null } });
+        if (raw === null) return;
+        const result = await this.deps.mailer.send(to, "password_reset", {
+          resetUrl: `${trimSlash(this.cfg.appUrl)}/reset-password?token=${encodeURIComponent(raw)}`,
+          locale: input.locale,
+        });
+        if (result.status === "failed") warn("delivery");
+      };
+      // The public order ends after the shared quota claim. Delivery latency cannot disclose a match.
+      if (afterAnswer) {
+        const nextTurn = new Promise<void>((resolve) => { setImmediate(resolve); });
+        afterAnswer(nextTurn.then(deliver).catch(() => warn("delivery")));
+      } else {
+        await deliver();
+      }
+    });
+    if (guarded?.status === "failed") warn("preparation");
   }
 
   // ── 6. "You already have an account" — the other half of the constant 202 ────────
@@ -662,10 +715,10 @@ export class MailService {
 
   // ── The guard every send goes through ────────────────────────────────────────
 
-  private async guarded(
+  private async guarded<T extends MailSendResult | void>(
     ctx: MailContext | OperatorAlertContext, rawTo: string, quota: MailQuota | "operator",
-    send: (to: string) => Promise<MailSendResult>,
-  ): Promise<MailSendResult> {
+    send: (to: string) => Promise<T>,
+  ): Promise<MailSendResult | T> {
     const to = normalizeRecipient(rawTo);
     if (!to) return { status: "skipped", reason: "invalid_recipient" };
     try {

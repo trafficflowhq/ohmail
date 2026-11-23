@@ -86,9 +86,11 @@ export type RegistrationResult = EnrollmentSessionEstablished | RegistrationPend
  *  - `verified` — the address is now proven and the user already has a factor. No session is
  *    minted: a mailed link must not be able to hand out a credential for an account that is
  *    already protected by a second factor. The caller signs in normally.
+ *  - `already_verified` — the password was correct and the address was previously confirmed.
+ *    The caller signs in normally here, too.
  */
 export interface EmailVerified {
-  status: "verified";
+  status: "verified" | "already_verified";
 }
 
 export type VerifyEmailResult = EnrollmentSessionEstablished | EmailVerified;
@@ -243,7 +245,7 @@ export interface AuthAuditEvent {
     // The password was changed from a stepped-up session (`POST /auth/password`), and every other
     // session family went with the old one; `password_change_refused` is a wrong current password
     // there, counted on the sign-in lockout. Neither row carries a password.
-    | "password_changed" | "password_change_refused";
+    | "password_changed" | "password_change_refused" | "password_reset";
   method?: "webauthn" | "totp" | "recovery_code" | "password";
   ip: string;
   device?: string;
@@ -274,4 +276,6 @@ export interface AuthDeps {
    * cannot be sent.
    */
   mail?: import("../mail/mail-service.js").MailService | null;
+  /** Keep reset mail delivery alive after the host answers the request. */
+  afterAnswer?: (work: Promise<unknown>) => void;
 }

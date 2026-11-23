@@ -18,10 +18,8 @@
  * The token leaves the address bar immediately — the same `replaceState` scrub `JoinScreen` does
  * for `?code=`; the sibling mitigations (`Referrer-Policy: no-referrer`, `Cache-Control: no-store`)
  * are paid by `middleware.ts`'s `credentialPage`. What this file must NOT do: interpret the
- * refusal. Every failure mode of a link — unknown, expired, already used, the loser of a race — is
- * deliberately ONE sentence from the server (`invalid_token`), because distinguishing them would
- * tell whoever holds a spent link that it was once real, i.e. that the address it was mailed to has
- * an account. This screen shows what it is given.
+ * refusal. A link alone never discloses whether the associated address was confirmed. The server
+ * only acknowledges an earlier confirmation after a successful password check.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -45,7 +43,7 @@ export interface VerifyCeremony {
   setPassword(v: string): void;
   busy: boolean;
   error: string | null;
-  done: boolean;
+  done: "verified" | "already_verified" | null;
   handedOff: boolean;
   pending: PendingSignOut;
   submit(e: { preventDefault(): void }): void;
@@ -61,7 +59,7 @@ export function useVerifyDoor({ initialToken }: { initialToken: string }): Verif
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<VerifyCeremony["done"]>(null);
   /** A tab waiting on "Check your email" took the setup over: this page opens no second wizard. */
   const [handedOff, setHandedOff] = useState(false);
   /** Aborted when the page goes away: an offer still open then ends, and nothing is opened. */
@@ -145,9 +143,8 @@ export function useVerifyDoor({ initialToken }: { initialToken: string }): Verif
           router.push("/join");
           return;
         }
-        // The address is proven and a second factor already exists. No session was minted, on
-        // purpose: a mailed link plus a password must not skip a factor somebody added.
-        setDone(true);
+        // A confirmed account signs in normally when the answer carries no enrollment session.
+        setDone(out.status);
       } catch (err) {
         // `invalid_token` is the one-sentence refusal for every dead link; `credential_refused` is a
         // wrong password, and the token is still live so retrying in place is the right remedy.

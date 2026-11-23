@@ -21,7 +21,7 @@ export {
 export type { ServiceContext, PassContext, OpenPassSendAdapter, Db, BoundDb, UnboundDb, ContextDb, SearchSupersede } from "./context.js";
 // The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
 // account-owned writers (the Junk window's rescue) reach it without the AI half.
-export { withAccountTx, dbFor, passContext } from "./context.js";
+export { withAccountTx, dbFor, passContext, assertPassWalk, rosterAccountDb } from "./context.js";
 export { withScreenerRuleRelease } from "./screener-rule-release.js";
 /* The fence itself, for a writer that already holds its transaction — the local install's consent
    write is one, and it is on the mail leaf for the same reason the door above is. */

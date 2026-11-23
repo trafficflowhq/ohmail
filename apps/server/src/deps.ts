@@ -218,7 +218,8 @@ export function stagingStorageFor(
  * the pager's mail arm. One construction, two instances — sharing one object would put two threat
  * models in one configuration. Throws on an unusable block (its callers' contracts differ).
  */
-function mailServiceFor(cfg: Wiring, mail: CustomerMail, operatorEmail?: string): MailService {
+function mailServiceFor(cfg: Wiring, mail: CustomerMail, options: { operatorEmail?: string; logger?: Logger } = {}): MailService {
+  const { operatorEmail, logger } = options;
   const mailer = mail.transport.kind === "smtp"
     ? new SmtpMailer({ url: mail.transport.url, from: mail.from, replyTo: mail.replyTo ?? undefined })
     : new ResendMailer({ apiKey: mail.transport.apiKey, from: mail.from, replyTo: mail.replyTo ?? undefined });
@@ -237,6 +238,7 @@ function mailServiceFor(cfg: Wiring, mail: CustomerMail, operatorEmail?: string)
     },
     // The recipient slots' keyer, on the key ring this program runs with; the pager's slot needs none.
     throttleKeys: throttleKeysFor(cfg.keyRing.provider),
+    logger,
   });
 }
 
@@ -254,7 +256,7 @@ export function customerMailFor(cfg: Wiring, logger: Logger): MailService | null
   const mail = cfg.customerMail;
   if (!mail) return null;
   try {
-    return mailServiceFor(cfg, mail);
+    return mailServiceFor(cfg, mail, { logger });
   } catch (err) {
     if (cfg.door === "process") {
       throw new Error(
@@ -554,6 +556,7 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
   put(bag, "auth", () => makeAuthService({
     config: authConfig, keyProvider, passwordHasher: scryptHasher,
     mail: parts.customerMail(),
+    afterAnswer: door.afterAnswer ?? (() => {}),
   }));
   // Envelope-encrypts mailbox credentials with the SAME provider the organizer decrypts them
   // with — the KEK ring identity on `/health` is what proves those agree.
@@ -572,13 +575,13 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
          asks about this account's standing cannot answer differently. No `?? UNMETERED` fallback:
          the member is armed unconditionally above, and an absent one is a composition bug. */
       : {
-        accessOf: (accountId: string) => {
+        accessOf: (accountId, opts) => {
           const port = bag.entitlementsPort as EntitlementsComposition | undefined;
           if (port === undefined) {
             throw new Error("`entitlementsPort` is not on the service bag — the mailbox "
               + "allowance gate has no limit to read. It is armed unconditionally; this is a bug.");
           }
-          return accessOf(port, accountId);
+          return accessOf(port, accountId, opts);
         },
       }),
     /* WHO THIS DEPLOYMENT IS TO A MAILBOX, resolved through the SAME function the worker resolves
@@ -791,7 +794,7 @@ export function pagerArms(
   const mail = cfg.customerMail;
   if (email && mail) {
     add("mail", () => {
-      const service = mailServiceFor(cfg, mail, email);
+      const service = mailServiceFor(cfg, mail, { operatorEmail: email });
       return {
         // A limiter, not a database: `sendOperatorAlert` uses it for exactly one thing, claiming an
         // `auth_throttle` slot. It cannot move onto the blind handle: the staff role has no grant there.

@@ -10,8 +10,8 @@ import type { Blanks } from "../stage/fields.js";
 export type VerifyState =
   /** This build has no server behind it. */
   | { readonly at: "unavailable" }
-  /** The address is confirmed and a second factor exists: the person signs in. */
-  | { readonly at: "done" }
+  /** The address is confirmed: the person signs in. */
+  | { readonly at: "done"; readonly already?: boolean }
   /** The address is confirmed, and the tab that waited for it carries the setup on. */
   | { readonly at: "handed" }
   /**

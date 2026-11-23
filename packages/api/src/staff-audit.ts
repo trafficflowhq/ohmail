@@ -1,7 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { accounts, bindDb, bindingOf, BindingRefusedError, mailboxes } from "@trafficflow/db";
-import { staffAuditEvents, STAFF_DOOR_KEY } from "@trafficflow/db/cloud";
+import { accounts, doorKeyDb, bindingOf, BindingRefusedError, mailboxes } from "@trafficflow/db";
+import { staffAuditEvents } from "@trafficflow/db/cloud";
 import {
   checkedDetail, isUuid, passContext, StaffAuditDetailError,
   type PassContext, type StaffAuditAction, type StaffAuditOutcome, type StaffReasonCode, type StaffRole, type UnboundDb,
@@ -19,7 +19,7 @@ import type { ApiDeps } from "./deps.js";
  * to an account is refused, so the door's word never rides beside a customer's session.
  */
 export function staffDb(deps: ApiDeps): UnboundDb {
-  return bindDb(doorDb(deps), { account: null, key: STAFF_DOOR_KEY });
+  return doorKeyDb(doorDb(deps), "staff");
 }
 
 /**

@@ -231,6 +231,8 @@ const OWNER_FREE_EXACT = [
   // The web's sign-out door: its retry after a refused press must still leave a blocked client.
   SIGN_OUT_PATH,
   "/auth/verify-email",
+  "/auth/password/reset",
+  "/auth/password/reset/complete",
   // The sign-in ceremony's second factor. VERIFY only — enrolment and generation are account
   // management and stay gated; see the header.
   "/auth/2fa/totp/verify",
@@ -1828,7 +1830,13 @@ export const auth = {
    * `AuthService.verifyEmail` for the full chain.
    */
   verifyEmail: (b: { token: string; password: string }) =>
-    api<EnrollmentSession | { status: "verified" }>("/auth/verify-email", { method: "POST", body: b }),
+    api<EnrollmentSession | { status: "verified" | "already_verified" }>("/auth/verify-email", { method: "POST", body: b }),
+
+  requestPasswordReset: (b: { email: string; locale: "de" | "en" }) =>
+    api<{ status: "ok" }>("/auth/password/reset", { method: "POST", body: b }),
+
+  completePasswordReset: (b: { token: string; password: string }) =>
+    api<{ status: "ok" }>("/auth/password/reset/complete", { method: "POST", body: b }),
 
   /** Another link for the SESSION's own address. Takes no recipient, by design; the mail is in `locale`. */
   resendVerification: (locale?: "de" | "en") =>

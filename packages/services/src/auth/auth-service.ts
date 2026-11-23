@@ -1,10 +1,10 @@
 import { randomInt, randomUUID } from "node:crypto";
 // `lt` is imported UNDER AN ALIAS: `lt` is the local name every 2FA verify uses for its
 // login-token row, and the shadowing turns a comparison into "call an object".
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, lte, or, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
-  markFenced, accountOfUser, assertBinding, bindDb, onServerPool, rebindTx, BINDING_KEY_MAX, type LedgerTx, type Tx,
+  markFenced, accountOfUser, assertBinding, bindDb, onServerPool, rebindTx, isCredentialKey, BINDING_KEY_MAX, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { recordSettingsChange } from "../consent-seed.js";
@@ -27,7 +27,7 @@ import {
   erasedBearerAccount,
   KNOWN_CLIENT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
-import { bridgeTx, credentialContext, keyedCredentialDb, type Db, type ServiceContext, type UnboundDb } from "../context.js";
+import { assertPassWalk, bridgeTx, credentialContext, keyedCredentialDb, type Db, type PassRoster, type ServiceContext, type UnboundDb } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { pruneWakeRows } from "../push-service.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
@@ -42,7 +42,7 @@ import { normalizeRecipient } from "../mail/port.js";
 // re-spelled: a second literal here that drifted from the mail service's would make `verifyEmail`
 // peek at rows `consumeEmailVerification` cannot consume, i.e. a link that validates and never
 // works.
-import { EMAIL_VERIFY_PURPOSE } from "../mail/mail-service.js";
+import { EMAIL_VERIFY_PURPOSE, PASSWORD_RESET_PURPOSE } from "../mail/mail-service.js";
 import { mailLocaleOf } from "../mail/templates.js";
 import { generateToken, hashToken, sha256, type PasswordHasher } from "./crypto.js";
 import { throttleKeysFor, THROTTLE_PREFIX, type ThrottleKeys } from "./throttle-keys.js";
@@ -67,6 +67,8 @@ import {
   PAIRED_DEVICE_KINDS, SessionLifecycle, holdLiveSession, lockUserRow, mintsNamedDevice, refuseCrossAccountCredential,
 } from "./session-lifecycle.js";
 import { ringDeviceMade } from "./device-doorbell.js";
+
+type NoticeRecipient = { accountId: string; id: string };
 
 /** Where a swallowed auth fault is named: `err` is class and code, never its message. */
 const authLog = createLogger({ service: "auth" });
@@ -387,6 +389,7 @@ const NO_USER = "00000000-0000-0000-0000-000000000000";
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A security notice is owed at most once per key per day (`noteNotice`). */
+const NOTICE_RETRY_MS = 5 * 60_000;
 export const NOTICE_EVERY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -423,6 +426,12 @@ const invalidVerification = (): ServiceError => new ServiceError(
   "This verification link is not valid any more. Links work once and expire; " +
   "sign in and we will send you a fresh one.",
 );
+
+const invalidPasswordReset = (): ServiceError => new ServiceError(
+  "invalid_token", 400, "This link has expired or was already used. Ask for a new one.",
+);
+
+const RESET_REUSE_MS = 5 * 60_000;
 
 /**
  * The `purpose` a desktop handoff code is stored under in `login_tokens`.
@@ -971,12 +980,13 @@ export class AuthService extends SessionLifecycle {
     // PEEK first, so the password check has a user to run against. This reads the row WITHOUT
     // consuming it: a wrong password must not burn the link, or one mistyped attempt would cost
     // the user their only credential and force a resend.
-    const [row] = await lookup.select({ userId: loginTokens.userId, accountId: loginTokens.accountId })
+    const [row] = await lookup.select({
+      userId: loginTokens.userId, accountId: loginTokens.accountId, consumedAt: loginTokens.consumedAt,
+    })
       .from(loginTokens)
       .where(and(
         eq(loginTokens.tokenHash, digest),
         eq(loginTokens.purpose, EMAIL_VERIFY_PURPOSE),
-        isNull(loginTokens.consumedAt),
         gt(loginTokens.expiresAt, ctx.now()),
       ))
       .limit(1);
@@ -994,9 +1004,17 @@ export class AuthService extends SessionLifecycle {
     const { pwKey, ceilingKey, hA } = this.passwordKeys(user.email, ctx);
     const guessKey = pwKey ?? ceilingKey;
     const guessPolicy = pwKey ? this.passwordPolicy() : this.ceilingPolicy();
-    if (pwKey) await this.throttleReserve(db, pwKey);
-    else await this.reserveCeiling(db, ceilingKey, hA);
-    await this.throttleCheck(db, `user:${user.id}`);
+    const replay = row.consumedAt !== null;
+    try {
+      if (pwKey) await this.throttleReserve(db, pwKey);
+      else await this.reserveCeiling(db, ceilingKey, hA, async () => user);
+      await this.throttleCheck(db, `user:${user.id}`);
+    } catch (err) {
+      if (replay && err instanceof ServiceError && (err.httpStatus === 423 || err.httpStatus === 429)) {
+        throw invalidVerification();
+      }
+      throw err;
+    }
 
     const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
     const ok = await this.deps.passwordHasher.verify(password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher)) && cred !== undefined;
@@ -1004,10 +1022,16 @@ export class AuthService extends SessionLifecycle {
       await this.throttleLock(db, guessKey, guessPolicy);
       await this.audit(db, user, "login_failed", "password", ctx);
       // `login`'s exact sentence. The token is still live and still single-use.
-      throw credentialRefused("invalid email or password");
+      throw replay ? invalidVerification() : credentialRefused("invalid email or password");
     }
 
     await this.throttleRefund(db, guessKey, guessPolicy);
+    // A spent link proves nothing by itself. Only the correct password can recover this receipt,
+    // and recovering it never enrolls a factor or issues a session.
+    if (replay) {
+      if (user.emailVerifiedAt !== null) return { status: "already_verified" };
+      throw invalidVerification();
+    }
     await this.rehashIfStale(db, user.id, cred!.passwordHash, password);
 
     const methods = await this.enrolledMethods(db, user.id);
@@ -1019,15 +1043,21 @@ export class AuthService extends SessionLifecycle {
       // between them would otherwise spend the token without recording the proof, and the user
       // would hold a dead link for an account still refused at the gate.
       const consumed = await mail.consumeEmailVerification(txCtx, token);
-      // Lost the race against another presentation of the same link. The single-statement
-      // consumption guarantees exactly one winner; this is the loser.
-      if (!consumed || consumed.userId !== user.id) throw invalidVerification();
-
-      // `COALESCE` — verification is monotonic. A second (legitimately re-issued) link opened
-      // later must not rewrite the instant the address was first proven.
-      await tx.update(users)
-        .set({ emailVerifiedAt: sql`coalesce(${users.emailVerifiedAt}, ${ctx.now().toISOString()}::timestamptz)` })
-        .where(eq(users.id, user.id));
+      // Only one presentation can consume the link. Read the stamp again if the other
+      // presentation won while this one was checking the password.
+      if (!consumed) {
+        const current = await this.loadUser(tx, user.id);
+        if (current.emailVerifiedAt !== null) return { status: "already_verified" as const };
+        throw invalidVerification();
+      }
+      if (consumed.userId !== user.id) throw invalidVerification();
+      // Stamp the first confirmation only. A second valid link can be spent without
+      // changing when the address was confirmed or issuing another enrollment session.
+      const [stamped] = await tx.update(users)
+        .set({ emailVerifiedAt: ctx.now() })
+        .where(and(eq(users.id, user.id), isNull(users.emailVerifiedAt)))
+        .returning({ id: users.id });
+      if (!stamped) return { status: "already_verified" as const };
       await this.audit(tx, user, "email_verified", "password", ctx);
 
       // Login's own re-entry rule. See the header for why a factor changes the answer.
@@ -1038,8 +1068,7 @@ export class AuthService extends SessionLifecycle {
 
   /**
    * Send this session's owner another verification link. AUTHENTICATED, and that is what makes it
-   * safe: the natural unauthenticated address-taking endpoint is a mail-bomb and an enumeration
-   * oracle at once — no endpoint takes a RECIPIENT from an anonymous caller. The recipient is
+   * safe: an unauthenticated verification resend would expose a mail-bomb and enumeration surface. The recipient is
    * `users.email` for the session's own user; there is no parameter, and `issueEmailVerification`
    * refuses any other `to`. Both limiters, neither new: `reserveIpSlot` under `verify:ip` (429)
    * and the `unsolicited` per-recipient budget. An unknown IP does NOT refuse here: the session
@@ -1077,6 +1106,82 @@ export class AuthService extends SessionLifecycle {
     return { ok: true };
   }
 
+  /** The public answer is independent of account existence and mail delivery. */
+  async requestPasswordReset(ctx: ServiceContext, b: { email?: unknown; locale?: unknown }): Promise<void> {
+    const email = requireEmail(b.email);
+    const mail = this.deps.mail;
+    if (!mail) throw new ServiceError("mail_unconfigured", 503, "Password reset is not available on this deployment.");
+
+    const ip = (ctx.ip ?? "").trim();
+    if (!ip || !await reserveIpSlot(asTx(ctx), this.keys, {
+      namespace: "verify:ip",
+      ip,
+      now: ctx.now(),
+      max: this.cfg.maxPublicRegistrationsPerWindow,
+      windowMs: this.cfg.failureWindowMs,
+    })) {
+      throw new ServiceError("rate_limited", 429, "Too many reset requests from this connection. Try again in a few minutes.");
+    }
+
+    const key = isCredentialKey(email) ? email : null;
+    const [user] = await bridgeTx(keyedCredentialDb(ctx, key))
+      .select({ id: users.id, accountId: users.accountId }).from(users).where(eq(users.email, key ?? "")).limit(1);
+    const subject = user ? credentialContext(ctx, user.accountId) : ctx;
+    await mail.issuePasswordReset(subject, { userId: user?.id ?? null, to: email, locale: mailLocaleOf(b.locale) },
+      async (tx, userId, digest, now, expiresAt) => {
+        const pending = and(
+          eq(loginTokens.userId, userId), eq(loginTokens.purpose, PASSWORD_RESET_PURPOSE), isNull(loginTokens.consumedAt),
+        );
+        // The mail service holds the user row through this check and any replacement.
+        const [recent] = await tx.select({ id: loginTokens.id }).from(loginTokens).where(and(
+          pending, gt(loginTokens.expiresAt, now), gt(loginTokens.createdAt, new Date(now.getTime() - RESET_REUSE_MS)),
+        )).limit(1);
+        if (recent) return false;
+        await tx.update(loginTokens).set({ consumedAt: now }).where(pending);
+        await tx.insert(loginTokens).values({
+          userId, accountId: subject.accountId, tokenHash: digest, purpose: PASSWORD_RESET_PURPOSE, methods: [],
+          createdAt: now, expiresAt,
+        });
+        return true;
+      }, this.deps.afterAnswer);
+  }
+
+  /** Burn the link and replace the password together. A reset never establishes a session. */
+  async completePasswordReset(ctx: ServiceContext, b: { token?: unknown; password?: unknown }): Promise<void> {
+    const token = typeof b.token === "string" ? b.token.trim() : "";
+    if (token.length === 0 || token.length > BINDING_KEY_MAX) throw invalidPasswordReset();
+    const digest = hashToken(token);
+    const live = (now: Date) => and(
+      eq(loginTokens.tokenHash, digest), eq(loginTokens.purpose, PASSWORD_RESET_PURPOSE),
+      isNull(loginTokens.consumedAt), gt(loginTokens.expiresAt, now),
+    );
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest))
+      .select({ userId: loginTokens.userId, accountId: loginTokens.accountId })
+      .from(loginTokens).where(live(ctx.now())).limit(1);
+    if (!row?.accountId || !row.userId) throw invalidPasswordReset();
+    const { accountId, userId } = row;
+    refuseCrossAccountCredential(ctx, accountId);
+    const subject = { ...credentialContext(ctx, accountId), sessionId: undefined };
+    const passwordHash = await this.deps.passwordHasher.hash(requirePassword(b.password));
+
+    const changed = await this.inTransaction(subject, async (txCtx) => {
+      const tx = asTx(txCtx);
+      await lockUserRow(tx, userId);
+      const now = txCtx.now();
+      const [burned] = await tx.update(loginTokens).set({ consumedAt: now })
+        .where(live(now)).returning({ id: loginTokens.id });
+      if (!burned) throw invalidPasswordReset();
+      const [swapped] = await tx.update(credentials).set({ passwordHash, algo: "scrypt", updatedAt: now })
+        .where(eq(credentials.userId, userId)).returning({ id: credentials.id });
+      if (!swapped) throw invalidPasswordReset();
+      await this.revokeOtherSessions(txCtx, userId);
+      const user = await this.loadUser(tx, userId);
+      await this.audit(tx, user, "password_reset", "password", txCtx);
+      return { email: user.email, at: now };
+    }, { fence: { accountId, onErased: () => { throw invalidPasswordReset(); } } });
+    await this.sendPasswordChangedNotice(subject, changed.email, changed.at);
+  }
+
   async login(ctx: ServiceContext, b: { email: string; password: string }): Promise<LoginResult> {
     const db = asTx(ctx);
     const email = requireField(b.email, "email").trim().toLowerCase();
@@ -1105,10 +1210,10 @@ export class AuthService extends SessionLifecycle {
     // RESERVED, not read — see {@link throttleReserve}.
     const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(email, ctx);
     const known = hC !== null && await this.isKnownClient(db, hA, hC);
-    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
+    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known, () => this.noticeRecipient(ctx, email));
 
     // An input the binder cannot carry follows the same unknown-address path.
-    const key = email.length <= BINDING_KEY_MAX && !/[\u0000-\u001f\u007f\p{Cs}]/u.test(email) ? email : null;
+    const key = isCredentialKey(email) ? email : null;
     const [found] = await bridgeTx(keyedCredentialDb(ctx, key))
       .select().from(users).where(eq(users.email, key ?? "")).limit(1);
     const user = found && (ctx.credentialDb || !ctx.accountId || ctx.accountId === found.accountId)
@@ -1183,7 +1288,7 @@ export class AuthService extends SessionLifecycle {
     if (!minted) {
       // What this sign-in checked is a wrong password now, and it is answered as one: counted (the
       // refund above is taken back), locked at the threshold, audited, refused in the same words.
-      await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
+      await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known, () => this.noticeRecipient(ctx, email));
       if (pwKey) await this.throttleLock(db, pwKey);
       if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
       await this.audit(accountDb, user, "login_failed", "password", owner);
@@ -2180,7 +2285,7 @@ export class AuthService extends SessionLifecycle {
     // ceiling for a client that never signed in here. Never `user:<id>`, the second factor's.
     const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(user.email, ctx);
     const known = hC !== null && await this.isKnownClient(db, hA, hC);
-    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
+    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known, async () => user);
     const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
     const verified = await this.deps.passwordHasher.verify(
       current, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
@@ -2195,10 +2300,12 @@ export class AuthService extends SessionLifecycle {
 
     // Hashed before the transaction: scrypt must not hold row locks.
     const nextHash = await this.deps.passwordHasher.hash(next);
-    return this.inTransaction(ctx, async (txCtx) => {
+    const changed = await this.inTransaction<{ revoked: number; at: Date } | null>(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
+      await lockUserRow(tx, user.id);
+      const now = txCtx.now();
       const swapped = await tx.update(credentials)
-        .set({ passwordHash: nextHash, algo: "scrypt", updatedAt: txCtx.now() })
+        .set({ passwordHash: nextHash, algo: "scrypt", updatedAt: now })
         .where(and(eq(credentials.userId, user.id), eq(credentials.passwordHash, cred.passwordHash)))
         .returning({ id: credentials.id });
       if (swapped.length === 0) {
@@ -2208,8 +2315,24 @@ export class AuthService extends SessionLifecycle {
       // registrations ({@link revokeClaimedSessions}).
       const { revoked } = await this.revokeOtherSessions(txCtx, user.id);
       await this.audit(tx, user, "password_changed", "password", txCtx);
-      return { revoked };
-    }, { fence: { accountId: ctx.accountId, onErased: () => ({ revoked: 0 }) } });
+      return { revoked, at: now };
+    }, { fence: { accountId: ctx.accountId, onErased: () => null } });
+    if (changed === null) return { revoked: 0 };
+    await this.sendPasswordChangedNotice(ctx, user.email, changed.at);
+    return { revoked: changed.revoked };
+  }
+
+  private async sendPasswordChangedNotice(ctx: ServiceContext, to: string, at: Date): Promise<void> {
+    const mail = this.deps.mail;
+    if (!mail) return;
+    try {
+      const [settings] = await asTx(ctx).select({ locale: accountSettings.locale }).from(accountSettings)
+        .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
+      await mail.sendSecurityNotice(ctx, { to, kind: "password_changed", at, locale: mailLocaleOf(settings?.locale) });
+    } catch {
+      // The committed password change still succeeds when its notice cannot be sent.
+      return;
+    }
   }
 
   // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`
@@ -3348,24 +3471,34 @@ export class AuthService extends SessionLifecycle {
    */
   private async reservePasswordKeys(
     db: Tx, keys: { pwKey: string | null; ceilingKey: string; hA: string }, known: boolean,
+    recipient: () => Promise<NoticeRecipient | undefined>,
   ): Promise<void> {
     if (keys.pwKey) await this.throttleReserve(db, keys.pwKey);
     if (known) return;
     try {
-      await this.reserveCeiling(db, keys.ceilingKey, keys.hA);
+      await this.reserveCeiling(db, keys.ceilingKey, keys.hA, recipient);
     } catch (err) {
       if (keys.pwKey) await this.throttleRefund(db, keys.pwKey).catch(() => undefined);
       throw err;
     }
   }
 
+  private async noticeRecipient(ctx: ServiceContext, email: string): Promise<NoticeRecipient | undefined> {
+    const key = isCredentialKey(email) ? email : null;
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, key)).select({ id: users.id, accountId: users.accountId })
+      .from(users).where(eq(users.email, key ?? "")).limit(1);
+    return row;
+  }
+
   /** Reserve the address ceiling; the refusal that trips it owes the account a notice ({@link noteNotice}). */
-  private async reserveCeiling(db: Tx, key: string, hA: string): Promise<void> {
+  private async reserveCeiling(
+    db: Tx, key: string, hA: string, recipient: () => Promise<NoticeRecipient | undefined>,
+  ): Promise<void> {
     try {
       await this.throttleReserve(db, key, this.ceilingPolicy());
     } catch (err) {
       if (err instanceof ServiceError && err.code === "sign_in_slowed") {
-        await this.noteNotice(db, `${THROTTLE_PREFIX.notice}ceiling:${hA}`);
+        await this.noteNotice(db, `${THROTTLE_PREFIX.notice}ceiling:${hA}`, await recipient());
       }
       throw err;
     }
@@ -3376,14 +3509,18 @@ export class AuthService extends SessionLifecycle {
    * {@link drainSecurityNotices}. At most one per key per {@link NOTICE_EVERY_MS}: a row younger
    * than that is left alone. `failures` 1 = owed, 0 = sent; `window_started_at` = when it was owed.
    */
-  private async noteNotice(db: Tx, key: string): Promise<void> {
+  private async noteNotice(db: Tx, key: string, recipient: NoticeRecipient | undefined): Promise<void> {
     const now = new Date();
     const horizon = new Date(now.getTime() - NOTICE_EVERY_MS).toISOString();
+    const notice = {
+      failures: 1, lockedUntil: null, windowStartedAt: now, updatedAt: now,
+      noticeAccountId: recipient?.accountId ?? null, noticeUserId: recipient?.id ?? null,
+    };
     await db.insert(authThrottle)
-      .values({ key, failures: 1, windowStartedAt: now, updatedAt: now })
+      .values({ key, ...notice })
       .onConflictDoUpdate({
         target: authThrottle.key,
-        set: { failures: 1, windowStartedAt: now, updatedAt: now },
+        set: notice,
         setWhere: sql`${authThrottle.windowStartedAt} < ${horizon}::timestamptz`,
       });
   }
@@ -3395,53 +3532,79 @@ export class AuthService extends SessionLifecycle {
    * Each row is CLAIMED before its send (two drains never mail twice); a failed send gives it back.
    * An address with no account behind it is dropped: there is nobody to tell.
    */
-  async drainSecurityNotices(ctx: ServiceContext, limit = 50): Promise<{ sent: number; dropped: number; failed: number }> {
+  async drainSecurityNotices(
+    ctx: ServiceContext, limit = 50, roster?: PassRoster,
+  ): Promise<{ sent: number; dropped: number; failed: number }> {
+    assertPassWalk(ctx.db);
     const out = { sent: 0, dropped: 0, failed: 0 };
     const mail = this.deps.mail;
     if (!mail) return out;
     const db = asTx(ctx);
-    const owed = await db.select({ key: authThrottle.key }).from(authThrottle)
-      .where(and(like(authThrottle.key, `${THROTTLE_PREFIX.notice}%`), eq(authThrottle.failures, 1))).limit(limit);
-    let byAddress: Map<string, { id: string; email: string; accountId: string }> | null = null;
-    for (const { key } of owed) {
-      const [, kind = "", subject = ""] = key.split(":");
-      let who: { id: string; email: string; accountId: string } | undefined;
-      if (kind === "factor" && UUID_SHAPE.test(subject)) {
-        who = (await db.select({ id: users.id, email: users.email, accountId: users.accountId }).from(users)
-          .where(eq(users.id, subject)).limit(1))[0];
-      } else if (kind === "ceiling") {
-        byAddress ??= await this.usersByAddressHash(db);
-        who = byAddress.get(subject);
+    const now = ctx.now();
+    const ready = or(isNull(authThrottle.lockedUntil), lte(authThrottle.lockedUntil, now));
+    const owed = await db.select({
+      key: authThrottle.key, accountId: authThrottle.noticeAccountId, userId: authThrottle.noticeUserId,
+      queuedAt: authThrottle.windowStartedAt,
+    }).from(authThrottle)
+      .where(and(like(authThrottle.key, `${THROTTLE_PREFIX.notice}%`), eq(authThrottle.failures, 1), ready))
+      .orderBy(authThrottle.updatedAt, authThrottle.id).limit(limit);
+    const legacyFactors = new Set<string>();
+    for (const notice of owed) {
+      const [, kind, id] = notice.key.split(":");
+      if (notice.accountId === null && kind === "factor" && id && UUID_SHAPE.test(id)) legacyFactors.add(id);
+    }
+    const legacyAccounts = new Map<string, string>();
+    if (roster && legacyFactors.size > 0) {
+      for (let offset = 0; legacyAccounts.size < legacyFactors.size; offset += limit) {
+        const page = await roster(limit, offset);
+        for (const row of page) if (legacyFactors.has(row.id)) legacyAccounts.set(row.id, row.accountId);
+        if (page.length < limit) break;
       }
-      // The notice is written in the account's own language: its settings row, read for this account alone,
-      // before the claim, so a read that throws leaves the notice owed for the next drain.
-      const settings = who ? (await db.select({ locale: accountSettings.locale }).from(accountSettings).where(eq(accountSettings.accountId, who.accountId)).limit(1))[0] : undefined;
-      const claimed = await db.update(authThrottle).set({ failures: 0, updatedAt: new Date() })
-        .where(and(eq(authThrottle.key, key), eq(authThrottle.failures, 1))).returning({ key: authThrottle.key });
+    }
+    let unresolved = 0;
+    for (const notice of owed) {
+      const [, kind = "", subject = ""] = notice.key.split(":");
+      const userId = notice.userId ?? (legacyFactors.has(subject) ? subject : null);
+      let accountId = notice.accountId ?? (userId === null ? null : legacyAccounts.get(userId) ?? null);
+      if (!roster && !accountId && userId) {
+        // A standalone store can resolve a legacy factor notice by its user ID.
+        const [legacy] = await db.select({ accountId: users.accountId }).from(users).where(eq(users.id, userId)).limit(1);
+        accountId = legacy?.accountId ?? null;
+      }
+      const recipient = accountId ? credentialContext(ctx, accountId) : null;
+      const scoped = recipient ? asTx(recipient) : db;
+      const [who] = accountId && userId ? await scoped.select({ email: users.email }).from(users)
+        .where(and(eq(users.id, userId), eq(users.accountId, accountId))).limit(1) : [];
+      const settings = who && accountId ? (await scoped.select({ locale: accountSettings.locale }).from(accountSettings)
+        .where(eq(accountSettings.accountId, accountId)).limit(1))[0] : undefined;
+      const sameNotice = and(eq(authThrottle.key, notice.key), eq(authThrottle.windowStartedAt, notice.queuedAt));
+      const claimed = await scoped.update(authThrottle).set({ failures: 0, updatedAt: new Date() })
+        .where(and(sameNotice, eq(authThrottle.failures, 1), ready)).returning({ key: authThrottle.key });
       if (claimed.length === 0) continue;
-      if (!who) { out.dropped++; continue; }
+      if (!who || !recipient) {
+        if (kind === "ceiling" && notice.userId === null) unresolved += 1;
+        out.dropped += 1;
+        continue;
+      }
       let sent = false;
       try {
-        const r = await mail.sendSecurityNotice(ctx, {
+        const r = await mail.sendSecurityNotice(recipient, {
           to: who.email, kind: kind === "factor" ? "factor_refused" : "sign_in_slowed", at: ctx.now(),
           locale: mailLocaleOf(settings?.locale) ?? "en",
         });
         sent = r.status !== "failed";
       } catch {
-        // A throwing mailer is a failed send: the claim is given back below and the next run retries.
+        // A failed delivery gives this same claim back. A newer notice stays as queued.
         sent = false;
       }
-      if (sent) { out.sent++; continue; }
-      out.failed++;
-      await db.update(authThrottle).set({ failures: 1, updatedAt: new Date() }).where(eq(authThrottle.key, key));
+      if (sent) { out.sent += 1; continue; }
+      out.failed += 1;
+      await scoped.update(authThrottle).set({
+        failures: 1, updatedAt: new Date(), lockedUntil: new Date(ctx.now().getTime() + NOTICE_RETRY_MS),
+      }).where(sameNotice);
     }
+    if (unresolved > 0) authLog.info("security_notices_unresolved", { count: unresolved });
     return out;
-  }
-
-  /** Every user by the keyed hash of their address — read only while a ceiling notice is owed. */
-  private async usersByAddressHash(db: Tx): Promise<Map<string, { id: string; email: string; accountId: string }>> {
-    const all = await db.select({ id: users.id, email: users.email, accountId: users.accountId }).from(users);
-    return new Map(all.map((u) => [this.keys.address(u.email.trim().toLowerCase()), u]));
   }
 
   private passwordPolicy(): ThrottlePolicy {
@@ -3479,7 +3642,7 @@ export class AuthService extends SessionLifecycle {
       await this.throttleCheck(db, `user:${user.id}`);
       if (preSession) await this.throttleCheck(db, dayKey);
     } catch (err) {
-      if (preSession) await this.noteNotice(db, `${THROTTLE_PREFIX.notice}factor:${user.id}`);
+      if (preSession) await this.noteNotice(db, `${THROTTLE_PREFIX.notice}factor:${user.id}`, user);
       throw err;
     }
   }
@@ -3739,7 +3902,7 @@ export class AuthService extends SessionLifecycle {
     await super.voidPendingGrants(db, userId, now);
     await db.update(loginTokens).set({ consumedAt: now }).where(and(
       eq(loginTokens.userId, userId),
-      inArray(loginTokens.purpose, ["login", DESKTOP_LINK_PURPOSE]),
+      or(inArray(loginTokens.purpose, ["login", DESKTOP_LINK_PURPOSE]), eq(loginTokens.purpose, PASSWORD_RESET_PURPOSE)),
       isNull(loginTokens.consumedAt),
       gt(loginTokens.expiresAt, now),
     ));

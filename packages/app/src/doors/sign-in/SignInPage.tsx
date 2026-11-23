@@ -140,6 +140,11 @@ function PasswordStep(p: {
                 {login("createAccount")}
               </WayButton>
             ) : null}
+            {door.forgotPassword && (
+              <WayButton way={door.forgotPassword} kind="quiet" size="l">
+                {login("forgotPassword")}
+              </WayButton>
+            )}
           </>
         }
       >

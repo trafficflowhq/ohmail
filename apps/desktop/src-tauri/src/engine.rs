@@ -6439,6 +6439,7 @@ const LINKS: [(&str, &str); 13] = [
     // The Cloud door's way to an account: sign-up, and setup behind a sign-in. `next=join` is a
     // constant like every character here; `engine_tests.rs` admits it for `setup` by name.
     ("join", "https://ohmail.app/join"),
+    ("forgot-password", "https://ohmail.app/forgot-password"),
     ("setup", "https://ohmail.app/login?next=join"),
 ];
 
@@ -6574,6 +6575,15 @@ fn server_settings_origin(config: Option<&Config>, server: &str, pane: &str) -> 
             .then(|| "https://ohmail.app".to_string());
     }
     config::self_hosted_origin(config)
+}
+
+#[cfg(feature = "local-engine")]
+fn server_password_reset_target(config: Option<&Config>, server: Option<&str>) -> Result<String, String> {
+    let origin = server.and_then(|base| server_settings_origin(config, base, "forgot-password"))
+        .ok_or_else(|| "ohmail: this install's server changed".to_string())?;
+    let target = format!("{origin}/forgot-password");
+    external_url(&target)?;
+    Ok(target)
 }
 
 #[cfg(feature = "local-engine")]
@@ -6877,6 +6887,16 @@ fn open_link(
     expected_server: Option<String>,
     expected_account: Option<String>,
 ) -> Result<(), String> {
+    if key == "server-forgot-password" {
+        if named(challenge.as_deref()) || named(request.as_deref()) || named(expected_account.as_deref()) {
+            return Err("ohmail: password recovery takes only the configured server".to_string());
+        }
+        let target = {
+            let _door = shell.door.lock().expect("shell door");
+            server_password_reset_target(shell.paths.config().as_ref(), expected_server.as_deref())?
+        };
+        return spawn_opener(&target);
+    }
     if let Some(pane) = server_settings_pane(&key) {
         let request = server_settings_request(pane, challenge.as_deref(), request.as_deref())?;
         let moved = || "ohmail: this install's server or account changed".to_string();

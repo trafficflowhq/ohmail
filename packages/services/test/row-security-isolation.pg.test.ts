@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { sql, TransactionRollbackError } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { bindDb, rebindTx, type BindTo } from "@trafficflow/db";
+import { bindDb, doorKeyDb, rebindTx, type BindTo } from "@trafficflow/db";
 import { brandDialect } from "@trafficflow/db/dialect";
 import {
-  makeOwnedDb, schema, accountColumnOf, lockedTables, policyList, readLock, lockHealthLine, WORKER_WIDE_READ, STAFF_DOOR_KEY, STAFF_TABLES, type OwnedDb,
+  makeOwnedDb, schema, accountColumnOf, lockedTables, policyList, readLock, lockHealthLine, WORKER_WIDE_READ, KEY_SETTING, STAFF_DOOR_KEY, STAFF_TABLES, type OwnedDb,
   pruneSignInRecords, pruneAuthEvents, pruneConnectAttempts, pruneAuditLog, pruneErasedBearers, pruneErasedNotices,
   sweepExpiredStagingFor, horizonOf, SIGN_IN_RECORD_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, CONNECT_ATTEMPTS_RETENTION_MS,
   AUDIT_LOG_RETENTION_MS, WEBAUTHN_CHALLENGE_RETENTION_MS, OAUTH_CEREMONY_RETENTION_MS, DEVICE_CEREMONY_RETENTION_MS,
@@ -537,9 +537,15 @@ for (const major of PG_MAJORS) {
     }, CASE_MS);
 
     it("the staff tables open only through their door, with no account bound", async () => {
-      const door = bindDb(api.db, { account: null, key: STAFF_DOOR_KEY }) as unknown as Exec;
+      const door = doorKeyDb(bindDb(api.db, { account: null }), "staff") as unknown as Exec;
       expect(await countOn(door, "staff_users")).toBe(1);
-      expect(await countOn(bindDb(api.db, { account: A.accountId, key: STAFF_DOOR_KEY }) as unknown as Exec, "staff_users")).toBe(0);
+      expect(() => bindDb(api.db, { account: A.accountId, key: STAFF_DOOR_KEY })).toThrow("reserved door key");
+      const bound = bindDb(api.db, { account: A.accountId }) as unknown as Txable;
+      const count = await bound.transaction(async (tx) => {
+        await tx.execute(sql`select set_config(${KEY_SETTING}, ${STAFF_DOOR_KEY}, true)`);
+        return countOn(tx, "staff_users");
+      });
+      expect(count).toBe(0);
       expect(await countOn(bindDb(api.db, { account: null }) as unknown as Exec, "staff_users")).toBe(0);
       expect(await countOn(api.db as unknown as Exec, "staff_users")).toBe(0);
     }, CASE_MS);
@@ -551,9 +557,14 @@ for (const major of PG_MAJORS) {
      */
     async function attempt(bind: BindTo | null, statement: string): Promise<number | string> {
       const db = (bind === null ? api.db
-        : bind.account === null ? bindDb(api.db, { account: null, key: bind.key }) : bindDb(api.db, { account: bind.account, key: bind.key })) as unknown as Txable;
+        : bind.account === null
+          ? bind.key === STAFF_DOOR_KEY ? doorKeyDb(bindDb(api.db, { account: null }), "staff") : bindDb(api.db, { account: null, key: bind.key })
+          : bindDb(api.db, { account: bind.account })) as unknown as Txable;
       let got: number | string = "not run";
       await db.transaction(async (tx) => {
+        if (bind?.account && bind.key === STAFF_DOOR_KEY) {
+          await tx.execute(sql`select set_config(${KEY_SETTING}, ${STAFF_DOOR_KEY}, true)`);
+        }
         got = await tx.execute(sql.raw(statement)).then((r) => Number((r as { count?: number }).count ?? 0), refusalOf);
         (tx as unknown as { rollback(): never }).rollback();
       }).catch((e: unknown) => { if (!(e instanceof TransactionRollbackError)) throw e; });
@@ -579,8 +590,9 @@ for (const major of PG_MAJORS) {
     }, CASE_MS);
 
     it("a reset inside a bound transaction answers nothing, and the login cannot turn row security off", async () => {
-      const a = bindDb(api.db, { account: A.accountId, key: STAFF_DOOR_KEY }) as unknown as Txable;
+      const a = bindDb(api.db, { account: A.accountId }) as unknown as Txable;
       const afterReset = await a.transaction(async (tx) => {
+        await tx.execute(sql`select set_config(${KEY_SETTING}, ${STAFF_DOOR_KEY}, true)`);
         await tx.execute(sql`reset all`);
         return { messages: await countOn(tx, "messages"), staff: await countOn(tx, "staff_users") };
       });

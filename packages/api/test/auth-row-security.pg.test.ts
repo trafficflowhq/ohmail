@@ -1,19 +1,19 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { and, eq, sql } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { accounts, accountSettings, pairingTokens, users } from "@trafficflow/db";
 import { createPolicyStatement } from "@trafficflow/db/admin";
 import {
   API_ROLE, LOCK_READERS, READER_SCHEMA, WORKER_ROLE, lockedTables, makeOwnedDb,
-  credentials, invites, loginTokens, oauthAuthCodes, policiesFor, policyList, readerStatement, waitlist, type OwnedDb,
+  authEvents, credentials, invites, loginTokens, oauthAuthCodes, policiesFor, policyList, readerStatement, waitlist, type OwnedDb,
 } from "@trafficflow/db/cloud";
 import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, realPgAvailable, throwawayDb,
 } from "@trafficflow/db/testing";
 import { hashToken, makeAuthService, makeMailService, makeTestAuthDeps, makeWaitlistService, SpyMailer, throttleKeysFor, totpNow, type Db } from "@trafficflow/services";
 import { SoftwareAuthenticator } from "../../services/test/webauthn-authenticator.js";
-import { FIXED_NOW, perRequest, req, seedSession, setCookieMap } from "./helpers.js";
+import { FIXED_NOW, perRequest, req, seedSession, seedSessionFor, setCookieMap } from "./helpers.js";
 
 const pgUp = await realPgAvailable();
 const ground = throwawayDb("auth_row_security");
@@ -24,13 +24,17 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
   let runtime: OwnedDb;
   let now = FIXED_NOW;
   const mailer = new SpyMailer();
+  const warn = vi.fn();
   const authDeps = makeTestAuthDeps({ publicSignup: true, autoSuggestAtSignup: true, maxDesktopApprovalsPerWindow: 25 });
+  const throttleKeys = throttleKeysFor(authDeps.keyProvider);
   const mail = makeMailService({
     mailer,
     config: { appUrl: "http://localhost:3001", siteUrl: "http://localhost:3000", supportEmail: "support@example.test" },
-    throttleKeys: throttleKeysFor(authDeps.keyProvider),
+    throttleKeys,
+    logger: { warn },
   });
-  const auth = makeAuthService({ ...authDeps, mail });
+  const afterAnswer: Promise<unknown>[] = [];
+  const auth = makeAuthService({ ...authDeps, mail, afterAnswer: (work) => { afterAnswer.push(work); } });
   const funnel = makeWaitlistService({ throttleKeys: throttleKeysFor(authDeps.keyProvider) });
   type Tokens = { accessToken: string; refreshToken: string };
 
@@ -67,7 +71,9 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     await ground.drop();
   }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 
-  function request(method: string, path: string, body?: unknown, bearer?: string, cookies?: Record<string, string>) {
+  afterEach(() => { vi.restoreAllMocks(); warn.mockClear(); });
+
+  function request(method: string, path: string, body?: unknown, bearer?: string, cookies?: Record<string, string>, ip = "198.18.0.1") {
     const deps = perRequest({
       ...({
         now: () => now, requestId: randomUUID(), session: null,
@@ -78,7 +84,7 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     return app.handle(req(method, path, {
       bearer, body: body === undefined ? undefined : JSON.stringify(body),
       headers: {
-        "x-forwarded-for": "198.18.0.1",
+        "x-forwarded-for": ip,
         ...(cookies?.tf_csrf ? { "x-csrf-token": cookies.tf_csrf } : {}),
       },
       cookie: cookies && Object.entries(cookies).map(([name, value]) => `${name}=${value}`).join("; "),
@@ -132,7 +138,11 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     expect((await request("POST", "/auth/verify-email", verification, other.token)).status).toBe(409);
     const verified = await request("POST", "/auth/verify-email", verification);
     expect(verified.status, "mail verification after refusals").toBe(200);
-    expect((await request("POST", "/auth/verify-email", verification)).status).toBe(400);
+    const replay = await request("POST", "/auth/verify-email", verification);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ status: "already_verified" });
+    expect(replay.headers.has("set-cookie")).toBe(false);
+    expect((await request("POST", "/auth/verify-email", wrongPassword)).status).toBe(400);
     const enrollment = setCookieMap(verified);
 
     const enroll = await request("POST", "/auth/2fa/totp/enroll", {}, undefined, enrollment);
@@ -252,6 +262,209 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     expect((await request("POST", "/auth/verify-email/resend", {})).status).toBe(401);
     expect((await request("POST", "/auth/verify-email/resend", {}, browser.token)).status).toBe(200);
     expect(mailer.ofTemplate("email_verification")).toHaveLength(1);
+  });
+
+  const requestReset = (email: string, ip = "198.18.0.2") =>
+    request("POST", "/auth/password/reset", { email, locale: "de" }, undefined, undefined, ip);
+
+  async function askReset(email: string, ip?: string) {
+    const response = await requestReset(email, ip);
+    await Promise.all(afterAnswer.splice(0));
+    return response;
+  }
+  const completeReset = (token: string, password: string, bearer?: string, cookies?: Record<string, string>) =>
+    request("POST", "/auth/password/reset/complete", { token, password }, bearer, cookies);
+  const resetToken = () => new URL(mailer.ofTemplate("password_reset").at(-1)!.data.resetUrl).searchParams.get("token")!;
+
+  function noticeCommits(accountId: string, event: "password_reset" | "password_changed") {
+    const committed: boolean[] = [];
+    const send = mailer.send.bind(mailer);
+    vi.spyOn(mailer, "send").mockImplementation(async (to, template, data, options) => {
+      if (template === "security_notice") {
+        const rows = await owner.db.select({ id: authEvents.id }).from(authEvents)
+          .where(and(eq(authEvents.accountId, accountId), eq(authEvents.event, event)));
+        committed.push(rows.length === 1);
+      }
+      return send(to, template, data, options);
+    });
+    return committed;
+  }
+
+  async function resetAccount() {
+    mailer.reset();
+    const email = `reset-${randomUUID()}@example.test`;
+    const password = randomBytes(24).toString("base64url");
+    expect((await request("POST", "/auth/register", { email, password, displayName: "Reader" }, undefined, undefined, "198.18.0.3")).status).toBe(202);
+    const token = new URL(mailer.only("email_verification").data.verifyUrl).searchParams.get("token");
+    const verification = await request("POST", "/auth/verify-email", { token, password });
+    expect(verification.status).toBe(200);
+    return { email, password, enrollment: setCookieMap(verification) };
+  }
+
+  it("resets a password once, signs out every device and still asks for the second factor", async () => {
+    const { email, password, enrollment } = await resetAccount();
+    const enroll = await request("POST", "/auth/2fa/totp/enroll", {}, undefined, enrollment);
+    expect(enroll.status).toBe(200);
+    const { secret } = await enroll.json() as { secret: string };
+    expect((await request("POST", "/auth/2fa/totp/activate", { code: totpNow(secret, now) }, undefined, enrollment)).status).toBe(200);
+    now = new Date(now.getTime() + 30_000);
+    const login = await request("POST", "/auth/login", { email, password });
+    const { loginToken } = await login.json() as { loginToken: string };
+    const signedIn = await request("POST", "/auth/2fa/totp/verify", { loginToken, code: totpNow(secret, now) });
+    expect(signedIn.status).toBe(200);
+    const cookies = setCookieMap(signedIn);
+    const device = await request("POST", "/auth/desktop-claim", await desktopCode(cookies.tf_session!));
+    expect(device.status).toBe(200);
+    const { tokens } = await device.json() as { tokens: Tokens };
+
+    const unknown = await askReset(`unknown-${randomUUID()}@example.test`);
+    expect(unknown.status, "unknown addresses get the public answer").toBe(202);
+    expect(mailer.ofTemplate("password_reset")).toHaveLength(0);
+    const asked = await askReset(email);
+    expect(asked.status).toBe(202);
+    expect(await asked.json()).toEqual({ status: "ok" });
+    expect(await unknown.json()).toEqual({ status: "ok" });
+    expect(asked.headers.has("set-cookie")).toBe(false);
+    const first = resetToken();
+    expect(mailer.only("password_reset").data.locale).toBe("de");
+    now = new Date(now.getTime() + 5 * 60_000 - 1);
+    const repeated = await askReset(email, "198.18.1.12");
+    expect(repeated.status).toBe(202);
+    expect(await repeated.json()).toEqual({ status: "ok" });
+    expect(mailer.ofTemplate("password_reset"), "a recent link is kept").toHaveLength(1);
+    const [kept] = await owner.db.select({ consumedAt: loginTokens.consumedAt }).from(loginTokens)
+      .where(eq(loginTokens.tokenHash, hashToken(first)));
+    expect(kept?.consumedAt).toBeNull();
+    now = new Date(now.getTime() + 1);
+    expect((await askReset(email)).status).toBe(202);
+    expect(mailer.ofTemplate("password_reset")).toHaveLength(2);
+    const token = resetToken();
+    const next = randomBytes(24).toString("base64url");
+    expect((await completeReset(first, next)).status).toBe(400);
+    const other = await steppedUpSession();
+    expect((await completeReset(token, next, other.token)).status).toBe(409);
+    const [subject] = await owner.db.select({ accountId: users.accountId }).from(users).where(eq(users.email, email));
+    await owner.db.insert(accountSettings).values({ accountId: subject!.accountId, locale: "de" })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { locale: "de" } });
+    const notice = noticeCommits(subject!.accountId, "password_reset");
+    const results = await Promise.all([
+      completeReset(token, next, undefined, cookies), completeReset(token, next, undefined, cookies),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 400]);
+    expect(results.every((r) => !r.headers.has("set-cookie"))).toBe(true);
+    expect((await completeReset(token, next)).status).toBe(400);
+    expect((await request("GET", "/auth/session", undefined, undefined, cookies)).status).toBe(401);
+    expect((await request("GET", "/auth/session", undefined, tokens.accessToken)).status).toBe(401);
+    expect((await request("POST", "/auth/refresh", { refreshToken: tokens.refreshToken })).status).toBe(401);
+    expect((await request("GET", "/auth/session", undefined, other.token)).status).toBe(200);
+    expect((await request("POST", "/auth/login", { email, password })).status).toBe(401);
+    const newLogin = await request("POST", "/auth/login", { email, password: next });
+    expect(newLogin.status).toBe(200);
+    expect(await newLogin.json()).toMatchObject({ status: "twofa_required", methods: ["totp"] });
+    expect(newLogin.headers.has("set-cookie")).toBe(false);
+    expect(notice).toEqual([true]);
+    expect(mailer.only("security_notice").rendered.subject).toBe("Dein ohmail-Passwort wurde geändert");
+  }, 30_000);
+
+  it("expires a reset link and sends nothing once the account is erased", async () => {
+    const { email } = await resetAccount();
+    const ip = "198.18.0.4";
+    const password = randomBytes(24).toString("base64url");
+    expect((await askReset(email, ip)).status).toBe(202);
+    const expired = resetToken();
+    now = new Date(now.getTime() + 30 * 60_000);
+    expect((await completeReset(expired, password)).status).toBe(400);
+    expect((await askReset(email, ip)).status).toBe(202);
+    const live = resetToken();
+    const [user] = await owner.db.select({ accountId: users.accountId }).from(users).where(eq(users.email, email));
+    await owner.db.update(accounts).set({ erasedAt: now }).where(eq(accounts.id, user!.accountId));
+    mailer.reset();
+    expect((await askReset(email, ip)).status).toBe(202);
+    expect(mailer.ofTemplate("password_reset")).toHaveLength(0);
+    expect((await completeReset(live, password)).status).toBe(400);
+  });
+
+  it.each(["account is erased", "recipient changes"] as const)("sends no link if the %s while delivery waits", async (change) => {
+    mailer.reset();
+    const session = await steppedUpSession();
+    const [user] = await owner.db.select({ email: users.email }).from(users).where(eq(users.id, session.userId));
+    await owner.db.transaction(async (tx) => {
+      await tx.execute(sql`select id from ${accounts} where id = ${session.accountId} for update`);
+      const asked = await requestReset(user!.email, "198.18.1.14");
+      expect(asked.status).toBe(202);
+      expect(afterAnswer).toHaveLength(1);
+      if (change === "account is erased") {
+        await tx.update(accounts).set({ erasedAt: now }).where(eq(accounts.id, session.accountId));
+      } else {
+        await tx.update(users).set({ email: `updated-${randomUUID()}@example.test` }).where(eq(users.id, session.userId));
+      }
+    });
+    await Promise.all(afterAnswer.splice(0));
+    expect(mailer.ofTemplate("password_reset")).toHaveLength(0);
+  });
+
+  it("treats addresses with a reserved binding prefix as unmatched", async () => {
+    mailer.reset();
+    const session = await steppedUpSession();
+    const email = `ohmail:${randomUUID()}@example.test`;
+    await owner.db.update(users).set({ email }).where(eq(users.id, session.userId));
+    const response = await askReset(email, "198.18.1.15");
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ status: "ok" });
+    expect(mailer.ofTemplate("password_reset")).toHaveLength(0);
+  });
+
+  it("bounds reset requests by client and mail by recipient", async () => {
+    const { email } = await resetAccount();
+    const max = authDeps.config.maxPublicRegistrationsPerWindow;
+    for (let i = 0; i < max; i++) {
+      expect((await askReset(`unknown-${randomUUID()}@example.test`, "198.18.0.5")).status).toBe(202);
+    }
+    expect((await askReset(email, "198.18.0.5")).status).toBe(429);
+    for (let i = 0; i < 5; i++) {
+      expect((await askReset(email, `198.18.1.${i + 1}`)).status).toBe(202);
+      now = new Date(now.getTime() + 5 * 60_000);
+    }
+    // Registration used one of the recipient's five unsolicited slots.
+    expect(mailer.ofTemplate("password_reset")).toHaveLength(4);
+    expect((await completeReset(resetToken(), randomBytes(24).toString("base64url"))).status).toBe(200);
+  });
+
+  it("voids an outstanding reset link when the password changes in Settings", async () => {
+    const { email, password } = await resetAccount();
+    const [user] = await owner.db.select({ accountId: users.accountId, userId: users.id }).from(users).where(eq(users.email, email));
+    const session = await seedSessionFor(owner.db as unknown as Db, { ...user!, now, lastTwofaAt: now });
+    expect((await askReset(email)).status).toBe(202);
+    const token = resetToken();
+    const newPassword = randomBytes(24).toString("base64url");
+    const notice = noticeCommits(user!.accountId, "password_changed");
+    expect((await request("POST", "/auth/password", { currentPassword: password, newPassword }, session.token)).status).toBe(200);
+    expect((await completeReset(token, randomBytes(24).toString("base64url"))).status).toBe(400);
+    expect(notice).toEqual([true]);
+    const sent = mailer.only("security_notice");
+    expect(sent.to === email).toBe(true);
+    expect(sent.rendered.subject).toBe("Your ohmail password was changed");
+  });
+
+  it("records a single safe warning for failed reset delivery or preparation", async () => {
+    mailer.reset();
+    const session = await steppedUpSession();
+    const [user] = await owner.db.select({ email: users.email }).from(users).where(eq(users.id, session.userId));
+    const fault = `${user!.email} ${randomBytes(32).toString("base64url")}`;
+    mailer.failNext(fault);
+    expect((await askReset(user!.email, "198.18.1.16")).status).toBe(202);
+    expect(warn.mock.calls).toEqual([["password_reset_mail_failed", { phase: "delivery" }]]);
+
+    warn.mockClear();
+    now = new Date(now.getTime() + 5 * 60_000);
+    vi.spyOn(mailer, "send").mockRejectedValueOnce(new Error(fault));
+    expect((await askReset(user!.email, "198.18.1.16")).status).toBe(202);
+    expect(warn.mock.calls).toEqual([["password_reset_mail_failed", { phase: "delivery" }]]);
+
+    warn.mockClear();
+    vi.spyOn(throttleKeys, "address").mockImplementationOnce(() => { throw new Error(fault); });
+    expect((await askReset(user!.email, "198.18.1.16")).status).toBe(202);
+    expect(warn.mock.calls).toEqual([["password_reset_mail_failed", { phase: "preparation" }]]);
   });
 
   async function oauthCode(bearer: string) {

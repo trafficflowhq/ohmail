@@ -296,6 +296,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if ((isApiPath(pathname) || isApiPath(routed)) && routed.toLowerCase() !== "/api/waitlist") return forwardClientIp(request);
     if (
       routed === "/login" || routed === "/join" || routed === "/verify-email" ||
+      routed === "/forgot-password" || routed === "/reset-password" ||
       // `/link-desktop` receives no credential and PRINTS one, which needs the same three
       // headers for the same three reasons: the page must not carry a `Referer` off itself
       // (under one origin `strict-origin-when-cross-origin` would send the full URL to our own
@@ -445,7 +446,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
  * The three pages that receive a CREDENTIAL IN THEIR URL, served under the strict script
  * policy plus the two headers that decision left owing.
  *
- * `/join?code=…` and `/verify-email?token=…` are linked from mail, so a live credential arrives
+ * `/join?code=…`, `/verify-email?token=…` and `/reset-password?token=…` are linked from mail, so a live credential arrives
  * in the query string. That was accepted deliberately (a link a person can click without
  * JavaScript beats an airtight design nobody implements correctly) with five mitigations as
  * the price. Two of them are headers, and this is where they are paid.
@@ -460,13 +461,13 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
  *     `strict-origin-when-cross-origin`, which strips the path only when the destination is
  *     ANOTHER origin — and under the single-origin merge the API is the SAME origin (`/api/*` is a rewrite on
  *     `ohmail.app`). So on the default policy the full URL, token and all, would ride in the
- *     `Referer` of the page's own API calls, and of every same-origin navigation off it. On these
- *     three paths nothing is allowed to carry a referrer at all.
+ *     `Referer` of the page's own API calls, and of every same-origin navigation off it. These
+ *     credential pages send no referrer.
  *  2. **`Cache-Control: no-store`.** These documents are per-request and their URL is a secret;
  *     a shared or disk cache holding one is a credential at rest that nobody chose to store.
  *
  * The remaining three mitigations are elsewhere and are not headers: `history.replaceState` in the
- * page's ceremony (`use-verify-door.ts`, `use-join-door.ts`), and no edge access-log retention of query
+ * page's ceremony (`use-verify-door.ts`, `use-join-door.ts`, `ResetPasswordRoute.tsx`), and no edge access-log retention of query
  * strings, which is a platform setting rather than code.
  *
  * `/login` gains both too. It takes no credential in its URL, but it takes one in a FORM, and
@@ -595,6 +596,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
+    "/forgot-password", "/reset-password",
     "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/account/delete", "/de", "/privacy", "/imprint",
     "/subprocessors", "/support", "/delete-account", "/ohcal", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
     "/api/waitlist", "/api/:path*",

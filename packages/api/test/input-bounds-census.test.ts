@@ -548,6 +548,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // The password change: the new password on the signup rule, the current one on sign-in's
   // maximum only; both refused before the throttle and before scrypt.
   "POST /auth/password": { bounds: [PASSWORD_MAX_LENGTH] },
+  "POST /auth/password/reset": { scalarsOnly: true },
+  "POST /auth/password/reset/complete": { bounds: [PASSWORD_MAX_LENGTH] },
   // OK on the reuse sweeps: at most REUSE_SWEEPS_MAX ids, each refused unless a uuid, before any read.
   "POST /auth/reuse-sweeps/ack": { bounds: [REUSE_SWEEPS_MAX] },
   "POST /auth/verify-email": { scalarsOnly: true },

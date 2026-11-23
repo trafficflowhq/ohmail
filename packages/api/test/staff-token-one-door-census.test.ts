@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { globSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { API_ROLE, PASS_ROSTERS, policyList } from "@trafficflow/db/cloud";
 import { withoutComments, bracketSpan } from "../../../scripts/lib/source-scan.mjs";
 
 /**
@@ -143,4 +144,61 @@ describe("staff step-up token one-door census", () => {
     const ok = stepUpShaped("staffTokenOf(body)");
     expect(offendersIn("synthetic.ts", ok)).toEqual([]);
   });
+});
+
+const binder = "packages/db/src/bound.ts";
+const roster = "packages/db/src/roster-db.ts";
+const policyBook = "packages/db/src/row-security/policies.ts";
+const staff = "packages/api/src/staff-audit.ts";
+
+it("mints reserved doors only at their entry points and never hands a keyed handle to a pass", () => {
+  const sources = ["apps", "packages"].flatMap((dir) => globSync(`${dir}/*/src/**/*.ts`)).sort();
+  const find = (pattern: RegExp) => sources.filter((path) => pattern.test(readFileSync(path, "utf8")));
+  expect(find(/["']ohmail:passes["']/)).toEqual([binder]);
+  expect(find(/\bPASS_DOOR_KEY\b/)).toEqual([binder, policyBook]);
+  expect(find(/\bdoorKeyDb\b/)).toEqual([staff, binder, "packages/db/src/index.ts"]);
+  expect(find(/\bdoorKeyDb\s+as\b/)).toEqual([]);
+  expect(readFileSync(binder, "utf8").match(/\bdoorKeyDb\b/g)).toHaveLength(1);
+  expect(readFileSync("packages/db/src/index.ts", "utf8").match(/\bdoorKeyDb\b/g)).toHaveLength(1);
+  const staffSource = readFileSync(staff, "utf8");
+  expect(staffSource.match(/\bdoorKeyDb\b/g)).toHaveLength(2);
+  expect(staffSource).toContain('doorKeyDb(doorDb(deps), "staff")');
+  expect(find(/\bexecutePassRosterRead\b/)).toEqual([binder, roster]);
+  expect(readFileSync(roster, "utf8").match(/\bexecutePassRosterRead\b/g)).toHaveLength(2);
+  const pass = /\brun(?:ScheduledSend|SendReconcile|OwedSentCopy|AwayResponder|AccountLifecycle|StorageMail)Pass\s*\(/;
+  for (const path of find(pass)) {
+    const source = readFileSync(path, "utf8");
+    expect(source, path).not.toMatch(/\bstaffDb\b/);
+  }
+  const starts = find(pass).filter((path) => path.startsWith("packages/services/src/")
+    && /export async function run\w+Pass\(/.test(readFileSync(path, "utf8")));
+  expect(starts).toHaveLength(6);
+  for (const path of starts) {
+    const source = readFileSync(path, "utf8");
+    expect(source, path).toMatch(/export async function run\w+Pass\([^]*?\): Promise<[^>]+> \{\s*assertPassWalk\(walk\);/);
+  }
+});
+
+it("the roster flight selects two identifiers and takes neither a lock nor a transaction", () => {
+  const source = readFileSync(roster, "utf8");
+  const query = source.match(/executePassRosterRead<PassRosterRow>\(walk, sql\x60([^\x60]+)\x60\)/)?.[1]?.trim().replace(/\s+/g, " ");
+  expect(query).toBe('select ${sql.identifier(roster.account)} as "accountId", ${sql.identifier(roster.id)} as id '
+    + 'from public.${sql.identifier(table)} order by ${sql.raw(order)} limit ${limit} offset ${offset}');
+  expect(source.match(/\bexecutePassRosterRead<PassRosterRow>\(/g)).toHaveLength(1);
+  for (const entry of Object.values(PASS_ROSTERS)) {
+    expect(["id", "account_id"]).toContain(entry.account);
+    expect(["id", "account_id", "send_id"]).toContain(entry.id);
+  }
+});
+
+it("the roster policies are SELECT-only and require both the reserved door and the due condition", () => {
+  const policies = policyList().filter(({ name }) => name === "lock_pass_roster");
+  expect(policies.map(({ table }) => table)).toEqual(Object.keys(PASS_ROSTERS).sort());
+  for (const policy of policies) {
+    const entry = PASS_ROSTERS[policy.table as keyof typeof PASS_ROSTERS];
+    expect(policy).toMatchObject({
+      verb: "SELECT", roles: [API_ROLE], check: null,
+      using: `ohmail.current_account() IS NULL AND ohmail.current_key() = 'ohmail:passes' AND (${entry.using})`,
+    });
+  }
 });

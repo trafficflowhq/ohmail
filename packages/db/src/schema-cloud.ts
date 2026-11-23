@@ -206,6 +206,8 @@ export const authThrottle = pgTable("auth_throttle", {
   failures: integer("failures").notNull().default(0),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
   windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
+  noticeAccountId: uuid("notice_account_id"),
+  noticeUserId: uuid("notice_user_id"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uqKey: unique().on(t.key) }));
 

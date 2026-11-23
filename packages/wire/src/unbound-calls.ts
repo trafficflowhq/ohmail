@@ -45,6 +45,8 @@ export type UnboundCall =
   | "POST /auth/login"
   | "POST /auth/logout"
   | "POST /auth/password"
+  | "POST /auth/password/reset"
+  | "POST /auth/password/reset/complete"
   // apps/webapp/app/csrf.ts
   | "POST /auth/refresh"
   // apps/webapp/app/sign-out.ts

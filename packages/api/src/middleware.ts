@@ -616,9 +616,11 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
       // on this code, and renaming it silently disables every one of them. `lifecycle` is the
       // program's dated block (what happened, the deadline, the erasure forecast); `exportPath`
       // is the open door out — both ride `details` so the wall can render without a second read.
+      const message = verdict.needsPlan
+        ? route.pattern === "/account/ai" ? "Choose a plan to use AI." : "Choose a plan to use ohmail."
+        : "This account is not active. Your mail and settings are kept — nothing has been deleted.";
       return errorResponse(
-        "subscription_required", 402,
-        "This account is not active. Your mail and settings are kept — nothing has been deleted.",
+        "subscription_required", 402, message,
         {
           reason: verdict.reason,
           ...(verdict.manageUrl ? { manageUrl: verdict.manageUrl } : {}),
