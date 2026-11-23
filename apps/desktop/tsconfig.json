@@ -124,6 +124,7 @@
       "@ohmail/app/write/editor/commands": ["../../packages/app/src/write/editor/commands.ts"],
       "@ohmail/app/write/editor/marks": ["../../packages/app/src/write/editor/marks.ts"],
       "@ohmail/app/write": ["../../packages/app/src/write/index.ts"],
+      "@ohmail/app/settings/ai/budget": ["../../packages/app/src/settings/ai/budget.ts"],
       "@ohmail/app/settings/ai": ["../../packages/app/src/settings/ai/index.ts"],
       "@ohmail/app/settings/browser": ["../../packages/app/src/settings/browser/index.ts"],
       "@ohmail/app/settings/away": ["../../packages/app/src/settings/away/index.ts"],
