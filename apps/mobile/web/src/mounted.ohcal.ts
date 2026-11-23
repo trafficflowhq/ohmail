@@ -1,5 +1,5 @@
 /** Calendar settings use the same menu and pane layout as the mail app. */
-import { NONE } from "@ohmail/app/host";
+import { calendar } from "@ohmail/app/calendar";
 import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
 import type { ShellConfig } from "../../src/shell/bridge-kinds";
 import { hostedSettingsPanes } from "./hosted-settings";
@@ -16,6 +16,7 @@ export default function mounted(
   const { billing, storage } = accountDataPanes(bridge, config);
   return {
     ...empty,
+    calendar,
     places: {
       ...empty.places,
       settings: mailSettings({

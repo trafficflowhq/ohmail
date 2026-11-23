@@ -402,10 +402,23 @@
 }
 
 @layer oh {
+  :root[data-device="phone"][data-product="cal"]
+    .oh-dock[data-round]
+    .oh-dock-places
+    > .oh-dock-entry[data-words] {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: var(--h-l);
+    border-radius: var(--r-pill);
+  }
+
   :root[data-device="phone"][data-product="cal"] .oh-dock-word {
-    max-inline-size: var(--s6);
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+
+  :root[data-device="phone"][data-product="cal"] .oh-dock:not([data-round]) .oh-dock-word {
+    max-inline-size: var(--s6);
   }
 }

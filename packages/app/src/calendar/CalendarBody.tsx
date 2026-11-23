@@ -288,6 +288,7 @@ function useCalendarCanvas(
   commands: FrameCommands,
   opened: CalendarEventFace | undefined,
 ) {
+  const { host } = useFrame();
   const { route, port, zones, where, found, zone } = props;
   const { settings, plan, panelOn, cursor, create, sources } = props;
   const { current: invitation } = useCalendarInvitation();
@@ -379,6 +380,7 @@ function useCalendarCanvas(
     clock: { zone, zones, nowMs },
     settings,
     plan,
+    fixedHourHeight: host.device.build.surface === "phone" && plan.device === "phone",
     panel: panelOn,
     cursor,
     stepDay:

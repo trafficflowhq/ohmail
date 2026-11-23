@@ -1,6 +1,6 @@
 /**
  * THE HOURS' SCROLLER: how tall an hour is, where the hours stand when a span opens, and which minutes are in view.
- * The hours in view fill the sheet's height, no hour lower than a line of type; the whole day is always there, a
+ * The hours in view fill the sheet's height where they are fitted; the whole day is always there, a
  * scroll away. Only a new span, new hours or a newly opened event move the hours: the person's own scroll stands.
  */
 import { useLayoutEffect, useRef, useState, type RefObject, type UIEvent } from "react";
@@ -20,8 +20,10 @@ export interface HoursScroller {
 export interface HoursScrollerInput {
   /** The hours in view, in minutes of the day. */
   readonly hours: { readonly from: number; readonly to: number };
-  /** An hour's height before the sheet has been measured. */
+  /** An hour's height before the sheet has been measured, or its fixed height. */
   readonly hourDefault: number;
+  /** Keep the hour height when the sheet has been measured. */
+  readonly fixedHourHeight?: boolean;
   /** Fit the hours to the sheet including the space behind the dock. */
   readonly fitBehindDock?: boolean;
   readonly focusMinute?: number | null;
@@ -71,26 +73,27 @@ export function homeTop(o: {
 }
 
 export function useHoursScroller(input: HoursScrollerInput): HoursScroller {
-  const { hours, room, fitBehindDock } = input;
+  const { hours, room, fitBehindDock, fixedHourHeight, hourDefault } = input;
   const ref = useRef<HTMLDivElement | null>(null);
-  const [hourPx, setHourPx] = useState(input.hourDefault);
+  const [fittedHour, setFittedHour] = useState(hourDefault);
+  const hourPx = fixedHourHeight ? hourDefault : fittedHour;
   const [inView, setInView] = useState<{ from: number; to: number } | null>(null);
   const spanHours = (hours.to - hours.from) / 60;
 
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el === null) return;
+    if (el === null || fixedHourHeight) return;
     const measure = () => {
       const { view, air, least } = gridRoom(el);
       const height = fitBehindDock ? el.clientHeight : view;
-      if (height > 0) setHourPx(fitHour(height - 2 * air, spanHours, least));
+      if (height > 0) setFittedHour(fitHour(height - 2 * air, spanHours, least));
     };
     measure();
     if (typeof ResizeObserver !== "function") return;
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [room, spanHours, fitBehindDock]);
+  }, [room, spanHours, fitBehindDock, fixedHourHeight]);
 
   const placedFor = useRef<string | null>(null);
   const key = `${input.spanKey} ${hours.from} ${hourPx} ${input.openId ?? ""}`;

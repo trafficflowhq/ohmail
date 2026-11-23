@@ -81,6 +81,7 @@ function switchInfoPlist(plist, row) {
   const sibling = VARIANTS[row.sibling];
   plist.OhmailSwitch = {
     ownHost: row.links.host, ownPath: row.links.path, siblingHost: sibling.links.host, siblingPath: sibling.links.path,
+    ...(row.app === "ohcal" ? { siblingScheme: sibling.scheme } : {}),
   };
   return plist;
 }

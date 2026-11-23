@@ -13,6 +13,7 @@ import { browserWindowFacts, fragmentAddress } from "@ohmail/app/host/browser";
 export interface Mounted {
   readonly places: FramePlaces;
   readonly stages: FrameStages;
+  readonly calendar?: FrameSupplies["calendar"];
   readonly reader: FrameSupplies["reader"];
   readonly above: FrameSupplies["above"];
   readonly mailboxWires?: Pick<HostContract["wires"], "mailboxes" | "connect">;
@@ -79,8 +80,7 @@ export function phoneFrameSupplies(
     address: keptAddress(address, kept),
     window: browserWindowFacts(win),
     appearance: systemAppearance(win),
-    // No calendar is seated yet: its entry is handed in by the seating step.
-    calendar: NONE,
+    calendar: mounted.calendar ?? NONE,
     recover: NONE,
   };
 }

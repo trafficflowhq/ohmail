@@ -45,22 +45,40 @@ struct CalendarDateView: View {
   }
 }
 
-struct CalendarDateWidget: Widget {
-  let kind: String
-  let title: String
-  let family: WidgetFamily
+private func calendarWidget(kind: String, title: String, family: WidgetFamily) -> some WidgetConfiguration {
+  StaticConfiguration(kind: kind, provider: CalendarTimeline()) { CalendarDateView(entry: $0) }
+    .configurationDisplayName(CalendarWords.widget(title)).supportedFamilies([family])
+}
 
+struct CalendarNextWidget: Widget {
   var body: some WidgetConfiguration {
-    StaticConfiguration(kind: kind, provider: CalendarTimeline()) { CalendarDateView(entry: $0) }
-      .configurationDisplayName(CalendarWords.widget(title)).supportedFamilies([family])
+    calendarWidget(kind: "ohcal.next", title: "calendar", family: .systemSmall)
+  }
+}
+
+struct CalendarMonthWidget: Widget {
+  var body: some WidgetConfiguration {
+    calendarWidget(kind: "ohcal.month", title: "month", family: .systemSmall)
+  }
+}
+
+struct CalendarTodayWidget: Widget {
+  var body: some WidgetConfiguration {
+    calendarWidget(kind: "ohcal.today", title: "today", family: .systemMedium)
+  }
+}
+
+struct CalendarWeekWidget: Widget {
+  var body: some WidgetConfiguration {
+    calendarWidget(kind: "ohcal.week", title: "week", family: .systemMedium)
   }
 }
 
 @main struct OhcalWidgets: WidgetBundle {
   var body: some Widget {
-    CalendarDateWidget(kind: "ohcal.next", title: "calendar", family: .systemSmall)
-    CalendarDateWidget(kind: "ohcal.month", title: "month", family: .systemSmall)
-    CalendarDateWidget(kind: "ohcal.today", title: "today", family: .systemMedium)
-    CalendarDateWidget(kind: "ohcal.week", title: "week", family: .systemMedium)
+    CalendarNextWidget()
+    CalendarMonthWidget()
+    CalendarTodayWidget()
+    CalendarWeekWidget()
   }
 }

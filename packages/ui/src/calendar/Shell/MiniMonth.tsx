@@ -50,6 +50,8 @@ export interface MiniMonthProps {
   label?: string;
   /** The marked days of the phone month view use tighter rows than the Agenda picker. */
   compactDays?: boolean;
+  /** Mark busy days with a dot beneath the date. */
+  busyDots?: boolean;
   /** One for each row, where the setting is on; `null` leaves a row without. */
   weekNumbers?: ({ number: number; label: string } | null)[];
   onDayPress?: (id: string) => void;
@@ -75,6 +77,7 @@ export function MiniMonth({
   onWeekPress,
   takesKeys,
   compactDays,
+  busyDots,
 }: MiniMonthProps) {
   const { grid, before, after, stopId, hold, keys } = useDayKeys(days, size, takesKeys, onDayPress);
   const columns = size === "strip" && weekdays.length === 5 ? 5 : 7;
@@ -87,6 +90,7 @@ export function MiniMonth({
       className="oh-mini"
       data-size={size === "rail" ? undefined : size}
       data-compact-days={compactDays ? "" : undefined}
+      data-busy-dots={busyDots ? "" : undefined}
       data-weekdays={columns === 5 ? "" : undefined}
     >
       {head ? miniMonthHead(head, before, after) : null}

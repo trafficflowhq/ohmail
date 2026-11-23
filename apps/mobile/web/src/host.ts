@@ -59,7 +59,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
   const { setting } = facts;
   const { mailFetch } = has;
   const own = setting === "standalone";
-  const calendar = has.frame.calendar !== NONE && has.calendar !== undefined;
+  const calendar = has.frame.calendar !== NONE;
   const settings = has.mailboxWires !== undefined || calendar;
   const managesAccount = settings && (setting === "managed" || setting === "selfHosted");
   return {
