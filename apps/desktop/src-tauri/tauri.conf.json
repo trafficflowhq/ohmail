@@ -1,6 +1,6 @@
 {
   "productName": "ohmail",
-  "version": "1.0.13",
+  "version": "2.0.0",
   "identifier": "io.ohmail.desktop",
   "build": {
     "frontendDist": "../dist"
