@@ -33,6 +33,7 @@ const ConversationLetter = memo(Letter);
 
 export function Reader({ route, plan, keysHere }: PaneProps) {
   const tp = useText("place");
+  const search = useText("search");
   const readerOpen = useReaderOpen();
   /* The keyboard stood on the column's scroller when the letter it showed left: the next letter's takes it. */
   const keyboard = useRef(false);
@@ -48,7 +49,7 @@ export function Reader({ route, plan, keysHere }: PaneProps) {
       </>
     );
   /* The way back names where it goes, where the place has a word of its own. */
-  const from = tp.has(route.place) ? tp(route.place) : "";
+  const from = route.place === "search" ? search("title") : tp.has(route.place) ? tp(route.place) : "";
   return (
     <Conversation
       key={`${readerOpen}:${route.wholeThread ? "thread" : "message"}:${route.open}`}

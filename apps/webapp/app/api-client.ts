@@ -37,7 +37,7 @@ import { webLane, type LaneTicket } from "@ohmail/app-logic/session/resume-lane"
 import { clientDeclaration } from "./shell/client-declaration";
 import { RELOAD_REMEDY, noticeServerAnswered, noticeUpdateAnswer, updateAnswerSentence } from "./shell/update-answer";
 import { updateAnswerOf } from "@ohmail/client-engine";
-import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading, OnlyNamesOf, RequestOf } from "@ohmail/wire";
+import type { AnswerOf, DraftStreamFrame, AwayResponderEdit, AwayResponderSaveReading, OnlyNamesOf, RequestOf } from "@ohmail/wire";
 import type {
   ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportPendingWire, ProfileImportStatusWire,
 } from "@ohmail/app/profile-import";
@@ -154,6 +154,7 @@ interface RequestOptions {
   signal?: AbortSignal;
   /** The live grant that authorized this quote or suggestion. Checked after transport waits. */
   maySendSuggestion?: () => boolean;
+  onDraftPreview?: (text: string) => void;
   /** The confirmed account whose pane supplied this request. */
   expectedOwner?: string | null;
   expectedFamily?: string;
@@ -1139,6 +1140,37 @@ async function hearing<T>(
   }
 }
 
+/** Consume progress through the same owner-checked transport as the purchase's final answer. */
+async function readDraftStream(res: Response, preview: (text: string) => void): Promise<Response> {
+  if (!res.body) throw offlineError();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) throw offlineError();
+      buffer += decoder.decode(value, { stream: true });
+      let end: number;
+      while ((end = buffer.indexOf("\n")) !== -1) {
+        const frame = JSON.parse(buffer.slice(0, end)) as DraftStreamFrame;
+        buffer = buffer.slice(end + 1);
+        if (frame.type === "preview" && typeof frame.text === "string") {
+          preview(frame.text);
+        } else if (frame.type === "result") {
+          const headers = new Headers();
+          if (frame.retryAfter !== undefined) headers.set("Retry-After", frame.retryAfter);
+          if (frame.syncSeq !== undefined) headers.set("X-Sync-Seq", frame.syncSeq);
+          return new Response(JSON.stringify(frame.body), { status: frame.status, headers });
+        }
+      }
+    }
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
 async function attempt<T>(
   path: string,
   opts: RequestOptions = {},
@@ -1155,9 +1187,14 @@ async function attempt<T>(
   // Every ask declares it understands `410 account_erased` — see `shell/account-erased.ts` — and
   // names this build (`shell/client-declaration.ts`).
   const headers: Record<string, string> = { ...ERASED_DECLARATION, ...opts.headers, ...clientDeclaration() };
-  const expected = opts.expectedOwner ?? opts.signingOutOf;
+  const onDraftPreview = opts.onDraftPreview;
+  const draftOwner = onDraftPreview ? boundApiOwner() : null;
+  const draftFamily = draftOwner === null ? null : boundApiFamily(draftOwner);
+  if (onDraftPreview) headers.Accept = "application/x-ndjson";
+  const expected = opts.expectedOwner ?? opts.signingOutOf ?? draftOwner ?? undefined;
+  const expectedFamily = opts.expectedFamily ?? draftFamily ?? undefined;
   if (expected !== undefined) headers[EXPECTED_ACCOUNT_HEADER] = expected;
-  if (opts.expectedFamily !== undefined) headers[EXPECTED_FAMILY_HEADER] = opts.expectedFamily;
+  if (expectedFamily !== undefined) headers[EXPECTED_FAMILY_HEADER] = expectedFamily;
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (method !== "GET") {
     const csrf = csrfToken();
@@ -1193,6 +1230,18 @@ async function attempt<T>(
   // The same server answered: a "being updated" line has done its work.
   if (res.ok) noticeServerAnswered();
 
+  if (onDraftPreview && res.headers.get("content-type") === "application/x-ndjson") {
+    res = await readDraftStream(res, (text) => {
+      if (draftOwner === null || boundApiOwner() !== draftOwner || !apiOwnerHolds(path) || !sessionFamilyHolds(draftFamily)) {
+        throw ownerRefusal("mismatch");
+      }
+      if (res.headers.get(OWNER_HEADER) !== draftOwner) {
+        reResolveApiOwner();
+        throw responseNotOurs();
+      }
+      onDraftPreview(text);
+    });
+  }
   if (res.status === 204) return undefined as T;
 
   const text = await res.text();

@@ -153,6 +153,7 @@
      measures the text measures what is drawn. Where the app's editor stands its root or a plain text box here,
      that box keeps the text's air and its least height, and the room around it holds none of its own. The two
      names are said one by one: not every reader of a sheet reads a list of names inside `:has()`. */
+  .oh-composer-text[data-preview],
   .oh-composer-text:has(.oh-lettertext),
   .oh-composer-text:has(.oh-lettertext-plain) {
     padding: 0;
@@ -323,6 +324,30 @@
     transform-origin: 0 50%;
     animation: oh-composer-run calc(var(--d-pull) * 2) var(--e-move) both;
     pointer-events: none;
+  }
+
+  .oh-composer-text[data-preview] > :not(.oh-composer-preview) {
+    display: none;
+  }
+
+  .oh-composer-preview {
+    padding: var(--s3) var(--s4);
+  }
+
+  .oh-composer-preview:empty::before {
+    content: "";
+    display: block;
+    block-size: 3lh;
+    background:
+      linear-gradient(var(--off), var(--off)) 0 0.25lh / 38% 0.5lh no-repeat,
+      linear-gradient(var(--off), var(--off)) 0 1.25lh / 86% 0.5lh no-repeat,
+      linear-gradient(var(--off), var(--off)) 0 2.25lh / 64% 0.5lh no-repeat;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oh-composer[data-drafting] .oh-composer-editor::before {
+      animation: none;
+    }
   }
 
   @keyframes oh-composer-run {

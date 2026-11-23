@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, eq, desc, isNull, like, sql } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { bindDb, devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
+import { accountSettings, bindDb, changeLog, devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
 import {
   authEvents, authThrottle, credentials, familyOf, loginTokens, oauthAuthCodes, pushSubscriptions, recoveryCodes, totpSecrets,
 } from "@trafficflow/db/cloud";
@@ -131,6 +131,18 @@ async function enrollWebauthn(h: Harness, user: SessionUser): Promise<SoftwareAu
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("AuthService — registration & first factor", () => {
+  it.each([true, false])("sets the account's automatic suggestion watermark at signup when enabled (%s)", async (enabled) => {
+    const deps = makeTestAuthDeps();
+    Object.assign(deps.config, { autoSuggestAtSignup: enabled });
+    const h = await harness(deps);
+    const user = await register(h);
+    const [settings] = await h.db.select().from(accountSettings).where(eq(accountSettings.accountId, user.accountId));
+    expect(settings?.autoSuggestAt ?? null).toEqual(enabled ? h.clock.now() : null);
+    const changes = await h.db.select({ entityId: changeLog.entityId, op: changeLog.op }).from(changeLog)
+      .where(and(eq(changeLog.accountId, user.accountId), eq(changeLog.entityType, "settings")));
+    expect(changes).toEqual(enabled ? [{ entityId: user.accountId, op: "update" }] : []);
+  });
+
   it("registers an invite-gated user, gated on 2FA enrollment", async () => {
     const h = await harness();
     const user = await register(h);

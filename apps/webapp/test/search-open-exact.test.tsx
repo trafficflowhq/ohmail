@@ -28,13 +28,11 @@ describe("a search hit opens exactly the clicked message", () => {
     await screen.findByRole("button", { name: /Kiln inspection/ });
     await press(await screen.findByRole("button", { name: /Kiln delivery/ }), "the delivery result");
 
-    await waitFor(() => window.location.hash === "#/ohbox/m/clicked", "the clicked letter's Ohbox address");
-    const list = await screen.findByRole("region", { name: "Messages" });
-    const option = within(list).getByRole("option", { name: /Kiln delivery/ });
-    expect(option.getAttribute("data-id")).toBe(clicked.id);
-    expect(option.hasAttribute("data-open")).toBe(true);
-    await waitFor(() => option.hasAttribute("data-located"), "the arrival mark on the clicked row");
-    expect(within(list).getByRole("option", { name: /Kiln inspection/ }).hasAttribute("data-located")).toBe(false);
+    await waitFor(() => window.location.hash === "#/search/m/clicked?q=kiln", "the clicked letter's Search address");
+    const picked = document.querySelector('[data-hit="clicked"] .oh-row');
+    expect(picked?.hasAttribute("data-open")).toBe(true);
+    expect(document.querySelector('[data-hit="neighbor"] .oh-row')?.hasAttribute("data-open")).toBe(false);
+    expect(document.querySelector(".ob-list")).toBeNull();
     const reading = await screen.findByRole("region", { name: "Reading" });
     await within(reading).findByRole("heading", { name: "Kiln delivery" });
     expect(within(reading).queryByRole("heading", { name: "Kiln inspection" })).toBeNull();
@@ -53,15 +51,13 @@ describe("locating a folded conversation", () => {
       await mountShell("#/search", letters);
       await findResults();
       await press(await screen.findByRole("button", { name: new RegExp(letter.subject) }), "a member's result");
-      await waitFor(() => window.location.hash === `#/ohbox/m/${letter.id}`, "the member's Ohbox address");
-      const list = await screen.findByRole("region", { name: "Messages" });
-      const rows = within(list).getAllByRole("option");
-      expect(rows).toHaveLength(1);
-      const [row] = rows;
-      expect(row!.getAttribute("data-id")).toBe("lead");
-      expect(row!.getAttribute("data-ids")?.split(" ")).toEqual(expect.arrayContaining(letters.map(({ id }) => id)));
-      expect(row!.hasAttribute("data-open")).toBe(true);
-      await waitFor(() => row!.hasAttribute("data-located"), "the arrival mark on the folded row");
+      await waitFor(() => window.location.hash === `#/search/m/${letter.id}?q=kiln`, "the member's Search address");
+      const selected = document.querySelectorAll(".sr-hit .oh-row[data-open]");
+      expect(selected).toHaveLength(1);
+      expect(selected[0]?.closest("[data-hit]")?.getAttribute("data-hit")).toBe(letter.id);
+      const reading = await screen.findByRole("region", { name: "Reading" });
+      expect(Array.from(reading.querySelectorAll("[data-conv-id]"), (item) => item.getAttribute("data-conv-id")))
+        .toEqual(expect.arrayContaining(letters.map(({ id }) => id)));
       await unmountAll();
     }
   }, 20_000);

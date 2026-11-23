@@ -1408,7 +1408,12 @@ export class MessageService {
   async move(
     ctx: ServiceContext, id: string, body: MoveBody,
     /** `putBackAutoFiling` — the Screener's automatic filing undone (mail 0138), in this transaction. */
-    opts: { idempotency?: MoveIdempotency | null; putBackAutoFiling?: boolean } = {},
+    opts: {
+      idempotency?: MoveIdempotency | null;
+      putBackAutoFiling?: boolean;
+      /** A caller composing this move in a larger transaction rings these after its commit. */
+      wakeAfter?: Set<string>;
+    } = {},
   ): Promise<MoveResult | MoveRequestResult> {
     const target = this.moveTarget(body);
     const from = body.from === undefined ? null : this.validFolder(body.from);
@@ -1553,7 +1558,10 @@ export class MessageService {
     /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
        transaction this deadlocked against every other writer of the mailbox row — measured on
        real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
-    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
+    if (filed !== null) {
+      if (opts.wakeAfter) opts.wakeAfter.add(filed);
+      else await this.ringFiledMailbox(ctx, filed);
+    }
 
     return answer;
   }
@@ -1982,7 +1990,7 @@ export class MessageService {
    * ring costs ONE ROTATION, and a throw is swallowed — a committed decision must not be reported
    * as failed by the thing that was only trying to make it faster.
    */
-  private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
+  async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
     try {
       await ringFilingDoorbell(bridgeTx(ctx.db), mailboxId, ctx.now());
     } catch (err) {

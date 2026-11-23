@@ -58,10 +58,11 @@ export interface DraftOffer {
   readonly tabs: ReactNode | undefined;
   /** A draft is being written for this reply. */
   readonly drafting: boolean;
+  readonly preview?: string;
 }
 
 /** The reply's draft offer; null where the host hands no draft wire (nothing is drawn). */
-export function useDraftOffer(messageId: string): DraftOffer | null {
+export function useDraftOffer(messageId: string, forward = false): DraftOffer | null {
   const t = useText("write");
   const w = useWriting();
   const beside = useWriteBeside();
@@ -101,7 +102,7 @@ export function useDraftOffer(messageId: string): DraftOffer | null {
       : ownWords && !untouched
         ? t("draft.fromTextTitle", { cost: control.cost })
         : t("draft.title", { cost: control.cost });
-  if (!control.offered) return null;
+  if (forward || !control.offered) return null;
   return {
     control: (
       <DraftControl
@@ -118,6 +119,7 @@ export function useDraftOffer(messageId: string): DraftOffer | null {
       here && control.notice !== null ? control.notice : noCredits === true ? t("draft.noCredits") : null,
     tabs: ownTabs(t, control, texts, w.replyBody, (next) => w.onReplyBody(next)),
     drafting,
+    preview: drafting ? control.preview : undefined,
   };
 }
 
@@ -197,6 +199,7 @@ export function useLetterDraftOffer(): DraftOffer | null {
     notice,
     tabs: ownTabs(t, control, texts, body, set),
     drafting,
+    preview: drafting ? control.preview : undefined,
   };
 }
 

@@ -29,6 +29,43 @@ it("the fixture keys have the vendors' key shapes", () => {
   expect(stripeTestKey("anthropic-client-wrong-row")).toMatch(FIXTURE_SHAPES.stripeTest);
 });
 
+it("streams the structured draft body before the final answer and reports the provider's usage", async () => {
+  const encoder = new TextEncoder();
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { writer = controller; } });
+  const events = fakeFetch([() => new Response(stream, { headers: { "content-type": "text/event-stream" } })]);
+  const usage: AnthropicCallReport[] = [];
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: events.fetch, onUsage: (report) => { usage.push(report); } });
+  const drafter = makeSonnetDrafter(client, { model: "claude-haiku-5-5", stream: true });
+  const emit = (event: unknown) => writer.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  const delta = (text: string) => emit({ type: "content_block_delta", delta: { type: "text_delta", text } });
+  const previews: string[] = [];
+  let firstWord!: () => void;
+  const first = new Promise<void>((resolve) => { firstWord = resolve; });
+  const answer = drafter.draft({
+    incoming: { subject: "Question", from: "Sender", snippet: "What day?" },
+    context: { threadMessages: [], kbEntries: [] },
+  }, { onPreview(text) { previews.push(text); firstWord(); } });
+
+  emit({ type: "message_start", message: { model: "claude-haiku-5-5", usage: { input_tokens: 90 } } });
+  delta('{"body":"Hello');
+  await first;
+  expect(previews).toEqual(["Hello"]);
+  expect(usage).toEqual([]);
+  delta('\\');
+  delta('nWe can meet Monday.", "subject":"Re: Question","rationale":"From the thread"}');
+  emit({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 18 } });
+  emit({ type: "message_stop" });
+  writer.close();
+
+  expect(JSON.parse(String(events.calls[0]?.init.body))).toMatchObject({ model: "claude-haiku-5-5", stream: true });
+  expect(await answer).toEqual({
+    body: "Hello\nWe can meet Monday.", subject: "Re: Question", rationale: "From the thread",
+  });
+  expect(previews).toEqual(["Hello", "Hello\nWe can meet Monday."]);
+  expect(usage).toMatchObject([{ inputTokens: 90, outputTokens: 18, ok: true }]);
+});
+
 interface Call { url: string; init: RequestInit }
 
 /**

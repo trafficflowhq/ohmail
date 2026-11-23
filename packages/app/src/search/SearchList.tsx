@@ -8,7 +8,7 @@
  * space finishes it (`from:` and `to:` a person, `in:` a place the answer counted, `has:` files, `is:unread`) and
  * leaves the field; one met inside the words stays words. Elsewhere it is searched as words.
  */
-import { useMemo, useRef, type UIEvent } from "react";
+import { useLayoutEffect, useMemo, useRef, type UIEvent } from "react";
 import type { AddressBookEntry } from "@ohmail/client-engine";
 import { useFocusFollows } from "@ohmail/app-logic/keys";
 import {
@@ -141,6 +141,37 @@ function fieldActions(model: SearchListModel, beside: SearchBeside, people: bool
   return { typed, pickPerson, enter, typing };
 }
 
+function useSearchResultFocus(
+  openId: string | null,
+  beside: boolean,
+  scrollerRef: SearchListModel["scrollerRef"],
+  boxRef: SearchListModel["boxRef"],
+): void {
+  const previousOpen = useRef(openId);
+  useLayoutEffect(() => {
+    const before = previousOpen.current;
+    previousOpen.current = openId;
+    const scroller = scrollerRef.current;
+    if (before === openId || !scroller) return;
+    const rowOf = (id: string) =>
+      Array.from(scroller.querySelectorAll<HTMLElement>("[data-hit]"))
+        .find((hit) => hit.dataset.hit === id)
+        ?.querySelector<HTMLElement>(".oh-row");
+    const focused = scroller.ownerDocument.activeElement;
+    if (openId === null && before !== null && focused !== boxRef.current) {
+      (
+        rowOf(before) ??
+        scroller.querySelector<HTMLElement>(".sr-hit[aria-current] .oh-row") ??
+        boxRef.current
+      )?.focus({ preventScroll: true });
+    } else if (openId !== null && beside) {
+      if (focused === boxRef.current || (before !== null && focused === rowOf(before))) {
+        rowOf(openId)?.focus({ preventScroll: true });
+      }
+    }
+  }, [openId, beside, scrollerRef, boxRef]);
+}
+
 export function SearchList({ route, plan }: PaneProps) {
   const model = useSearchModel();
   const beside = useSearchBeside();
@@ -151,6 +182,7 @@ export function SearchList({ route, plan }: PaneProps) {
   const { scrollerRef } = model;
   const root = useRef<HTMLDivElement>(null);
   useFocusFollows(root, { enter: false });
+  useSearchResultFocus(route.open, plan.columns === 2, scrollerRef, model.boxRef);
   const people = model.searchBy === "people";
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const el = event.currentTarget;
@@ -182,7 +214,7 @@ export function SearchList({ route, plan }: PaneProps) {
         <ListLine>{t("mailboxTotal", { count: model.mailboxTotal })}</ListLine>
       ) : null}
     </div>
-  ) : model.length === 0 ? (
+  ) : model.length === 0 || model.found === 0 ? (
     <>
       {meant}
       <SearchEmpty model={model} beside={beside} lines={said.lines} />
@@ -208,7 +240,13 @@ export function SearchList({ route, plan }: PaneProps) {
         title={t("title")}
         below={
           <div className="sr-below" data-filter-stack="">
-            <SearchField model={model} onType={typed} onEnter={enter} named={named} />
+            <SearchField
+              model={model}
+              onType={typed}
+              onEnter={enter}
+              named={named}
+              focusOnMount={route.open === null}
+            />
             {people ? <SearchPersonRow model={model} beside={beside} /> : null}
             <SearchFilters
               model={model}

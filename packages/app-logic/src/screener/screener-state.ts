@@ -21,6 +21,7 @@ import type {
   ScreenerWaitingSenderDTO,
   UnscreenedGroupDTO,
 } from "@ohmail/wire";
+import { SCREENER_RELEASE_MOVE_MAX } from "@trafficflow/core/rule-order";
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import {
   FOLDER_OF_VIEW,
@@ -44,7 +45,7 @@ import {
   type CardReach,
   type EntityReader,
   type OhmailEngine,
-  type PressTally,
+  type PressVerdict,
   type StayVerdict,
   type ScreenerSegments,
   type UnsubscribeClaim,
@@ -85,6 +86,7 @@ import type { ToastFn } from "../press/report.js";
 import type { UndoToastFn } from "../press/undo-door.js";
 import type { ScreenerReleaseWindow } from "../press/release-window.js";
 import { UNDO_MS } from "../press/undo-window.js";
+import { browserOffline, queuedSentence } from "../press/queued-sentence.js";
 import type { Translator } from "../text/translator.js";
 import type { SpamRow } from "./spam-row.js";
 import { givenUpRowIds } from "./screener-given-up.js";
@@ -918,12 +920,12 @@ export function useScreenerState(
    * refusal. `ruled`: the release rewrites the sender's rule, so its letters go as that rule's
    * (`pressRule`) and the next decision about the sender moves them too.
    */
-  const moveAll = (ids: string[], folder: Folder, ruled: boolean): Promise<PressTally> =>
+  const moveAll = (ids: string[], folder: Folder, ruled: boolean): Promise<PressVerdict[]> =>
     Promise.all(
       ids.map((messageId) =>
         engine.mutate(releaseMove(messageId, folder, ruled)).then(pressVerdict, () => PRESS_THREW),
       ),
-    ).then(tallyVerdicts);
+    );
 
   /**
    * A release is two halves now, and the answer is their conjunction. The rule half was missing (live,
@@ -939,23 +941,24 @@ export function useScreenerState(
     ruleMutations: EngineMutation[],
     moveIds: string[],
     folder: Folder,
-  ): Promise<PressTally> => {
-    /* NOTHING TO DO IS A REFUSAL — a press that can dispatch neither half cannot change what the
-       reader sees, and one counted refusal is how that reaches the caller's own reading. */
-    if (ruleMutations.length === 0 && moveIds.length === 0) {
-      return Promise.resolve({ applied: 0, queued: 0, refused: 1, silent: 0, firstRefusal: undefined, holder: null });
+  ): Promise<PressVerdict[]> => {
+    if (ruleMutations.length === 0 && moveIds.length === 0) return Promise.resolve([PRESS_THREW]);
+    const rules = Promise.all(ruleMutations.map((m) => engine.mutate(m).then(pressVerdict, () => PRESS_THREW)));
+    return Promise.all([rules, moveAll(moveIds, folder, writesTheRule(ruleMutations))]).then(([rules, moves]) => [...rules, ...moves]);
+  };
+
+  const releaseWaitSentence = (
+    verdicts: readonly PressVerdict[], sender: string,
+  ): string => {
+    const retries = verdicts.filter((v) => v.kind === "queued" && v.wait === "retry");
+    const retry = retries.find((v) => v.kind === "queued" && v.failed) ?? retries[0];
+    if (retry?.kind === "queued") {
+      const wait = queuedSentence(retry, browserOffline());
+      return t(wait === "failing" ? "toastReleaseRetryFailing"
+        : wait === "queued" ? "toastReleaseRetryOffline" : "toastReleaseRetryUnsent", { sender });
     }
-    const rules = Promise.all(
-      ruleMutations.map((m) => engine.mutate(m).then(pressVerdict, () => PRESS_THREW)),
-    ).then(tallyVerdicts);
-    return Promise.all([rules, moveAll(moveIds, folder, writesTheRule(ruleMutations))]).then(([a, b]) => ({
-      applied: a.applied + b.applied,
-      queued: a.queued + b.queued,
-      refused: a.refused + b.refused,
-      silent: a.silent + b.silent,
-      firstRefusal: a.firstRefusal ?? b.firstRefusal,
-      holder: a.holder ?? b.holder,
-    }));
+    const { holder } = tallyVerdicts(verdicts);
+    return holder ? t("toastReleaseQueued", { sender, name: holder }) : t("toastReleaseQueuedUnknown", { sender });
   };
 
   /**
@@ -964,17 +967,13 @@ export function useScreenerState(
    * refused but something waiting is the queued sentence, which is the one this reading exists
    * for: the row stays, and it says what it is waiting on rather than reporting a release.
    */
-  const releaseSaid = (tally: PressTally, sender: ScreenerSenderDTO, segment: "screened" | "spam"): boolean => {
+  const releaseSaid = (verdicts: readonly PressVerdict[], sender: ScreenerSenderDTO, segment: "screened" | "spam"): boolean => {
+    const tally = tallyVerdicts(verdicts);
     if (tally.refused > 0) { refuseRelease(sender, segment); return false; }
     if (tally.queued > 0) {
       for (const id of refusalKeys(sender)) s.refused.add(id);
       bump();
-      toast(
-        tally.holder
-          ? t("toastReleaseQueued", { sender: senderLabel(sender), name: tally.holder })
-          : t("toastReleaseQueuedUnknown", { sender: senderLabel(sender) }),
-        { duration: UNDO_MS },
-      );
+      toast(releaseWaitSentence(verdicts, senderLabel(sender)), { duration: UNDO_MS });
       return false;
     }
     clearRefused(sender);
@@ -982,11 +981,8 @@ export function useScreenerState(
   };
 
   /**
-   * A RELEASE WITH ITS UNDO. The rule change waits in the routing window from the press and is
-   * written when it closes; the mail moves now, its reversal read before it is sent. Undo is
-   * offered once the moves landed. A refused move takes the rule change back and a wait says so,
-   * both without an offer; the rule's own answer at the close speaks only if it is a refusal.
-   * `false`: no window here.
+   * A release files the named letters and changes the sender's rule together. Undo uses the
+   * same request to restore both. Back to Waiting still holds its rule removal for Undo.
    */
   const releaseWithUndo = (
     sender: ScreenerSenderDTO, segment: "screened" | "spam", dest: "ohbox" | "reads" | "screener",
@@ -997,19 +993,55 @@ export function useScreenerState(
     const wanted = FOLDER_OF_VIEW[dest];
     const pre = engine.verbRead();
     const ruled = writesTheRule(ruleMutations);
+    const change = ruleMutations[0];
+    if (dest !== "screener" && change && (change.kind === "rule_update" || change.kind === "rule_create")) {
+      const from = segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened;
+      const prior = change.kind === "rule_update" ? pre.get<RuleDTO>("rule", change.ruleId)
+        : oneRowPerKey(pre.list<RuleDTO>("rule").filter((r) => r.kind === "sender"
+          && ruleMatchKey(r.match) === ruleMatchKey(change.match) && !r.subjectContains?.trim() && !r.bodyContains?.trim()))[0];
+      const messageIds = moveIds.slice(0, SCREENER_RELEASE_MOVE_MAX);
+      const release = {
+        messageIds, from, to: wanted,
+        ...(change.kind === "rule_create" && prior ? { existingRuleId: prior.id } : {}),
+      };
+      const reverse = { messageIds, from: wanted, to: from };
+      void engine.mutate({ ...change, release }).then((result) => {
+        const verdict = result.pendingWith
+          ? pressVerdict({ status: "awaiting_organizer", queuedWith: result.pendingWith })
+          : pressVerdict(result);
+        const ok = releaseSaid([verdict], sender, segment);
+        after?.(ok);
+        if (!ok || result.status !== "confirmed") return;
+        const undo: EngineMutation[] = prior ? [{
+          kind: "rule_update", ruleId: result.entityId ?? prior.id, destination: prior.destination, applyRetro: false,
+          keepProvenance: true,
+          ...(!prior.enabled ? { enabled: false } : {}),
+          ...(prior.provenance === "manual" ? {} : { restoreProvenance: prior.provenance }),
+          release: reverse,
+        }] : result.entityId ? [{ kind: "rule_delete", ruleId: result.entityId, release: reverse }] : [];
+        releaseWindow.toastWithUndo(sentence, undo, undo.length ? { undone: ts("toastRoutingUndoneRules") } : undefined);
+      }, () => {
+        refuseRelease(sender, segment);
+        after?.(false);
+      });
+      return true;
+    }
     const inverses = moveIds.flatMap((messageId) => inverseMutations(pre, releaseMove(messageId, wanted, ruled)));
     const address = sender.from.address;
     const held = ruleMutations.length > 0 && releaseWindow.hold({
       id: crypto.randomUUID(), seedId: sender.id, address,
       from: segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened, dest, messageIds: moveIds,
       after: (results) => {
-        const tally = tallyVerdicts(results.map(pressVerdict));
-        if (tally.refused > 0) { releaseSaid(tally, sender, segment); after?.(false); }
+        const verdicts = results.map(pressVerdict);
+        if (verdicts.some((verdict) => verdict.kind === "refused" || verdict.kind === "queued")) {
+          releaseSaid(verdicts, sender, segment);
+          after?.(false);
+        }
       },
     }).held;
-    void moveAll(moveIds, wanted, ruled).then((tally) => {
-      if (tally.refused > 0 && held) releaseWindow.cancel(address);
-      const ok = releaseSaid(tally, sender, segment);
+    void moveAll(moveIds, wanted, ruled).then((verdicts) => {
+      if (held && verdicts.some((verdict) => verdict.kind === "refused")) releaseWindow.cancel(address);
+      const ok = releaseSaid(verdicts, sender, segment);
       after?.(ok);
       if (!ok) return;
       // A jar that refused the record sent the rule at once, so no Undo is on offer.
@@ -2248,13 +2280,11 @@ export function useScreenerState(
     const move: EngineMutation = { kind: "move", messageId: id, folder: FOLDER_OF_VIEW[to], from: FOLDER_OF_VIEW.screener };
     const inverses = inverseMutations(engine.verbRead(), move);
     const sender = displayAddressee(letter.from.name, letter.from.address);
-    const tally = tallyVerdicts([await engine.mutate(move).then(pressVerdict, () => PRESS_THREW)]);
-    if (tally.silent > 0) return;
-    if (tally.refused > 0) { toast(t("toastReleaseFailed", { sender, place: t("title") }), { duration: UNDO_MS }); return; }
-    if (tally.queued > 0) {
-      toast(tally.holder
-        ? t("toastReleaseQueued", { sender, name: tally.holder })
-        : t("toastReleaseQueuedUnknown", { sender }), { duration: UNDO_MS });
+    const verdict = await engine.mutate(move).then(pressVerdict, () => PRESS_THREW);
+    if (verdict.kind === "silent") return;
+    if (verdict.kind === "refused") { toast(t("toastReleaseFailed", { sender, place: t("title") }), { duration: UNDO_MS }); return; }
+    if (verdict.kind === "queued") {
+      toast(releaseWaitSentence([verdict], sender), { duration: UNDO_MS });
       return;
     }
     const sentence = ts("toastMoved", { place: piles[to], count: 1, sender });

@@ -1064,6 +1064,7 @@ export const DE: Deck = {
   draftAiLetterLeft: "Der Entwurf liegt in den Entwürfen.",
   draftAiFailedOpaque: "Der Entwurf wurde geschrieben, ließ sich aber nicht laden. Erneutes Drücken holt denselben — es wird kein zweiter gekauft.",
   draftAiFailedOpaqueEarly: "Auf dem Server ist etwas schiefgegangen, es wurde kein Entwurf erstellt. Erneutes Drücken wiederholt diese Anfrage, und sie wird nie doppelt berechnet.",
+  draftAiCreditsUsed: "Der Entwurf wurde abgebrochen. Deine Punkte wurden verbraucht.",
   draftAiCreditsReturned: "Das hat nicht geklappt. Deine Punkte sind zurück.",
   draftAiCreditsOwed: "Das hat nicht geklappt. Deine Punkte kommen zurück.",
   draftAiDeclined: "Das Modell hat es abgelehnt, diese Antwort zu entwerfen.",

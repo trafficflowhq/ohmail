@@ -928,6 +928,7 @@ export interface ApiDeps {
   sessionDb?: () => UnboundDb;
   now: () => Date;
   requestId: string;
+  onDraftPreview?: (text: string) => void;
   /**
    * WHICH RUN OF A LOSSY STORE THIS HOST IS SERVING — the desktop sidecar's local PGlite states
    * one; the hosted Postgres and the phone's SQLite state nothing, because neither can lose a row

@@ -42,7 +42,7 @@ function planLine(facts: StorageFacts, size: (bytes: number) => string, locale: 
       date: storageDayName(facts.limitDropsAt, locale),
     };
   }
-  return { kind: "keeps", limit: size(facts.limitBytes), plan: facts.offer?.current.plan ?? null };
+  return { kind: "keeps", limit: size(facts.limitBytes), plan: facts.offer?.current?.plan ?? null };
 }
 
 /** The bar to scale: whichever is largest of what is used, the limit and what the mail is expected to need. */
@@ -78,11 +78,11 @@ function barOf(facts: StorageFacts, size: (bytes: number) => string): StorageFig
 
 /** The plans with their room, the fit and the add-on, each amount said for the offer's interval. */
 function plansOf(offer: StorageOffer, size: (bytes: number) => string, say: StorageSaying): StorageFigures["plans"] {
-  const fitChanges = storageFitIsChange(offer);
+  const fit = storageFitIsChange(offer) ? offer.fit : null;
   const price = (amount: number) => say.price(amount, offer);
   return {
     lines: offer.plans.map((p): StoragePlan => {
-      const fitted = fitChanges && offer.fit.plan === p.plan;
+      const fitted = fit?.plan === p.plan ? fit : null;
       const extra = fitted ? storageFitExtraBytes(offer) : null;
       return {
         plan: p.plan,
@@ -90,11 +90,11 @@ function plansOf(offer: StorageOffer, size: (bytes: number) => string, say: Stor
         letters: estimatedEmails(p.roomBytes),
         mailboxes: p.mailboxes,
         price: price(p.amount),
-        tag: fitted && offer.fit.keepsAll ? "keepsAll" : p.plan === offer.current.plan ? "yours" : null,
+        tag: fitted?.keepsAll ? "keepsAll" : p.plan === offer.current?.plan ? "yours" : null,
         fit:
-          extra === null
+          extra === null || fitted === null
             ? null
-            : { extra: `+${size(extra)}`, room: size(offer.fit.roomBytes), price: price(offer.fit.amount) },
+            : { extra: `+${size(extra)}`, room: size(fitted.roomBytes), price: price(fitted.amount) },
       };
     }),
     addon:
@@ -104,13 +104,13 @@ function plansOf(offer: StorageOffer, size: (bytes: number) => string, say: Stor
             unit: `+${size(offer.addon.unitBytes)}`,
             letters: estimatedEmails(offer.addon.unitBytes),
             most: offer.addon.maxUnits,
-            atLimit: offer.current.addonUnits >= offer.addon.maxUnits,
+            atLimit: offer.current !== null && offer.current.addonUnits >= offer.addon.maxUnits,
             price: say.price(offer.addon.amount, {
               currency: offer.currency,
               interval: offer.addon.interval ?? offer.interval,
             }),
           },
-    mayChange: offer.canChange,
+    mayChange: offer.canChange && offer.current !== null,
   };
 }
 

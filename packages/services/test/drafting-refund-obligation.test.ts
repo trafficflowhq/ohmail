@@ -6,7 +6,7 @@ import { accounts, mailboxes, messages, clientIdempotencyKey, UNMETERED_ACCESS }
 import type { RefundObligation, RefundObligationPort } from "@trafficflow/db";
 import { DraftingService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
-import { makeSonnetDrafter, type AnthropicLike, type DraftPort } from "@trafficflow/core";
+import { ModelDeclinedError, makeSonnetDrafter, type AnthropicLike, type DraftPort } from "@trafficflow/core";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 
 /**
@@ -178,6 +178,30 @@ describe("DraftingService — the model declined the draft", () => {
     usage: { input_tokens: 900, output_tokens: 0 },
   }) } } as AnthropicLike;
   const decliningDrafter: DraftPort = makeSonnetDrafter(refusing);
+
+  it("keeps the charge when the model runs out of tokens after showing draft words", async () => {
+    const { ctx, messageId } = await setup();
+    const credits = fakeSpendPort();
+    credits.exclusive();
+    const obligations = fakeObligations();
+    const delivered: string[] = [];
+    const drafter: DraftPort = {
+      async draft(_input, call) {
+        call?.onPreview?.("Here are the first words.");
+        throw new ModelDeclinedError("max_tokens", null);
+      },
+    };
+
+    const err = await svc.draftFromMessage(ctx, messageId, {
+      drafter, credits, obligations, attemptKey, onPreview: (text) => delivered.push(text),
+    }).catch((e: unknown) => e);
+    expect(delivered).toEqual(["Here are the first words."]);
+    expect(credits.releases.map((release) => release.refund)).toEqual([false]);
+    expect(obligations.owed).toEqual([]);
+    expect(err).toMatchObject({
+      code: "ai_draft_declined", httpStatus: 422, retryable: false, details: { credits: "used" },
+    });
+  });
 
   it("the refund LANDS: 422 `ai_draft_declined`, credits returned, not retryable", async () => {
     const { ctx, accountId, messageId } = await setup();

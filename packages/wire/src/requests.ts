@@ -111,7 +111,17 @@ export interface FolderRenameBody { name: string }
 
 // ── rules ───────────────────────────────────────────────────────────────────
 
+/** The held letters to file with a Screener sender-rule edit. */
+export interface ScreenerRuleRelease {
+  messageIds: string[];
+  from: Folder;
+  to: Folder;
+  /** The sender rule a domain exception will replace, as seen at the press. */
+  existingRuleId?: string;
+}
+
 export interface CreateRuleBody {
+  release?: ScreenerRuleRelease;
   kind: string;
   match: string;
   destination: string;

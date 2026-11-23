@@ -22,7 +22,14 @@ import { useComposer } from "@ohmail/app-logic/writing/composer-record";
 import { useWriting } from "../write/above.js";
 import { avatarHue, rowAddress, rowStamp, senderName, tagsOfMessage } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { useFrame, usePaletteOffers, useResumingReader, useSelectionBar } from "../frame/commands.js";
+import { fragmentOf, routeOf } from "../frame/route.js";
+import {
+  useFrame,
+  useOhboxSearchPosition,
+  usePaletteOffers,
+  useResumingReader,
+  useSelectionBar,
+} from "../frame/commands.js";
 import { usePlaceLiveArgs } from "../frame/place-live.js";
 import { useRailDrag } from "../frame/rail-drag.js";
 import { useOwnAddresses, usePress } from "../frame/room.js";
@@ -186,11 +193,31 @@ function useOhboxTagOffers(live: ReturnType<typeof useOhboxLive>): void {
   );
 }
 
+function useOhboxSearchScroll(scroller: ReturnType<typeof useOhboxLive>["model"]["listScrollerRef"]): void {
+  const { host, route } = useFrame();
+  const address = host.device.address;
+  const memory = useOhboxSearchPosition();
+  const here = useRef(fragmentOf(route));
+  here.current = fragmentOf(route);
+  useLayoutEffect(() => {
+    const list = scroller.current;
+    if (!list) return;
+    const saved = memory.current;
+    memory.current = null;
+    if (saved?.address === here.current) list.scrollTop = saved.top;
+    return () => {
+      if (routeOf(address.read()).place === "search")
+        memory.current = { address: here.current, top: list.scrollTop };
+    };
+  }, [address, memory, scroller]);
+}
+
 function useOhboxListFocus(
   model: ReturnType<typeof useOhboxLive>["model"],
   page: ReturnType<typeof usePage>,
 ) {
   const scroller = model.listScrollerRef;
+  useOhboxSearchScroll(scroller);
   useLayoutEffect(() => page.from(scroller), [page, scroller]);
   /* The selection's bar stands at the list's foot while rows are picked: on a phone the frame draws no dock over it. */
   useSelectionBar(model.pickedRowCount > 0);

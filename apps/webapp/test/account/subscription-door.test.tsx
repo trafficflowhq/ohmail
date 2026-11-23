@@ -204,6 +204,20 @@ describe("the press over the real filling", () => {
     expect(server.sent).toEqual([]);
   });
 
+  it.each([
+    { interval: "year", amount: 12_000, price: "$120/year" },
+    { interval: "month", amount: 1_000, price: "$10/month" },
+  ])("shows the storage unit at $price on a yearly plan", async ({ interval, amount, price }) => {
+    access = open({
+      ...NEAR,
+      offer: { ...OFFER, interval: "year", addon: { ...OFFER.addon, interval, amount } },
+    });
+    await mounted(() => {}, "account-subscription");
+    await settle();
+    expect(screen.getByText(price)).toBeTruthy();
+    expect(screen.getByRole("button", { name: en.settings.storageAddStorage })).toBeTruthy();
+  });
+
   it("makes no address by being drawn, and asks nothing to draw the pane", async () => {
     await mounted();
     expect(screen.getByRole("button", { name: en.settings.subscriptionManage })).toBeTruthy();

@@ -85,7 +85,7 @@ function plansOf(offer: StorageOffer, locale: string): PlansAnswer {
         year: offer.interval === "year" ? price(line.amount) : null,
       },
     })),
-    current: {
+    current: offer.current === null ? null : {
       plan: offer.current.plan,
       interval: offer.interval,
       addonUnits: offer.current.addonUnits,

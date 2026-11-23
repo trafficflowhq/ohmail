@@ -36,8 +36,9 @@ describe("the suggest run's progress bar", () => {
     mount({}, running({ done: 3, total: 40 }));
     expect(amounts()).toEqual([["3", "40"]]);
     expect(tracks()[0]?.getAttribute("aria-hidden")).toBe("true");
-    const ask = screen.getByRole("dialog", { name: "How many waiting senders to suggest for" });
-    expect(within(ask).getByText("3 of 40 suggested…").getAttribute("role")).toBe("status");
+    const tools = screen.getByRole("group", { name: "Act on all waiting senders" });
+    expect(within(tools).getByText("3 of 40 suggested…").getAttribute("role")).toBe("status");
+    expect(screen.queryByRole("dialog", { name: "How many waiting senders to suggest for" })).toBeNull();
   });
 
   it("draws nothing when the run is not in flight", () => {

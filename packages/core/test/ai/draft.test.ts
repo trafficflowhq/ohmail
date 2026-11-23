@@ -180,6 +180,27 @@ describe("a declined draft is thrown as its own class", () => {
 });
 
 describe("makeSonnetDrafter — response parsing", () => {
+  it("keeps line breaks and at most one blank line between real paragraphs", async () => {
+    const body = "Hello,\r\n\r\nFirst line.\r\n\r\nSecond line.\r\n\r\nThanks,\r\n\r\nSam";
+    const loose = await makeSonnetDrafter(fakeClient(JSON.stringify({ body }))).draft(INPUT);
+    expect(loose.body).toBe("Hello,\nFirst line.\nSecond line.\nThanks,\nSam");
+
+    const grouped = await makeSonnetDrafter(fakeClient(JSON.stringify({
+      body: "Hello,\nFirst line.\n\n \nNext paragraph.\nThanks,\nSam",
+    }))).draft(INPUT);
+    expect(grouped.body).toBe("Hello,\nFirst line.\n\nNext paragraph.\nThanks,\nSam");
+  });
+
+  it("preserves blank lines around one-line paragraphs", async () => {
+    const body = [
+      "Hi Anna,",
+      "Thanks for sending the contract. I have read it and the proposed terms look right to me.",
+      "I will sign it on Monday and send it back the same day.",
+      "Best, Sam",
+    ].join("\n\n");
+    expect((await makeSonnetDrafter(fakeClient(JSON.stringify({ body }))).draft(INPUT)).body).toBe(body);
+  });
+
   it("parses a structured-output text block into a DraftResult and issues one create", async () => {
     const client = fakeClient(JSON.stringify({
       subject: "Re: Invoice question", body: "Payment is due Net 30.", rationale: "grounded in KB payment terms",

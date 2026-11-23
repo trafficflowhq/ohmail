@@ -185,11 +185,6 @@ describe("the decision: a message parked in a bottom pile opens in the reader", 
 
 describe("the arrival: the shell locates the row it navigated to", () => {
   it("every mounted Search destination receives the selected row or letter", () => {
-    const search = read("../../../packages/app-logic/src/search/live-open.ts");
-    expect(search).toMatch(/case "ohbox":[\s\S]*?place: "ohbox", open: target\.id/);
-    expect(search).toMatch(/case "stream":[\s\S]*?"news" : "receipts", open: target\.id/);
-    expect(search).toMatch(/case "screener":[\s\S]*?open: target\.letter \?\? target\.row/);
-    expect(search).toMatch(/commands\.go\(there, \{ entered: true \}\)/);
     expect(read("../../../packages/app/src/ohbox/Seat.tsx")).toContain("args.entered.letter");
     expect(read("../../../packages/app-logic/src/streams/live.ts"))
       .toMatch(/useTakeEntered\(\s*entered,[\s\S]*?id === model\.openId/);
@@ -246,9 +241,9 @@ describe("the Search arrival wash in the mounted Ohbox", () => {
     await settle();
     const hit = screen.getAllByRole("listitem").find((item) => item.dataset.hit === "b")!;
     await click(within(hit).getByRole("button", { name: /Invoice b/ }), "the second hit");
-    expect(window.location.hash).toBe("#/ohbox/m/b");
-    expect(rowOf(document, "b")?.hasAttribute("data-located")).toBe(true);
-    expect(rowOf(document, "a")?.hasAttribute("data-located")).toBe(false);
+    expect(window.location.hash).toBe("#/search/m/b?q=invoice");
+    expect(document.querySelector('[data-hit="b"] .oh-row[data-open]')).not.toBeNull();
+    expect(rowOf(document, "b")).toBeNull();
 
     await goTo("history");
     await goTo("ohbox/m/b");

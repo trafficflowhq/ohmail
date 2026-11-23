@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
   liveAccountResponse,
 } from "./fixtures/live-walk-shell";
 import {
@@ -127,7 +127,7 @@ class World {
       { status: 200, headers: { "content-type": "application/json", "X-Sync-Seq": String(this.seq) } });
   }
 
-  patchRule(id: string, destination: string): Response {
+  patchRule(id: string, destination: string, release?: { messageIds: string[]; to: string }): Response {
     if (this.refuseRulePatch) {
       return new Response(JSON.stringify({ error: { code: "forbidden", message: "no" } }),
         { status: 403, headers: { "content-type": "application/json" } });
@@ -136,6 +136,14 @@ class World {
     if (!r) {
       return new Response(JSON.stringify({ error: { code: "not_found", message: "rule not found" } }),
         { status: 404, headers: { "content-type": "application/json" } });
+    }
+    if (release && this.refuseMove) {
+      return new Response(JSON.stringify({ error: { code: "conflict", message: "no" } }),
+        { status: 409, headers: { "content-type": "application/json" } });
+    }
+    for (const id of release?.messageIds ?? []) {
+      this.posts.push(`move ${id} → ${release!.to}`);
+      this.move(id, release!.to);
     }
     r.destination = destination;
     this.log.push({ type: "rule", op: "update", id, seq: ++this.seq, updatedAt: ISO, entity: this.ruleEntityOf(r) });
@@ -198,9 +206,12 @@ function installWorld(): void {
     }
     const rl = /\/rules\/([^/?]+)$/.exec(url);
     if (rl && method === "PATCH") {
-      const destination = (JSON.parse(String(init?.body ?? "{}")) as { destination?: string }).destination ?? "";
+      const { destination, release } = JSON.parse(String(init?.body ?? "{}")) as {
+        destination: string; release?: { messageIds: string[]; to: string };
+      };
       w.patches.push(`rule ${rl[1]} → ${destination}`);
-      return w.patchRule(rl[1]!, destination);
+      if (w.moveDelayMs > 0) await new Promise((r) => setTimeout(r, w.moveDelayMs));
+      return w.patchRule(rl[1]!, destination, release);
     }
     if (rl && method === "DELETE") {
       w.deletes.push(`rule ${rl[1]}`);
@@ -258,9 +269,6 @@ describe("releasing a sender a RULE holds in Spam", () => {
     releaseScreenerRow(c, "ohbox");
     await tick(200);
 
-    // The rule change waits out the Undo offer, and is written when it closes.
-    expect(w.patches, "the rule was changed before the Undo offer closed").toEqual([]);
-    await tick(9000);
     // The DURABLE half: the deny rule now points at the Ohbox. Without this the projection puts
     // every moved message straight back into Spam, and future mail keeps arriving quarantined —
     // deny outranks allow at equal priority, so a second rule could never have won.
@@ -308,9 +316,6 @@ describe("releasing a sender a RULE holds in Spam", () => {
     releaseScreenerRow(c, "ohbox");
     await tick(200);
 
-    // The rule change waits out the Undo offer, and is written when it closes.
-    expect(w.patches, "the rule was changed before the Undo offer closed").toEqual([]);
-    await tick(9000);
     expect(w.patches, "no retarget was even attempted").toEqual([`rule ${SPAM_RULE} → INBOX`]);
     expect(rowIds(c), "the refused release dropped the row anyway").toContain(REP);
     expect(c.textContent, "the returned row carries no refusal note").toContain("Not saved");
@@ -333,11 +338,17 @@ describe("the release's Undo offer and its moves", () => {
     releaseScreenerRow(c, "ohbox");
     await tick(3200);
     expect(toastText(), "no Undo offer once the move landed").toContain("Undo");
-    // Past the press's own window but inside the offer's: the rule change is still held.
-    await tick(6000);
-    expect(w.patches, "the window closed under a live Undo offer").toEqual([]);
-    await tick(3000);
     expect(w.patches).toEqual([`rule ${SPAM_RULE} → INBOX`]);
+    // Inside the offer's window even though the time since the original press exceeds it.
+    await tick(6000);
+    await act(() => {
+      const report = document.querySelector('.fr-report [role="status"]:not([data-leaving])')!;
+      (report.querySelector("button") as HTMLElement).click();
+    });
+    await tick(3200);
+    expect(w.patches).toEqual([`rule ${SPAM_RULE} → INBOX`, `rule ${SPAM_RULE} → ${QUARANTINE}`]);
+    expect(w.rules.get(SPAM_RULE)?.destination).toBe(QUARANTINE);
+    expect(w.msgs.get(QUARANTINED)?.folder).toBe(QUARANTINE);
   }, 30000);
 
   it("a refused move offers no Undo, and the rule change is never written", async () => {
@@ -349,7 +360,9 @@ describe("the release's Undo offer and its moves", () => {
     expect(toastText(), "no toast reported the refusal").toContain("could not be saved");
     expect(toastText(), "an Undo was offered over a release that did not happen").not.toContain("Undo");
     await tick(9000);
-    expect(w.patches, "a release whose move was refused still changed the rule").toEqual([]);
+    expect(w.patches).toEqual([`rule ${SPAM_RULE} → INBOX`]);
+    expect(w.rules.get(SPAM_RULE)?.destination).toBe(QUARANTINE);
+    expect(w.msgs.get(QUARANTINED)?.folder).toBe(QUARANTINE);
     expect(rowIds(c)).toContain(REP);
   }, 30000);
 });
@@ -373,9 +386,6 @@ describe("releasing a sender a RULE holds in Screened out", () => {
     releaseScreenerRow(c, "ohbox");
     await tick(200);
 
-    // The rule change waits out the Undo offer, and is written when it closes.
-    expect(w.patches, "the rule was changed before the Undo offer closed").toEqual([]);
-    await tick(9000);
     expect(w.patches, "the screen-out rule was not retargeted").toEqual(["rule rule-screenout → INBOX"]);
     expect(w.posts, "the release moved mail the rule change already covers").toEqual([`move s-filed → INBOX`]);
     expect(rowIds(c)).not.toContain("s-rep");

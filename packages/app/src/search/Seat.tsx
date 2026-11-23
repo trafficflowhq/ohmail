@@ -10,20 +10,16 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  useSearchLive,
-  type SearchBy,
-  type SearchLiveOwn,
-  type SearchScreenerRow,
-} from "@ohmail/app-logic/search";
+import { useSearchLive, type SearchBy, type SearchLiveOwn } from "@ohmail/app-logic/search";
 import { displayTime, PLACE_LABEL, placeLabel } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useFrame, useSearchQuery } from "../frame/commands.js";
+import { ListMoveContext, type ListMove } from "@ohmail/app-logic/reading";
 import { usePlaceVerbs } from "@ohmail/app-logic/place-list";
 import { usePlaceListOwn } from "../place-list/own.js";
+import { useRoomHolds } from "../frame/room.js";
 import { usePlaceLiveArgs } from "../frame/place-live.js";
 import { NONE } from "../host/index.js";
-import { useScreener } from "../screener/contract.js";
 import { useText, useTimeZone } from "../text/index.js";
 import { useCalendarMatches } from "../calendar/mail-search.js";
 import type { SearchBeside } from "./beside.js";
@@ -55,13 +51,11 @@ function useSearchBy(by: SearchBy | (() => Promise<SearchBy>)): SearchBy {
 function useOwn(): SearchLiveOwn {
   const { host, commands } = useFrame();
   const rememberedQuery = useSearchQuery();
+  const holds = useRoomHolds();
   const t = useText("search");
   const shortcuts = useText("shortcuts");
   const boxRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLElement>(null);
-  /* The Screener's one model, as the ground stands it: the row that speaks for a sender, read at the press. */
-  const screener = useScreener();
-  const places = host.features.places;
   const supply = host.capabilities.searchBy;
   const searchBy = useSearchBy(typeof supply === "object" ? supply.by : supply);
   const junkWire = host.wires.junk !== NONE;
@@ -72,6 +66,7 @@ function useOwn(): SearchLiveOwn {
       t,
       shortcuts,
       rememberedQuery,
+      holds,
       exit: commands.closeSearch,
       boxRef,
       scrollerRef,
@@ -79,15 +74,8 @@ function useOwn(): SearchLiveOwn {
       searchBy,
       junkWire,
       readMailboxTotal,
-      screenerRows: (segment): readonly SearchScreenerRow[] =>
-        segment === "waiting"
-          ? screener.waiting
-          : segment === "screened"
-            ? screener.screenedOut
-            : screener.spam.map((r) => r.sender),
-      handed: (place) => places[place] !== NONE,
     }),
-    [t, shortcuts, rememberedQuery, commands, zone, searchBy, junkWire, readMailboxTotal, screener, places],
+    [t, shortcuts, rememberedQuery, holds, commands, zone, searchBy, junkWire, readMailboxTotal],
   );
 }
 
@@ -96,7 +84,9 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
   useSwitchEnded(route, true);
   const t = useText("search");
   const args = usePlaceLiveArgs();
-  const live = useSearchLive(args, useOwn());
+  const own = useOwn();
+  const live = useSearchLive(args, own);
+  const heldPlaces = own.holds.places;
   const { model, archiveHit, now, placeOf, junk, junkReadable, people } = live;
   const { length, slotAt } = model;
   const events = useCalendarMatches();
@@ -109,6 +99,11 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
     return rows;
   }, [length, slotAt]);
   const { verbs } = usePlaceVerbs(args, usePlaceListOwn(), surface);
+  const { onMessageAction } = verbs;
+  const move: ListMove = useMemo(
+    () => (message, destination) => onMessageAction(`move:${destination}`, message, "letter"),
+    [onMessageAction],
+  );
   const beside: SearchBeside = useMemo(
     () => ({
       selection: { rows: surface, verbs },
@@ -118,6 +113,8 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
         stamp: (m) => displayTime(m, now),
         /* THE PLACE, NOT THE FOLDER: a letter consent keeps in History is said to be there. */
         place: (m) => {
+          const filed = heldPlaces.get(m.id);
+          if (filed !== undefined) return placeLabel(filed);
           const known = placeOf?.has(m.id) === true;
           const presented = known ? placeOf!.get(m.id)! : m.folder;
           return known && presented === null ? t("hitHistory") : placeLabel(presented ?? m.folder);
@@ -131,11 +128,11 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
       events,
       go: { address: (address) => commands.go({ place: "address", sub: address }) },
     }),
-    [now, placeOf, t, junk, junkReadable, plan.pointer, people, events, commands, surface, verbs],
+    [now, placeOf, heldPlaces, t, junk, junkReadable, plan.pointer, people, events, commands, surface, verbs],
   );
   return (
     <SearchAbove model={model} archiveHit={archiveHit} beside={beside} blank={blankOf(model, t)}>
-      {children}
+      <ListMoveContext.Provider value={move}>{children}</ListMoveContext.Provider>
     </SearchAbove>
   );
 }

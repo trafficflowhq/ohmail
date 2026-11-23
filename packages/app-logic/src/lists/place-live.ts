@@ -64,7 +64,14 @@ export interface PlaceLiveCommands {
    * To another place, or to this one under another word. `entered`: the letter the target names is opened as
    * entered (a hit a person chose), which the place that lists it takes once from its own record's `entered`.
    */
-  readonly go: (to: PlaceLiveTarget, how?: { readonly entered?: true }) => void;
+  readonly go: (
+    to: PlaceLiveTarget,
+    how?: {
+      readonly entered?: true;
+      readonly replace?: true;
+      readonly history?: "preview" | "dismiss-preview";
+    },
+  ) => void;
   /** Opens a letter of this place beside or over its list; `null` closes the open one. */
   readonly open: (letter: string | null, how?: "replace", wholeThread?: true) => void;
   /** To a new letter. */

@@ -1,5 +1,5 @@
 /** The browser's fragment is the frame address on web, desktop, paired and phone. */
-import type { HostAddress } from "../device.js";
+import type { AddressMark, HostAddress } from "../device.js";
 import { historyPosition, type EntryPosition } from "./history-position.js";
 import { leaveHold } from "../leave-hold.js";
 
@@ -9,14 +9,20 @@ function writeFragment(
   position: ReturnType<typeof historyPosition>,
   next: string,
   how: "push" | "replace",
-  mark?: "closed" | "open-dialog" | "dismiss-dialog",
+  mark?: AddressMark,
 ): EntryPosition {
   if (how === "push") {
+    const [opener] = window.location.hash.split("?", 1);
     const previous = position.current();
     window.location.hash = next;
     const current = position.pushed(previous);
-    if (mark === "closed" || mark === "open-dialog") {
-      const flag = mark === "closed" ? { ohmailReaderClosed: true } : { ohmailOpenedDialog: true };
+    if (mark === "closed" || mark === "open-dialog" || mark === "preview") {
+      const flag =
+        mark === "preview"
+          ? { ohmailPreviewFrom: opener }
+          : mark === "closed"
+            ? { ohmailReaderClosed: true }
+            : { ohmailOpenedDialog: true };
       window.history.replaceState({ ...window.history.state, ...flag }, "");
       position.returned(current);
     }
@@ -24,9 +30,20 @@ function writeFragment(
   }
   const current = position.current();
   const state = window.history.state;
-  if (mark === "closed" || state?.ohmailReaderClosed || state?.ohmailOpenedDialog) {
-    const { ohmailReaderClosed: _reader, ohmailOpenedDialog: _dialog, ...rest } = state ?? {};
+  if (
+    mark === "closed" ||
+    state?.ohmailReaderClosed ||
+    state?.ohmailOpenedDialog ||
+    state?.ohmailPreviewFrom
+  ) {
+    const {
+      ohmailReaderClosed: _reader,
+      ohmailOpenedDialog: _dialog,
+      ohmailPreviewFrom,
+      ...rest
+    } = state ?? {};
     if (mark === "closed") rest.ohmailReaderClosed = true;
+    if (mark === "preview" && ohmailPreviewFrom !== undefined) rest.ohmailPreviewFrom = ohmailPreviewFrom;
     window.history.replaceState(rest, "", next);
   } else window.history.replaceState(state, "", next);
   position.returned(current);
@@ -58,6 +75,7 @@ export function fragmentAddress(window: Window): HostAddress {
   let returning: { delta: number; approved: boolean } | null = null;
   let holding = false;
   const dismissDialog = dialogBack(window);
+  const dismissPreview = previewBack(window, position);
   const hold = leaveHold((held) => {
     holding = held;
     if (held) {
@@ -136,9 +154,10 @@ export function fragmentAddress(window: Window): HostAddress {
     }
   }
 
-  function write(next: string, how: "push" | "replace", mark?: "closed" | "open-dialog" | "dismiss-dialog") {
+  function write(next: string, how: "push" | "replace", mark?: AddressMark) {
     if (heldBefore(next, () => write(next, how, mark))) return;
     if (mark === "dismiss-dialog" && dismissDialog()) return;
+    if (mark === "dismiss-preview" && dismissPreview(next)) return;
     if (window.location.hash === next) return;
     if (holding) standing = next;
     const current = writeFragment(window, position, next, how, mark);
@@ -177,6 +196,36 @@ function dialogBack(window: Window): () => boolean {
           pending = false;
         },
         { once: true },
+      );
+      window.history.back();
+    }
+    return true;
+  };
+}
+
+/** Keep the latest Search words on the list entry when Escape unwinds the preview. */
+function previewBack(
+  window: Window,
+  position: ReturnType<typeof historyPosition>,
+): (next: string) => boolean {
+  let pending = false;
+  return (next) => {
+    const opener = window.history.state?.ohmailPreviewFrom;
+    if (typeof opener !== "string" || window.history.length <= 1) return false;
+    if (!pending) {
+      pending = true;
+      window.addEventListener(
+        "popstate",
+        () => {
+          pending = false;
+          const hash = window.location.hash;
+          if (hash !== next && hash.split("?", 1)[0] === opener) {
+            const current = position.arrived();
+            window.history.replaceState(window.history.state, "", next);
+            if (current) position.returned(current);
+          }
+        },
+        { capture: true, once: true },
       );
       window.history.back();
     }

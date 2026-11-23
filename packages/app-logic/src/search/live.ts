@@ -11,14 +11,15 @@
  * What only a file of `packages/app` can read (`own`): the words, the field and the scroller, what the
  * host's server takes, the Screener's rows, which places the host hands.
  *
- * A RESULT OPENS WHERE IT IS PRESENTED (`live-open.ts`), entered, through the frame's commands: never spelled here.
+ * A result opens in Search through the frame, which keeps the list mounted.
  * The question asked starts the search mark (`beginSearch`), which the device's first paint ends.
  */
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import { type AddressBookEntry, type SearchHit } from "@ohmail/client-engine";
+import type { AddressBookEntry, SearchHit } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 import { useConsent } from "../consent/consent-row.js";
 import { usePartition } from "../consent/partition.js";
-import { useDemoMode, useDerivedVersion, useEngine } from "../engine/context.js";
+import { useDemoMode, useEngine } from "../engine/context.js";
 import { useZoneNav } from "../keys/zone-nav.js";
 import { junkFolderSaid } from "../lists/folders.js";
 import type { PlaceLiveArgs } from "../lists/place-live.js";
@@ -29,12 +30,13 @@ import { usePresented } from "../reading/presented-mirror.js";
 import { useDayClock } from "../session/day-clock.js";
 import { beginSearch } from "../session/ui-vitals.js";
 import type { Translator } from "../text/translator.js";
-import { useSearchOpen, type SearchOpenOwn } from "./live-open.js";
+import { useSearchOpen } from "./live-open.js";
 import { useSearchList } from "./search-list.js";
 import type { SearchListInput, SearchListModel } from "./types.js";
 
 /** What only Search's seat can read: the words, the field and the scroller, the host's answers. */
-export interface SearchLiveOwn extends SearchOpenOwn {
+export interface SearchLiveOwn {
+  readonly holds: NonNullable<SearchListInput["holds"]>;
   readonly rememberedQuery: { current: string };
   readonly exit: () => void;
   /** Search's own words (`search`), which its keys are listed under too. */
@@ -75,19 +77,40 @@ export function useSearchLive(args: PlaceLiveArgs, own: SearchLiveOwn): SearchLi
   const { foldersEnabled } = useConsent(); // throws where no ground stands above
   const { mailboxes } = useMailState();
   const now = useDayClock(null, own.zone);
-  const [query, setQuery] = useState(() => own.rememberedQuery.current);
+  const openId = args.route.open;
+  const linkedQuery = args.route.words.q;
+  const [typed, setQuery] = useState(() => linkedQuery ?? own.rememberedQuery.current);
+  const query = linkedQuery ?? typed;
+  useEffect(() => {
+    if (linkedQuery === undefined) return;
+    own.rememberedQuery.current = linkedQuery;
+    setQuery(linkedQuery);
+  }, [linkedQuery, own.rememberedQuery]);
+  const replaceWords = useStableCallback((words: PlaceLiveArgs["route"]["words"]) => {
+    args.commands.go(
+      { ...args.route, words },
+      { replace: true, history: openId === null ? undefined : "preview" },
+    );
+  });
   const onQuery = useStableCallback((q: string) => {
     beginSearch();
     own.rememberedQuery.current = q;
     setQuery(q);
+    if (linkedQuery !== undefined || openId !== null) {
+      replaceWords({ ...args.route.words, q });
+    }
   });
   const placeOf = consentView?.placeOf ?? null;
   const [carried, carry] = useState<SearchHit["message"] | null>(null);
-  const openId = args.route.open;
   useEffect(() => {
     carry((hit) => (hit?.id === openId ? hit : null));
   }, [openId]);
-  const onOpen = useSearchOpen(args, { engine, presented, placeOf, foldersEnabled, now }, own, carry);
+  const onOpen = useSearchOpen(
+    args,
+    (id) => presented.get<EngineMessage>("message", id),
+    (id) => engine.messageIsGone(id),
+    carry,
+  );
   const people = usePeople(presented, ownAddresses);
   const model = useSearchList({
     engine,
@@ -95,6 +118,14 @@ export function useSearchLive(args: PlaceLiveArgs, own: SearchLiveOwn): SearchLi
     query,
     onQuery,
     onOpen,
+    onRefine: replaceWords,
+    linkWords: args.route.words,
+    openId,
+    holds: own.holds,
+    walkPreview: args.plan.columns === 2,
+    closePreview: () => args.commands.open(null, "replace"),
+    dismissPreview: () =>
+      args.commands.go({ ...args.route, open: null }, { replace: true, history: "dismiss-preview" }),
     onExit: own.exit,
     boxRef: own.boxRef,
     scrollerRef: own.scrollerRef,
@@ -104,7 +135,14 @@ export function useSearchLive(args: PlaceLiveArgs, own: SearchLiveOwn): SearchLi
     people,
   });
   /* Search's keys are inert where the rail holds the keyboard. */
-  useZoneNav(own.shortcuts, {});
+  useZoneNav(own.shortcuts, {
+    listFocusSelector: ".sr-hit[aria-current] .oh-row",
+    reader: {
+      selector: ".fr-reading [data-reading-scroll]",
+      focusSelector: ".fr-reading",
+      disabled: openId === null,
+    },
+  });
   const junk = useMemo(() => junkFolderSaid(mailboxes ?? []), [mailboxes]);
   return {
     model,

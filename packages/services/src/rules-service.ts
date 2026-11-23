@@ -436,6 +436,7 @@ export class RulesService {
       const rule = await materializeRule(asDb(tx), ctx.accountId, out.ruleId);
       if (!rule) throw new ServiceError("internal", 500, "rule vanished after write");
 
+      const travel = travelled(plan) ? await fanOutRuleEdit(bridgeTx(tx), ctx, plan, "rule.create", travelling(), at) : undefined;
       // Store the verbatim answer IN this tx, status included, so a retry after a lost response
       // replays the SAME rule and status instead of minting a second one. Inserted directly:
       // services cannot import packages/api.
@@ -445,7 +446,7 @@ export class RulesService {
           key: opts.idempotency.key,
           requestHash: opts.idempotency.requestHash,
           responseStatus: out.created ? 201 : 200,
-          responseJson: rule,
+          responseJson: body.release && travel ? { ...rule, travel } : rule,
           seq,
           now: ctx.now(),
         });
@@ -457,9 +458,7 @@ export class RulesService {
       /* THE MIXED ACCOUNT: the row above IS the rule for the mailboxes this install organizes, and
          the same edit travels to each install holding one of the others. Both halves, from one
          press, reported separately — never one "saved". */
-      if (!travelled(plan)) return { rule, seq, created: out.created };
-      const travel = await fanOutRuleEdit(bridgeTx(tx), ctx, plan, "rule.create", travelling(), at);
-      return { rule, seq, created: out.created, travel };
+      return { rule, seq, created: out.created, ...(travel === undefined ? {} : { travel }) };
     });
   }
 
@@ -856,13 +855,21 @@ export class RulesService {
       const rule = await materializeRule(asDb(tx), ctx.accountId, id);
       if (!rule) throw new ServiceError("internal", 500, "rule vanished after write");
 
+      if (travelled(plan)) {
+        travel = await fanOutRuleEdit(
+          bridgeTx(tx), ctx, plan, "rule.update",
+          ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance, refile),
+          at,
+        );
+      }
+
       if (opts.idempotency) {
         const claimed = await claimIdempotencyKey(tx, {
           accountId: ctx.accountId,
           key: opts.idempotency.key,
           requestHash: opts.idempotency.requestHash,
           responseStatus: 200,
-          responseJson: rule,
+          responseJson: patch.release && travel ? { ...rule, travel } : rule,
           seq: Number(seq),
           now: ctx.now(),
         });
@@ -873,13 +880,7 @@ export class RulesService {
       }
 
       // The mixed account — the row above is the rule here, and the same edit travels.
-      if (!travelled(plan)) return { rule, seq: Number(seq) };
-      travel = await fanOutRuleEdit(
-        bridgeTx(tx), ctx, plan, "rule.update",
-        ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance, refile),
-        at,
-      );
-      return { rule, seq: Number(seq), travel };
+      return { rule, seq: Number(seq), ...(travel === undefined ? {} : { travel }) };
     });
   }
 

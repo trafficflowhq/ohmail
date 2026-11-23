@@ -106,6 +106,8 @@ export interface PhysicalLeave {
 }
 export type AskLeave = (leave: (drop?: () => void) => void, physical?: PhysicalLeave) => void;
 
+export type AddressMark = "closed" | "open-dialog" | "dismiss-dialog" | "preview" | "dismiss-preview";
+
 /** The address bar, owned by the shell. The frame reads and writes the fragment through it, never `location`. */
 export interface HostAddress {
   /** The current pane holds a leave while a draft differs from its saved value. */
@@ -115,7 +117,7 @@ export interface HostAddress {
   read(): string;
   /** Whether the reader was explicitly closed in this history entry. */
   readerClosed?(): boolean;
-  write(next: string, how: "push" | "replace", mark?: "closed" | "open-dialog" | "dismiss-dialog"): void;
+  write(next: string, how: "push" | "replace", mark?: AddressMark): void;
   subscribe(changed: () => void): () => void;
 }
 

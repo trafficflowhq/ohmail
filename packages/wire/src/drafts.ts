@@ -201,3 +201,8 @@ export interface AttachmentWire {
 export interface DraftWrittenAnswer {
   draftId: string;
 }
+
+/** Optional streaming representation of a draft purchase. The result carries the normal API answer. */
+export type DraftStreamFrame =
+  | { type: "preview"; text: string }
+  | { type: "result"; status: number; body: unknown; retryAfter?: string; syncSeq?: string };

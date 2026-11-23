@@ -129,26 +129,8 @@ const hits = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>('[role
 const cursorHit = (): HTMLElement | null =>
   host!.querySelector<HTMLElement>('[role="listitem"][data-hit][aria-current="true"]');
 
-/**
- * THE ID OF THE MESSAGE THAT IS OPEN, in whichever pile the shell landed in.
- *
- * The list-shaped piles mark the open row and the streams mark the open card. This helper asks both,
- * because "the hit opened where it lives" is a claim about every pile and the assertion should
- * not quietly become a claim about the row-shaped ones.
- *
- * It used to be the `:is(.row.sel, [role=option][data-open])` query alone, and it passed for a reason that was not the rule:
- * the second search hit for this query happened to be an Ohbox message. Search now breaks a
- * relevance tie by recency, which reordered two equally-scoring hits and put a Reads message
- * there instead — a real message, opened correctly, in a pile the selector could not see.
- */
 function openedMessageId(): string | undefined {
-  const streamItem = host!.querySelector<HTMLElement>('[data-stream-item][data-open]');
-  if (streamItem) {
-    return streamItem.querySelector('.oh-message-more button[aria-expanded="true"]')
-      ? streamItem.dataset.streamItem
-      : undefined;
-  }
-  return host!.querySelector<HTMLElement>('[role="option"][data-id][data-open]')?.dataset.id;
+  return host!.querySelector<HTMLElement>('[data-hit]:has(.oh-row[data-open])')?.dataset.hit;
 }
 
 /** A message shaped enough for the routing decision, in `folder`. */
@@ -284,12 +266,6 @@ describe("the keyboard opens a search result", () => {
   });
 
   it("↵ opens the hit under the cursor, in the pile it lives in", async () => {
-    // The report, as an assertion: pressing ↵ on a result leaves search and lands
-    // on the message. `openMessage` is what routes it; this pins that the KEY reaches it.
-    // Give a stream's scroller a viewport so the chosen card can finish landing in jsdom.
-    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
-      return this.classList.contains("oh-sheet-scroll") && this.querySelector("[data-stream-item]") ? 600 : 0;
-    });
     await mountShell();
     window.location.hash = "#/search";
     await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
@@ -303,10 +279,7 @@ describe("the keyboard opens a search result", () => {
     expect(target).not.toBe(hits()[0]!.dataset.hit);
     await key("Enter");
 
-    expect(window.location.hash, "still on search").not.toContain("search");
-    // THE CURSOR of the pile it landed in, not merely "the row exists somewhere on screen":
-    // every Ohbox row is on screen whichever one was opened, so presence alone would hold
-    // for an implementation that opened `shown[0]` and ignored ↑/↓ entirely.
+    expect(window.location.hash).toContain(`#/search/m/${target}`);
     expect(openedMessageId(), `↵ did not open the hit under the cursor`).toBe(target);
   });
 
@@ -326,9 +299,6 @@ describe("the keyboard opens a search result", () => {
   });
 
   it("j and k are NOT rebound here — they keep their pile meaning", async () => {
-    // The ruling is explicit that a search-session cursor must not survive navigation. If
-    // `j` were bound in this view it would be a second meaning for the most-used key in
-    // the product, live only on one surface.
     await mountShell();
     window.location.hash = "#/search";
     await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
@@ -363,46 +333,27 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
     });
     await act(async () => { vi.advanceTimersByTime(1); });
 
-    expect(window.location.hash).toContain("ohbox");
+    expect(window.location.hash).toMatch(/^#\/search\/m\//);
     expect(openLetter(document), "the reader did not survive the navigation").toBeTruthy();
     expect(window.location.hash).toContain(`/m/${encodeURIComponent(ohboxHit!.dataset.hit!)}`);
   });
 });
 
 it("centers the chosen Ohbox result and marks its arrival until the reader moves on", async () => {
-  const centered: Element[] = [];
-  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
-    this: Element,
-    options?: boolean | ScrollIntoViewOptions,
-  ) {
-    if (typeof options === "object" && options.block === "center") centered.push(this);
-  });
   await mountShell();
-  const at = async (fragment: string) => {
-    await act(async () => {
-      window.location.hash = fragment;
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    });
-  };
-  await at("#/search");
+  await act(async () => {
+    window.location.hash = "#/search";
+    window.dispatchEvent(new Event("hashchange"));
+  });
   await typeSearch(SEEDS);
-  const hit = hits().find((row) => row.textContent?.includes("Ohbox"))!;
-  const id = hit.dataset.hit!;
-  await act(async () => hit.querySelector<HTMLElement>('[role="button"]')!.click());
-  await act(async () => { vi.advanceTimersByTime(1); });
-
-  const rows = () => Array.from(host!.querySelectorAll('[role="option"][data-id]'));
-  const located = () => rows().filter((row) => row.hasAttribute("data-located")).map((row) => row.getAttribute("data-id"));
-  const chosen = rows().find((row) => row.getAttribute("data-id") === id);
-  expect(chosen?.hasAttribute("data-open"), "the exact result is selected").toBe(true);
-  expect(centered.some((row) => row === chosen), "the exact result was centered").toBe(true);
-  expect(located()).toEqual([id]);
-
-  const other = rows().find((row) => row !== chosen)!.getAttribute("data-id")!;
-  await at(`#/ohbox/m/${encodeURIComponent(other)}`);
-  expect(openedMessageId()).toBe(other);
-  expect(located()).toEqual([]);
-  await at(`#/ohbox/m/${encodeURIComponent(id)}`);
-  expect(openedMessageId()).toBe(id);
-  expect(located()).toEqual([]);
+  const [first, second] = hits();
+  expect(second).toBeTruthy();
+  for (const hit of [first!, second!]) {
+    const id = hit.dataset.hit!;
+    await act(async () => hit.querySelector<HTMLElement>('[role="button"]')!.click());
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(openedMessageId()).toBe(id);
+    expect(window.location.hash).toContain(`#/search/m/${id}`);
+    expect(hits().map((row) => row.dataset.hit)).toContain(first!.dataset.hit);
+  }
 });

@@ -641,6 +641,15 @@ const NO_BUILD: SettingsDoorInput = {
   sseHolds: true, sseLifetimeMaxMs: null,
 };
 
+export function configuredAiProvider(ai: Settings["ai"]): AiProviderEnv | null {
+  if (ai === null) return null;
+  if (ai.kind === "operator") return ai.env;
+  return {
+    provider: "anthropic", apiKey: ai.apiKey, baseUrl: null, allowPrivate: false,
+    classifyModel: null, draftModel: "claude-haiku-5-5",
+  };
+}
+
 /**
  * {@link ServerConfig} for a self-hosted environment: the settings (`settings.ts`) under the flat
  * names this server's own modules and tests read. Nothing is read from the environment here.
@@ -670,7 +679,7 @@ export function serverConfigOf(settings: Settings): ServerConfig {
     sse: settings.sse,
     smtp: mail?.transport.kind === "smtp" ? { url: mail.transport.url, from: mail.from, replyTo: mail.replyTo } : null,
     storage: settings.storage,
-    ai: settings.ai?.kind === "operator" ? settings.ai.env : null,
+    ai: configuredAiProvider(settings.ai),
     aiTimeoutMs: settings.ai?.kind === "operator" ? settings.ai.timeoutMs : null,
     alerts: settings.alerts,
     msOAuth: settings.msOAuth,

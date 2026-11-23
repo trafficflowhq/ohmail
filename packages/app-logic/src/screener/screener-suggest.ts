@@ -759,10 +759,10 @@ export function useScreenerSuggestions(opts: {
    * read `link.current`; the dependency list stays the four signals it claims to be.
    */
   const link = useRef({
-    wire, publish: opts.publish, publishStanding: opts.publishStanding, mirrorSuggestionOf: opts.mirrorSuggestionOf,
+    wire, active, publish: opts.publish, publishStanding: opts.publishStanding, mirrorSuggestionOf: opts.mirrorSuggestionOf,
   });
   link.current = {
-    wire, publish: opts.publish, publishStanding: opts.publishStanding, mirrorSuggestionOf: opts.mirrorSuggestionOf,
+    wire, active, publish: opts.publish, publishStanding: opts.publishStanding, mirrorSuggestionOf: opts.mirrorSuggestionOf,
   };
   /**
    * THE SENTENCE FOR A REFUSAL, IN THE READER'S LANGUAGE WHERE THERE IS ONE.
@@ -984,10 +984,12 @@ export function useScreenerSuggestions(opts: {
       try {
         // `automatic`: NOBODY PRESSED THIS, and the server holds it to the automatic rule — a sender
         // whose mail is kept out of automatic AI comes back `no_auto_ai`, unasked and uncharged.
-        const res = await link.current.wire.suggest(set, {
-          idempotencyKey: newKey(), automatic: true, relayGrant,
-          maySend: () => io.current.autoRun === run && canRequest(permissionVersion, true),
-        })
+        const maySend = () => link.current.active && io.current.autoRun === run && canRequest(permissionVersion, true);
+        const idempotencyKey = newKey();
+        const res = await suggestWithBackoff(
+          () => link.current.wire.suggest(set, { idempotencyKey, automatic: true, relayGrant, maySend }),
+          maySend,
+        )
           .finally(() => flying(setInFlight, set, false));
         // Remembered even from a stale answer: the verdict is about the sender, not this run.
         for (const s of res.skipped) {
@@ -1007,7 +1009,7 @@ export function useScreenerSuggestions(opts: {
         // nobody pressed for it, so it waits behind the "Undone" or outcome the person's act raised.
         notify.current.toast(summarize(res, notify.current.t, notify.current.metered), { yields: true });
       } catch (err) {
-        if (io.current.autoRun !== run) return;
+        if (io.current.autoRun !== run || (isBusyDatabase(err) && !link.current.active)) return;
         // DISARM, DO NOT RETRY — for a refusal a SERVER stated. See the latch's own comment and
         // {@link disarmsAutoSuggest}: a standing condition is a wall, a client-side refusal is
         // not, and disarming on the second one stopped the pass for a browser that had only
@@ -1307,13 +1309,11 @@ export function useScreenerSuggestions(opts: {
               // An older server without a grant for an empty chunk offers nothing to dispatch.
               if (grant === undefined) continue;
               flying(setInFlight, chunk, true);
-              res = await wire.suggest(chunk, {
-                idempotencyKey: newKey(),
-                relayGrant,
-                maySend: () => io.current.run === run && canRequest(permissionVersion),
-                maxCredits: ceiling,
-                quoteGrant: grant.proof,
-              }).finally(() => flying(setInFlight, chunk, false));
+              const idempotencyKey = newKey();
+              const maySend = () => io.current.run === run && canRequest(permissionVersion);
+              res = await suggestWithBackoff(() => wire.suggest(chunk, {
+                idempotencyKey, relayGrant, maySend, maxCredits: ceiling, quoteGrant: grant.proof,
+              }), maySend).finally(() => flying(setInFlight, chunk, false));
             } catch (err) {
               // Stale — a newer press owns the state; paint nothing.
               if (io.current.run !== run) return;
@@ -1706,7 +1706,28 @@ export function clientRefusalKey(err: unknown): string | null {
  * off a wire this client cannot inspect.
  */
 export function disarmsAutoSuggest(err: unknown): boolean {
-  return !madeOnThisSide(err);
+  return !madeOnThisSide(err) && !isBusyDatabase(err);
+}
+
+function isBusyDatabase(err: unknown): err is { status: 503; code: "db_busy"; retryAfterMs?: number; retryable?: boolean } {
+  const refusal = err as { status?: unknown; code?: unknown } | null;
+  return refusal?.status === 503 && refusal.code === "db_busy";
+}
+
+/** Retry a busy pool under the same key while the original consent still holds. */
+async function suggestWithBackoff(
+  send: () => Promise<ScreenerSuggestWire>, maySend: () => boolean,
+): Promise<ScreenerSuggestWire> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (err) {
+      if (!isBusyDatabase(err) || err.retryable === false || attempt >= 2 || !maySend()) throw err;
+      const base = Math.max(500, err.retryAfterMs ?? 0);
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(30_000, base * 2 ** attempt)));
+      if (!maySend()) throw err;
+    }
+  }
 }
 
 /**

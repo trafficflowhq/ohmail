@@ -57,6 +57,15 @@
   align-items: center;
   gap: var(--s1);
 }
+.sc-suggest-content {
+  min-inline-size: min(calc(288px - 2 * var(--s2)), calc(100vw - 4 * var(--s2)));
+}
+.sc-suggest-size {
+  padding: var(--s1) var(--s2) var(--s2);
+}
+.sc-suggest-content > .sc-progress {
+  padding: var(--s1) var(--s3) var(--s2);
+}
 .sc-suggest-copy {
   padding: 0 var(--s3) var(--s3);
   font-weight: var(--w-mid);
@@ -71,18 +80,20 @@
 }
 .sc-progress {
   display: flex;
-  flex-basis: 100%;
   align-items: center;
   gap: var(--s2);
   color: var(--ink2);
   font-size: var(--t-meta);
   font-variant-numeric: tabular-nums;
 }
+.sc-tools > .sc-progress:not([data-inline]) {
+  flex-basis: 100%;
+}
 .sc-progress-track {
   appearance: none;
   inline-size: 120px;
   max-inline-size: 40%;
-  block-size: 3px;
+  block-size: var(--s1);
   border: 0;
   border-radius: var(--r-pill);
   background: var(--line);

@@ -186,6 +186,7 @@ export const messageRoutes: Route[] = [
       }
       const { draftId, seq } = await drafting(deps).draftFromMessage(ctx, params.id!, {
         drafter: drafter(deps),
+        onPreview: deps.onDraftPreview,
         credits,
         // The memory for a refund this request may owe. Composed by the same host that composes
         // `credits`; the service refuses a metered press that arrives without one.

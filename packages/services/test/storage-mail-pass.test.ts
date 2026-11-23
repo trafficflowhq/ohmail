@@ -142,6 +142,8 @@ describe("the storage mails", () => {
     expect(await w.run()).toMatchObject({ noOffer: 1, sent: { near: 0, full: 0 } });
     w.plane.offer = null;
     expect(await w.run()).toMatchObject({ noOffer: 1 });
+    w.plane.offer = { ...OFFER, fit: null };
+    expect(await w.run()).toMatchObject({ noOffer: 1, sent: { near: 0, full: 0 } });
     w.plane.offer = OFFER;
     w.plane.state = "past_due";
     expect(await w.run()).toMatchObject({ due: 0, sent: { near: 0, full: 0 } });

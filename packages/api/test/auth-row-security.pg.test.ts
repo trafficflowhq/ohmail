@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { accounts, pairingTokens, users } from "@trafficflow/db";
+import { accounts, accountSettings, pairingTokens, users } from "@trafficflow/db";
 import { createPolicyStatement } from "@trafficflow/db/admin";
 import {
   API_ROLE, LOCK_READERS, READER_SCHEMA, WORKER_ROLE, lockedTables, makeOwnedDb,
@@ -24,7 +24,7 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
   let runtime: OwnedDb;
   let now = FIXED_NOW;
   const mailer = new SpyMailer();
-  const authDeps = makeTestAuthDeps({ publicSignup: true, maxDesktopApprovalsPerWindow: 25 });
+  const authDeps = makeTestAuthDeps({ publicSignup: true, autoSuggestAtSignup: true, maxDesktopApprovalsPerWindow: 25 });
   const mail = makeMailService({
     mailer,
     config: { appUrl: "http://localhost:3001", siteUrl: "http://localhost:3000", supportEmail: "support@example.test" },
@@ -120,6 +120,9 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     const registration = await request("POST", "/auth/register", { email, password, displayName: "Cloud user" });
     expect(registration.status, "public registration").toBe(202);
     expect(registration.headers.has("set-cookie")).toBe(false);
+    const [settings] = await owner.db.select({ autoSuggestAt: accountSettings.autoSuggestAt }).from(accountSettings)
+      .innerJoin(users, eq(users.accountId, accountSettings.accountId)).where(eq(users.email, email));
+    expect(settings?.autoSuggestAt).toEqual(now);
     const delivered = mailer.only("email_verification");
     const token = new URL(delivered.data.verifyUrl).searchParams.get("token");
     const verification = { token, password };

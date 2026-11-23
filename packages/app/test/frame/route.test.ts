@@ -13,6 +13,7 @@ const CANONICAL = [
   "#/history/m/a1",
   "#/search",
   "#/search/m/a1",
+  "#/search/m/a1?q=glaze+%26+kiln",
   "#/compose",
   "#/drafts",
   "#/trash",

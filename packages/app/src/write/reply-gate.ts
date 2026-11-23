@@ -40,10 +40,13 @@ export function useReplyGate(
       save: () => tr("bodyTooLong", beside.sendLineValues()),
     },
   );
+  const draft = w.draftReplyChrome.control;
+  const previewing =
+    reply.mode !== "forward" && draft.preview !== undefined && draft.messageId === reply.messageId;
   const sentence = tc("needContent");
   const empty = useNeedsContent({ refusal: reply.refusal, held: attaching }, sentence);
   return {
-    mayGo: reply.refusal === null && !attaching,
+    mayGo: reply.refusal === null && !attaching && !previewing,
     tooLong: long.tooLong,
     longLine: long.line,
     refused: long.refused,

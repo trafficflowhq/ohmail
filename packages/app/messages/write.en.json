@@ -199,6 +199,7 @@
     "append": "Add below",
     "failedOpaque": "The draft was written but could not be loaded. Pressing again fetches the same one — it does not buy a second.",
     "failedOpaqueEarly": "Something went wrong on the server and no draft was made. Pressing again retries this request, and it is never charged twice.",
+    "creditsUsed": "The draft stopped. Your credits were used.",
     "creditsReturned": "This did not work. Your credits are back.",
     "creditsOwed": "This did not work. Your credits will be returned.",
     "declined": "The model declined to draft this reply.",

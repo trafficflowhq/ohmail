@@ -159,7 +159,7 @@ export async function makeDeps(
   start: Date = FIXED_NOW,
   authOver: Partial<AuthConfig> = {},
   over: {
-    remote?: RemoteFetch; resolver?: HostResolver; drafter?: DraftPort; sendAdapter?: OpenSendAdapter;
+    db?: Db; remote?: RemoteFetch; resolver?: HostResolver; drafter?: DraftPort; sendAdapter?: OpenSendAdapter;
     oneClickPost?: OneClickPost; trustedAuthservIds?: ReadonlySet<string>;
     smtpVerify?: (smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } }) => Promise<void>;
   } = {},
@@ -167,7 +167,7 @@ export async function makeDeps(
   db: Db; deps: ApiDeps; clock: TestClock; mailer: SpyMailer; mail: MailService;
   access: AccessHandle;
 }> {
-  const db = await makeTestDb();
+  const db = over.db ?? await makeTestDb();
   stubImapDial();
   // THE ACCESS VERDICT EVERY ROUTE READ ANSWERS FROM, and the one place a test steers it.
   // UNMETERED is the default because it is the only verdict a host with no entitlements program

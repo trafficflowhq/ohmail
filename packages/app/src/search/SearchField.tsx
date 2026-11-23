@@ -5,7 +5,7 @@
  * stands at its end. A person set stands before the words as one control that lets them go, and so does Backspace
  * in an empty field; what is typed then searches their mail.
  */
-import { useEffect, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { SearchListModel } from "@ohmail/app-logic/search";
 import { FindField } from "@ohmail/ui/base";
 import { useText } from "../text/index.js";
@@ -15,8 +15,10 @@ export function SearchField({
   onType,
   onEnter,
   named,
+  focusOnMount,
 }: {
   model: SearchListModel;
+  focusOnMount: boolean;
   onType: (q: string) => void;
   /** The person set, as their control names them (their address where another of the name is known); null for none. */
   named: string | null;
@@ -25,8 +27,9 @@ export function SearchField({
 }) {
   const t = useText("search");
   const { boxRef, person } = model;
+  const focusInitially = useRef(focusOnMount);
   useEffect(() => {
-    boxRef.current?.focus({ preventScroll: true });
+    if (focusInitially.current) boxRef.current?.focus({ preventScroll: true });
   }, [boxRef]);
   const keys = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return;

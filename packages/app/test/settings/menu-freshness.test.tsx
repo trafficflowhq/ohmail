@@ -2,22 +2,32 @@
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConsentContext, type ConsentRow } from "@ohmail/app-logic/consent";
-import { MailStateContext, type MailStateBinding } from "@ohmail/app-logic/mail-state";
+import { EngineContext } from "@ohmail/app-logic/engine";
+import {
+  MailStateContext,
+  useMailState,
+  type MailStateBinding,
+  type MailboxProbe,
+} from "@ohmail/app-logic/mail-state";
 import { onNoticeReturn, readChannels, writeChannels } from "@ohmail/app-logic/notices/browser-channels";
+import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
 import { FrameContext, type FrameInner } from "../../src/frame/commands.js";
 import { NONE, type DeviceNotifications } from "../../src/host/index.js";
 import { mailboxesPane } from "../../src/mailboxes/pane/pane.js";
+import { MailStateProvider } from "../../src/mail-state/index.js";
 import { SettingsMenu } from "../../src/settings/SettingsMenu.js";
 import { paneOf } from "../../src/settings/facts.js";
 import { BrowserSettingsAbove } from "../../src/settings/browser/MailSettings.js";
 import { useAwaySummary } from "../../src/settings/away/summary.js";
 import { useFoldersSummary } from "../../src/settings/consent-summary.js";
 import { TextProvider } from "../../src/text/index.js";
+import { fakeMail } from "../reader/support/fake-mail.js";
 import settings from "../../messages/settings.en.json" with { type: "json" };
 import menu from "../../messages/settings-menu.en.json" with { type: "json" };
 import notifications from "../../messages/settings-notifications.en.json" with { type: "json" };
+import frame from "../../messages/frame.en.json" with { type: "json" };
 
-const words = { ...settings, ...menu, ...notifications };
+const words = { ...settings, ...menu, ...notifications, ...frame };
 const go = () => {};
 const row = (name: string) => screen.getByRole("button", { name });
 
@@ -99,6 +109,69 @@ it("only calls a mailbox connected after its first successful sync", () => {
   lastSyncAt = "2026-11-21T12:00:00Z";
   rerender(tree());
   expect(within(row("Mailboxes")).getByText("Connected")).toBeTruthy();
+});
+
+it("shows a failed Mailboxes read and keeps the last good summary through a later failure", async () => {
+  const { engine } = fakeMail([]);
+  const binding = { engine, demo: false, serverDemo: false, sync: SYNC_SETTLED };
+  const probe = vi
+    .fn<MailboxProbe>()
+    .mockRejectedValueOnce(new Error("Unavailable"))
+    .mockResolvedValueOnce([
+      {
+        id: "work",
+        address: "",
+        displayName: "Work",
+        status: "connected",
+        errorCode: null,
+        disabledReason: null,
+        syncBlockedReason: null,
+        syncBlockedSince: null,
+        createdAt: "2026-11-21T11:00:00Z",
+        lastSyncAt: "2026-11-21T12:00:00Z",
+      },
+    ])
+    .mockRejectedValueOnce(new Error("Unavailable"));
+  const pane = paneOf(
+    "mailboxes",
+    mailboxesPane({
+      factor: NONE,
+      calendar: NONE,
+      mailState: useMailState,
+      useLimit: () => 10,
+    }),
+  );
+  let refresh: MailStateBinding["refresh"];
+  function Reread() {
+    refresh = useMailState().refresh;
+    return null;
+  }
+  await act(async () => {
+    render(
+      <TextProvider locale="en" messages={words}>
+        <EngineContext.Provider value={binding}>
+          <MailStateProvider scope="owner" probe={probe} mirrored={0}>
+            <SettingsMenu menu={[pane]} current={null} go={go} />
+            <Reread />
+          </MailStateProvider>
+        </EngineContext.Provider>
+      </TextProvider>,
+    );
+  });
+  const failed = frame.viewError.loadFailed;
+  expect(within(row("Mailboxes")).getByText(failed)).toBeTruthy();
+  await act(async () => {
+    await refresh();
+  });
+  expect(within(row("Mailboxes")).queryByText(failed)).toBeNull();
+  expect(within(row("Mailboxes")).getByText("1 of 10")).toBeTruthy();
+  expect(within(row("Mailboxes")).getByText("Work")).toBeTruthy();
+  await act(async () => {
+    await refresh();
+  });
+  expect(probe).toHaveBeenCalledTimes(3);
+  expect(within(row("Mailboxes")).getByText("1 of 10")).toBeTruthy();
+  expect(within(row("Mailboxes")).getByText("Work")).toBeTruthy();
 });
 
 it("waits for the live folders answer after an older boot cache", () => {

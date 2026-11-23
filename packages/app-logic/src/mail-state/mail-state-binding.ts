@@ -149,6 +149,8 @@ export interface MailStateBinding {
    * the demo (2026-09-06); the desktop has supplied a probe since, so only its first poll lands there.
    */
   rosterProbed: boolean;
+  /** A roster read failed. A successful read clears this without replacing good facts on failure. */
+  rosterFailed: boolean;
   /**
    * Messages in the mirror — every folder, every mailbox — published as the fact it is. NOT
    * `state.count`, and the difference is load-bearing: `MailState.count` is carried by the states
@@ -230,6 +232,7 @@ export function useMailStateBinding({ scope, probe, freshnessProbe, mirrored, re
      different mailbox — is what makes this identity meaningful. */
   const probeEngine = useEngine();
   const [facts, setFacts] = useState<MailboxFacts[] | null>(null);
+  const [rosterFailed, setRosterFailed] = useState(false);
   const [probedFreshness, setProbedFreshness] = useState<FreshnessFacts | null>(null);
   const [beat, setBeat] = useState(() => Date.now());
   /**
@@ -346,6 +349,7 @@ export function useMailStateBinding({ scope, probe, freshnessProbe, mirrored, re
   if (changed) {
     setAdopted(identity);
     setFacts(null);
+    setRosterFailed(false);
     setProbedFreshness(null);
   }
   /** The identity this render is actually about — the adjusted one when it has just changed. */
@@ -412,12 +416,14 @@ export function useMailStateBinding({ scope, probe, freshnessProbe, mirrored, re
       if (alive.current && answering.current === now) {
         factsReadAtRef.current = Date.now();
         setFacts((prev) => (sameWire(prev, got) ? prev : got));
+        setRosterFailed(false);
       }
     } catch {
       // NOT `setFacts([])`. A refusal or a dead network is "we still cannot see", which is what
       // `facts` already says — and if we DID see mailboxes a moment ago, the last thing we knew
       // is a better answer than a fabricated empty account. A signed-out tab is the shell's own
       // `SessionScreen`'s business, not this strip's.
+      if (alive.current && answering.current === now && syncMayRead(probeEngine)) setRosterFailed(true);
     }
   }, [now, probeEngine]);
 
@@ -529,10 +535,10 @@ export function useMailStateBinding({ scope, probe, freshnessProbe, mirrored, re
   );
   const binding = useMemo<MailStateBinding>(
     () => ({
-      state, mailboxes: facts, rosterProbed: probe !== undefined, mirrored, pulled, freshness,
+      state, mailboxes: facts, rosterProbed: probe !== undefined, rosterFailed, mirrored, pulled, freshness,
       refresh, importOver: importOverById, factsReadAt,
     }),
-    [state, facts, probe, mirrored, pulled, freshness, refresh, importOverById, factsReadAt],
+    [state, facts, probe, rosterFailed, mirrored, pulled, freshness, refresh, importOverById, factsReadAt],
   );
 
   return binding;

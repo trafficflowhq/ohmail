@@ -112,6 +112,56 @@ afterEach(async () => {
 });
 
 describe("the storage-owner boundary", () => {
+  it.each([false, true])("delivers draft words only while the original account is held (switch: %s)", async (switchAccount) => {
+    const { bindApiOwner, api } = await import("../app/api-client.js");
+    setOwnerCookie(A);
+    bindApiOwner(A);
+    const encoder = new TextEncoder();
+    const frame = (value: unknown) => encoder.encode(JSON.stringify(value) + "\n");
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const part = new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } });
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      expect(new Headers(init?.headers).get("accept")).toBe("application/x-ndjson");
+      return new Response(part, { headers: { "content-type": "application/x-ndjson", "x-ohmail-account": A } });
+    });
+    let onFirst!: () => void;
+    const first = new Promise<void>((resolve) => { onFirst = resolve; });
+    const previews: string[] = [];
+    const request = api("/messages/m1/draft", {
+      method: "POST", onDraftPreview(text) { previews.push(text); onFirst(); },
+    });
+    const settled = request.then((value) => ({ value }), (error) => ({ error }));
+    stream.enqueue(frame({ type: "preview", text: "Hello" }));
+    await first;
+    expect(previews).toEqual(["Hello"]);
+    if (switchAccount) {
+      setOwnerCookie(B);
+      bindApiOwner(B);
+    }
+    stream.enqueue(frame({ type: "preview", text: "Hello again" }));
+    stream.enqueue(frame({ type: "result", status: 202, body: { draftId: "d1" } }));
+    stream.close();
+    if (switchAccount) {
+      expect(await settled).toMatchObject({ error: { code: "owner_mismatch" } });
+      expect(previews).toEqual(["Hello"]);
+    } else {
+      expect(await settled).toEqual({ value: { draftId: "d1" } });
+      expect(previews).toEqual(["Hello", "Hello again"]);
+    }
+  });
+
+  it("keeps the retry delay from a streamed draft refusal", async () => {
+    const { bindApiOwner, api } = await import("../app/api-client.js");
+    setOwnerCookie(A);
+    bindApiOwner(A);
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      type: "result", status: 503, retryAfter: "5", body: { error: { code: "db_busy", message: "Try again." } },
+    }) + "\n", { headers: { "content-type": "application/x-ndjson", "x-ohmail-account": A } }));
+    await expect(api("/messages/m1/draft", { method: "POST", onDraftPreview() {} })).rejects.toMatchObject({
+      status: 503, code: "db_busy", wire: { retryAfterMs: 5000 },
+    });
+  });
+
   it("keeps Screening reads and changes with the account that opened Settings", async () => {
     const { bindApiOwner, screeningSettings, screenerAutoFiled } = await import("../app/api-client.js");
     setOwnerCookie(A);

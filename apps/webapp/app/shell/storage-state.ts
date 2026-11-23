@@ -46,9 +46,10 @@ export interface StorageOffer {
   currency: string;
   interval: "month" | "year";
   plans: Array<{ plan: StoragePlanName; mailboxes: number; roomBytes: number; amount: number }>;
+  /** The interval of the quoted amount, or the plan interval when absent. */
   addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
-  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" };
-  fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
+  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" } | null;
+  fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean } | null;
   canChange: boolean;
 }
 
@@ -137,16 +138,22 @@ export function storageOfferOf(raw: unknown): StorageOffer | null {
       ...(a.interval === undefined ? {} : { interval: a.interval }),
     };
   }
-  const c = rec(o.current);
-  const f = rec(o.fit);
-  if (c === null || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
-    || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")) return null;
-  if (f === null || !isPlan(f.plan) || !isCount(f.addonUnits) || !isCount(f.roomBytes) || !isCount(f.amount)
-    || typeof f.keepsAll !== "boolean") return null;
+  let current: StorageOffer["current"] = null;
+  if (o.current !== null) {
+    const c = rec(o.current);
+    if (c === null || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
+      || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")) return null;
+    current = { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom };
+  }
+  let fit: StorageOffer["fit"] = null;
+  if (o.fit !== null) {
+    const f = rec(o.fit);
+    if (f === null || !isPlan(f.plan) || !isCount(f.addonUnits) || !isCount(f.roomBytes) || !isCount(f.amount)
+      || typeof f.keepsAll !== "boolean") return null;
+    fit = { plan: f.plan, addonUnits: f.addonUnits, roomBytes: f.roomBytes, amount: f.amount, keepsAll: f.keepsAll };
+  }
   return {
-    currency: o.currency.toLowerCase(), interval: o.interval, plans, addon,
-    current: { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom },
-    fit: { plan: f.plan, addonUnits: f.addonUnits, roomBytes: f.roomBytes, amount: f.amount, keepsAll: f.keepsAll },
+    currency: o.currency.toLowerCase(), interval: o.interval, plans, addon, current, fit,
     canChange: o.canChange === true,
   };
 }
@@ -205,12 +212,14 @@ export function storageRoomLine(facts: StorageFacts, locale: string): StorageRoo
 
 /** Is the offer's fit a change from what the account holds now? An unchanged fit offers nothing. */
 export function storageFitIsChange(offer: StorageOffer): boolean {
-  return offer.fit.plan !== offer.current.plan || offer.fit.addonUnits !== offer.current.addonUnits;
+  const { fit, current } = offer;
+  return fit !== null && (fit.plan !== current?.plan || fit.addonUnits !== current.addonUnits);
 }
 
 /** The storage the fit adds, or `null` with no add-on units. */
 export function storageFitExtraBytes(offer: StorageOffer): number | null {
-  return offer.addon !== null && offer.fit.addonUnits > 0 ? offer.fit.addonUnits * offer.addon.unitBytes : null;
+  const { addon, fit } = offer;
+  return addon !== null && fit !== null && fit.addonUnits > 0 ? fit.addonUnits * addon.unitBytes : null;
 }
 
 /** An amount in the offer's minor unit, in the reader's language: "$25", "25,50 €". */

@@ -20,9 +20,19 @@ import { ListMenu, type ListMenuItem } from "../../place-list/ListMenu.js";
 import { useNoAdvice, useScreener, useScreenerBeside } from "../contract.js";
 import type { ScreenerSuggest } from "../ports.js";
 
-function ScreeningProgress({ label, done, total }: { label: string; done: number; total: number }) {
+function ScreeningProgress({
+  label,
+  done,
+  total,
+  inline,
+}: {
+  label: string;
+  done: number;
+  total: number;
+  inline?: boolean;
+}) {
   return (
-    <div className="sc-progress">
+    <div className="sc-progress" data-inline={inline || undefined}>
       <span role="status">{label}</span>
       {total > 0 ? (
         <progress className="sc-progress-track" aria-hidden="true" value={done} max={total} />
@@ -113,16 +123,11 @@ function Suggest({
   const reaskContent = useRef<HTMLDivElement | null>(null);
   const { standing, subscriptionPane } = useNoAdvice();
   const c = suggest.control;
-  const open = c.phase !== "closed";
+  const runningFirst = c.phase === "running" && c.progress !== null && !again;
+  const open = c.phase !== "closed" && !runningFirst;
   const first = c.available > 0;
   if (!open && !first && c.resuggestable === 0) return null;
-  const inline = !touch && first;
-  const price =
-    c.quote === null || again
-      ? undefined
-      : suggest.priced
-        ? t("suggest.price", { senders: c.quote.senders, credits: c.quote.credits })
-        : t("suggest.priceUnmetered", { senders: c.quote.senders });
+  const inline = !touch && first && !runningFirst;
   return (
     <>
       {inline ? (
@@ -142,12 +147,13 @@ function Suggest({
         open={!c.disabled && open}
         onClose={c.cancel}
         anchor={inline && !fromList ? button : listAnchor}
+        returnFocus={runningFirst ? listAnchor : undefined}
+        right
         label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
         kind="ask"
-        fitContent={again}
+        fitContent
         initialFocus={again ? reaskContent : undefined}
         title={again ? t("suggest.labelAgain") : t("suggest.label")}
-        aside={c.phase === "ready" ? price : undefined}
       >
         <SuggestMenuContent
           suggest={suggest}
@@ -193,17 +199,23 @@ function SuggestMenuContent({
   }, [again, open, c.phase, emptyAgain, contentRef]);
   const n = c.quote?.senders ?? c.size;
   const count = n > 1 && n === c.size ? (n === c.pool ? "all" : "first") : "count";
-  const showSizes = !again || (c.sizes.length > 1 && (!emptyAgain || c.size < c.pool));
-  const creditPrice =
-    again && suggest.priced && !emptyAgain && c.phase === "ready" && c.quote !== null
-      ? t("suggest.credits", { credits: c.quote.credits })
+  const showSizes = c.sizes.length > 1 && (!emptyAgain || c.size < c.pool);
+  const price =
+    c.phase === "ready" && c.quote && !emptyAgain
+      ? again
+        ? suggest.priced
+          ? t("suggest.credits", { credits: c.quote.credits })
+          : null
+        : suggest.priced
+          ? t("suggest.price", { senders: c.quote.senders, credits: c.quote.credits })
+          : t("suggest.priceUnmetered", { senders: c.quote.senders })
       : null;
   const noControls = c.phase === "running" || (emptyAgain && !showSizes);
   const creditRefusal = useText("aiRefusal")("insufficientCredits");
   const notice =
     standingLine !== null && (c.notice === null || c.notice === creditRefusal) ? t(standingLine) : c.notice;
   return (
-    <div ref={contentRef} tabIndex={again ? (noControls ? 0 : -1) : undefined}>
+    <div className="sc-suggest-content" ref={contentRef} tabIndex={again ? (noControls ? 0 : -1) : undefined}>
       {c.phase === "pricing" ? (
         <p className="oh-text" role="status" aria-busy="true">
           {t("suggest.pricing")}
@@ -220,18 +232,20 @@ function SuggestMenuContent({
       ) : (
         <>
           {showSizes ? (
-            <Seg
-              label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
-              value={String(c.size)}
-              options={c.sizes.map((size) => ({
-                value: String(size),
-                label: size === c.pool ? t("suggest.sizeAll", { count: size }) : String(size),
-              }))}
-              onChange={(size) => c.choose(Number(size))}
-            />
+            <div className="sc-suggest-size">
+              <Seg
+                label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
+                value={String(c.size)}
+                options={c.sizes.map((size) => ({
+                  value: String(size),
+                  label: size === c.pool ? t("suggest.sizeAll", { count: size }) : String(size),
+                }))}
+                onChange={(size) => c.choose(Number(size))}
+              />
+            </div>
           ) : null}
-          {creditPrice ? <p className="oh-text sc-suggest-copy">{creditPrice}</p> : null}
-          <div className={again && !emptyAgain ? "sc-suggest-actions" : undefined}>
+          {price ? <p className="oh-text sc-suggest-copy">{price}</p> : null}
+          <div className="sc-suggest-actions">
             {!again || (c.phase === "ready" && c.quote !== null && !emptyAgain) ? (
               <Button
                 kind="ink"
@@ -287,6 +301,7 @@ export function Tools({
       : model.queueSettled && !facts.owed && model.copyBehind !== true;
   const may = !refused(model.role);
   const control = waiting && ownSuggest == null && suggest !== NONE ? suggest.control : null;
+  const suggesting = !suggestionMenu.again && control?.phase === "running" ? control.progress : null;
   const start = (again: boolean, fromList = false) => {
     setSuggestionMenu({ again, fromList });
     if (again) control?.openAgain();
@@ -343,6 +358,9 @@ export function Tools({
               start={start}
             />
           ) : null))}
+      {suggesting ? (
+        <ScreeningProgress label={t("suggest.progress", suggesting)} {...suggesting} inline />
+      ) : null}
       {apply ? (
         <Button kind="two" size="s" keyHint="a" onPress={view.askApplySuggestions}>
           {t("applyAll", { count: model.suggestedCount })}

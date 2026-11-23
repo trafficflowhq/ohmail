@@ -15,13 +15,17 @@ function onSide(m: EngineMessage, address: string, dir: "any" | "from" | "to"): 
   return dir === "from" ? from : dir === "to" ? to : from || to;
 }
 
-export function applyNarrowing(list: readonly SearchHit[], n: SearchNarrowing): readonly SearchHit[] {
+export function applyNarrowing(
+  list: readonly SearchHit[],
+  n: SearchNarrowing,
+  openId?: string | null,
+): readonly SearchHit[] {
   if (n.person === null && !n.unread && n.date === null) return list;
   const first = n.date?.from ? (dayBounds(n.date.from)?.first ?? null) : null;
   const last = n.date?.to ? (dayBounds(n.date.to)?.last ?? null) : null;
   return list.filter(({ message: m }) => {
     if (n.person !== null && !onSide(m, n.person.address, n.person.dir)) return false;
-    if (n.unread && !m.unread) return false;
+    if (m.id !== openId && n.unread && !m.unread) return false;
     if (first !== null || last !== null) {
       if (!m.date) return false;
       const at = new Date(m.date).getTime();

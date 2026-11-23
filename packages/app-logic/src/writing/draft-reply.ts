@@ -8,14 +8,7 @@
  * is 15 credits ({@link DRAFT_REPLY_COST_CREDITS}), the figure the route charges, not one computed from a balance.
  */
 
-/**
- * The price is a constant here and a dry run in the Screener: the batch's size is a question only the server can
- * answer, while one press here is one message — but the client never decides affordability; the server's refusal
- * renders verbatim. The 202 carries only `{draftId}`; the draft is read directly with `GET /drafts/:id` (a `read`
- * route that spends nothing) rather than waiting on the sync cadence — the mirror still converges, it is just not
- * what is waited on.
- */
-
+/** Read the saved draft directly after the purchase receipt. Progress is provisional. */
 import { useCallback, useRef, useState } from "react";
 import type { AnswerOf, ParamsOf, RequestOf } from "@ohmail/wire";
 import { isRichEmpty, type RichValue } from "./rich-text.js";
@@ -45,6 +38,8 @@ export interface DraftReplyRead {
  * exactly these two routes (`draft-reply-wire.ts` writes them once for both engine doors), and
  * shared code cannot send anything else down the pipe through this seam.
  */
+type DraftPreview = (body: string) => void;
+
 export interface DraftReplyWire {
   /** Is there anything to ask at all? False shows the unavailable notice and spends nothing. */
   configured: () => boolean;
@@ -53,7 +48,7 @@ export interface DraftReplyWire {
    * reused on a retry of that press, so a lost answer is replayed instead of bought twice.
    */
   create: (
-    messageId: ParamsOf<"POST /messages/:id/draft">["id"], idempotencyKey: string,
+    messageId: ParamsOf<"POST /messages/:id/draft">["id"], idempotencyKey: string, onPreview?: DraftPreview,
   ) => Promise<AnswerOf<"POST /messages/:id/draft">>;
   /** `GET /drafts/:id`, the draft that purchase wrote. A read; it spends nothing. */
   read: (draftId: string) => Promise<DraftReplyRead>;
@@ -62,7 +57,7 @@ export interface DraftReplyWire {
    * `none`: this host has no door for it.
    */
   fromText:
-    | ((body: RequestOf<"POST /drafts/from-text">, idempotencyKey: string) => Promise<AnswerOf<"POST /drafts/from-text">>)
+    | ((body: RequestOf<"POST /drafts/from-text">, idempotencyKey: string, onPreview?: DraftPreview) => Promise<AnswerOf<"POST /drafts/from-text">>)
     | "none";
   /**
    * The `draftReply` sentence for 503 `drafter_unconfigured` on a door where the person can fix
@@ -105,6 +100,7 @@ export function useDraftReply(opts: {
 
   const [phase, setPhase] = useState<DraftReplyPhase>("closed");
   const [messageId, setMessageId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string>();
   const [notice, setNotice] = useState<string | null>(null);
   const [own, setOwn] = useState<ReadonlyMap<string, OwnText>>(() => new Map());
 
@@ -130,6 +126,7 @@ export function useDraftReply(opts: {
   const open = useCallback((id: string) => {
     io.current.run += 1;
     io.current.key = null;
+    setPreview(undefined);
     setMessageId(id);
     setNotice(null);
     setPhase("offered");
@@ -138,6 +135,7 @@ export function useDraftReply(opts: {
   const cancel = useCallback(() => {
     io.current.run += 1;
     io.current.key = null;
+    setPreview(undefined);
     setPhase("closed");
     setNotice(null);
   }, []);
@@ -148,7 +146,7 @@ export function useDraftReply(opts: {
    * moment send one request.
    */
   const spend = useCallback((
-    id: string, of: string, buy: (key: string) => ReturnType<DraftReplyWire["create"]>, typed: RichValue | null,
+    id: string, of: string, buy: (key: string, onPreview: DraftPreview) => ReturnType<DraftReplyWire["create"]>, typed: RichValue | null,
     lands: "reply" | "letter",
   ) => {
     if (wire === "none" || io.current.busy) return;
@@ -166,6 +164,7 @@ export function useDraftReply(opts: {
     io.current.flight = id;
     io.current.letGo = false;
     io.current.away = false;
+    setPreview(undefined);
     setPhase("running");
     setNotice(t("draftReply.running"));
 
@@ -182,7 +181,9 @@ export function useDraftReply(opts: {
        */
       let bought = false;
       try {
-        const { draftId } = await buy(key);
+        const { draftId } = await buy(key, (text) => {
+          if (io.current.run === run && !io.current.letGo && !io.current.away) setPreview(text);
+        });
         bought = true;
         // `GET /drafts/:id` rather than the mirror — see the header. `cost: read`, spends
         // nothing, and the row was written inside the request that answered above.
@@ -191,6 +192,7 @@ export function useDraftReply(opts: {
         const away = io.current.away;
         io.current.busy = false;
         if (io.current.run !== run) return;
+        setPreview(undefined);
         io.current.key = null;
         setPhase("closed");
         /* The new letter it was made for left the composer: no letter takes it, it stays in Drafts, and that is said. */
@@ -215,22 +217,12 @@ export function useDraftReply(opts: {
       } catch (err) {
         io.current.busy = false;
         if (io.current.run !== run) return;
-        /**
-         * BACK TO THE OFFER, AND NO RETRY LOOP. Every refusal on this path already has a true sentence written by the
-         * code that made the decision — "no AI credits remain on this account" (402), "cannot AI-draft a sensitive
-         * message" (422), "this deployment has no AI drafter connected" (503) — and a second taxonomy here is how
-         * somebody with an empty balance is told the model is down. The key is kept: if the user presses again it is
-         * the SAME purchase being retried, which is what stops a lost response from being charged twice. Nothing
-         * retries on its own, because a 402 retried in a loop is a person being asked to buy something they have
-         * already been told they cannot afford.
-         */
+        setPreview(undefined);
         setPhase("offered");
-        // THE THREE REFUSALS EVERY DEPLOYMENT CAN MAKE COME OUT OF THE CATALOGUE, by their code,
-        // for the Screener's reason: the server's `message` is English written for a log.
-        // THE CHARGED-AND-FAILED PAIR FIRST — the only refusal here that knows what happened to
-        // the person's money. An unmodelled fault does not (a killed request answers with no
-        // envelope at all), so `failedOpaqueEarly` says only what the kept key makes true.
         const paid = draftFailureKey(err);
+        // The server settled this key. A deliberate new press can buy a fresh attempt.
+        // An opaque failure keeps the key so a lost response can still be recovered.
+        if (paid === "creditsUsed") io.current.key = null;
         const noModel = wire.noModel !== undefined
           && (err as { code?: unknown } | null)?.code === "drafter_unconfigured" ? wire.noModel : null;
         const key = aiRefusalKey(err);
@@ -252,13 +244,13 @@ export function useDraftReply(opts: {
 
   const confirm = useCallback(() => {
     if (wire === "none" || !messageId || phase === "running") return;
-    spend(messageId, messageId, (key) => wire.create(messageId, key), null, "reply");
+    spend(messageId, messageId, (key, progress) => wire.create(messageId, key, progress), null, "reply");
   }, [messageId, phase, spend, wire]);
 
   const press = useCallback((id: string, typed: RichValue) => {
     if (wire === "none" || phase === "running" || io.current.busy) return;
     setMessageId(id);
-    spend(id, id, (key) => wire.create(id, key), typed, "reply");
+    spend(id, id, (key, progress) => wire.create(id, key, progress), typed, "reply");
   }, [phase, spend, wire]);
 
   /* The door for a draft made of the person's own words: the host's, or `none` (also where the host has no drafter). */
@@ -266,7 +258,7 @@ export function useDraftReply(opts: {
   const pressText = useCallback((id: string, text: string, typed: RichValue) => {
     if (textWire === "none" || io.current.busy) return;
     setMessageId(id);
-    spend(id, `${id}\n${text}`, (key) => textWire({ text, inReplyToMessageId: id }, key), typed, "reply");
+    spend(id, `${id}\n${text}`, (key, progress) => textWire({ text, inReplyToMessageId: id }, key, progress), typed, "reply");
   }, [spend, textWire]);
 
   const pressLetter = useCallback((
@@ -280,18 +272,22 @@ export function useDraftReply(opts: {
       ...(words.mailboxId !== null ? { mailboxId: words.mailboxId } : {}),
       ...(words.subject.trim() !== "" ? { subject: words.subject } : {}),
     };
-    spend(id, `${id}\n${words.mailboxId ?? ""}\n${words.subject}\n${words.text}`, (key) => textWire(body, key), typed, "letter");
+    spend(id, `${id}\n${words.mailboxId ?? ""}\n${words.subject}\n${words.text}`, (key, progress) => textWire(body, key, progress), typed, "letter");
   }, [spend, textWire]);
 
   const keep = useCallback((o: OwnText) => setOwn((all) => withEntry(all, o)), []);
   const forget = useCallback((id: string) => {
-    if (io.current.busy && io.current.flight === id) io.current.letGo = true;
+    if (io.current.busy && io.current.flight === id) {
+      io.current.letGo = true;
+      setPreview(undefined);
+    }
     setOwn((all) => without(all, id));
   }, []);
   const moved = useCallback((id: string) => {
     if (io.current.busy && io.current.flight === id) {
       io.current.letGo = true;
       io.current.away = true;
+      setPreview(undefined);
     }
     setOwn((all) => without(all, id));
   }, []);
@@ -307,6 +303,7 @@ export function useDraftReply(opts: {
   return {
     offered: true,
     phase,
+    preview,
     messageId,
     cost: DRAFT_REPLY_COST_CREDITS,
     notice,

@@ -77,6 +77,31 @@ afterEach(() => {
 });
 
 describe("a draft that failed after the charge says what happened to the credits", () => {
+  it.each([
+    ["en", 503, "ai_draft_failed", "The draft stopped. Your credits were used."],
+    ["de", 422, "ai_draft_declined", "Der Entwurf wurde abgebrochen. Deine Punkte wurden verbraucht."],
+  ] as const)("renders the credits-used sentence in %s and starts a fresh attempt on the next press",
+    async (locale, status, code, sentence) => {
+      const h = mount(locale);
+      vi.mocked(globalThis.crypto.randomUUID)
+        .mockReturnValueOnce("a1111111-1111-1111-1111-111111111111")
+        .mockReturnValueOnce("a2222222-2222-2222-2222-222222222222");
+      const failure = new ApiError(status, code, "the draft stopped", { credits: "used" });
+      fetchMock.mockRejectedValue(failure);
+
+      act(() => { h.control.open("m1"); });
+      act(() => { h.control.confirm(); });
+      await flush();
+
+      expect(notice()).toBe(sentence);
+      act(() => { h.control.confirm(); });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const keys = fetchMock.mock.calls.map(([, init]) => init.headers["Idempotency-Key"]);
+      expect(keys).toEqual(["a1111111-1111-1111-1111-111111111111", "a2222222-2222-2222-2222-222222222222"]);
+    },
+  );
+
   it("the reversal LANDED — the person is told the credits are back", async () => {
     const h = mount("en");
     fetchMock.mockRejectedValueOnce(failed("returned"));

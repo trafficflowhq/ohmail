@@ -40,6 +40,7 @@ export interface SonnetDrafterOpts {
    */
   inferenceGeo?: string;
   maxTokens?: number;
+  stream?: boolean;
 }
 
 const DEFAULT_MODEL = "claude-sonnet-5-5";
@@ -72,7 +73,7 @@ export function buildDraftParams(input: DraftInput, opts: SonnetDrafterOpts = {}
      */
     thinking: thinkingOffFor(model),
     system: [
-      { type: "text", text: draftSystemPrompt(input), cache_control: { type: "ephemeral" } },
+      { type: "text", text: draftSystemPrompt(input, opts.stream), cache_control: { type: "ephemeral" } },
     ],
     messages: [
       { role: "user", content: JSON.stringify(userPayload) },
@@ -100,6 +101,16 @@ function extractJsonText(content: unknown): string {
 }
 
 /**
+ * The ordered schema puts the body first. Decode only its available JSON string prefix,
+ * holding an incomplete escape or surrogate pair until the next chunk.
+ */
+function draftBodyPrefix(json: string): string | undefined {
+  const match = /^\s*\{\s*"body"\s*:\s*("(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*)/.exec(json);
+  if (match === null) return undefined;
+  return (JSON.parse(`${match[1]}"`) as string).replace(/[\uD800-\uDBFF]$/, "");
+}
+
+/**
  * The injected-client Sonnet drafter (mirrors `makeHaikuClassifier`). `client` is a
  * real `new Anthropic()` in prod, a canned-JSON fake in tests. No `@anthropic-ai/sdk`
  * import lives in this module — the SDK is a deployment concern.
@@ -110,7 +121,18 @@ export function makeSonnetDrafter(client: AnthropicLike, opts: SonnetDrafterOpts
   return {
     async draft(input: DraftInput, call?: DraftCallOptions): Promise<DraftResult> {
       const params = buildDraftParams(input, opts);
-      const resp = await client.messages.create(params, call);
+      let json = "";
+      let preview = "";
+      const resp = await client.messages.create(params, !opts.stream || call?.onPreview === undefined ? call : {
+        ...call,
+        onText(delta) {
+          json += delta;
+          const body = draftBodyPrefix(json);
+          if (body === undefined || body === preview) return;
+          preview = body;
+          call.onPreview?.(body);
+        },
+      });
       // A refusal or a cut-off draft is said as one, never read as a malformed reply.
       const declined = declineOf(resp.stop_reason, resp.stop_details);
       if (declined) throw declined;

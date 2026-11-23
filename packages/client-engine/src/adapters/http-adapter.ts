@@ -2346,10 +2346,12 @@ export class HttpAdapter implements EngineAdapter {
       case "rule_delete": {
         const res = await this.call("DELETE /rules/:id", {
           params: { id: ruleAddress(m) },
-          ...(m.key === undefined ? {} : { body: { key: m.key } }),
+          ...(m.key === undefined && m.release === undefined ? {} : {
+            body: { ...(m.key === undefined ? {} : { key: m.key }), ...(m.release ? { release: m.release } : {}) },
+          }),
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
-        if (res.status === 404) return { changes: [], seq: null };
+        if (res.status === 404 && m.release === undefined) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
         // 204 IS A RULE GONE; 202 IS A DELETE ASKED FOR — the route's own words, and on an
         // account whose every live mailbox another install organizes the row is deliberately
@@ -2366,6 +2368,8 @@ export class HttpAdapter implements EngineAdapter {
           body: {
             ...(m.key === undefined ? {} : { key: m.key }),
             destination: m.destination,
+            ...(m.release ? { release: m.release } : {}),
+            ...(m.enabled === undefined ? {} : { enabled: m.enabled }),
             // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
             ...(m.priority === undefined ? {} : { priority: m.priority }),
             // OMITTED when the caller said nothing, and that is the whole contract: the server
@@ -2388,9 +2392,12 @@ export class HttpAdapter implements EngineAdapter {
         const queued = this.queuedAnswer(res, body);
         if (queued) return queued;
         const dto = body as RuleDTO;
+        const waiting = m.release && body && "travel" in body ? body.travel.pending[0] : undefined;
         return {
           changes: seq === null ? [] : [{ type: "rule", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt, entity: dto }],
           seq,
+          ...(m.release?.messageIds.length ? { partialEcho: true } : {}),
+          ...(waiting ? { pendingWith: { name: waiting.holder.name } } : {}),
         };
       }
 
@@ -2416,6 +2423,7 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.call("POST /rules", {
           body: {
             kind: m.ruleKind, match: m.match, destination: m.destination,
+            ...(m.release ? { release: m.release } : {}),
             // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
             ...(m.priority === undefined ? {} : { priority: m.priority }),
             // The second term, and OMITTED rather than sent as `null` when there is none — unlike
@@ -2445,9 +2453,12 @@ export class HttpAdapter implements EngineAdapter {
         const queued = this.queuedAnswer(res, body);
         if (queued) return queued;
         const dto = body as RuleDTO;
+        const waiting = m.release && body && "travel" in body ? body.travel.pending[0] : undefined;
         return {
           changes: seq === null ? [] : [{ type: "rule", op: "create", id: dto.id, seq, updatedAt: dto.updatedAt, entity: dto }],
           seq,
+          ...(m.release?.messageIds.length ? { partialEcho: true } : {}),
+          ...(waiting ? { pendingWith: { name: waiting.holder.name } } : {}),
           // The server's row id: a surface waiting on this rule's backlog pass names it by this.
           ...(typeof dto?.id === "string" ? { entityId: dto.id } : {}),
         };

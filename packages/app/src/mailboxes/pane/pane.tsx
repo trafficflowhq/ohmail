@@ -18,6 +18,7 @@ import { MailboxesPane } from "./MailboxesPane.js";
 export interface PaneMailState {
   readonly state: { readonly key: string };
   refresh(): unknown;
+  readonly rosterFailed?: boolean;
   readonly mailboxes?:
     | readonly {
         readonly status: string;
@@ -111,10 +112,11 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
   }
   function useSummary(): PaneSummary | null {
     const t = useText("settingsMenu");
+    const failureText = useText("viewError");
     const locale = useLocale();
     const limit = slots.useLimit?.();
-    const facts = slots.mailState().mailboxes;
-    if (facts === undefined || facts === null) return null;
+    const { mailboxes: facts, rosterFailed } = slots.mailState();
+    if (facts == null) return rosterFailed ? { value: failureText("loadFailed") } : null;
     const live = facts.filter((m) => m.status !== "disabled");
     const full = live.some((m) => m.syncBlockedReason === "mailbox_full");
     const statuses = live.map(({ status, lastSyncAt, syncBlockedReason }) =>

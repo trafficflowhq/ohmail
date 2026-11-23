@@ -39,12 +39,11 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const t = useText("write");
   const tc = useText("compose");
   const w = useWriting();
-  const { compose } = w;
   const going = useComposeSending(w);
   const locked = w.composeLocked !== null || going;
   const { files, forwarded, notKept } = useLetterFiles(locked);
   const fromLine = useFromLine(w.composeFrom, locked, (fromMailboxId) =>
-    w.onComposeFields({ ...compose, fromMailboxId }),
+    w.onComposeFields({ ...w.compose, fromMailboxId }),
   );
   const [laterAnchor, setLaterAnchor] = useState<HTMLElement | null>(null);
   const laterOpen = laterAnchor !== null;
@@ -56,11 +55,12 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const lines = useLetterSendLines();
   const draft = useLetterDraftOffer();
   const drafting = draft?.drafting === true;
+  const previewing = draft?.preview !== undefined;
   const placeholder = draft === null ? t("placeholder") : t("draft.placeholder");
   /* With Send later open, Mod+Enter is the card's: it schedules, it never sends now. */
   useLetterKeys(
     keysHere,
-    pressable && !laterOpen,
+    pressable && !previewing && !laterOpen,
     () => then("send"),
     () => then("leave"),
   );
@@ -69,7 +69,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const emoji = useEmoji(handle, locked || drafting);
   const from = withStamp(fromLine, letterStamp(going, drafting, w, t, tc), reassurance);
 
-  const { sheet, first } = useComposeFocus(keysHere, compose, t);
+  const { sheet, first } = useComposeFocus(keysHere, w.compose, t);
   const compact = useWritingViewport(sheet, plan.pointer === "coarse");
   return (
     <>
@@ -82,8 +82,8 @@ export function Letter({ keysHere, plan }: PaneProps) {
         foot={
           <Verbs
             compact={compact}
-            forward={Boolean(compose.forwardOf)}
-            canSend={mayGo}
+            forward={Boolean(w.compose.forwardOf)}
+            canSend={mayGo && !previewing}
             going={going}
             keysHere={keysHere}
             discardHeld={letterDiscardHeld(w.composeSend)}
@@ -103,6 +103,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
           fill
           going={going}
           drafting={drafting}
+          draftPreview={draft?.preview}
           tabs={draft?.tabs}
           status={lines.top}
           head={<LetterPeople from={from} locked={locked} />}
@@ -128,7 +129,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
             emoji: emoji.control,
             ...(draft === null ? {} : { draft: draft.control }),
           }}
-          placeholder={unwritten({ text: compose.body, html: compose.html }) ? placeholder : undefined}
+          placeholder={unwritten({ text: w.compose.body, html: w.compose.html }) ? placeholder : undefined}
         >
           <OfferedLetterDraft locked={locked} focus={() => handle?.focus({ preventScroll: true })} />
           <LetterText
@@ -136,7 +137,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
             editable={!locked && !drafting}
             focusAtMount={keysHere && first === "text"}
             onSendKey={() => {
-              if (pressable && !laterOpen && !modalIsOpen()) then("send");
+              if (pressable && !previewing && !laterOpen && !modalIsOpen()) then("send");
             }}
             onLeaveKey={() => then("leave")}
             onHandle={setHandle}
@@ -148,7 +149,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
       <ComposeLater
         anchor={laterAnchor}
         close={() => setLaterAnchor(null)}
-        mayGo={mayGo}
+        mayGo={mayGo && !previewing}
         attaching={files.model.attaching}
       />
     </>

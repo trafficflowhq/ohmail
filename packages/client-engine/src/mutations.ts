@@ -473,6 +473,15 @@ function openReadFloor(reader: EntityReader, now: Date): string {
 }
 
 export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: EffectContext): MutationEffect[] {
+  const effects = effectsOf(reader, m, ctx);
+  if (effects.length === 0 || !("release" in m) || !m.release) return effects;
+  const { from, to, messageIds } = m.release;
+  return [...effects, ...messageIds.flatMap((messageId) => effectsOf(reader, {
+    kind: "move", messageId, from, folder: to, pressRule: true,
+  }, ctx))];
+}
+
+function effectsOf(reader: EntityReader, m: EngineMutation, ctx: EffectContext): MutationEffect[] {
   const iso = ctx.now().toISOString();
 
   switch (m.kind) {
@@ -1113,6 +1122,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         id: rule.id,
         entity: {
           ...rule, destination: m.destination, updatedAt: iso,
+          ...(m.enabled === undefined ? {} : { enabled: m.enabled }),
           // The server's answer, not a guess: a press naming the place makes the rule the person's,
           // an undo keeps what it was — so the Rules page's origin does not flip under the echo.
           provenance: m.keepProvenance !== true ? "manual"
