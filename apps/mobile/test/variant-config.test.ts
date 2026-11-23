@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { decode } from "../../../test/compare/png.mjs";
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
 const req = createRequire(`${APP}package.json`);
@@ -177,6 +178,50 @@ describe("the configuration as a function of the variant", () => {
     const preview = resolveVariant(appJson(), "ohmail-preview");
     expect([preview.name, preview.scheme, preview.android.package]).toEqual(["ohmail preview", "ohmail-preview", "app.ohmail.preview"]);
     expect(preview.plugins.map(nameOf)).toEqual(appJson().plugins.map(nameOf));
+  });
+});
+
+describe("the installed launcher icons", () => {
+  it.each(["ohmail", "ohcal"])("fills the iOS canvas with white corners (%s)", (variant) => {
+    const icon = resolveVariant(appJson(), variant).ios.icon;
+    const bytes = readFileSync(`${APP}${icon}`);
+    const { width, height, data } = decode(bytes);
+    // IHDR colour type 2 is RGB with no alpha channel.
+    expect([width, height, bytes[25]]).toEqual([1024, 1024, 2]);
+    for (const x of [0, 1023]) {
+      for (const y of [0, 1023]) {
+        const start = (y * width + x) * 4;
+        expect([...data.subarray(start, start + 4)]).toEqual([255, 255, 255, 255]);
+      }
+    }
+  });
+
+  it("uses the white ground behind the Android adaptive icon", () => {
+    expect(resolveVariant(appJson(), "ohmail").android.adaptiveIcon.backgroundColor.toLowerCase()).toBe("#ffffff");
+  });
+
+  it.each(["ohmail", "ohcal"])("keeps Android artwork within the launcher safe circle (%s)", (variant) => {
+    const { foregroundImage, monochromeImage } = resolveVariant(appJson(), variant).android.adaptiveIcon;
+    const { data: foreground, width, height } = decode(readFileSync(`${APP}${foregroundImage}`));
+    const { data: monochrome, width: monoWidth, height: monoHeight } = decode(readFileSync(`${APP}${monochromeImage}`));
+    expect([width, height, monoWidth, monoHeight]).toEqual([1024, 1024, 1024, 1024]);
+    const safeRadius = width * 66 / 108 / 2;
+    let artwork = 0;
+    let outside = 0;
+    let colored = 0;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const p = 4 * (y * width + x);
+        if (foreground[p + 3] || monochrome[p + 3]) {
+          artwork++;
+          if (Math.hypot(x + 0.5 - 512, y + 0.5 - 512) > safeRadius) outside++;
+        }
+        if (monochrome[p + 3] && (monochrome[p] || monochrome[p + 1] || monochrome[p + 2])) colored++;
+      }
+    }
+    expect(artwork).toBeGreaterThan(0);
+    expect(outside).toBe(0);
+    expect(colored).toBe(0);
   });
 });
 
