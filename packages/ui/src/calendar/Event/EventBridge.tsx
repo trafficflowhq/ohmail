@@ -27,6 +27,8 @@ export function EventBridge({ tone, width, height, still, ...input }: EventBridg
   const edge = `${id}-edge`;
   const skin = `${id}-skin`;
   const sheet = `${id}-sheet`;
+  const head = `${id}-head`;
+  const tint = "var(--oh-bridge-tint)";
   const shape = bridgeShape(input);
   if (!shape) return null;
   const own = toneOf(tone);
@@ -43,11 +45,11 @@ export function EventBridge({ tone, width, height, still, ...input }: EventBridg
     <g className="oh-bridge-form" data-form={name} transform={turn}>
       {fadesAlongSide ? (
         <>
-          <g clipPath={`url(#${id}-head)`}>{fill(path, "var(--oh-bridge-tint)")}</g>
+          <g clipPath={`url(#${head})`}>{fill(path, tint)}</g>
           <g clipPath={`url(#${sheet})`}>{fill(path, `url(#${skin})`)}</g>
         </>
       ) : (
-        fill(path, input.side === "t" ? `url(#${skin})` : "var(--oh-bridge-tint)")
+        fill(path, input.side === "t" ? `url(#${skin})` : tint)
       )}
       {sides.map((d) => (
         <path key={d} className="oh-bridge-edge" d={d} />
@@ -86,7 +88,7 @@ export function EventBridge({ tone, width, height, still, ...input }: EventBridg
         </linearGradient>
         {fadesAlongSide && (
           <>
-            <clipPath id={`${id}-head`}>
+            <clipPath id={head}>
               <rect x="0" y="0" width={width} height={Math.max(0, headEnd)} />
             </clipPath>
             <clipPath id={sheet}>

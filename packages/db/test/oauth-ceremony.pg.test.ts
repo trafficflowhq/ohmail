@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "../src/dialect/index.js";
-import { eq } from "drizzle-orm";
+import { eq, sql, TransactionRollbackError } from "drizzle-orm";
+import { bindDb, carryBinding, rebindTx } from "../src/bound.js";
+import { makeOwnedDb } from "../src/client.js";
+import { createPolicyStatement } from "../src/row-security/apply.js";
+import { API_ROLE, LOCK_READERS, readerStatement } from "../src/row-security/names.js";
+import { policiesOfTable } from "../src/row-security/policies.js";
 import { runMigrations } from "../src/migrate.js";
 import { schema, accounts } from "../src/schema.js";
 import { mailboxOauthCeremonies, oauthProviderConfig, staffUsers } from "../src/schema-cloud.js";
@@ -86,6 +91,79 @@ async function seedCeremony(accountId: string, createdAt: Date = NOW): Promise<s
 }
 
 describe.skipIf(!PG_UP)("cloud 0009 — the ceremony is consumed EXACTLY ONCE under real concurrency", () => {
+  it("scopes a calendar ceremony to its account, provider and purpose under concurrent redemption", async () => {
+    const accountId = await seedAccount();
+    const other = await seedAccount();
+    const state = randomUUID().replaceAll("-", "");
+    await createOAuthCeremony(dbA, {
+      state, accountId, provider: "microsoft", purpose: "calendar",
+      codeVerifierEnc: "fixture", codeVerifierKeyVersion: 1, now: NOW,
+    });
+    const scope = { accountId, provider: "microsoft", purpose: "calendar" as const };
+    expect((await consumeOAuthCeremony(dbA, { state, now: NOW })).outcome).toBe("unknown");
+    expect((await consumeOAuthCeremony(dbA, { state, now: NOW, scope: { ...scope, provider: "google" } })).outcome).toBe("unknown");
+    expect((await consumeOAuthCeremony(dbA, { state, now: NOW, scope: { ...scope, accountId: other } })).outcome).toBe("wrong_account");
+    const outcomes = await Promise.all(racers.map((db) => consumeOAuthCeremony(db, { state, now: NOW, scope })));
+    expect(outcomes.map((result) => result.outcome).sort()).toEqual(["ok", ...Array(RACERS - 1).fill("unknown")]);
+  });
+
+  it("spends calendar state as the row-security-bound API role on its own account alone", async () => {
+    const accountId = await seedAccount();
+    const other = await seedAccount();
+    const state = randomUUID().replaceAll("-", "");
+    await createOAuthCeremony(dbA, {
+      state, accountId, provider: "microsoft", purpose: "calendar",
+      codeVerifierEnc: "fixture", codeVerifierKeyVersion: 1, now: NOW,
+    });
+    const owned = makeOwnedDb(PG_TEST_URL, { role: "api" });
+    const unbound = bindDb(owned.db, { account: null });
+    const spendAs = async (account: string) => {
+      await expect(unbound.transaction(async (tx) => {
+        // The lane database has no production logins. Install the real API policies and readers
+        // for this table, then roll back all DDL, grants and state writes at the end of each arm.
+        await tx.execute(sql.raw(`do $fixture$ begin
+          if not exists (select from pg_roles where rolname = '${API_ROLE}') then
+            create role ${API_ROLE} nologin nosuperuser nobypassrls;
+          end if;
+        end $fixture$`));
+        await tx.execute(sql`create schema if not exists ohmail`);
+        for (const reader of LOCK_READERS) await tx.execute(sql.raw(readerStatement(reader)));
+        await tx.execute(sql.raw(`grant select, update on public.mailbox_oauth_ceremonies to ${API_ROLE}`));
+        await tx.execute(sql`alter table public.mailbox_oauth_ceremonies enable row level security`);
+        await tx.execute(sql`alter table public.mailbox_oauth_ceremonies force row level security`);
+        for (const policy of policiesOfTable("mailbox_oauth_ceremonies")) {
+          if (policy.roles.includes(API_ROLE)) {
+            await tx.execute(sql.raw(createPolicyStatement({ ...policy, roles: [API_ROLE] })));
+          }
+        }
+        await tx.execute(sql.raw(`set local role ${API_ROLE}`));
+        const bound = await rebindTx(carryBinding(unbound, tx), { account });
+        const [facts] = await bound.execute(sql`select current_user as role, row_security_active('public.mailbox_oauth_ceremonies') as locked`);
+        expect(facts).toMatchObject({ role: API_ROLE, locked: true });
+
+        const input = { state, now: NOW, scope: { accountId: account, provider: "microsoft", purpose: "calendar" as const } };
+        if (account !== accountId) expect((await consumeOAuthCeremony(bound, input)).outcome).toBe("unknown");
+        await rebindTx(bound, { key: state });
+        if (account === accountId) {
+          expect((await consumeOAuthCeremony(bound, input)).outcome).toBe("ok");
+          expect((await consumeOAuthCeremony(bound, input)).outcome).toBe("unknown");
+        } else {
+          expect((await consumeOAuthCeremony(bound, input)).outcome).toBe("wrong_account");
+          const [row] = await bound.select({ consumedAt: mailboxOauthCeremonies.consumedAt })
+            .from(mailboxOauthCeremonies).where(eq(mailboxOauthCeremonies.state, state));
+          expect(row).toEqual({ consumedAt: null });
+        }
+        tx.rollback();
+      })).rejects.toBeInstanceOf(TransactionRollbackError);
+    };
+    try {
+      await spendAs(other);
+      await spendAs(accountId);
+    } finally {
+      await owned.close();
+    }
+  });
+
   it("eight concurrent consumes of one state yield exactly one winner", async () => {
     const accountId = await seedAccount();
     const state = await seedCeremony(accountId);

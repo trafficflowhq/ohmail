@@ -55,6 +55,7 @@ const refused402 = (): Response => jsonOf({
 let access: () => Response = () => jsonOf(OPEN);
 let walled = false;
 let asked: string[] = [];
+let pendingRenewal: Promise<Response> | null;
 
 beforeEach(async () => {
   (await import("../app/api-client")).forgetAccess();
@@ -65,6 +66,7 @@ beforeEach(async () => {
   sessionStorage.clear();
   access = () => jsonOf(OPEN);
   walled = false;
+  pendingRenewal = null;
   FakeEventSource.made = [];
   vi.stubGlobal("EventSource", FakeEventSource);
   const base = globalThis.fetch;
@@ -72,7 +74,7 @@ beforeEach(async () => {
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     asked.push(`${Math.round((Date.now() - Date.parse(shell.ISO)) / 1000)}s ${new URL(url, "https://ohmail.app").pathname}${walled ? "!" : ""}`);
-    if (url.includes("/auth/refresh")) return new Response(null, { status: 204 });
+    if (url.includes("/auth/refresh") && pendingRenewal === null) return new Response(null, { status: 204 });
     if (url.includes("/account/access")) return access();
     if (walled && (url.includes("/mailboxes") || url.includes("/sync"))) return refused402();
     return base(input as RequestInfo, init);
@@ -86,6 +88,22 @@ afterEach(async () => {
 /* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (1)): the mail stands when the frame's root is drawn (`.fr-root`,
    `packages/app/src/frame/FrameRoot.tsx`), where today's shell drew `.today`. */
 describe("the wall replaces the mail shell, so the lift streams again", () => {
+  it("opens the stream once the initial renewal has replaced the access cookie", { timeout: 60_000 }, async () => {
+    let settle!: (answer: Response) => void;
+    pendingRenewal = new Promise((resolve) => { settle = resolve; });
+    shell.scriptRefresh(() => pendingRenewal!);
+    await shell.mountCloudShell();
+    await shell.tick(1_000);
+    try {
+      expect(asked.filter((line) => line.endsWith(" /auth/refresh"))).toHaveLength(1);
+      expect(FakeEventSource.made, "the stream dialled with the old access cookie").toHaveLength(0);
+    } finally {
+      settle(shell.refresh204());
+      await shell.tick(1_000);
+    }
+    expect(FakeEventSource.made).toHaveLength(1);
+  });
+
   it("a warm mount dials its stream when the confirm opens the gate, with no tab flip", { timeout: 60_000 }, async () => {
     await shell.mountCloudShell();
     await shell.tick(5_000);

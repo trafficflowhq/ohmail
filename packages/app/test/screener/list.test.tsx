@@ -97,7 +97,7 @@ describe("the queue", () => {
   it("shows the finished count and the Ohbox action for this session", () => {
     mountPlace(modelOf(asked, { decidedThisSession: 3 }));
     expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("No one’s waiting");
-    expect(within(reading()).getByText("3 decided")).toBeTruthy();
+    expect(within(reading()).getByText((_, element) => element?.textContent === "3 decided")).toBeTruthy();
     expect(within(reading()).getByRole("button", { name: "Ohbox" })).toBeTruthy();
   });
 

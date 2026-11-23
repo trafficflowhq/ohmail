@@ -9,6 +9,7 @@ import {
   type CalendarPort,
 } from "@ohmail/app-logic/calendar";
 import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
+import { senderCheckFact } from "@ohmail/app-logic/screener";
 import type { CalendarTime } from "@ohmail/wire";
 import type { NONE } from "../host/index.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
@@ -119,7 +120,9 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
   const answer =
     (!personal && current && record.myAnswer !== "none" ? record.myAnswer : null) ?? invitation.answer;
   const mailAnswer =
-    props.message.authVerdict !== "fail" && !!invitation.organizer && !!invitation.invitedAddress;
+    senderCheckFact(props.message)?.reason !== "failed" &&
+    !!invitation.organizer &&
+    !!invitation.invitedAddress;
 
   return {
     when:

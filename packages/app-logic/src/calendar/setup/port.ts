@@ -4,11 +4,17 @@
  *
  * What a person types for a connection reaches the port once, in `connect` or `signInAgain`, and nowhere else.
  */
+import type { CalendarOAuthResult } from "./steps.js";
 import type { CalendarSettingsBody, CalendarSettingsWire, CalendarSyncFault } from "@ohmail/wire";
 
 /** Every way a calendar can be connected, as our server names it. */
 export const CALENDAR_WAYS = ["icloud", "caldav", "ics", "google", "microsoft"] as const;
 export type CalendarWay = (typeof CALENDAR_WAYS)[number];
+export type CalendarOAuthProvider = Extract<CalendarWay, "google" | "microsoft">;
+
+export function isCalendarOAuthProvider(way: unknown): way is CalendarOAuthProvider {
+  return way === "google" || way === "microsoft";
+}
 
 /** One connection asked for: iCloud's Apple Account and app password, another CalDAV server, or a subscription. */
 export type ConnectAsk =
@@ -47,6 +53,8 @@ export interface CalendarSetupPort {
    * is a new ask with a new connection id.
    */
   readonly connect: ((ask: ConnectAsk) => Promise<ConnectAnswer>) | "none";
+  /** Opens the provider's sign-in in this browser, where the host can handle its return. */
+  readonly startOAuth?: (provider: CalendarOAuthProvider) => Promise<CalendarOAuthResult | void>;
   /**
    * A new sign-in for the connection the ask names. A rejection means the ask was not sent and the connection is as
    * it was.

@@ -282,7 +282,8 @@ export function DesktopSettings({
   const paired = isDesktopHost(status) && host !== null;
   const door = connectedThrough(status);
   const credential = credentialLine(status, session, host);
-  const showCredential = status.mode === "cloud" ? session !== "live" : status.credentialState !== "ready";
+  const showCredential =
+    status.mode === "cloud" ? session !== "live" : status.mode === "local" || status.credentialState !== "ready";
   const compactHosted = status.mode === "cloud" && !paired && session === "live";
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
@@ -332,7 +333,7 @@ export function DesktopSettings({
           value={door}
         />
         {compactHosted ? (
-          <SettingLine label={DOOR_COPY.mailboxesLabel}>
+          <SettingLine label={DOOR_COPY.mailboxesLabel} description={readOnly ? mailboxRowWhy(readOnly) : undefined}>
             <span title={held?.length ? mailboxValue : undefined}>
               {held === null ? DOOR_COPY.installConnectionUnknown : DOOR_COPY.installMailboxCount(held.length, readOnly ? "reader" : "organizer")}
             </span>
@@ -381,7 +382,10 @@ export function DesktopSettings({
             <Button kind="quiet" size="s" onPress={onTakeOver} disabled={busy}>{DOOR_COPY.takeoverAction}</Button>
           </SettingLine>
         ) : null}
-        <SettingLine label={DOOR_COPY.installSwitch}>
+        <SettingLine
+          label={DOOR_COPY.installSwitch}
+          description={paired ? DOOR_COPY.installSwitchWhyHost(host, machineWord()) : DOOR_COPY.installSwitchWhy(machineWord())}
+        >
           <Button kind="quiet" size="s" onPress={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
         </SettingLine>
         {status.pairingLeftAt ? (

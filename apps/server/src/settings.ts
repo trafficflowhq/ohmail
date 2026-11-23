@@ -147,6 +147,7 @@ export interface Settings {
     enabled: boolean;
     policy: "cloud" | "own-network";
     connect: Record<"google" | "microsoft", { on: boolean; configured: boolean }>;
+    google: { clientId: string; clientSecret: string } | null;
     notices: { microsoftValidation: boolean };
   };
   /**
@@ -585,15 +586,19 @@ function loadCalendar(env: NodeJS.ProcessEnv, privateDials: boolean): Settings["
     if (word !== "" && word !== "0" && word !== "1") throw new Error(`${name} must be 1 (the way offered) or unset`);
     return word === "1";
   };
+  const clientId = trimmed(env, "OHCAL_GOOGLE_CLIENT_ID");
+  const clientSecret = trimmed(env, "OHCAL_GOOGLE_CLIENT_SECRET");
+  const google = clientId && clientSecret ? { clientId, clientSecret } : null;
   return {
     enabled: trimmed(env, "OHMAIL_CALENDAR") === "1",
+    google,
     // Exactly `1`, unpadded, as the worker reads the same variable: the two programs then agree, and
     // where they did not, the dial's own refusal is the one that counts.
     policy: privateDials && env.OHCAL_ALLOW_PRIVATE === "1" ? "own-network" : "cloud",
     connect: {
       google: {
         on: offered("OHCAL_CONNECT_GOOGLE"),
-        configured: present(env, "OHCAL_GOOGLE_CLIENT_ID") && present(env, "OHCAL_GOOGLE_CLIENT_SECRET"),
+        configured: google !== null,
       },
       microsoft: { on: offered("OHCAL_CONNECT_MICROSOFT"), configured: trimmed(env, "OHCAL_MICROSOFT") === "1" },
     },

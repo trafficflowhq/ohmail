@@ -35,11 +35,14 @@ it("uses the newest name for an address from either side of the mail", () => {
   const title = (letters: EngineMessage[]) => {
     cleanup();
     listSeat({ letters, first });
-    return screen.getByRole("heading", { level: 1 }).textContent;
+    return screen.getByRole("heading", { level: 1 });
   };
-  expect(title([nameless, sender])).toBe("Anna Berg");
-  expect(title([recipient])).toBe("Anna B.");
-  expect(title([sender, recipient, nameless])).toBe("Anna B.");
-  expect(title([nameless])).toBe(address);
-  expect(title([])).toBe(address);
+  expect(title([nameless, sender]).textContent).toBe("Anna Berg");
+  for (const letters of [[recipient], [sender, recipient, nameless]]) {
+    const heading = title(letters);
+    expect(heading.textContent).toBe("Anna B");
+    expect(heading.querySelector(".oh-dot[aria-hidden='true']")).not.toBeNull();
+  }
+  expect(title([nameless]).textContent).toBe(address);
+  expect(title([]).textContent).toBe(address);
 });

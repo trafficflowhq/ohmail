@@ -202,9 +202,12 @@ describe("Settings → Mailboxes", () => {
 describe("the first-run mailbox form", () => {
   /** The stage's mailbox step on the hosted door, its probe the web's own over the API's answer. */
   async function firstRun(): Promise<MountedStage> {
-    return addRun();
+    const stage = await addRun();
+    expect(tile(stage.el, "Gmail")?.getAttribute("aria-pressed")).not.toBe("true");
+    await stage.press("Gmail");
+    return stage;
   }
-  /** A Gmail address chooses Gmail's tile (no tile is preselected), and its password field stands. */
+  /** The chosen Gmail form asks for the address and app password. */
   const GMAIL = "do-not-reply@gmail.com";
   const fill = async (el: HTMLElement): Promise<void> => {
     await typeInto(el, O.address!, GMAIL);
@@ -212,10 +215,13 @@ describe("the first-run mailbox form", () => {
   };
 
   it("Gmail is pre-selected, and its note and links are on screen before the press", async () => {
-    const { el } = await firstRun();
-    // No tile is preselected by the ruled design: the typed address chooses Gmail's.
+    const stage = await addRun();
+    const { el } = stage;
+    expect(tile(el, "Gmail")?.getAttribute("aria-pressed")).toBe("false");
     await typeInto(el, O.address!, GMAIL);
     expect(tile(el, "Gmail")?.getAttribute("aria-pressed")).toBe("true");
+    await stage.press("Gmail");
+    expect(within(el).getByLabelText(O.password!)).toBeTruthy();
     expect(el.textContent).toContain(P.note_gmail);
     expect(hrefs(el)).toEqual(expect.arrayContaining([LINKS.prereq, LINKS.help]));
   });

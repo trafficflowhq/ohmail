@@ -243,7 +243,9 @@ describe("grouping rules by destination", () => {
     expect(groupByDestination([item]).map((group) => group.destination)).toEqual(["INBOX"]);
     const view = await mountRulesList([item]);
     expect(view.items()).toEqual([sentence(item)]);
-    expect(view.pane.queryByRole("group", { name: rules.facetLabel })).toBeNull();
+    expect(view.facets().getAllByRole("button").map((button) => button.textContent)).toEqual(["All", "Ohbox"]);
+    await view.pick("Ohbox");
+    expect(view.items()).toEqual([sentence(item)]);
   });
 });
 

@@ -12,7 +12,27 @@
       "none": "Von hier kann kein Kalender verbunden werden",
       "icloud": "iCloud",
       "caldav": "Ein anderer CalDAV-Server",
-      "ics": "Ein Abo"
+      "ics": "Ein Abo",
+      "google": "Google Kalender",
+      "microsoft": "Microsoft Outlook"
+    },
+    "oauth": {
+      "connecting": "Dein Kalender wird verbunden…",
+      "connected": "Kalender verbunden.",
+      "consent_declined": "Der Kalenderzugriff wurde abgelehnt.",
+      "admin_consent_required": "Deine Organisation muss den Kalenderzugriff genehmigen.",
+      "consent_failed": "Der Anbieter konnte den Kalenderzugriff nicht genehmigen.",
+      "state_expired": "Diese Kalenderanmeldung ist abgelaufen. Beginne erneut.",
+      "state_invalid": "Diese Kalenderanmeldung ist nicht mehr gültig. Beginne erneut.",
+      "account_mismatch": "Diese Kalenderanmeldung wurde mit einem anderen ohmail-Account gestartet.",
+      "provider_off": "Dieser Kalenderanbieter ist nicht verfügbar.",
+      "exchange_failed": "Die Kalenderanmeldung konnte nicht abgeschlossen werden. Versuche es erneut.",
+      "start_failed": "Die Kalenderanmeldung konnte nicht gestartet werden. Versuche es erneut.",
+      "calendar_off": "Schalte deinen Kalender ein, bevor du ihn verbindest.",
+      "email_unverified": "Bestätige deine E-Mail-Adresse, bevor du einen Kalender verbindest.",
+      "conflict": "Entferne eine Kalenderverbindung, bevor du eine weitere hinzufügst.",
+      "missing_permissions": "Erlaube alle angefragten Kalenderberechtigungen und versuche es erneut.",
+      "provider_unavailable": "Der Kalenderanbieter war nicht erreichbar. Versuche es gleich noch einmal."
     },
     "signin": {
       "icloud": "Ich bin <user></user> mit dem App-Passwort <password></password>",

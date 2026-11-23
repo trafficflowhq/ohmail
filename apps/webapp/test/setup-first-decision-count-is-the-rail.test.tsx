@@ -95,7 +95,7 @@ describe("the first decision says the Screener's count, the one the rail reads",
     await launch(3);
     await waitFor(() => stageHeading() !== null, "the first-decision step");
     await waitFor(() => railScreener(3) !== null, "the rail to count 3");
-    expect(railScreener(3)?.getAttribute("title")).toBe("3 waiting");
+    expect(railScreener(3)?.getAttribute("title")).toBe("3 first-time senders waiting");
     expect(stageLead(/^3 left$/)).toBeTruthy();
   });
 
@@ -103,13 +103,16 @@ describe("the first decision says the Screener's count, the one the rail reads",
     await launch(1);
     await waitFor(() => stageHeading() !== null, "the first-decision step");
     await waitFor(() => railScreener(1) !== null, "the rail to count 1");
-    expect(railScreener(1)?.getAttribute("title")).toBe("1 waiting");
+    expect(railScreener(1)?.getAttribute("title")).toBe("1 first-time sender waiting");
     expect(stageLead(/^1 left$/)).toBeTruthy();
   });
 });
 
-it.each([1, 3])("keeps the original German waiting title for %i senders", async (count) => {
+it.each([
+  [1, "1 neuer Absender wartet"],
+  [3, "3 neue Absender warten"],
+])("shows the German waiting title for %i senders", async (count, title) => {
   await launch(count, "de");
   await waitFor(() => railScreener(count, german.screener.title) !== null, `the German rail to count ${count}`);
-  expect(railScreener(count, german.screener.title)?.getAttribute("title")).toBe(`${count} wartend`);
+  expect(railScreener(count, german.screener.title)?.getAttribute("title")).toBe(title);
 });

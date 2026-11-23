@@ -123,10 +123,10 @@ async function wizard() {
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
   /* The step is the one connect form: the chosen tile by its name, the refusal by its role. */
   const probes = mailboxProbes(host, en, act);
-  const picked = () => probes.checked()[0] ?? null;
+  const heading = () => host.querySelector("h1")?.textContent;
   const alert = () => probes.refusal();
   const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === label) ?? null;
-  return { host, picked, alert, button };
+  return { host, heading, alert, button };
 }
 
 const copy = en.join as unknown as Record<string, string>;
@@ -138,7 +138,8 @@ describe("the wizard words a failed Microsoft sign-in itself", () => {
       await signInReturns("oauth=pending&state=STATE-F&code=CODE-F");
       const ui = await wizard();
       expect(ui.alert()).toBe(copy[`mailboxOauth_${reason}`]);
-      expect(ui.picked()).toMatch(/^Microsoft 365/);
+      expect(ui.heading()).toBe(en.join.step_mailbox_title);
+      expect(ui.host.textContent).toContain(en.mailboxes.microsoftOauthNote);
       expect(ui.button(en.mailboxes.oauthContinue), "the way to try again").toBeTruthy();
       expect(ui.host.textContent).not.toContain("Start again from Settings");
       expect(ui.host.textContent).not.toContain(SERVER[reason]!.body.error.message);

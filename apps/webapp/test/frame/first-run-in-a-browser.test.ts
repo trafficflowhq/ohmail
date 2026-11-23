@@ -26,8 +26,7 @@ const ROOT = process.cwd();
 const ORIGIN = "https://app.ohmail.test";
 const t = en.onboarding;
 /** The steps a connected, not yet organized mailbox walks first, by the heading each one says. */
-const ORGANIZE = t.mapTitle;
-const HOW_FAR = t.organizeLast.replace("<window></window>.", t.windowYear);
+const ORGANIZE = t.organizeLast.replace("<window></window>.", t.windowYear);
 const AI = t.aiSay.replace("<on></on>.", t.aiOff);
 
 let browser: Browser | null = null;
@@ -87,7 +86,7 @@ function escape(s: string): string {
 }
 /** The step on screen: the heading of the one step drawn. */
 async function stepOn(page: Page): Promise<string | null> {
-  for (const title of [ORGANIZE, HOW_FAR, AI]) if (await step(page, title).isVisible()) return title;
+  for (const title of [ORGANIZE, AI]) if (await step(page, title).isVisible()) return title;
   return null;
 }
 const asked = (page: Page) => page.evaluate(() => (window as unknown as { firstRunAsked: { complete: number } }).firstRunAsked);
@@ -115,22 +114,23 @@ for (const size of SIZES) {
   describe(`setup over the frame at ${size.name}`, () => {
     it("nothing of setup stands in what the frame makes inert", async () => {
       const page = await setup(size.width, size.height);
-      const held = { continue: await inert(page, t.continue), cancel: await inert(page, t.setupMenu) };
+      const held = { agree: await inert(page, t.agree), cancel: await inert(page, t.setupMenu) };
       await page.context().close();
-      expect(held, "setup's controls stand in an inert subtree").toEqual({ continue: false, cancel: false });
+      expect(held, "setup's controls stand in an inert subtree").toEqual({ agree: false, cancel: false });
     }, 60_000);
 
+    // The folder map and consent share the step, so Agree is its forward control.
     it("with the mouse: a click on Continue moves the step", async () => {
       const page = await setup(size.width, size.height);
-      await button(page, t.continue).click({ timeout: 5000 });
-      await expect.poll(() => stepOn(page), { message: "Continue moved no step", timeout: 5000 }).toBe(HOW_FAR);
+      await button(page, t.agree).click({ timeout: 5000 });
+      await expect.poll(() => stepOn(page), { message: "Agree moved no step", timeout: 5000 }).toBe(AI);
       await page.context().close();
     }, 60_000);
 
     it("with the keyboard: ↵ on a step moves the step", async () => {
       const page = await setup(size.width, size.height);
       await page.keyboard.press("Enter");
-      await expect.poll(() => stepOn(page), { message: "↵ moved no step", timeout: 5000 }).toBe(HOW_FAR);
+      await expect.poll(() => stepOn(page), { message: "↵ moved no step", timeout: 5000 }).toBe(AI);
       await page.context().close();
     }, 60_000);
 
@@ -155,7 +155,7 @@ for (const size of SIZES) {
       await expect.poll(() => button(page, t.cancelConfirm).count(), { message: "Escape left the confirm open", timeout: 5000 }).toBe(0);
       const stood = await stepOn(page);
       await page.keyboard.press("Enter");
-      await expect.poll(() => stepOn(page), { message: "↵ after the confirm moved no step", timeout: 5000 }).toBe(HOW_FAR);
+      await expect.poll(() => stepOn(page), { message: "↵ after the confirm moved no step", timeout: 5000 }).toBe(AI);
       const said = await asked(page);
       await page.context().close();
       expect(stood, "the step did not stand").toBe(ORGANIZE);
@@ -201,9 +201,9 @@ describe("setup's foot stands inside its card", () => {
     it(`at ${c.width} by ${c.height}${c.textSize ? ", Text size 1.5" : ""}`, async () => {
       const page = await setup(c.width, c.height, c.textSize);
       const seen: string[] = [];
-      for (const title of [ORGANIZE, HOW_FAR, AI]) {
+      for (const title of [ORGANIZE, AI]) {
         await step(page, title).waitFor({ timeout: 5000 });
-        const action = title === HOW_FAR ? t.agree : t.continue;
+        const action = title === ORGANIZE ? t.agree : t.continue;
         const at = await button(page, action).evaluate(async (el) => {
           const box = (e: Element | null) => {
             const r = e!.getBoundingClientRect();
@@ -234,7 +234,7 @@ describe("setup's foot stands inside its card", () => {
         /* Across the card: the foot runs from the card's inner left edge to its inner right edge. */
         if (Math.abs(at.foot.left - at.inner.left) > 1 || Math.abs(at.foot.right - at.inner.right) > 1)
           seen.push(`${title}: the foot ${JSON.stringify(at.foot)} does not run across the card ${JSON.stringify(at.inner)}`);
-        /* On to the next step by its own ↵: Continue, then Agree. */
+        /* On to the next step by its own ↵: Agree. */
         if (title !== AI) await page.keyboard.press("Enter");
       }
       await page.context().close();

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
@@ -141,10 +141,11 @@ describe("the browser a desktop host serves says where a screen-out's unsubscrib
   for (const locale of ["en", "de"] as const) {
     it(`the Settings switch's note names your computer, never our servers (${locale})`, { timeout: 30_000 }, async () => {
       const row = await paneRow("#/settings/screener", locale, CATALOGUES[locale].settings.autoUnsub.title);
-      const note = row.nextElementSibling?.nextElementSibling;
       expect(within(row).getByRole("switch", { name: CATALOGUES[locale].settings.autoUnsub.title })).toBeTruthy();
-      expect(note?.tagName, "the switch's note is not under its row").toBe("P");
-      const text = note!.textContent ?? "";
+      const about = CATALOGUES[locale].settingsScreener.details.replace("{title}", CATALOGUES[locale].settings.autoUnsub.title);
+      const info = within(row).getByRole("button", { name: about });
+      await act(async () => info.click());
+      const text = screen.getByRole("dialog", { name: about }).textContent ?? "";
       expect(text, `${locale}: the paired browser says the request goes from our servers`).not.toMatch(SERVERS);
       expect(text, `${locale}: the paired browser does not name your computer`).toMatch(YOUR_COMPUTER[locale]);
       expect(text, `${locale}: the paired browser does not say what the sender sees`).toMatch(ADDRESS[locale]);

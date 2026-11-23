@@ -90,7 +90,8 @@ describe("Google's sign-in: the answer traded for a lasting sign-in", () => {
   ])("keeps nothing of an answer with %s", async (_what, reply, reason) => {
     const { http } = serving({ [TOKEN_URL]: [reply] });
     const answer = await exchangeGoogleCode({ http, clock: { now: () => NOW } }, code, never);
-    expect(answer).toEqual(refusal(reason));
+    const missingPermissions = _what === "only one of the two permissions" || _what === "no word on the permissions";
+    expect(answer).toEqual({ ...refusal(reason), ...(missingPermissions ? { missingPermissions: true } : {}) });
   });
 });
 

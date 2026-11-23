@@ -205,6 +205,11 @@ export interface ApiServices {
    * composition that keeps one. ABSENT refuses: no way is listed and none is taken.
    */
   calendarConnect?: CalendarConnectPort;
+  /** Public callback origin and the server-only registration for Google's calendar grant. */
+  calendarOAuth?: {
+    readonly origin: string;
+    readonly google: { readonly clientId: string; readonly clientSecret: string } | null;
+  };
   /**
    * The door a calendar's provider rings ({@link CalendarNoticeDoor}), handed beside `calendar` by a
    * server that mounts the notice routes. ABSENT, those routes answer as they always do and read

@@ -17,6 +17,7 @@ import { sendDepsOf, sendKeyOf } from "../send-deps.js";
 import { readBody } from "../routes/shared.js";
 import { placesOff, readPlaceQuestion } from "./places.js";
 import { calendarConnectRoutes } from "./connect.js";
+import { calendarOAuthRoutes } from "./oauth.js";
 
 export {
   makePlaceSuggester, readPlaceQuestion,
@@ -158,4 +159,5 @@ export const calendarRoutes: Route[] = [
   },
   // The connect door: the ways, a connection made, removed, asked now and signed in again, and a calendar's own (`./connect.ts`).
   ...calendarConnectRoutes,
+  ...calendarOAuthRoutes,
 ];

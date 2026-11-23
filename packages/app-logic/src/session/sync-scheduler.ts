@@ -1194,6 +1194,8 @@ export interface SyncSchedulerOptions {
    * and again on each return to visibility; after a refusal, at most once per {@link WAKE_STREAM_REASK_MS}.
    */
   wake?: (() => WakeStreamLike) | null;
+  /** Wait for the stream's credentials before dialing. A false answer leaves the poll in charge. */
+  waitForWake?: () => Promise<boolean>;
   /**
    * Hear the push wake (`engine-config.ts` `cloudPushWakes`): a visible tab drains at once, at most
    * once per poll period and never on a drain's echo; a hidden one keeps its cadence. Returns the
@@ -1314,6 +1316,7 @@ export function startSyncScheduler(
   const wakeSafetyPollMs = options.wakeSafetyPollMs ?? WAKE_SAFETY_POLL_MS;
   const wakeStreamSilenceMs = options.wakeStreamSilenceMs ?? WAKE_STREAM_SILENCE_MS;
   const wakeFactory = options.wake ?? null;
+  const waitForWake = options.waitForWake;
   const base = options.backoffBaseMs ?? BACKOFF_BASE_MS;
   const cap = options.backoffCapMs ?? BACKOFF_CAP_MS;
   const random = options.random ?? Math.random;
@@ -1466,6 +1469,7 @@ export function startSyncScheduler(
 
   /** The wake stream, when this build has one and the tab is visible. */
   let stream: WakeStreamLike | null = null;
+  let wakePreparation: "idle" | "waiting" | "deferred" = "idle";
   /**
    * The stream has DELIVERED A FRAME (ready, ping or sync) and has not since errored or gone
    * silent — the state that relaxes the poll. Never set by `open` alone.
@@ -1540,9 +1544,9 @@ export function startSyncScheduler(
     }
   };
 
-  const connectStream = (): void => {
-    if (!wakeFactory || streamDead || stopped || standingDown || stream !== null || !visible()) return;
-    if (streamRefusedAt !== null && Date.now() - streamRefusedAt < WAKE_STREAM_REASK_MS) return;
+  const mayConnectStream = (): boolean => {
+    if (streamDead || stopped || standingDown || stream !== null || !visible()) return false;
+    if (streamRefusedAt !== null && Date.now() - streamRefusedAt < WAKE_STREAM_REASK_MS) return false;
     /**
      * AND NOT WHILE THIS MIRROR'S IDENTITY DOES NOT HOLD: `/events` is a SESSION-authenticated stream and the server
      * emits the answering account's sequence on it. Opened without asking, a stale shell for A held a live
@@ -1552,9 +1556,12 @@ export function startSyncScheduler(
      * stream is the one thing in this loop that is not a request, so nothing else in the file was ever going to ask
      * the question for it.
      */
-    if (!identityHolds() || !canReachNetwork()) return;
+    return identityHolds() && canReachNetwork();
+  };
+
+  const openStream = (makeStream: () => WakeStreamLike): void => {
     try {
-      const s = wakeFactory();
+      const s = makeStream();
       stream = s;
       const watch = (): void => {
         if (streamWatchdog !== null) clearTimeout(streamWatchdog);
@@ -1645,6 +1652,20 @@ export function startSyncScheduler(
       closeStream();
       streamDead = true;
     }
+  };
+
+  const connectStream = (): void => {
+    if (!wakeFactory || wakePreparation === "waiting" || !mayConnectStream()) return;
+    if (waitForWake === undefined) {
+      openStream(wakeFactory);
+      return;
+    }
+    wakePreparation = "waiting";
+    const settled = (ready: boolean): void => {
+      wakePreparation = ready ? "idle" : "deferred";
+      if (ready && mayConnectStream()) openStream(wakeFactory);
+    };
+    void waitForWake().then(settled, () => settled(false));
   };
 
   gate?.claim(mayRequest);
@@ -1851,8 +1872,8 @@ export function startSyncScheduler(
       failures = 0;
       bootstrapping = false;
       arm(steadyDelay());
-      // A refused stream is asked for again on this cadence; `connectStream` holds the minute.
-      if (streamRefusedAt !== null) connectStream();
+      // A stream deferred for renewal can connect after a settled poll. A refused stream still waits a minute.
+      if (streamRefusedAt !== null || wakePreparation === "deferred") connectStream();
       // THE EAGER BODY PASS, kicked from the one place that knows a drain just SETTLED cleanly.
       // Fire-and-forget: the settle must publish and re-arm without waiting on background
       // fetches, and the engine's pass never rejects (failures become per-id records). It lives

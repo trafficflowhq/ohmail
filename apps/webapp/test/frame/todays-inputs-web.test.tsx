@@ -178,11 +178,13 @@ describe("the web's host, read back as today's inputs", () => {
     expect(factories.away).toHaveBeenCalledTimes(1);
     expect(inputs.awayTransport).toBe(factories.away.mock.results[0]?.value.wire);
     // The browser's own notification host, each part the shared file's object; its notices the page's own emitter.
-    const pageEmitter = webNoticeEmitter(browserNoticePage, () => { throw new Error("nothing is drawn here"); });
+    const pageEmitter = webNoticeEmitter(browserNoticePage, () => { throw new Error("nothing is drawn here"); }, undefined, true);
     expect(inputs.notificationHost).toEqual({
       ...browserNotificationHost,
       liveNoticeScope: expect.any(Function),
-      emitter: { ...pageEmitter, post: expect.any(Function), takeBack: expect.any(Function) },
+      emitter: {
+        ...pageEmitter, post: expect.any(Function), takeBack: expect.any(Function), lockSummary: expect.any(Function),
+      },
     });
     // This host can announce notices only while the browser still names its account.
     const liveNoticeScope = inputs.notificationHost?.liveNoticeScope;

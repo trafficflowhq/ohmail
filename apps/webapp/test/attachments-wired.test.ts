@@ -355,7 +355,7 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     const pane = code(read("../../../packages/app/src/reader/Letter.tsx"));
     // RENDERED, not merely imported: an unused import compiles and ships nothing. The strip is
     // `LetterFiles` now, the one component the letter renders it through.
-    expect(pane, "the letter does not render <LetterFiles>").toMatch(/<LetterFiles /);
+    expect(pane, "the letter does not render <LetterFiles>").toMatch(/<LetterFiles\s/);
     expect(code(read("../../../packages/app/src/reader/files/Files.tsx")), "LetterFiles does not render the kit's <FileTile>")
       .toMatch(/<FileTile/);
     expect(pane, "the letter still gates the attachment surface on the fixtures-only field")
@@ -416,7 +416,7 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     const files = sliceOfDeclaration(code(read("../../../packages/app/src/reader/files/Files.tsx")), "LetterFiles");
     expect(files, "the tile list must supply the same inline item to the preview")
       .toMatch(/const list = files\.itemsOf\(messageId, \{ includeInlineParts: true \}\)/);
-    expect(files).toMatch(/const items = list\.items;/);
+    expect(files).toMatch(/const items = omit \? list\.items\.filter\(\(item\) => item\.id !== omit\) : list\.items;/);
     expect(files).toMatch(/items\.map\(\(item\) =>/);
     expect(files).toMatch(/<LetterPreview[\s\S]*?items=\{items\}/);
   });
@@ -465,7 +465,7 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
       .toContain('previewSelection={`${route.place}:${openId}`}');
     const letter = code(read("../../../packages/app/src/reader/Letter.tsx"));
     expect(letter, "the preview is mounted under the letter that owns its files")
-      .toMatch(/<LetterFiles messageId=\{message\.id\} selection=\{previewSelection\} parts=\{parts\} \/>/);
+      .toMatch(/<LetterFiles\s+messageId=\{message\.id\}\s+selection=\{previewSelection\}\s+parts=\{parts\}\s+omit=\{parts\.invitationFile\?\.\(message\)\}\s+\/>/);
     const files = code(read("../../../packages/app/src/reader/files/Files.tsx"));
     expect(files, "a changed selection must stop drawing the old preview immediately")
       .toMatch(/const activeId = picked\?\.selection === selection \? picked\?\.id : undefined;/);

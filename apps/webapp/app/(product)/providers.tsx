@@ -3,7 +3,7 @@
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ConfirmBrowserFaceOwner } from "./confirm-browser-face-owner";
-import { ThemeProvider, themeInitScript } from "@ohmail/ui";
+import { setViewTransitions, ThemeProvider, themeInitScript } from "@ohmail/ui";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
@@ -16,6 +16,9 @@ import { frameBootScript } from "@ohmail/app/frame/boot";
 // and drops the copy of an account the server says was erased (`erased-door.ts`).
 import "../revoked-door";
 import "../erased-door";
+
+// A document view transition captures pointer input. Fade the theme colors with the controls still live.
+if (typeof window !== "undefined") setViewTransitions(false);
 
 type AppearanceProps = {
   nonce?: string;

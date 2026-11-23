@@ -68,10 +68,17 @@ journeysOf("reader", () => {
     expect(asked()).toEqual([]);
   });
   journey(GUARDS[4]!, async (b) => {
+    const before = b.heard.length;
     const { person, named } = await personWith(b, UNREAD);
     await person.arrive("ohbox");
     await person.act("press", "conversation", { named });
     await person.act("shortcut", "reply");
     await person.see("reply-send");
+    if (b.id === "web" && b.setting === "W-s") {
+      await person.until(
+        async () => b.heard.slice(before).some((h) => h.method === "GET" && h.pattern === "/events" && h.status === 200),
+        "the server to admit the event stream",
+      );
+    }
   });
 });

@@ -12,7 +12,27 @@
       "none": "No calendar can be connected from here",
       "icloud": "iCloud",
       "caldav": "Another CalDAV server",
-      "ics": "A subscription"
+      "ics": "A subscription",
+      "google": "Google Calendar",
+      "microsoft": "Microsoft Outlook"
+    },
+    "oauth": {
+      "connecting": "Connecting your calendar…",
+      "connected": "Calendar connected.",
+      "consent_declined": "Calendar access was declined.",
+      "admin_consent_required": "Your organization needs to approve calendar access.",
+      "consent_failed": "The provider could not approve calendar access.",
+      "state_expired": "This calendar sign-in expired. Start again.",
+      "state_invalid": "This calendar sign-in is no longer valid. Start again.",
+      "account_mismatch": "This calendar sign-in was started by a different ohmail account.",
+      "provider_off": "This calendar provider is unavailable.",
+      "exchange_failed": "Calendar sign-in could not finish. Try connecting again.",
+      "start_failed": "Calendar sign-in could not start. Try again.",
+      "calendar_off": "Turn on your calendar before connecting.",
+      "email_unverified": "Verify your email before connecting a calendar.",
+      "conflict": "Remove a calendar connection before adding another.",
+      "missing_permissions": "Allow all requested calendar permissions and try again.",
+      "provider_unavailable": "The calendar provider could not be reached. Try again in a moment."
     },
     "signin": {
       "icloud": "I’m <user></user> with app password <password></password>",

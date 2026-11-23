@@ -84,7 +84,7 @@ it("saves to an available CalDAV calendar while preferences are unavailable", as
     mountFrame("#/cal/week/2026-11-16", w, NONE);
     fireEvent.click(screen.getByRole("button", { name: "New event" }));
     const form = within(screen.getByRole("dialog", { name: "New event" }));
-    fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Pottery" } });
+    fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Pottery" } });
     const add = form.getByRole<HTMLButtonElement>("button", { name: "Add" });
     expect(add.disabled).toBe(false);
     fireEvent.click(add);

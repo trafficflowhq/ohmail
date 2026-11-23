@@ -101,15 +101,25 @@ const mountJunk = (junk: ScreenerJunk, opts: { room?: "desktop" | "phone"; lang?
   });
 
 describe("the third section with the mail server's Junk handed", () => {
-  it("is Junk: each letter says who filed it, the section states no count, and Spam's senders are not listed", () => {
+  it("shows the complete Junk count and filing origins without the Spam senders", () => {
     const { junk } = junkOf();
     mountJunk(junk);
-    expect(screen.getByRole("button", { name: "Junk" }).textContent).toBe("Junk");
+    expect(screen.getByRole("button", { name: "Spam 2" }).getAttribute("aria-pressed")).toBe("true");
     const rows = screen.getByRole("listbox", { name: "Junk" });
     expect(within(rows).getAllByRole("option")).toHaveLength(2);
     expect(rows.textContent).toContain("Your verdict");
     expect(rows.textContent).toContain("Mail server");
     expect(screen.queryByText("Spammy Sender")).toBeNull();
+  });
+
+  it("shows the first page of Junk without presenting its size as the total", () => {
+    const { junk } = junkOf({ nextCursor: "c-1" });
+    mountJunk(junk);
+    expect(screen.getByRole("button", { name: "Spam", exact: true }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    const rows = screen.getByRole("listbox", { name: "Junk" });
+    expect(within(rows).getAllByRole("option")).toHaveLength(2);
   });
 
   it("with no window handed, the third section is Spam with its senders", () => {

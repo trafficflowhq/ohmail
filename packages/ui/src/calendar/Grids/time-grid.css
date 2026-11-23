@@ -130,7 +130,7 @@
     content: "";
     order: 1;
     flex: none;
-    block-size: 100dvh;
+    block-size: calc(100dvh / var(--ui-zoom, 1));
   }
   :root[data-device="phone"] .oh-tg-scroll {
     touch-action: pan-y;

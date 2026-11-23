@@ -341,7 +341,8 @@ describe("the reply you sent is brought into view", () => {
     expect(top).toBe(700);
   });
 
-  it("another conversation opened before the send confirmed opens at its opened message, and nothing eases", async () => {
+  // An open lands at the newest letter, even when an earlier one supplied the link.
+  it("another conversation opened before the send confirmed opens at its newest message, and nothing eases", async () => {
     await open([A, B]);
     top = 700;
     await pressSend();
@@ -358,9 +359,9 @@ describe("the reply you sent is brought into view", () => {
     geometry();
     await act(async () => { observing.forEach((cb) => cb()); });
     await act(async () => { vi.advanceTimersByTime(16); });
-    expect(top, "the new conversation's anchor: its opened message").toBe(TALL * 1 - 14);
+    expect(top, "the new conversation's anchor: its newest message").toBe(TALL * 2 - 14);
     for (let i = 0; i < 60; i++) await act(async () => { vi.advanceTimersByTime(16); });
-    expect(top).toBe(TALL * 1 - 14);
+    expect(top).toBe(TALL * 2 - 14);
   });
 
   it("an arrival that is not the person's own send moves nothing", async () => {
@@ -475,7 +476,7 @@ describe("the reply you sent is brought into view", () => {
     expect(top).toBe(TALL * 2 - 16);
   });
 
-  it("the same conversation remounted past the window opens at its opened message again", async () => {
+  it("the same conversation remounted past the window opens at its newest message again", async () => {
     await open([A, B]);
     top = 700;
     await pressSend();
@@ -483,7 +484,7 @@ describe("the reply you sent is brought into view", () => {
     await act(async () => { vi.advanceTimersByTime(61_000); });
     await remount();
     await resized();
-    expect(top).toBe(TALL * 1 - 14);
+    expect(top).toBe(TALL * 2 - 14);
   });
 
   /* The reader closed before the copy joined, the conversation opened again later: a new open, not a remount. */
@@ -499,14 +500,14 @@ describe("the reply you sent is brought into view", () => {
   }
 
   for (const [label, ms] of [["10 s", 10_000], ["90 s", 90_000]] as const) {
-    it(`the reader closed before the copy joined, reopened ${label} on: it opens at the opened message and nothing eases`, async () => {
+    it(`the reader closed before the copy joined, reopened ${label} on: it opens at the newest message and nothing eases`, async () => {
       await reopenAfter(ms);
-      expect(top, "the open anchor stood down for a press of the closed reader").toBe(TALL * 1 - 14);
+      expect(top, "the open anchor stood down for a press of the closed reader").toBe(TALL * 2 - 14);
       for (let i = 0; i < 60; i++) {
         await act(async () => { vi.advanceTimersByTime(16); });
         geometry();
       }
-      expect(top).toBe(TALL * 1 - 14);
+      expect(top).toBe(TALL * 2 - 14);
     });
   }
 

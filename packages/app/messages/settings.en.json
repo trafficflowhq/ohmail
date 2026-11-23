@@ -529,7 +529,7 @@
     "twinPaused": "files into {place}, paused",
     "profileBound": "Your other computers receive your newest {max, number} rules, and {count, plural, one {# older one stays} other {# older ones stay}} on this one.",
     "introHeld": "It organizes your mail, and these are the rules it files by. A change you make here goes to {holder}.",
-    "introCopy": "It organizes your mail, and these are the rules it last published.",
+    "introCopy": "These are the rules it last published.",
     "profileBoundHeld": "{holder} sends its newest {max, number} rules; any older ones are not listed here.",
     "goesTo": "goes to",
     "goesToPlace": "goes to {place}",

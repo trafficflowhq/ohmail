@@ -39,6 +39,7 @@
 # The calendar's providers: the connect door reads a typed address and seals a sign-in by them,
 # and the write door reads their proven repeats and their series reckoning.
 !packages/cal-providers
+!packages/wire
 
 # …minus anything inside them that must never be copied in: no test trees, no stale local
 # compile output, no previous bundle run.

@@ -2,6 +2,7 @@
 import type { EngineMessage, Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { ContactCard } from "@ohmail/ui/mail";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -67,17 +68,18 @@ async function render(o: { fixture: boolean; placeOf?: Map<string, Folder | null
       locale: "en", messages: en,
       children: React.createElement(SenderMenu, {
         state: { messageId: "in-0", x: 0, y: 0 } as never, sender,
+        renderCard: (card) => React.createElement(ContactCard, card),
         onChoose: () => undefined, onOpenDetail: () => undefined, onClose: () => undefined, stayedFor, onMoveToo: vi.fn(),
       }),
     }));
   });
   await act(async () => { await Promise.resolve(); });
-  const lines = [...host.querySelectorAll(".sm-stayed-line")].map((l) => l.querySelector("span")!.textContent!);
+  const lines = [...document.querySelectorAll(".sm-stayed-line")].map((l) => l.querySelector("span")!.textContent!);
   const back = screeningReadBack(store, "in-0", undefined, "ohbox", "sender", {
     consent: { known: true, standalone: false, dormancyDays: 60, screeningBaselineAt: null, screeningScope: "window", foldersEnabled: false },
     now: new Date(NOW), ownAddresses: ["me@home.example"], retro: true,
   });
-  return { now: host.querySelector(".sm-now")!.textContent!, lines, stayedFor, back };
+  return { now: document.querySelector(".oh-contactcard-line")!.getAttribute("aria-description")!, lines, stayedFor, back };
 }
 
 describe("the sheet's split is the wire's when another mail app filed one", () => {

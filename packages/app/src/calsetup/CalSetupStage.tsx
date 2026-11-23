@@ -8,10 +8,10 @@ import { useEffect, useState } from "react";
 import { Button, EndDot, Page, Sentence } from "@ohmail/ui/base";
 import {
   offeredWays,
+  calendarOAuthResultOf,
   stepOf,
   waysSaid,
   type CalendarWay,
-  type SteppedWay,
 } from "@ohmail/app-logic/calendar/setup";
 import { useFrame } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
@@ -47,6 +47,7 @@ export function CalSetupStage({ route }: PaneProps) {
   const fromSettings = words.from === "settings";
   const offered = port === NONE || said === null ? (port === NONE ? [] : null) : offeredWays(said, port);
   const at = stepOf(words, offered ?? []);
+  const result = calendarOAuthResultOf(words.oauth);
 
   const go = (next: Readonly<Record<string, string>>) =>
     commands.go({
@@ -66,7 +67,14 @@ export function CalSetupStage({ route }: PaneProps) {
 
   if (port === NONE || at.step === "way") {
     return (
-      <WayStep offered={offered} leave={leave} pick={(way: SteppedWay) => go({ step: "signin", way })} />
+      <WayStep
+        offered={offered}
+        leave={leave}
+        pick={(way) => go({ step: "signin", way })}
+        startOAuth={port === NONE ? undefined : port.startOAuth}
+        status={result === null ? undefined : t(`oauth.${result}`)}
+        busy={result === "connecting"}
+      />
     );
   }
   if (at.step === "signin") {
@@ -99,6 +107,7 @@ export function CalSetupStage({ route }: PaneProps) {
     return (
       <CalendarsStep
         way={at.way}
+        connected={result === "connected"}
         mirror={mirror}
         connection={at.connection}
         port={port}

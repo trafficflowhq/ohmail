@@ -37,7 +37,13 @@ export function CalendarsStep({
   again,
   next,
   way,
-}: StepBase & { readonly way: SteppedWay | null; readonly again: () => void; readonly next: () => void }) {
+  connected,
+}: StepBase & {
+  readonly way: SteppedWay | null;
+  readonly connected: boolean;
+  readonly again: () => void;
+  readonly next: () => void;
+}) {
   const t = useText("calsetup");
   const report = useReport();
   const record = mirror.connections.find((c) => c.id === connection) ?? null;
@@ -62,7 +68,7 @@ export function CalendarsStep({
   }
   if (own.length === 0) {
     return (
-      <Page acts={leave} line={t("calendars.checkingLine")}>
+      <Page acts={leave} line={connected ? t("oauth.connected") : t("calendars.checkingLine")}>
         <Sentence size="xl" level={1}>
           <EndDot kind="hot" product="cal">
             {t("calendars.checking")}
@@ -78,6 +84,7 @@ export function CalendarsStep({
   };
   return (
     <Page
+      line={connected ? t("oauth.connected") : undefined}
       acts={
         <Button kind="ink" size="l" keyHint="↵" onPress={next}>
           {t("continue")}

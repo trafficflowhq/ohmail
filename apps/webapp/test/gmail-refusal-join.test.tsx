@@ -76,10 +76,11 @@ async function joinGmail(messages: Messages = en) {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_mailbox_title);
+  expect(host.querySelector("h1")?.textContent?.trim()).toBe(messages.onboarding.providerFirst);
   /* The step is the one connect form: its fields by their labels, its tiles by their names, its refusal by its role. */
   const probes = mailboxProbes(host, messages, act);
   await probes.choose("Gmail");
+  expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_mailbox_title);
   const { type } = probes;
   await type("join-mb-address", "pat@gmail.test");
   await type("join-mb-pass", "the-google-password");

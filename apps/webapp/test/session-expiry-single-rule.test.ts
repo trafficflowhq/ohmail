@@ -153,8 +153,19 @@ describe("the two writers of a sign-in verdict, and only those", () => {
     ]);
     for (const file of ["apps/webapp/app/(product)/error.tsx", "apps/webapp/app/(product)/mailbox/use-wall-door.ts"]) {
       const src = scan.withoutComments(readFileSync(resolve(file), "utf8"));
-      expect(src.slice(0, src.indexOf('window.location.assign("/login")')), file).toMatch(/await signOut\(/);
+      const start = /const doSignOut = useCallback\(async \(\) => \{/.exec(src);
+      expect(start, file).not.toBeNull();
+      const open = start!.index + start![0].length - 1;
+      const handler = scan.bracketSpan(scan.withoutCommentsAndLiterals(src), open, "{", "}");
+      const body = src.slice(handler.start, handler.end);
+      expect(body, file).toMatch(
+        /const result = await signOutAndSettle\(readOwner\(\) \?\? undefined\);\s*const said = signOutTrouble\(result\);[\s\S]*?if \(said !== null\) \{ window\.location\.assign\("\/"\); return; \}\s*window\.location\.assign\("\/login"\);/,
+      );
     }
+    const signOut = scan.withoutComments(readFileSync(resolve("apps/webapp/app/sign-out.ts"), "utf8"));
+    expect(signOut).toMatch(
+      /async function signOutAndSettle\([^\n]*\{\s*const result = await signOut\(owner, options\);\s*await result\.cacheCleanup\?\.settled;\s*return result;/,
+    );
   });
 
   it("the sign-out note is left only beside those navigations", () => {

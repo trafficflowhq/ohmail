@@ -151,7 +151,7 @@ function useConnectStep(
   kind: ConnectFormProps["ask"]["purpose"]["kind"],
   paged: boolean,
 ) {
-  const [showCredentials, setShowCredentials] = useState(false);
+  const [showCredentials, setShowCredentials] = useState(form.signInReturnedWithoutConnection);
   const [manualOpen, setManualOpen] = useState(() => form.state.typed.byHand);
   const hasManualStep = kind === "join" || kind === "firstRun";
   const manual = manualOpen && form.preset?.manual === true;

@@ -17,6 +17,7 @@ import {
   cleanNoticeText, leadWords, noticeFields,
   type CalendarSummaryDetails, type Clock, type MailNoticeDetails, type Notice, type NoticeFacts, type NoticeKind, type NoticeTaken, type NoticeWording,
 } from "@ohmail/client-engine";
+import { clockTimeAt } from "@ohmail/app-logic/calendar";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 
 /** What the emitter asks of the page and its browser. */
@@ -121,9 +122,8 @@ export function noticeWordingOf(say: NoticeSay): NoticeWording {
     body: (facts) => words(facts).body,
     label: (as) => say(as === "busy" ? "alertBusy" : "alertEvent"),
     summary({ agenda, zone }, count) {
-      const time = new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit" });
       const lines = agenda.map(({ label, startMs, allDay }) => {
-        const at = allDay ? say("summaryAllDay") : time.format(startMs);
+        const at = allDay ? say("summaryAllDay") : clockTimeAt(startMs, zone);
         const name = label.as === "title" ? cleanNoticeText(label.text) : say(label.as === "busy" ? "alertBusy" : "alertEvent");
         return name ? say("summaryLine", { at, name }) : at;
       });

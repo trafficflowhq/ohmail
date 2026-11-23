@@ -163,8 +163,8 @@ export function useThreadWalk({
     anchored.current = false;
     pin.current = null;
   }, []);
+  useAnchorRelease(scroller, anchored, anchor, pin, initialId, measure);
   useLayoutWatch(scroller, scope, key, measure, look, landOwed, onHand);
-  useAnchorRelease(scroller, anchored);
 
   /* The channel: this column's place, and its jump for a press on the list row's squares. */
   const shown = here !== null && ids.includes(here) ? here : null;
@@ -241,10 +241,27 @@ function coverOf(scroller: HTMLElement, names: ThreadDomNames, scrollerTop: numb
 }
 
 /** The open's anchor is let go at the person's first gesture, wherever it lands, or at the ceiling. */
-function useAnchorRelease(scroller: HTMLElement | null, anchored: { current: boolean }): void {
+function useAnchorRelease(
+  scroller: HTMLElement | null,
+  anchored: { current: boolean },
+  requested: boolean,
+  pin: { current: string | null },
+  initialId: string | undefined,
+  measure: () => void,
+): void {
+  const prior = useRef(requested);
+  useLayoutEffect(() => {
+    if (prior.current === requested) return;
+    prior.current = requested;
+    anchored.current = requested;
+    if (requested) {
+      pin.current = initialId ?? null;
+      measure();
+    }
+  }, [requested, anchored, pin, initialId, measure]);
   useEffect(() => {
     const win = scroller?.ownerDocument.defaultView;
-    if (!win || !anchored.current) return;
+    if (!win || !requested || !anchored.current) return;
     const release = (): void => {
       anchored.current = false;
     };
@@ -254,7 +271,7 @@ function useAnchorRelease(scroller: HTMLElement | null, anchored: { current: boo
       win.clearTimeout(timer);
       for (const ev of HANDOVER) win.removeEventListener(ev, release, true);
     };
-  }, [scroller, anchored]);
+  }, [scroller, anchored, requested]);
 }
 
 /**

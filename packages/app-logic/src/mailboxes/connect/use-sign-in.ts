@@ -33,7 +33,7 @@ export function useWays(signIn: SignInCalls | "none"): SignInWays {
  * landing is the Mailboxes pane, which draws it. Once per return, and it presses nothing: a refused sign-in is
  * started again only by the person.
  */
-export function useSignInReturn(input: ConnectFormInput, machine: Machine): void {
+export function useSignInReturn(input: ConnectFormInput, machine: Machine): boolean {
   const signIn = input.door.signIn;
   const returned: SignInReturn | null = useSyncExternalStore(
     signIn === NONE ? nothing.subscribe : signIn.returned.subscribe,
@@ -50,6 +50,7 @@ export function useSignInReturn(input: ConnectFormInput, machine: Machine): void
     dispatch({ kind: "provider", id: PRESET_OF_SIGN_IN.microsoft, byHand: true });
     dispatch({ kind: "said", shown: saidOfReturn(returned, purpose), reason: returned.reason });
   }, [purpose, returned, dispatch]);
+  return purpose === "join" && (returned?.kind === "refused" || returned?.kind === "failed");
 }
 
 export interface SignInPress {

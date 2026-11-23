@@ -148,7 +148,7 @@ describe("a reply draft deleted on another device while ohmail was closed", () =
     await reply(s);
     await waitFor(() => s.sent.some((m) => m.kind === "draft_save"), "the kept words saved", 200);
     const made = s.sent.filter((m) => m.kind === "draft_save").map((m) => ({ row: (m as { draftId?: string | null }).draftId ?? null, unsaved: ((m as { body?: string }).body ?? "").includes("never saved") }));
-    expect({ made, says: (document.body.textContent ?? "").includes(messages.reply.deletedElsewhereKept) })
+    expect({ made, says: (document.body.textContent ?? "").includes(messages.reply.deletedElsewhereKept.replace(/\.$/, "")) })
       .toEqual({ made: [{ row: null, unsaved: true }], says: true });
   }, 60_000);
 });
@@ -193,7 +193,7 @@ describe("a reply whose last save went through the offline queue, then deleted o
     return { dock: replySurface(s.el)?.textContent ?? "", made: saves(s).length - before, said };
   }
   const says = (said: string) => ({
-    kept: said.includes(messages.reply.deletedElsewhereKept), deleted: said.includes(messages.reply.deletedElsewhere),
+    kept: said.includes(messages.reply.deletedElsewhereKept.replace(/\.$/, "")), deleted: said.includes(messages.reply.deletedElsewhere.replace(/\.$/, "")),
   });
 
   it("the save landed, the tab closed: Reply opens empty, writes nothing, says nothing", async () => {
@@ -277,7 +277,7 @@ describe("a reply draft open here while another device changes it", () => {
     const mine = replies(s).find((d) => d.id !== "d1")!;
     expect({
       stated: saves(s)[0]?.ifContentRevision, theirs: s.store.get<EngineDraft>("draft", "d1")?.body,
-      mine: mine.body?.includes("typed here"), says: said().includes(messages.reply.changedElsewhere),
+      mine: mine.body?.includes("typed here"), says: said().includes(messages.reply.changedElsewhere.replace(/\.$/, "")),
     }).toEqual({ stated: "rev-d1", theirs: OTHER, mine: true, says: true });
   }, 60_000);
 
@@ -348,7 +348,7 @@ describe("a reply draft open here while another device changes it", () => {
     await act(async () => { typeInto(replySurface(s.el)!, " second"); });
     await waitFor(() => saves(s).length === 2, "the second save", 200);
     await rounds(20);
-    expect({ rows: replies(s).map((d) => d.id), stated: saves(s).every((m) => m.draftId === "d1" && m.ifContentRevision !== undefined), says: said().includes(messages.reply.changedElsewhere) })
+    expect({ rows: replies(s).map((d) => d.id), stated: saves(s).every((m) => m.draftId === "d1" && m.ifContentRevision !== undefined), says: said().includes(messages.reply.changedElsewhere.replace(/\.$/, "")) })
       .toEqual({ rows: ["d1"], stated: true, says: false });
   }, 60_000);
 
@@ -364,7 +364,7 @@ describe("a reply draft open here while another device changes it", () => {
     await act(async () => { typeInto(replySurface(s.el)!, " and today"); });
     await waitFor(() => saves(s).length === 1, "the save", 200);
     await rounds(20);
-    expect({ stated: saves(s)[0]!.ifContentRevision, rows: replies(s).map((d) => d.id), says: said().includes(messages.reply.changedElsewhere) })
+    expect({ stated: saves(s)[0]!.ifContentRevision, rows: replies(s).map((d) => d.id), says: said().includes(messages.reply.changedElsewhere.replace(/\.$/, "")) })
       .toEqual({ stated: "rev-theirs", rows: ["d1"], says: false });
   }, 60_000);
 
@@ -411,7 +411,7 @@ describe("an inline forward's draft changed on another device", () => {
     expect({
       theirs: s.store.get<EngineDraft>("draft", row)?.body, creates: saves(s).filter((m) => m.draftId === null).length,
       mine: [mine.inReplyToMessageId ?? null, mine.forwardParts, mine.to.map((a) => a.address), mine.body?.includes("and the budget")],
-      said: said().split(messages.reply.forwardChangedElsewhere).length - 1,
+      said: said().split(messages.reply.forwardChangedElsewhere.replace(/\.$/, "")).length - 1,
     }).toEqual({ theirs: "Written on the other device.", creates: 2, mine: [null, [PART_A, PART_B], [TO], true], said: 1 });
   }, 60_000);
 

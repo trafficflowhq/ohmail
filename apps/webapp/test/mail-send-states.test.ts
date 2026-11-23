@@ -1510,7 +1510,7 @@ describe("the warn sentence is about the message on screen", () => {
     expect(
       status,
       "the composer states the hold and offers no way to answer it",
-    ).toMatch(/const said = \{ send: w\.composeSend, held, locked, onResolve: w\.resolveHeldSend \}/);
+    ).toMatch(/const said = \{\s+send: w\.composeSend,\s+held,\s+locked,\s+showShortSending: w\.composeReopenedSending,\s+onResolve: w\.resolveHeldSend,\s+\}/);
     expect(
       replyView,
       "the reply editor states the hold and offers no way to answer it",

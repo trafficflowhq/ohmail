@@ -1,5 +1,6 @@
 /** The parts a shell handed `readerEntry`, for every view of the reader under it. */
 import { createContext, useContext } from "react";
+import type { EngineMessage } from "@ohmail/wire";
 import { KEY_WRITING } from "@ohmail/app-logic/keys";
 import type { ReaderParts } from "./ports.js";
 
@@ -18,12 +19,16 @@ export function useReplyTarget(reply: ReaderParts["reply"]): string | null {
   return useTarget();
 }
 
-export function useReplyVerbs(messageId?: string) {
+export function useReplyVerbs(messageId?: string, conversation?: readonly EngineMessage[]) {
   const { reply } = useParts();
   const useVerbs = reply === "none" ? noReply : reply.useVerbs;
   const verbs = useVerbs();
   const target = useReplyTarget(reply);
-  return messageId === undefined || messageId === target ? verbs : null;
+  const belongsHere =
+    messageId === undefined ||
+    messageId === target ||
+    conversation?.some((message) => message.id === target) === true;
+  return belongsHere ? verbs : null;
 }
 
 /** The writing surface belongs to the open reply, including when a key is pressed on one of its controls. */

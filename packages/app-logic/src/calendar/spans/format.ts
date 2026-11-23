@@ -5,12 +5,12 @@
 import { dayNumberOf, monthOfDay, type DayId, type MonthId } from "./days.js";
 
 const made = new Map<string, Intl.DateTimeFormat>();
-function formatter(locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const key = `${locale}|${JSON.stringify(options)}`;
+function formatter(locale: string, options: Intl.DateTimeFormatOptions, zone = "UTC"): Intl.DateTimeFormat {
+  const key = `${locale}|${zone}|${JSON.stringify(options)}`;
   let f = made.get(key);
   if (!f) {
     /* The product's English writes the day before the month: "Fri 20 Nov". */
-    f = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : locale, { ...options, timeZone: "UTC" });
+    f = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : locale, { ...options, timeZone: zone });
     made.set(key, f);
   }
   return f;
@@ -60,6 +60,11 @@ export const clockTime = (minute: number, locale: string): string =>
   formatter(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(
     new Date(Date.UTC(2024, 0, 1, Math.floor(minute / 60) % 24, minute % 60)),
   );
+
+/** A calendar day key and a clock reading for a notification in the calendar's zone. */
+export const dayKeyAt = (atMs: number, zone: string): DayId => formatter("sv-SE", {}, zone).format(atMs);
+export const clockTimeAt = (atMs: number, zone: string): string =>
+  formatter("en-GB", { hour: "2-digit", minute: "2-digit" }, zone).format(atMs);
 
 export const yearOf = (id: DayId): string => id.slice(0, 4);
 export const sameMonth = (a: DayId, b: DayId): boolean => monthOfDay(a) === monthOfDay(b);

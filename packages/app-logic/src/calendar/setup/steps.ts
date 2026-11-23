@@ -4,10 +4,8 @@
  * way is offered only where this build has a step for it and connecting has a door. The step is read from the stage's
  * words and folds to the first one wherever it would name a way that is not offered.
  */
-import { CALENDAR_WAYS, type CalendarSetupPort, type CalendarWay } from "./port.js";
+import { CALENDAR_WAYS, isCalendarOAuthProvider, type CalendarSetupPort, type CalendarWay } from "./port.js";
 
-/** The ways this build has a sign-in step for. Google and Microsoft have none: their ceremony has no route yet. */
-const STEPPED: ReadonlySet<CalendarWay> = new Set<CalendarWay>(["icloud", "caldav", "ics"]);
 const KNOWN: ReadonlySet<string> = new Set<string>(CALENDAR_WAYS);
 
 export const SETUP_STEPS = ["way", "signin", "calendars", "default", "wait"] as const;
@@ -29,9 +27,34 @@ export async function waysSaid(port: CalendarSetupPort): Promise<readonly Calend
 }
 
 /** The ways drawn as a choice, in the server's order: none where connecting has no door. */
-export function offeredWays(said: readonly CalendarWay[], port: CalendarSetupPort): readonly SteppedWay[] {
-  if (port.connect === "none") return [];
-  return said.filter((w): w is SteppedWay => STEPPED.has(w));
+export function offeredWays(said: readonly CalendarWay[], port: CalendarSetupPort): readonly CalendarWay[] {
+  return said.filter((way) =>
+    isCalendarOAuthProvider(way) ? port.startOAuth !== undefined : port.connect !== "none",
+  );
+}
+
+const OAUTH_RESULTS = [
+  "connecting",
+  "connected",
+  "consent_declined",
+  "admin_consent_required",
+  "consent_failed",
+  "state_expired",
+  "state_invalid",
+  "account_mismatch",
+  "provider_off",
+  "exchange_failed",
+  "start_failed",
+  "calendar_off",
+  "email_unverified",
+  "conflict",
+  "missing_permissions",
+  "provider_unavailable",
+] as const;
+export type CalendarOAuthResult = (typeof OAUTH_RESULTS)[number];
+
+export function calendarOAuthResultOf(value: unknown): CalendarOAuthResult | null {
+  return OAUTH_RESULTS.find((result) => result === value) ?? null;
 }
 
 export type StandingStep =
@@ -46,9 +69,9 @@ export type StandingStep =
 /** The step the stage's words stand on, folded to `way` wherever they name a way that is not offered. */
 export function stepOf(
   words: Readonly<Record<string, string>>,
-  offered: readonly SteppedWay[],
+  offered: readonly CalendarWay[],
 ): StandingStep {
-  const way = offered.find((w) => w === words.way) ?? null;
+  const way = offered.find((w): w is SteppedWay => !isCalendarOAuthProvider(w) && w === words.way) ?? null;
   switch (words.step) {
     case "signin":
       return way === null ? { step: "way" } : { step: "signin", way, again: words.again || null };

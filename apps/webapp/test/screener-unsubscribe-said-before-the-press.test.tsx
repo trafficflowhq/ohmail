@@ -229,7 +229,7 @@ describe("a claim through a list's address: Screen out files those letters alone
     expect(cardLine()).toBeNull();
     expect(screen().queryByText(
       "Screen out and Spam are the exception here: they set aside only the messages that claim to be PostFinance, and make no rule.",
-    )).toBeNull();
+    )).toBeTruthy();
     expect(screen().getAllByText("Not PostFinance").length).toBeGreaterThan(0);
     expect(genericRuleLine()).toBeNull();
     expect(screen().queryByText(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`)).toBeNull();

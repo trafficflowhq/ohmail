@@ -21,6 +21,7 @@ import { MIGRATION_ALLOWANCES } from "../src/migration-allowances.js";
  * lock holds may be superseded by an allowance whose SHIPPED hash is the file's current bytes, for
  * that tag, and by nothing else. Without this the two rules disagreed: the deployment would
  * proceed over a change this lock refused, and a lane would have to choose which gate to believe.
+ * An allowance can also name a server migration that databases applied before its first release.
  *
  * THE DEVICE STORE HAS NO SUCH DOOR. Its migrator records an applied entry by FILE NAME alone and
  * applies the directory in name order: there is no recorded hash an allowance could name, a
@@ -31,6 +32,10 @@ import { MIGRATION_ALLOWANCES } from "../src/migration-allowances.js";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
 const LOCK_PATH = join(REPO, "packages", "db", "released-migrations.lock.json");
+const SERVER = new Map([
+  ["mail", "packages/db-mail/drizzle/"],
+  ["cloud", "packages/db/drizzle-cloud/"],
+]);
 const DEVICE = "packages/db-mail/drizzle-sqlite/";
 const isDevice = (path: string): boolean => path.startsWith(DEVICE);
 
@@ -84,12 +89,29 @@ describe("released migration files are frozen", () => {
    * tag-blind lookup would have.
    */
   it("an allowance admits its own tag's file and nothing else", () => {
+    const pinnedServerFiles = Object.keys(LOCK.files).filter((path) => !isDevice(path));
+    const currentFiles = [...SERVER.values(), DEVICE].flatMap((dir) =>
+      readdirSync(join(REPO, dir)).filter((file) => file.endsWith(".sql")).map((file) => dir + file),
+    );
     for (const a of MIGRATION_ALLOWANCES) {
-      const own = Object.keys(LOCK.files).filter((p) => !isDevice(p) && p.endsWith(`/${a.tag}.sql`));
-      expect(own.length, `${a.tag} is not a pinned file`).toBe(1);
-      expect(admitted(own[0]!)).toContain(a.shipped);
-      const foreign = Object.keys(LOCK.files).find((p) => !isDevice(p) && !p.endsWith(`/${a.tag}.sql`))!;
-      expect(admitted(foreign), "an allowance reached another tag's file").not.toContain(a.shipped);
+      const name = `/${a.tag}.sql`;
+      const pinned = pinnedServerFiles.filter((path) => path.endsWith(name));
+      if (pinned.length > 0) {
+        expect(pinned.length, `${a.tag} is not a pinned file`).toBe(1);
+        expect(admitted(pinned[0]!)).toContain(a.shipped);
+        const foreign = pinnedServerFiles.find((path) => !path.endsWith(name))!;
+        expect(admitted(foreign), "an allowance reached another tag's file").not.toContain(a.shipped);
+        continue;
+      }
+
+      const dir = SERVER.get(a.journal);
+      expect(dir, `${a.tag} must name a server journal`).toBeDefined();
+      const path = `${dir!}${a.tag}.sql`;
+      const serverMatches = currentFiles.filter((file) => !isDevice(file) && file.endsWith(name));
+      expect(serverMatches, `${a.tag} must name exactly one file in its server journal`).toEqual([path]);
+      expect(hashOf(path), `${a.tag} must name the bytes it currently ships`).toBe(a.shipped);
+      const admittedFiles = currentFiles.filter((file) => admitted(file).includes(a.shipped));
+      expect(admittedFiles, `${a.tag} must admit only its own file`).toEqual([path]);
     }
   });
 

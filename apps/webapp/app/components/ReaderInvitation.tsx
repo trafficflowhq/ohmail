@@ -1,7 +1,7 @@
 import { InvitationLetterCard, type ReaderInvitationProps } from "@ohmail/app/reader";
 import type { DistinctCalendarEvent } from "@ohmail/client-engine";
 import { useDoors } from "@ohmail/app-logic/reader/doors";
-import type { CalendarTime, InvitationAnswerResult, MessageInvitationDTO } from "@ohmail/wire";
+import type { CalendarTime, InvitationAnswerBody, InvitationAnswerResult, MessageInvitationDTO } from "@ohmail/wire";
 import type { IcsEventPreview, IcsTime } from "@trafficflow/core/ics";
 import { useFrame } from "@ohmail/app/frame";
 import { api } from "../api-client";
@@ -12,8 +12,9 @@ const sameAddress = (a: string | null | undefined, b: string | null) =>
   !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
 function matches(event: IcsEventPreview, invitation: MessageInvitationDTO) {
-  return (invitation.method === "REQUEST" && (event.method === "REQUEST" || event.method === null) && !event.cancelled ||
-    invitation.method === "CANCEL" && (event.cancelled || event.method === null)) &&
+  const request = invitation.method === "REQUEST" && (event.method === "REQUEST" || event.method === null) && !event.cancelled;
+  const cancellation = invitation.method === "CANCEL" && (event.cancelled || event.method === null);
+  return (request || cancellation) &&
     event.uid === invitation.uid && (event.recurrenceId ?? "") === invitation.recurrenceId &&
     (event.sequence === null || event.sequence === invitation.sequence) &&
     sameAddress(event.organizer?.email, invitation.organizer);
@@ -60,6 +61,10 @@ export function ReaderInvitation({ messageId, message, invitationWithoutEvent, t
   const invitation = message?.invitation;
   const activeInvitation = invitation && (invitation.method === "REQUEST" || invitation.method === "CANCEL");
   const action = message && invitationPart(message, events);
+  const reply = (body: InvitationAnswerBody, key: string) =>
+    api<InvitationAnswerResult>(`/messages/${encodeURIComponent(messageId)}/invitation/answer`, {
+      method: "POST", body, headers: { "Idempotency-Key": key }, expectedOwner: host.session.scope,
+    });
   return (
     <>
       <InvitationNote message={{ invitationWithoutEvent }} text={text} full={full} className="rd-invitation-note" />
@@ -71,9 +76,7 @@ export function ReaderInvitation({ messageId, message, invitationWithoutEvent, t
         start={action ? storedTime(action.event.start) : retainedStart(invitation)}
         end={action ? (action.event.end ? storedTime(action.event.end) : dayEnd(action.event.start)) : null}
         repeat={action?.event.rule ?? null} copyable={!!action && !action.event.extraDates}
-        reply={(body, key) => api<InvitationAnswerResult>(`/messages/${encodeURIComponent(messageId)}/invitation/answer`, {
-          method: "POST", body, headers: { "Idempotency-Key": key }, expectedOwner: host.session.scope,
-        })}
+        reply={reply}
       />}
       <IcsEventCards events={action ? events.filter((row) => row !== action) : events} />
     </>

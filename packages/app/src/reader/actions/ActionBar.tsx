@@ -251,7 +251,7 @@ export function LetterActions({
   const other = otherId === null ? null : (mirror?.get<EngineMessage>("message", otherId) ?? null);
   const otherVisit = useListVisit(otherId);
   const otherVerbs = useVerbs(other, otherVisit, null);
-  const reply = useReplyVerbs(messageId);
+  const reply = useReplyVerbs(messageId, thread.messages);
   if (message === null || verbs.idle) return null;
   const deleteTarget =
     otherId === null

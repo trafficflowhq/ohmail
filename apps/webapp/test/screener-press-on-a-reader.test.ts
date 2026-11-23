@@ -99,7 +99,7 @@ for (const folder of [SCREENER, "INBOX"]) describe(`the press says so before any
       await goTo("screener");
       await tick(50);
       await fileToOhbox(c, true);
-      expect(c.textContent, "the press said nothing about why").toContain(WHY.nobody);
+      expect(c.textContent, "the press said nothing about why").toContain(WHY.nobody.replace(/\.$/, ""));
       expect(c.textContent, "the press did not say nothing was filed").toContain(en.screener.notFiled);
       expect(c.textContent, "the press claimed a filing").not.toContain("files there automatically");
       const undo = within(c).queryAllByRole("button", { name: en.screener.toastUndo });
@@ -122,6 +122,6 @@ for (const folder of [SCREENER, "INBOX"]) describe(`where the roster is a pass b
       await goTo("ohbox");
       await tick(200);
       expect(posts.length, "the premise: the write went and was refused").toBeGreaterThan(0);
-      expect(c.textContent, "the correction named no reason").toContain(WHY.nobody);
+      expect(c.textContent, "the correction named no reason").toContain(WHY.nobody.replace(/\.$/, ""));
   });
 });

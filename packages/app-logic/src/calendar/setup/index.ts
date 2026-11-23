@@ -1,6 +1,8 @@
 /** The calendar's setup and settings, for their screens: the port, the ways and steps, the accounts, the fault sentences. */
 export {
   CALENDAR_WAYS,
+  isCalendarOAuthProvider,
+  type CalendarOAuthProvider,
   type CalendarChange,
   type CalendarSetupPort,
   type CalendarWay,
@@ -10,9 +12,11 @@ export {
 export type { CalendarSettingsBody, CalendarSyncFault } from "@ohmail/wire";
 export {
   SETUP_STEPS,
+  calendarOAuthResultOf,
   offeredWays,
   stepOf,
   waysSaid,
+  type CalendarOAuthResult,
   type SetupStep,
   type StandingStep,
   type SteppedWay,

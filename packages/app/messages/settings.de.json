@@ -529,10 +529,10 @@
     "twinPaused": "sortiert in {place}, pausiert",
     "profileBound": "Deine anderen Computer erhalten deine neuesten {max, number} Regeln. {count, plural, one {# ältere bleibt} other {# ältere bleiben}} auf diesem Computer.",
     "introHeld": "Es organisiert deine Nachrichten nach diesen Regeln. Änderungen, die du hier machst, gehen an {holder}.",
-    "introCopy": "Es organisiert deine Nachrichten. Das sind die zuletzt veröffentlichten Regeln.",
+    "introCopy": "Das sind die zuletzt veröffentlichten Regeln.",
     "profileBoundHeld": "Von {holder} kommen die neuesten {max, number} Regeln; ältere sind hier nicht aufgeführt.",
     "goesTo": "geht nach",
-    "goesToPlace": "geht nach {place}",
+    "goesToPlace": "Ziel: {place}",
     "wholeDomainMeta": "Ganze Domain · {meta}",
     "moveAlreadyHere": "Vorhandene Nachrichten verschieben",
     "waitingRemovalSlow": "Das Entfernen wartet noch, weil {holder} es noch nicht abgeholt hat · {date}"
