@@ -7,7 +7,7 @@ import { setViewTransitions, ThemeProvider, themeInitScript } from "@ohmail/ui";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
-import { ownerMatchesBeforePaint } from "@ohmail/app-logic/storage/owner-cookie";
+import { ownerBeforePaint } from "@ohmail/app-logic/storage/owner-cookie";
 import { accountThemeDoor, currentFaceOwner, FACE_ACCOUNT_OWNER_KEY } from "../shell/face-mirror";
 import { listenBrowserSession } from "../signed-out-signal";
 import { textSizeBootScript } from "../shell/text-size";
@@ -24,13 +24,16 @@ type AppearanceProps = {
   nonce?: string;
   deferLinuxFace?: boolean;
   owner?: string | null;
+  /** Only set while resuming a remembered session. Null means the request carried no owner cookie. */
+  rememberedOwner?: string | null;
 };
 
 /** Set the saved appearance before the browser can paint the document's canvas. */
-export function AppearanceBoot({ nonce, deferLinuxFace, owner = null }: AppearanceProps) {
+export function AppearanceBoot({ nonce, deferLinuxFace, owner = null, rememberedOwner }: AppearanceProps) {
+  const expected = owner ?? rememberedOwner;
   const accountFaceOwner = {
     storageKey: FACE_ACCOUNT_OWNER_KEY,
-    confirmed: owner === null ? null : { id: owner, matches: ownerMatchesBeforePaint(owner) },
+    read: expected === undefined ? null : ownerBeforePaint(expected),
   };
   return (
     <>
@@ -41,12 +44,14 @@ export function AppearanceBoot({ nonce, deferLinuxFace, owner = null }: Appearan
   );
 }
 
-export function Providers({ children, nonce, deferLinuxFace, owner = null }: AppearanceProps & { children: ReactNode }) {
+export function Providers({ children, nonce, deferLinuxFace, owner = null, rememberedOwner }: AppearanceProps & { children: ReactNode }) {
   const currentOwner = useSyncExternalStore(listenBrowserSession, currentFaceOwner, () => owner);
   const [confirmed, confirm] = useState<string | null>(null);
   const verified = confirmed ?? owner;
   const faceOwner = verified === currentOwner ? verified : null;
-  const storage = useMemo(() => accountThemeDoor(faceOwner), [faceOwner]);
+  const pendingOwner = verified === null ? rememberedOwner : undefined;
+  const appearanceOwner = pendingOwner === null || pendingOwner === currentOwner ? currentOwner : faceOwner;
+  const storage = useMemo(() => accountThemeDoor(faceOwner, pendingOwner), [faceOwner, pendingOwner]);
   return (
     <>
       {/* Restore the column widths before the first server-drawn controls. */}
@@ -58,6 +63,7 @@ export function Providers({ children, nonce, deferLinuxFace, owner = null }: App
         deferLinuxFace={deferLinuxFace}
         preferAccountFace={deferLinuxFace}
         accountFaceScope={faceOwner}
+        accountFaceReadScope={appearanceOwner}
         storage={storage}
       >
         <portalRenderer.Provider value={createPortal}>

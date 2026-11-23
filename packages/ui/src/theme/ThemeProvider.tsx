@@ -213,8 +213,8 @@ export function themeInitScript(
     deferLinuxFace?: boolean;
     faceStorageKey?: string;
     accountFaceStorageKey?: string;
-    /** A signed-in host's owner stamp. An owned mirror outranks an older device pin at boot. */
-    accountFaceOwner?: { storageKey: string; confirmed: { id: string; matches: string } | null };
+    /** The host's owner expression, or null when this document cannot use the account mirror. */
+    accountFaceOwner?: { storageKey: string; read: string | null };
     layoutStorageKey?: string;
   } = {},
 ): string {
@@ -226,8 +226,8 @@ export function themeInitScript(
   const accountKey = JSON.stringify(opts.accountFaceStorageKey ?? "ohmail.face.account");
   const layoutKey = JSON.stringify(opts.layoutStorageKey ?? "ohmail.layout");
   const owner = opts.accountFaceOwner;
-  const ownFace = owner?.confirmed
-    ? `try{if((${owner.confirmed.matches})&&localStorage.getItem(${JSON.stringify(owner.storageKey)})===${JSON.stringify(owner.confirmed.id)})f=localStorage.getItem(${accountKey})}catch(e){}`
+  const ownFace = owner?.read
+    ? `try{var o=${owner.read};if(o!==null&&localStorage.getItem(${JSON.stringify(owner.storageKey)})===o)f=localStorage.getItem(${accountKey})}catch(e){}`
     : "";
   const deviceFace = `try{f=localStorage.getItem(${faceKey})}catch(e){}`;
   const faceHalf = "var f=null;" + (owner
@@ -285,6 +285,8 @@ export interface ThemeProviderProps {
   preferAccountFace?: boolean;
   /** A host may fence adopted account appearance to its current browser owner. */
   accountFaceScope?: string | null;
+  /** A host can read a remembered face while waiting to confirm its account. */
+  accountFaceReadScope?: string | null;
   /**
    * THE DOOR EVERY WRITE GOES THROUGH, handed in by the host — see {@link StorageDoor}. Omit it and this provider
    * persists nothing ({@link ThemePersistence} `unpersisted`): the choice holds for the session, no jar is touched,
@@ -315,6 +317,7 @@ export function ThemeProvider({
   deferLinuxFace = false,
   preferAccountFace = false,
   accountFaceScope,
+  accountFaceReadScope = accountFaceScope,
   storage,
   systemScheme,
 }: ThemeProviderProps) {
@@ -358,9 +361,9 @@ export function ThemeProvider({
   const [accountFace, setAccountFaceState] = useState<FaceName | null>();
   const activeFaceScope = useRef(accountFaceScope);
   useFaceStamp(() => { activeFaceScope.current = accountFaceScope; }, [accountFaceScope]);
-  const [faceScope, setFaceScope] = useState(accountFaceScope);
-  if (faceScope !== accountFaceScope) {
-    setFaceScope(accountFaceScope);
+  const [faceScope, setFaceScope] = useState(accountFaceReadScope);
+  if (faceScope !== accountFaceReadScope) {
+    setFaceScope(accountFaceReadScope);
     setAccountFaceState(undefined);
   }
   const [linux, setLinux] = useState(false);
@@ -401,7 +404,7 @@ export function ThemeProvider({
       return isLayout(raw) ? raw : null;
     });
     setLinux(linuxDesktopDevice());
-  }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey, accountFaceScope]);
+  }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey, accountFaceReadScope]);
 
   // Stamp <html data-theme> exactly like the prototype: absent = system.
   // Skipped until adoption so hydration never clobbers the pre-paint stamp.

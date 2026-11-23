@@ -156,3 +156,40 @@ it("adopts a confirmed owner's face only when the live browser account matches",
   expect(look.accountFace).toBe("ohmarchy");
   expect(document.documentElement.dataset.face).toBe("ohmarchy");
 });
+
+it("keeps the remembered face during session confirmation and saves the confirmed account's new choice", () => {
+  let confirm!: (owner: string) => void;
+  let look!: ReturnType<typeof useTheme>;
+  function Probe() {
+    confirm = useContext(ConfirmBrowserFaceOwner);
+    look = useTheme();
+    return null;
+  }
+  localStorage.setItem(MIRROR, "paper");
+  localStorage.setItem("ohmail.face", "ohmarchy");
+  render(<Providers rememberedOwner={null} deferLinuxFace><Probe /></Providers>);
+  expect(look.face).toBe("paper");
+  act(() => { look.adoptAccountFace("ohmarchy"); });
+  expect(localStorage.getItem(MIRROR)).toBe("paper");
+
+  act(() => { confirm(ACCOUNT); });
+  act(() => { look.adoptAccountFace("ohmarchy"); });
+  expect(document.documentElement.dataset.face).toBe("ohmarchy");
+  expect(localStorage.getItem(MIRROR)).toBe("ohmarchy");
+  expect(localStorage.getItem(OWNER)).toBe(ACCOUNT);
+  delete document.documentElement.dataset.face;
+  expect(firstFace(ACCOUNT)).toBe("ohmarchy");
+});
+
+it("leaves a different account's remembered face unused while the session is pending", () => {
+  let look!: ReturnType<typeof useTheme>;
+  function Probe() {
+    look = useTheme();
+    return null;
+  }
+  document.cookie = `tf_owner=${OTHER}; Path=/`;
+  localStorage.setItem(OWNER, OTHER);
+  render(<Providers rememberedOwner={ACCOUNT} deferLinuxFace><Probe /></Providers>);
+  expect(look.face).toBe("paper");
+  expect(localStorage.getItem(MIRROR)).toBe("ohmarchy");
+});
