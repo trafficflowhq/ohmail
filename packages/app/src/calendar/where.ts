@@ -149,6 +149,7 @@ export function useWhere(
   zone: string,
   zones: ZoneSource,
 ): Where | null {
+  const { host, plan } = useFrame();
   const nowMs = useNow();
   const [reach, setReach] = useState<{ first: string | null; days: number }>({
     first: null,
@@ -182,9 +183,12 @@ export function useWhere(
     more: () => setReach({ first, days: days + AGENDA_MORE }),
     keepAt: (destination: CalendarPlaceId, day: string) => setHeldAgenda({ first, place: destination, day }),
   };
+  const phoneAgenda = host.device.build.surface === "phone" && plan.device === "phone";
   const span =
     place === "agenda"
-      ? agenda
+      ? phoneAgenda
+        ? { first: weekStartOf(firstOfMonth(monthOfDay(anchor)), settings.weekStart), last: agenda.last }
+        : agenda
       : spanOf(place, anchor, today, settings.weekStart, port.held().window.daysBack);
   return { place, nowMs, now, today, anchorDay, anchor, span, agenda };
 }

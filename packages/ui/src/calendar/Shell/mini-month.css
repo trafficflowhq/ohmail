@@ -158,6 +158,17 @@
   .oh-mini[data-size="phone"] .oh-mini-wd {
     font-size: var(--t-meta);
   }
+  .oh-mini[data-busy-dots] .oh-mini-day[data-busy]:not([data-today], [data-picked])::after {
+    content: "";
+    position: absolute;
+    inset-block-end: var(--oh-hair);
+    inset-inline-start: calc(50% - var(--s1) / 2);
+    inline-size: var(--s1);
+    block-size: var(--s1);
+    border-radius: var(--dot-r);
+    background: var(--ink2);
+    pointer-events: none;
+  }
   .oh-mini[data-size="phone"] .oh-mini-grid > .oh-wn {
     --oh-wn-size: 10px;
     right: calc(50% + 17px);

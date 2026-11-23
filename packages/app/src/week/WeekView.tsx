@@ -133,6 +133,7 @@ export function WeekView(props: CalendarViewProps) {
   const hours = useHoursScroller({
     hours: settings.hours,
     hourDefault: plan.device === "phone" ? 56 : 60,
+    fixedHourHeight: props.fixedHourHeight,
     room: plan,
     focusMinute: props.cursor,
     spanKey: isoOfDay(days[0]!),

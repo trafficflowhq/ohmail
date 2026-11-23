@@ -35,7 +35,7 @@ export function CurrentView({
   readonly edge: HeldEdge;
 }) {
   const { place, agenda, span } = where;
-  const { commands } = useFrame();
+  const { commands, host } = useFrame();
   const t = useText("calendar");
   const drafting = route.words.panel === "new";
   const arrival = useMemo(() => (drafting ? { played: false } : null), [drafting]);
@@ -60,6 +60,7 @@ export function CurrentView({
         acts={acts}
         edge={edge}
         days={agenda.days}
+        miniMonthDots={host.device.build.surface === "phone"}
         onMore={agenda.more}
         keysHere={keysHere && route.open === null}
       />

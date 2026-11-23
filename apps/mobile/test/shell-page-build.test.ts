@@ -14,13 +14,22 @@ import { gunzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
 import type { WakePaneState } from "@ohmail/app-logic/phone/wake";
 import type { ShellSession } from "../src/net/pairing";
-import type { PhoneNameRow, ShellConfig } from "../src/shell/bridge-kinds";
+import type { PhoneNameRow, ShellConfig, SwitchPlace } from "../src/shell/bridge-kinds";
 import { HttpDoor } from "../src/shell/http-door";
 import { BENCH_MARKER, buildShell, policyOf } from "../scripts/build-shell.mjs";
 import { design } from "@ohmail/tokens/design";
+import { CALENDAR_WAYS } from "@ohmail/app-logic/calendar/setup";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
 const { chromium, expect: browserExpect } = require_("@playwright/test") as typeof import("@playwright/test");
+/** A whole-day event's bounds in UTC, from its yyyy-mm-dd day. */
+const dayStart = (day: string) => new Date(`${day}`).toISOString();
+const dayEnd = (day: string) => new Date(Date.parse(day) + 86_400_000 - 1).toISOString();
+/** The provider sign-in way the setup offers first, and the words its button says (the catalogue's). */
+const SIGN_IN_WAY = CALENDAR_WAYS[0];
+const WAY_WORDS = (JSON.parse(readFileSync(new URL("../../../packages/app/messages/calsetup.en.json", import.meta.url), "utf8")) as {
+  calsetup: { way: Record<string, string> };
+}).calsetup.way;
 
 const POLICY =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; " +
@@ -248,6 +257,7 @@ describe("the built page in a browser", () => {
     names?: readonly PhoneNameRow[];
     refuseFirstNameRead?: boolean;
     refuseName?: string;
+    withoutRandomUUID?: boolean;
   };
   type MailCopy = { accountId: string; subject: string };
   type Feeds = { snapshot: MailCopy[]; updates?: MailCopy[] };
@@ -256,8 +266,9 @@ describe("the built page in a browser", () => {
   function nativeDouble({ config, kept, settings, feeds, nativeHttp, replies }: {
     config: ShellConfig; kept: KeptReading; settings: PhoneSettingsReading; feeds?: Feeds; nativeHttp: boolean; replies: Readonly<Record<string, object>>;
   }) {
+    if (settings.withoutRandomUUID) Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
     const w = window as unknown as Record<string, unknown>;
-    const asked: { kind: string; path?: string; method?: string; act?: string; place?: string; do?: string; distributor?: string; mailboxId?: string; name?: string | null; took?: unknown; askId?: number }[] = [];
+    const asked: { kind: string; path?: string; method?: string; act?: string; place?: string; to?: SwitchPlace; do?: string; distributor?: string; mailboxId?: string; name?: string | null; took?: unknown; askId?: number }[] = [];
     const listeners: ((e: { data: string }) => void)[] = [];
     let { wake, names, refuseFirstNameRead } = settings;
     const replyCounts = new Map<string, number>();
@@ -298,7 +309,7 @@ describe("the built page in a browser", () => {
     w.ohmailShell = {
       postMessage(text: string) {
         const m = JSON.parse(text) as (typeof asked)[number] & { id: number; epoch: string; act?: string };
-        asked.push({ kind: m.kind, path: m.path, method: m.method, act: m.act, place: m.place, do: m.do, distributor: m.distributor, mailboxId: m.mailboxId, name: m.name, took: m.took, askId: m.askId });
+        asked.push({ kind: m.kind, path: m.path, method: m.method, act: m.act, place: m.place, to: m.to, do: m.do, distributor: m.distributor, mailboxId: m.mailboxId, name: m.name, took: m.took, askId: m.askId });
         const envelope = { id: m.id, epoch: m.epoch, ok: true };
         if (m.kind === "http" && nativeHttp) {
           const ask = w.__askNativeHttp as (request: object) => Promise<object>;
@@ -549,6 +560,10 @@ describe("the built page in a browser", () => {
       await browserExpect(page.locator("html")).toHaveAttribute("data-face", "paper");
       await browserExpect(page.locator("html")).toHaveAttribute("data-accent", "cobalt");
       await browserExpect(dock.getByRole("button", { name: "Agenda", exact: true })).toBeVisible();
+      for (const name of ["Agenda", "Day", "Month"]) {
+        const word = dock.getByRole("button", { name, exact: true }).getByText(name, { exact: true });
+        await browserExpect.poll(() => word.evaluate((label) => label.scrollWidth - label.clientWidth)).toBeLessThanOrEqual(1);
+      }
       await dock.getByRole("button", { name: "More", exact: true }).click();
       await page.getByRole("dialog", { name: "More", exact: true })
         .getByRole("button", { name: "Settings", exact: true }).click();
@@ -558,6 +573,186 @@ describe("the built page in a browser", () => {
     } finally {
       await close();
     }
+  }, 120_000);
+
+  it("opens the preferred calendar view even when restoring a mail address", async () => {
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en", place: "#/ohbox" },
+      [[`ohmail.calendar.display.${CONFIG.scope}`, JSON.stringify({ opensIn: "day" })]]);
+    try {
+      const dock = page.getByRole("navigation", { name: "Calendar" });
+      await browserExpect(dock.getByRole("button", { name: "Day", exact: true })).toHaveAttribute("aria-current", "page");
+      await browserExpect(page.getByRole("button", { name: "Ohbox", exact: true })).toHaveCount(0);
+      await browserExpect(page).toHaveURL(/#\/cal\/day/);
+    } finally { await close(); }
+  }, 120_000);
+
+  it.each([true, false])("handles Connect a calendar with unconfigured settings %s", async (unconfigured) => {
+    const off = {
+      enabledAt: null, ...(unconfigured ? { unconfigured } : {}),
+      weekNumbers: false, secondZone: null, dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null,
+    };
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en" },
+      [], undefined, undefined, {}, undefined, undefined, {
+        "http:GET /calendar/settings": httpAnswer(off),
+        "http:PATCH /calendar/settings": { ...httpAnswer({ error: { code: "validation_failed" } }), status: 400 },
+      });
+    try {
+      const connect = page.getByRole("button", { name: "Connect a calendar", exact: true });
+      await connect.click();
+      if (unconfigured) {
+        await askedFor(page, "http", "PATCH /calendar/settings");
+        await browserExpect(page.getByRole("status").filter({ hasText: /^Not saved$/ })).toBeVisible();
+        await browserExpect(page).toHaveURL(/#\/cal\/agenda$/);
+        await browserExpect(connect).toBeVisible();
+      } else {
+        await browserExpect(page).toHaveURL(/#\/cal\/calendars\/calaccounts$/);
+        await browserExpect(page.getByRole("switch", { name: "Use ohcal" })).not.toBeChecked();
+        expect(await page.evaluate(() => {
+          const { asked } = (window as unknown as { __native: { asked: { method?: string; path?: string }[] } }).__native;
+          return asked.some(({ method, path }) => method === "PATCH" && path === "/calendar/settings");
+        })).toBe(false);
+      }
+    } finally { await close(); }
+  }, 120_000);
+
+  it("connects through the paired server and opens a usable calendar on iOS", async () => {
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    const timestamp = now.toISOString();
+    const title = "Fixture planning session";
+    const earlierDate = now.getUTCDate() === 12 ? 13 : 12;
+    const earlierDay = `${day.slice(0, 8)}${earlierDate}`;
+    let enabledAt: string | null = null;
+    let connectionId = "";
+    const settings = () => ({
+      enabledAt, ...(enabledAt === null ? { unconfigured: true } : {}),
+      weekNumbers: false, secondZone: null, dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null,
+    });
+    const connection = () => ({
+      id: connectionId, provider: "caldav", label: "Fixture account", status: "active",
+      errorCode: null, grantMailboxId: null, serverHost: null, consentedAt: timestamp,
+      lastSyncedAt: timestamp, createdAt: timestamp, updatedAt: timestamp,
+    });
+    const calendar = {
+      id: "fixture-cal", connectionId: "", name: "Fixture calendar", color: null, access: "owner",
+      shown: true, timeZone: null, window: null, defaultAlarms: [], lastSyncedAt: timestamp,
+      errorCode: null, updatedAt: timestamp,
+    };
+    const event = {
+      id: "fixture-event", calendarId: calendar.id, uid: "fixture-event", recurrenceId: "", thisAndFuture: false,
+      sequence: 0, status: "confirmed", title, notes: null, place: null, callLink: null,
+      start: { kind: "date", value: day.replaceAll("-", "") }, end: null,
+      duration: null, startsAt: dayStart(day), endsAt: dayEnd(day),
+      occurrenceAt: null, repeat: null, busy: false, private: false, organizer: null, myAnswer: null,
+      heldBack: false, invitees: [], alarms: [], cut: false, writes: [], updatedAt: timestamp,
+    };
+    const earlier = {
+      ...event, id: "fixture-earlier", uid: "fixture-earlier", title: "Earlier appointment",
+      start: { kind: "date", value: earlierDay.replaceAll("-", "") },
+      startsAt: dayStart(earlierDay), endsAt: dayEnd(earlierDay),
+    };
+    const session = {
+      profile: { accountId: CONFIG.accountId }, standalone: false, boundAccount: () => CONFIG.accountId,
+      async send(route: string, init: RequestInit) {
+        const path = route.split("?")[0];
+        const method = init.method;
+        if (path === "/calendar/settings") {
+          if (method === "PATCH" && JSON.parse(String(init.body)).enabled === true) enabledAt = timestamp;
+          return Response.json(settings());
+        }
+        if (path === "/calendar/connect") {
+          return Response.json({ ways: enabledAt ? [SIGN_IN_WAY, "caldav"] : [], connections: connectionId ? [connection()] : [] });
+        }
+        if (path === "/calendar/connections" && method === "POST") {
+          connectionId = JSON.parse(String(init.body)).connectionId;
+          calendar.connectionId = connectionId;
+          return Response.json(connection(), { status: 201 });
+        }
+        const rows = [
+          ["settings", { id: "settings", calendarEnabledAt: enabledAt }],
+          ...(connectionId ? [
+            ["calendar_connection", connection()], ["calendar", calendar],
+            ["calendar_event", event], ["calendar_event", earlier],
+          ] : []),
+        ].map(([type, entity], i) => ({
+          type, entity, id: (entity as { id: string }).id, seq: i + 1, op: "update", updatedAt: timestamp,
+        }));
+        if (path === "/sync/snapshot") {
+          return Response.json({ asOfSeq: rows.length, changes: rows, nextCursor: null });
+        }
+        if (path === "/sync") {
+          return Response.json({ changes: { creates: [], updates: rows, deletes: [], moves: [] }, cursor: "NQ", hasMore: false });
+        }
+        return Response.json({}, { status: 404 });
+      },
+    } as unknown as ShellSession;
+    const http = new HttpDoor({ live: () => ({ session, scope: CONFIG.scope }), ready: () => true });
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", os: "ios", language: "en" }, [], undefined,
+      undefined, { withoutRandomUUID: true }, undefined, http);
+    try {
+      await page.getByRole("button", { name: "Connect a calendar", exact: true }).click({ timeout: 4_000 });
+      await browserExpect(page.getByRole("button", { name: WAY_WORDS[SIGN_IN_WAY], exact: true })).toBeVisible({ timeout: 4_000 });
+      await page.getByRole("button", { name: "Another CalDAV server", exact: true }).click();
+      await page.getByLabel("The server’s address").fill(new URL("https:" + "//cal.example.invalid").href);
+      await page.getByLabel("User name").fill("fixture");
+      await page.getByLabel("Password", { exact: true }).fill("fixture calendar sign-in");
+      await page.getByRole("button", { name: "Connect", exact: true }).click();
+      await browserExpect(page.getByRole("group", { name: "Calendars" })).toBeVisible({ timeout: 8_000 });
+      await page.getByRole("button", { name: "Continue", exact: true }).click();
+      await page.getByRole("button", { name: "Continue", exact: true }).click();
+      await page.getByRole("button", { name: "Open the calendar", exact: true }).click();
+      const titleText = page.getByText(title, { exact: true }).first();
+      await browserExpect(titleText).toBeVisible({ timeout: 8_000 });
+      const weight = await titleText.evaluate((label) => getComputedStyle(label).fontWeight);
+      const marked = (date: import("@playwright/test").Locator) => date.evaluate((date) => {
+        const marker = getComputedStyle(date, "::after");
+        return marker.content !== "none" && marker.content !== "normal" && marker.display !== "none";
+      });
+      const agendaDate = `${day.slice(0, 8)}15`;
+      await page.evaluate((date) => { location.hash = `#/cal/agenda/${date}`; }, agendaDate);
+      await browserExpect(page).toHaveURL(new RegExp(`/agenda/${agendaDate}$`));
+      const calendarDates = page.getByRole("grid");
+      const dateButton = (date: number) => calendarDates.getByRole("button", { name: new RegExp(`\\b${date}\\b`) });
+      const dot = await marked(dateButton(earlierDate));
+      const emptyDot = await marked(dateButton(now.getUTCDate() === 16 ? 17 : 16));
+      const dock = page.getByRole("navigation", { name: "Calendar" });
+      const hourPitch = async () => {
+        const axis = page.getByText("07:00", { exact: true }).first();
+        const next = page.getByText("08:00", { exact: true }).first();
+        const top = (label: typeof axis) => label.evaluate((element) => element.getBoundingClientRect().top);
+        return Math.round(await top(next) - await top(axis));
+      };
+      await dock.getByRole("button", { name: "Day", exact: true }).click();
+      await browserExpect(page).toHaveURL(/#\/cal\/day/);
+      const dayPitch = await hourPitch();
+      const visibleDayHeight = await page.getByText("08:00", { exact: true }).first().evaluate((label) => {
+        let container = label.parentElement;
+        while (container && getComputedStyle(container).overflowY !== "auto") container = container.parentElement;
+        return container?.clientHeight ?? Infinity;
+      });
+      await dock.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("dialog", { name: "More", exact: true }).getByRole("button", { name: "Week", exact: true }).click();
+      await browserExpect(page).toHaveURL(/#\/cal\/week/);
+      const weekPitch = await hourPitch();
+      expect({ weight, dot, emptyDot, dayPitch, weekPitch }).toEqual({
+        weight: "600", dot: true, emptyDot: false, dayPitch: 56, weekPitch: 56,
+      });
+      expect(visibleDayHeight).toBeLessThan(16 * dayPitch);
+      expect(connectionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    } finally { await close(); }
+  }, 120_000);
+
+  it("hands the Calendar header's Mail button to the companion app", async () => {
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", os: "ios", other: "unknown", language: "en" },
+      [], undefined, undefined, {}, undefined, undefined, { "switch.open:": { went: "opened" } });
+    try {
+      await page.getByRole("button", { name: "Mail", exact: true }).click();
+      const asked = await page.evaluate(() => (window as unknown as { __native: { asked: { kind: string; to?: unknown }[] } }).__native.asked);
+      expect(asked.filter(({ kind }) => kind.startsWith("switch."))).toEqual([
+        expect.objectContaining({ kind: "switch.open", to: { to: "last" } }),
+      ]);
+      await browserExpect(page).toHaveURL(/#\/cal\/agenda/);
+    } finally { await close(); }
   }, 120_000);
 
   it("keeps Calendar notification and widget titles private on the phone", async () => {

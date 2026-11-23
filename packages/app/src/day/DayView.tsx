@@ -43,6 +43,7 @@ export function DayView(props: CalendarViewProps) {
   const hours = useHoursScroller({
     hours: settings.hours,
     hourDefault: plan.device === "phone" ? 56 : 60,
+    fixedHourHeight: props.fixedHourHeight,
     room: plan,
     fitBehindDock: plan.device === "phone",
     focusMinute: props.cursor,

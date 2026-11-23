@@ -106,7 +106,7 @@ describe("the phone shell's answers, per setting", () => {
     },
     frame: {
       places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), overs: named("overs"), address: named("address"),
-      window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
+      window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: NONE,
     },
     signals: {
       linkIn: named("linkIn"), posture: named("posture"), insets: named("insets"), keyboard: named("keyboard"),
@@ -114,10 +114,10 @@ describe("the phone shell's answers, per setting", () => {
     },
   };
   const engine = named<HostContract["engine"]>("engine");
-  const of = (setting: ShellSetting) =>
+  const of = (setting: ShellSetting, calendar: PhoneSupplies["frame"]["calendar"]) =>
     phoneHost(engine, {
       setting, scope: "p0123456789abcdef0123456789abcdef", accountId: "acct-1", build: { version: "2.0.0", commit: "abc" },
-    }, has);
+    }, { ...has, frame: { ...has.frame, calendar } });
   const NO_WIRE = Object.fromEntries([
     "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "images", "olderBody", "junk", "trash",
     "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "connect", "mailboxes",
@@ -156,34 +156,47 @@ describe("the phone shell's answers, per setting", () => {
     ["desktopHost", { session: { state: NONE, account: null, signOut: has.signOut }, capabilities: capabilities("ownComputer", "computer", "signOutOnly") }],
     ["standalone", { session: { state: NONE, account: null, signOut: NONE }, capabilities: { ...capabilities("ownComputer", "computer", NONE), searchBy: "people" } }],
   ];
-  for (const [setting, want] of table) {
-    it(`answers the whole record on ${setting}`, async () => {
-      const w = want as { session: { state: string; account: string | null; signOut: unknown }; capabilities: object };
-      const host = of(setting);
-      expect(host).toEqual({
-        engine,
-        session: {
-          resolve: NONE, confirmed: NONE, state: w.session.state, scope: "p0123456789abcdef0123456789abcdef",
-          account: w.session.account, mirrorAccount: null, accountAddress: null, accountDisplayName: null, signOut: w.session.signOut,
-          recover: has.frame.recover, today: NONE,
-        },
-        reads: { mailboxes: expect.any(Function), copyAge: NONE, access: NONE },
-        wires: { ...NO_WIRE, consent: expect.objectContaining({ state: expect.any(Function) }) },
-        capabilities: w.capabilities,
-        features: NO_FEATURE,
-        device: DEVICE,
-        signals: SIGNALS,
-      });
-      const { mailboxes } = host.reads;
-      const { consent } = host.wires;
-      if (mailboxes === NONE || consent === NONE) throw new Error("The mail page is missing its account reads");
-      await expect(mailboxes({ counts: true })).resolves.toEqual([
-        { id: "mailbox", address: "Fixture mailbox", status: "connected", messageCount: 8 },
-      ]);
-      await expect(mailboxes()).rejects.toThrow(/503/);
-      await expect(consent.state()).resolves.toEqual({ dormancyDays: 28 });
+  const calendarFrame = named<Exclude<PhoneSupplies["frame"]["calendar"], typeof NONE>>("calendar");
+  const cases = table.flatMap(([setting, want]) =>
+    ([NONE, calendarFrame] as const).map((calendar) => ({ setting, want, calendar, frame: calendar === NONE ? "absent" : "present" })),
+  );
+  it.each(cases)("answers the whole record on $setting with the Calendar frame $frame and no transport", async ({ setting, want, calendar }) => {
+    const w = want as { session: { state: string; account: string | null; signOut: unknown }; capabilities: object };
+    const hosted = calendar !== NONE && (setting === "managed" || setting === "selfHosted");
+    const host = of(setting, calendar);
+    expect(host).toEqual({
+      engine,
+      session: {
+        resolve: NONE, confirmed: NONE, state: w.session.state, scope: "p0123456789abcdef0123456789abcdef",
+        account: w.session.account, mirrorAccount: null, accountAddress: null, accountDisplayName: null, signOut: w.session.signOut,
+        recover: has.frame.recover, today: NONE,
+      },
+      reads: { mailboxes: expect.any(Function), copyAge: NONE, access: NONE },
+      wires: { ...NO_WIRE, consent: expect.objectContaining({ state: expect.any(Function) }) },
+      capabilities: {
+        ...w.capabilities,
+        ...(calendar === NONE ? {} : { products: "calendar" }),
+        ...(hosted ? { pairing: "account", account: "here" } : {}),
+      },
+      features: {
+        ...NO_FEATURE,
+        calendar,
+        ...(calendar === NONE ? {} : { devices: { name: "devices", render: expect.any(Function) } }),
+        ...Object.fromEntries((hosted ? ["account", "subscription", "storage", "invites", "security"] : [])
+          .map((name) => [name, { name, render: expect.any(Function) }])),
+      },
+      device: DEVICE,
+      signals: SIGNALS,
     });
-  }
+    const { mailboxes } = host.reads;
+    const { consent } = host.wires;
+    if (mailboxes === NONE || consent === NONE) throw new Error("The mail page is missing its account reads");
+    await expect(mailboxes({ counts: true })).resolves.toEqual([
+      { id: "mailbox", address: "Fixture mailbox", status: "connected", messageCount: 8 },
+    ]);
+    await expect(mailboxes()).rejects.toThrow(/503/);
+    await expect(consent.state()).resolves.toEqual({ dormancyDays: 28 });
+  });
 });
 
 describe("what the page hands the frame", () => {
@@ -243,7 +256,10 @@ describe("what the page hands the frame", () => {
     expect(frame.overs).toEqual({ palette: NONE, keys: NONE });
     expect(frame.places).toBe(mounted.places);
     expect(frame.stages).toBe(mounted.stages);
-    expect(frame.calendar).toBe(NONE);
+    expect(frame.calendar).toMatchObject({
+      places: { agenda: { id: "agenda" }, day: { id: "day" }, week: { id: "week" }, calsettings: { id: "calsettings" } },
+      stage: expect.any(Object),
+    });
     expect(frame.above).toBe(NONE);
     expect(frame.reader).toBe(NONE);
     expect(frame.recover).toBe(NONE);

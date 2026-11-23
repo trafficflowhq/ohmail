@@ -14,6 +14,7 @@ import {
   type CalendarWay,
 } from "@ohmail/app-logic/calendar/setup";
 import { useFrame } from "../frame/commands.js";
+import { useCalendarDevice } from "../calsettings/device.js";
 import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useText } from "../text/index.js";
@@ -38,7 +39,9 @@ function useWays(port: ReturnType<typeof useSetupPort>): readonly CalendarWay[] 
 }
 
 export function CalSetupStage({ route }: PaneProps) {
-  const { commands } = useFrame();
+  const { commands, host } = useFrame();
+  const device = useCalendarDevice();
+  const home = host.capabilities.products === "calendar" ? (device?.settings.opensIn ?? "agenda") : "week";
   const t = useText("calsetup");
   const port = useSetupPort();
   const mirror = useCalendarMirror();
@@ -55,7 +58,7 @@ export function CalSetupStage({ route }: PaneProps) {
       stage: { id: "calSetup", words: fromSettings ? { ...next, from: "settings" } : next },
     });
   const out = () =>
-    commands.go(fromSettings ? { place: "calsettings", sub: "calaccounts" } : { place: "week" });
+    commands.go(fromSettings ? { place: "calsettings", sub: "calaccounts" } : { place: home });
   const leave = (
     <Button kind="quiet" size="l" onPress={out}>
       {t("leave")}
@@ -102,7 +105,7 @@ export function CalSetupStage({ route }: PaneProps) {
     );
   }
   const step = { connection: at.connection, ...(at.way ? { way: at.way } : {}) };
-  const done = () => commands.go({ place: "week" });
+  const done = () => commands.go({ place: home });
   if (at.step === "calendars") {
     return (
       <CalendarsStep

@@ -295,8 +295,18 @@ public class OhmailSwitchModule: Module {
       // Armed before the link opens: the sibling's ask may come back before the system says it opened.
       SwitchArrivals.shared.arm()
       openSibling(fields, leg: "open") { opened in
-        if !opened { SwitchArrivals.shared.disarm() }
-        promise.resolve(opened)
+        if opened {
+          promise.resolve(true)
+          return
+        }
+        SwitchArrivals.shared.disarm()
+        // Opening the mail app at its root carries no place, pairing digest or handoff.
+        guard fields["p"] == "last", let scheme = lands()?["siblingScheme"],
+              let url = URL(string: "\(scheme):///") else {
+          promise.resolve(false)
+          return
+        }
+        UIApplication.shared.open(url, options: [:]) { promise.resolve($0) }
       }
     }.runOnQueue(.main)
 

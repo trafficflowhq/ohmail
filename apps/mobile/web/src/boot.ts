@@ -2,6 +2,7 @@
  * THE PAGE'S FIRST MODULE, imported before every other: the bridge, and the words door installed on
  * the page's storage before anything else can write to it.
  */
+import "./webview-uuid";
 import { createBridge, note, type Bridge } from "./bridge";
 import { installKeptStorage, type KeptStorage } from "./kept-storage";
 import { pagePort } from "./port";

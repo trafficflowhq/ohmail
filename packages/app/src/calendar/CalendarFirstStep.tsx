@@ -3,7 +3,7 @@ import type { CalendarPort } from "@ohmail/app-logic/calendar";
 import { Empty } from "@ohmail/ui/base";
 import { useSetupPort } from "../calsetup/index.js";
 import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
-import { useFrame } from "../frame/commands.js";
+import { useFrame, useReport } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
 import { useText } from "../text/index.js";
 
@@ -48,9 +48,41 @@ export function useCalendarFirstStep(): boolean {
 }
 
 export function CalendarFirstStep() {
-  const { commands } = useFrame();
+  const { commands, host, route } = useFrame();
+  const setup = useSetupPort();
+  const settings = useSharedCalendarSettings();
+  const report = useReport();
   const t = useText("calendar");
   const accounts = useText("calsettings");
+  const [connecting, setConnecting] = useState(false);
+
+  async function connect() {
+    if (connecting) return;
+    const save = settings?.save ?? NONE;
+    const said = settings?.said;
+    if (
+      host.capabilities.products !== "calendar" ||
+      setup === NONE ||
+      setup.connect === NONE ||
+      (said?.enabledAt === null && (said.unconfigured !== true || save === NONE))
+    ) {
+      commands.go({ place: "calsettings", sub: "calaccounts" });
+      return;
+    }
+    const current = host.device.address.read();
+    if (said?.enabledAt === null && save !== NONE) {
+      setConnecting(true);
+      const ok = await save({ enabled: true });
+      setConnecting(false);
+      if (host.device.address.read() !== current) return;
+      if (!ok) {
+        report(accounts("notSaved"));
+        return;
+      }
+    }
+    commands.go({ place: route.place, stage: { id: "calSetup", words: {} } });
+  }
+
   return (
     <section className="cal-body cal-first-step" aria-label={t("landmark")}>
       <Empty
@@ -58,7 +90,7 @@ export function CalendarFirstStep() {
         act={{
           kind: "ink",
           label: t("connect"),
-          onPress: () => commands.go({ place: "calsettings", sub: "calaccounts" }),
+          onPress: () => void connect(),
         }}
       />
     </section>

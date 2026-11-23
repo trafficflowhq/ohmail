@@ -11,7 +11,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { createPortal } from "react-dom";
 import { calendarPortOf } from "@ohmail/app-logic/calendar";
 import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
-import { calendar as calendarEntry } from "@ohmail/app/calendar";
+import { isCalendarPlace, routeOf } from "@ohmail/app/frame";
+import { NONE } from "@ohmail/app/host";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { mailboxTotalOf, readSearchBy } from "@ohmail/app-logic/search";
 import { startSyncScheduler, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
@@ -93,8 +94,10 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   }
   let permission: NoticePermission = config.notifications;
   const mountedPlaces = mounted(bridge, config);
-  const calendarHome = config.app === "ohcal" ? `#/cal/${readCalendarDevice(config.scope).opensIn}` : null;
-  const frame = phoneFrameSupplies(mountedPlaces, config.place ?? calendarHome, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
+  const place = config.app === "ohcal" && (config.place === null || !isCalendarPlace(routeOf(config.place).place))
+    ? `#/cal/${readCalendarDevice(config.scope).opensIn}`
+    : config.place;
+  const frame = phoneFrameSupplies(mountedPlaces, place, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
   const signals = phoneSignals(bridge, config.facts, () => unsentDraftsOf(engine.read()).length, frame.address);
   const transport = config.app === "ohcal" ? engine.calendarTransport() : null;
   const setup = transport && engine.calendarSetupTransport();
@@ -140,10 +143,10 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
       },
     },
     signOut: async () => { await bridge.request("act", { act: "signOut" }); },
-    frame: calendar ? {
+    frame: frame.calendar !== NONE ? {
       ...frame,
       calendar: {
-        ...calendarEntry, CompanionSwitch: companionSwitch(other, config.os),
+        ...frame.calendar, CompanionSwitch: companionSwitch(other, config.os),
         writeGuests: async (to, subject) => { await bridge.request("act", { act: "calendar.guests", to, subject }); },
       },
     } : frame,

@@ -51,6 +51,7 @@ export interface CalendarViewProps {
   readonly clock: { readonly zone: string; readonly zones: ZoneSource; readonly nowMs: number };
   readonly settings: CalendarViewSettings;
   readonly plan: LayoutPlan;
+  readonly fixedHourHeight?: boolean;
   /** A panel (the Agenda, the Invitations) stands beside the view. */
   readonly panel: boolean;
   readonly cursor?: number | null;

@@ -323,6 +323,14 @@ describe("what an app leaves out of its native build", () => {
     expect(modules.excludeInPodfile(PODFILE, ["organizer-service"])).toContain("  use_expo_modules!(exclude: ['organizer-service'])");
   });
 
+  it("gives the calendar builds their matching mail app's launch scheme", async () => {
+    for (const app of ["ohmail", "ohmail-preview"]) expect((await prebuilt(app)).infoPlist.OhmailSwitch).not.toHaveProperty("siblingScheme");
+    const release = await prebuilt("ohcal");
+    const preview = await prebuilt("ohcal-preview");
+    expect(release.infoPlist.OhmailSwitch).toMatchObject({ siblingScheme: "ohmail" });
+    expect(preview.infoPlist.OhmailSwitch).toMatchObject({ siblingScheme: "ohmail-preview" });
+  });
+
   it("changes nothing for an app that leaves nothing out, and refuses a template without its anchor", () => {
     expect(modules.excludeInSettings(SETTINGS, [])).toBe(SETTINGS);
     expect(modules.excludeInPodfile(PODFILE, [])).toBe(PODFILE);

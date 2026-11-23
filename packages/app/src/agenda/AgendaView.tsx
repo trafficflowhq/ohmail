@@ -49,6 +49,8 @@ export interface AgendaViewProps {
   readonly from?: string;
   /** How many days from its first one the list holds: what the body worked the occurrences out over. */
   readonly days: number;
+  /** The phone app marks event days in the mini month above the list. */
+  readonly miniMonthDots?: boolean;
   /** Asks for more days at the list's foot. */
   readonly onMore: () => void;
   readonly onClose?: () => void;
@@ -67,6 +69,7 @@ export function AgendaView({
   edge,
   from,
   days,
+  miniMonthDots,
   onMore,
   onClose,
   onRow,
@@ -145,7 +148,7 @@ export function AgendaView({
   return (
     <div className="cal-ag" data-device="phone">
       <div className="cal-ag-pick" {...swipe}>
-        <PhoneMonth input={input} acts={acts} folded={folded} />
+        <PhoneMonth input={input} acts={acts} folded={folded} busyDots={miniMonthDots} />
       </div>
       <div className="cal-ag-sheet">
         <button
@@ -317,7 +320,17 @@ function Row({
 }
 
 /** The phone's month over the list: a press picks the day the list starts from. */
-function PhoneMonth({ input, acts, folded }: { input: RangeInput; acts: RangeActs; folded: boolean }) {
+function PhoneMonth({
+  input,
+  acts,
+  folded,
+  busyDots,
+}: {
+  input: RangeInput;
+  acts: RangeActs;
+  folded: boolean;
+  busyDots?: boolean;
+}) {
   const locale = useLocale();
   const grid = useMemo(
     () =>
@@ -346,6 +359,7 @@ function PhoneMonth({ input, acts, folded }: { input: RangeInput; acts: RangeAct
     <div className="cal-ag-month">
       <MiniMonth
         size="phone"
+        busyDots={busyDots}
         weekdays={weekdayNames(locale, input.weekStart, "narrow")}
         days={weeks.flatMap((w) =>
           w.days.map((d) => ({
