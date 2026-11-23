@@ -53,6 +53,8 @@ export const UNBOUND_CALLS = [
   "POST /auth/refresh/logout", "POST /auth/register", "POST /auth/reuse-sweeps/ack", "GET /auth/session",
   "POST /auth/step-up/recovery-code", "POST /auth/step-up/totp", "POST /auth/step-up/webauthn/options",
   "POST /auth/step-up/webauthn/verify", "POST /auth/verify-email", "POST /auth/verify-email/resend",
+  "POST /calendar/oauth/google/complete", "POST /calendar/oauth/google/start",
+  "POST /calendar/oauth/microsoft/complete", "POST /calendar/oauth/microsoft/start",
   "GET /consent", "GET /consent/reset", "POST /consent/reset",
   "GET /consent/seed", "POST /consent/seed", "PATCH /consent/settings", "GET /devices", "DELETE /devices/:id",
   "POST /devices/revoke-web-sessions", "GET /events", "GET /folders/:id/summary", "GET /health", "GET /img",
@@ -84,7 +86,7 @@ type _UnboundCallsComplete = Assert<Complete<UnboundCall, typeof UNBOUND_CALLS>>
  * Why no client of this tree calls a route.
  *  · `operator`: the operator's console and tools ask it; they are not in this repository.
  *  · `platform`: a clock, the worker or an alert drill asks it, with a shared secret.
- *  · `provider`: a calendar's provider calls it, with its channel's own id and word.
+ *  · `provider`: a calendar provider calls it for a notice or redirects the browser after sign-in.
  *  · `site`: the public site's form asks it.
  *  · `no-caller-found`: no client's source spells its path. A candidate for removal, once a log
  *    of what running clients ask for agrees.
@@ -101,6 +103,8 @@ export const SERVER_ONLY_ROUTES: Readonly<Record<string, ServerOnlyReason>> = Ob
   "GET /auth/audit": "no-caller-found",
   "POST /calendar/notices/google": "provider",
   "POST /calendar/notices/microsoft": "provider",
+  "GET /calendar/oauth/google/callback": "provider",
+  "GET /calendar/oauth/microsoft/callback": "provider",
   "GET /contacts": "no-caller-found",
   "GET /contacts/:id": "no-caller-found",
   "PATCH /contacts/:id": "no-caller-found",

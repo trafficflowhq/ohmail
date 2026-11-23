@@ -35,6 +35,22 @@ import { makeDeps, req, seedSession, FIXED_NOW, type SeededSession } from "./hel
 const app = createApp([...apiRoutes, ...calendarRoutes]);
 const plain = createApp(apiRoutes);
 
+describe("calendar sign-in callback", () => {
+  it.each([
+    ["ordinary refusal", { error: "access_denied", error_description: "AADSTS65001" }, "admin_consent_required"],
+    ["oversized error", { error: `${" ".repeat(128)}consent_required` }, "consent_failed"],
+    ["oversized description", { error: "access_denied", error_description: `${"x".repeat(4096)}AADSTS65001` }, "consent_failed"],
+    ["oversized subcode", { error: "interaction_required", error_subcode: `${" ".repeat(128)}cancel` }, "consent_failed"],
+  ] as const)("classifies %s before returning to Settings", async (_name, params, refusal) => {
+    const { deps } = await makeDeps();
+    const query = new URLSearchParams({ state: "a".repeat(43), ...params });
+    const response = await app.handle(req("GET", `/calendar/oauth/microsoft/callback?${query}`), deps);
+    expect(response.status).toBe(303);
+    const fragment = new URL(response.headers.get("location")!).hash;
+    expect(new URLSearchParams(fragment.split("?")[1]).get("refusal")).toBe(refusal);
+  });
+});
+
 interface Port {
   policy: "cloud" | "own-network";
   ceremonies: Record<"google" | "microsoft", { on: boolean; configured: boolean }>;

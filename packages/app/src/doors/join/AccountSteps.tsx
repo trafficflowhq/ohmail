@@ -3,8 +3,8 @@ import { Button, Dot, Page, Tag } from "@ohmail/ui/base";
 import { AccountSentence, useWanted, type AccountField } from "../stage/AccountSentence.js";
 import { DoorForm } from "../stage/DoorForm.js";
 import { PASSWORD_MIN, accountReady } from "../stage/fields.js";
-import { Address, SaidWith } from "../stage/Said.js";
-import { SentenceBlank } from "../stage/SentenceBlank.js";
+import { Address, SaidWith } from "../../text/Said.js";
+import { SentenceBlank } from "../../text/SentenceBlank.js";
 import { WayButton } from "../stage/way.js";
 import { refusalOf, SignOutAgain, type StepProps } from "./parts.js";
 

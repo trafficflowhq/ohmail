@@ -235,7 +235,9 @@ function joinDoorOf(lang: Lang): JoinDoor {
     waitlist: way,
     demo: NONE,
     slots: {
-      mailbox: () => <ConnectForm ask={askOf("join", null)} door={wireOf(null)} factor={discarded} />,
+      mailbox: (page) => (
+        <ConnectForm ask={askOf("join", null)} door={wireOf(null)} factor={discarded} page={page} />
+      ),
       authenticatorQr: () => null,
     },
   };

@@ -6,8 +6,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Menu, MenuItem, Page, RadioLines, RefusalLine, Slot } from "@ohmail/ui/base";
 import { DoorSheet } from "../stage/DoorSheet.js";
 import { DoorFields, DoorForm } from "../stage/DoorForm.js";
-import { Said, SaidWith } from "../stage/Said.js";
-import { SentenceBlank } from "../stage/SentenceBlank.js";
+import { Said, SaidWith } from "../../text/Said.js";
+import { SentenceBlank } from "../../text/SentenceBlank.js";
 import type { JoinState } from "./door.js";
 import { refusalOf, SignOutAgain, type StepProps } from "./parts.js";
 

@@ -2,12 +2,12 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AUTH_CONFIG } from "@trafficflow/services";
 import { KEY_RING_V1 } from "./support/key-ring-env.js";
-import { publicPath } from "./support/public-root.mjs";
+import { publicPath, publicRel } from "./support/public-root.mjs";
 import { evalIf, type IfContext } from "./support/workflow-if.js";
 import { concurrencyFindings, concurrencyOf, concurrencyRuns } from "./workflows-under-pull-requests.test.js";
 
@@ -36,6 +36,7 @@ const WF_TEXT = readFileSync(publicPath("github/workflows/selfhost-smoke.yml"), 
 const IMAGES_TEXT = readFileSync(publicPath("github/workflows/ghcr-images.yml"), "utf8");
 const SCRIPT = publicPath("github/scripts/selfhost-smoke.sh");
 const DIR = publicPath("deploy/selfhost");
+const COMPOSE_DIR = publicRel("deploy/selfhost");
 const load = (t: string) => yaml.load(t) as Workflow;
 const exec = (t: string) => t.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
 
@@ -176,6 +177,8 @@ exit "\${STUB_JOURNEYS_RC:-0}"
 type Run = { status: number | null; out: string; log: string[]; env: string; dir: string };
 function smoke(mode: "--build" | "--staged", tag: string, opts: { images?: string[]; env?: Record<string, string>; dir?: string; json?: Record<string, string>; journeys?: boolean } = {}): Run {
   const dir = mkdtempSync(join(tmpdir(), "selfhost-smoke-"));
+  // The script's compose argv is whitespace-delimited. Use paths relative to its working directory.
+  const runDir = relative(REPO, dir);
   const services: Record<string, string> = { ...OTHERS };
   for (const [svc, name] of Object.entries(OURS)) services[svc] = `ghcr.io/trafficflowhq/${name}:${tag}`;
   Object.assign(services, opts.json ?? {});
@@ -187,10 +190,10 @@ function smoke(mode: "--build" | "--staged", tag: string, opts: { images?: strin
   writeFileSync(join(dir, "curl"), CURL_STUB, { mode: 0o755 });
   writeFileSync(join(dir, "npx"), NPX_STUB, { mode: 0o755 });
   const env = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, LC_ALL: "C", RUNNER_TEMP: dir, STUB_DIR: dir,
-    DOCKER: join(dir, "docker"), NODE: join(dir, "node"), CURL: join(dir, "curl"), NPX: join(dir, "npx"), STUB_HEALTH: `${COMMIT} file`, ...opts.env,
+    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, LC_ALL: "C", RUNNER_TEMP: runDir, STUB_DIR: dir,
+    DOCKER: join(runDir, "docker"), NODE: join(dir, "node"), CURL: join(dir, "curl"), NPX: join(dir, "npx"), STUB_HEALTH: `${COMMIT} file`, ...opts.env,
   };
-  const args = [SCRIPT, mode, "--dir", opts.dir ?? DIR, "--tag", tag, "--commit", COMMIT, ...(opts.journeys ? ["--journeys"] : [])];
+  const args = [SCRIPT, mode, "--dir", opts.dir ?? COMPOSE_DIR, "--tag", tag, "--commit", COMMIT, ...(opts.journeys ? ["--journeys"] : [])];
   const r = spawnSync("bash", args, { encoding: "utf8", env, cwd: REPO });
   const envFile = join(dir, "selfhost-smoke.env");
   let envText = "";
@@ -222,8 +225,10 @@ describe("selfhost-smoke.sh boots exactly the images of this run and the commit 
     const pulled = r.log.filter((l) => / compose .* pull /.test(l)).map((l) => l.split(" ").pop()).sort();
     expect(pulled).toEqual(Object.keys(OTHERS).sort());
     const compose = /SMOKE_COMPOSE=(.*) SMOKE_ENV_FILE=(.*)$/.exec(r.log[at.smoke]!)!;
-    expect(compose[1]).toBe(`${join(r.dir, "docker")} compose -f ${DIR}/docker-compose.yml -f ${DIR}/docker-compose.ci.yml --env-file ${join(r.dir, "selfhost-smoke.env")}`);
-    expect(compose[2]).toBe(join(r.dir, "selfhost-smoke.env"));
+    const runDir = relative(REPO, r.dir);
+    const envFile = join(runDir, "selfhost-smoke.env");
+    expect(compose[1]).toBe(`${join(runDir, "docker")} compose -f ${COMPOSE_DIR}/docker-compose.yml -f ${COMPOSE_DIR}/docker-compose.ci.yml --env-file ${envFile}`);
+    expect(compose[2]).toBe(envFile);
     for (const svc of Object.keys(OURS)) expect(r.out).toContain(`identity: ${svc} runs ghcr.io/trafficflowhq/${OURS[svc]}:smoke-7-1 (sha256:id-${svc})`);
     expect(r.out).toContain(`identity: /health names ${COMMIT}, read from the build's file`);
   });
@@ -307,16 +312,18 @@ describe("selfhost-smoke.sh boots exactly the images of this run and the commit 
     expect(r.status, r.out).toBe(0);
     const handover = join(r.dir, "selfhost-journeys.json");
     // One invite per account the stack's journeys make, under the product's own registration bound with room to spare.
-    expect(r.log).toContain(`handover ${handover} ${DEFAULT_AUTH_CONFIG.maxRegistrationsPerWindow - 4}`);
+    expect(r.log).toContain(`handover ${relative(REPO, handover)} ${DEFAULT_AUTH_CONFIG.maxRegistrationsPerWindow - 4}`);
     const journeys = idx(r.log, /^npx vitest run /);
     expect(journeys, r.log.join("\n")).toBeGreaterThan(idx(r.log, /^curl -fsS http:\/\/localhost:3080\/health$/));
     expect(journeys).toBeLessThan(idx(r.log, / down -v$/));
     expect(r.log[journeys]).toMatch(/^npx vitest run test\/journeys\/guards\.test\.ts test\/journeys\/journeys\/\S+\.journeys\.test\.ts .* TF_JOURNEYS=stack$/);
     expect(r.log[journeys], "a folder as the filter runs the whole suite").not.toMatch(/ test\/journeys( |$)/);
     const seen = JSON.parse(readFileSync(join(r.dir, "handover.seen"), "utf8")) as Record<string, unknown>;
+    const runDir = relative(REPO, r.dir);
+    const envFile = join(runDir, "selfhost-smoke.env");
     expect(seen).toEqual({
-      origin: "http://localhost:3080", invites: ["STUB-INVITE"], commit: COMMIT, envFile: join(r.dir, "selfhost-smoke.env"),
-      compose: [join(r.dir, "docker"), "compose", "-f", `${DIR}/docker-compose.yml`, "-f", `${DIR}/docker-compose.ci.yml`, "--env-file", join(r.dir, "selfhost-smoke.env")],
+      origin: "http://localhost:3080", invites: ["STUB-INVITE"], commit: COMMIT, envFile,
+      compose: [join(runDir, "docker"), "compose", "-f", `${COMPOSE_DIR}/docker-compose.yml`, "-f", `${COMPOSE_DIR}/docker-compose.ci.yml`, "--env-file", envFile],
     });
     expect(statSync(join(r.dir, "handover.seen")).mode & 0o777).toBe(0o600);
     expect(existsSync(handover), "the handover outlived the run").toBe(false);
@@ -384,7 +391,7 @@ describe("selfhost-smoke.sh boots exactly the images of this run and the commit 
       expect(r.status, `${mode} ${tag}`).not.toBe(0);
       expect(r.log, `${mode} ${tag}`).toEqual([]);
     }
-    const spaced = smoke("--build", "smoke-7-1", { dir: `${DIR}/with space` });
+    const spaced = smoke("--build", "smoke-7-1", { dir: `${COMPOSE_DIR}/with space` });
     expect(spaced.status).not.toBe(0);
     expect(spaced.out).toMatch(/whitespace/);
     expect(spaced.log).toEqual([]);

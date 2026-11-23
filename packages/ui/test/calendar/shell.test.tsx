@@ -178,8 +178,9 @@ describe("the answer switch", () => {
     expect(screen.getByRole("group", { name: "Answer" })).toBeTruthy();
     for (const a of ANSWERS)
       expect(screen.getByRole("button", { name: a.label }).getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: "Maybe" }));
-    expect(onChange).toHaveBeenCalledWith("maybe");
+    const maybe = screen.getByRole("button", { name: "Maybe" });
+    fireEvent.click(maybe);
+    expect(onChange).toHaveBeenCalledWith("maybe", maybe);
     rerender(<AnswerSwitch label="Answer" answers={{ options: ANSWERS, value: "maybe", onChange }} />);
     expect(screen.getByRole("button", { name: "Maybe" }).getAttribute("aria-pressed")).toBe("true");
   });

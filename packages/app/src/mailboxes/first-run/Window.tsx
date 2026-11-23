@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Counters, Menu, MenuItem, Page, Slot, Tag } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import { decisionCountSentence, type WindowChoice } from "@ohmail/app-logic/mailboxes/first-run/rules";
-import { SaidWith } from "../../doors/stage/Said.js";
+import { SaidWith } from "../../text/Said.js";
 import { useLocale, useText } from "../../text/index.js";
 import { FolderMap, HolderWait } from "./Consent.js";
 import { Next, StepForm, refusalOf, stepTop, type StepProps } from "./parts.js";

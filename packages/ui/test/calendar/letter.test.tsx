@@ -52,8 +52,9 @@ describe("the invitation card in a letter", () => {
         .getAllByRole("button")
         .map((b) => b.getAttribute("aria-pressed")),
     ).toEqual(["true", "false", "false"]);
-    fireEvent.click(within(answer).getByRole("button", { name: "No" }));
-    expect(onChange).toHaveBeenCalledWith("no");
+    const no = within(answer).getByRole("button", { name: "No" });
+    fireEvent.click(no);
+    expect(onChange).toHaveBeenCalledWith("no", no);
   });
 
   it("on an event a person may only view, the answer is read and not given: every part is off, the given one still said", () => {

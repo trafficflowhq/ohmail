@@ -7,6 +7,10 @@ import {
   type ApiDeps, type Route,
 } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
+import {
+  CALENDAR_OAUTH_CODE_MAX_CHARS, CALENDAR_OAUTH_ERROR_DESCRIPTION_MAX_CHARS,
+  CALENDAR_OAUTH_ERROR_MAX_CHARS, CALENDAR_OAUTH_STATE_CHARS,
+} from "../src/calendar/oauth.js";
 import { SEND_KEY_MAX } from "../src/send-deps.js";
 import { CALENDAR_WRITE_LIMITS } from "@trafficflow/db/calendar";
 import { CALDAV_PASSWORD_MAX_CHARS, CALDAV_USER_MAX_CHARS } from "../../services/src/calendar/connect.js";
@@ -218,6 +222,8 @@ const readsInputInline = (r: Route): boolean => READS_INPUT.test(String(r.handle
 const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "GET /calendar/settings",
   "GET /calendar/connect",
+  "POST /calendar/oauth/google/start",
+  "POST /calendar/oauth/microsoft/start",
   "DELETE /calendar/connections/:id",
   "POST /calendar/connections/:id/check",
   "POST /calendar/writes/:id/retry",
@@ -875,6 +881,20 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   },
   "POST /calendar/connections/:id/sign-in": { bounds: [CALDAV_USER_MAX_CHARS, CALDAV_PASSWORD_MAX_CHARS] },
   "PATCH /calendar/calendars/:id": { bounds: [CALENDAR_NAME_MAX_CHARS] },
+  "GET /calendar/oauth/google/callback": {
+    bounds: [CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS, CALENDAR_OAUTH_ERROR_MAX_CHARS],
+  },
+  "GET /calendar/oauth/microsoft/callback": {
+    bounds: [CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS,
+      CALENDAR_OAUTH_ERROR_MAX_CHARS, CALENDAR_OAUTH_ERROR_DESCRIPTION_MAX_CHARS],
+  },
+  // State has a fixed shape, the code has a length cap and the refusal comes from a closed set.
+  "POST /calendar/oauth/google/complete": {
+    bounds: [JSON_BODY_MAX_BYTES, CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS],
+  },
+  "POST /calendar/oauth/microsoft/complete": {
+    bounds: [JSON_BODY_MAX_BYTES, CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS],
+  },
 
   // ── workflows ───────────────────────────────────────────────────────────────────────────
   "POST /workflows": { bounds: [MAX_WORKFLOW_STEPS], door: "`name` is stored on one column; each step's `args` OBJECT is shape-checked but not sized, and the worker resolves and executes it" },
@@ -1442,6 +1462,11 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // `approveAuthorize`/`peekAuthorizeRequest` before `hashToken` runs over it, then matched by
   // equality against a stored hash — it reaches no `LIKE`, no ordering and no allocation.
   "routes/oauth.ts#request": "identifier",
+  "calendar/oauth.ts#state": "identifier",
+  "calendar/oauth.ts#code": "length-capped",
+  "calendar/oauth.ts#error": "length-capped",
+  "calendar/oauth.ts#error_description": "length-capped",
+  "calendar/oauth.ts#error_subcode": "length-capped",
   // routes/settings-handoff.ts: mint calls isPane before encrypting. PANES contains only
   // account, security, devices, storage and mailboxes.
   "routes/settings-handoff.ts#settingsPane": "closed-set",

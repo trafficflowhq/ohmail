@@ -140,7 +140,7 @@ describe("each state comes to itself by the steps the subjects walk", () => {
   it("the join's step stands as the join seats it: its heading, the address first, the tiles, nothing chosen", async () => {
     await page(JOIN_STEP_KEY);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toContain(
-      say("en", { ns: "join", key: "step_mailbox_title" }),
+      say("en", { ns: "onboarding", key: "providerFirst" }),
     );
     expect(screen.getByLabelText(say("en", { ns: "join", key: "mailboxAddress" }))).toBeTruthy();
     const tiles = screen.getByRole("group", { name: say("en", { ns: "providerPicker", key: "label" }) });

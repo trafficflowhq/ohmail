@@ -11,7 +11,7 @@ import { useText, type Text } from "../../text/index.js";
 import { clock } from "../stage/clock.js";
 import { ColdMark } from "../stage/ColdMark.js";
 import { Break, DoorLine, Fact, Heavy, Note } from "../stage/DoorLine.js";
-import { Said, SaidWith } from "../stage/Said.js";
+import { Said, SaidWith } from "../../text/Said.js";
 import { StepUpDialog } from "../step-up/StepUpDialog.js";
 import type { ApproveAsked, ApproveDoor, ApproveState } from "./door.js";
 

@@ -1,6 +1,6 @@
 import { cloneElement, Fragment, isValidElement, type ReactNode } from "react";
 import { Dot, EndDot, Sentence } from "@ohmail/ui/base";
-import "./sheet.css";
+import "./sentence.css";
 
 /**
  * A page's one sentence, ending in the dot: `hot` while something waits on the person, `ink` once it is done. The

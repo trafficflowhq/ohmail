@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from "react";
 import { Button, Page, type PageLinePart } from "@ohmail/ui/base";
-import { Said } from "../doors/stage/Said.js";
+import { Said } from "../text/Said.js";
 import type { PhoneDoorConfig } from "./contract.js";
 import { useDoorWords } from "./namespace.js";
 import type { StepProps } from "./states.js";

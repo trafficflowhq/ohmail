@@ -765,7 +765,13 @@ it.each([
           type: "touchMove",
           touchPoints: [{ x: x + (dx * step) / 10, y: y + (dy * step) / 10 }],
         });
-        if (step === 5) await expect.poll(here).toBe(start + Math.round(Math.hypot(dx, dy) / 2 / pitch));
+        // Let Chromium process each touch sample in its own frame before sending the next.
+        await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
+        if (step === 5) {
+          await expect
+            .poll(here, { timeout: 4_000 })
+            .toBe(start + Math.round(Math.hypot(dx, dy) / 2 / pitch));
+        }
       }
       const end = start + Math.round(Math.hypot(dx, dy) / pitch);
       await expect.poll(here).toBe(end);

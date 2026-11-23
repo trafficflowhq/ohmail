@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Avatar, Button, Menu, MenuItem, Page, Seg, Slot, Tag } from "@ohmail/ui/base";
-import { SaidWith } from "../../doors/stage/Said.js";
+import { SaidWith } from "../../text/Said.js";
 import { useText } from "../../text/index.js";
 import { StepForm, stepTop, type StepProps } from "./parts.js";
 import { PLACES } from "./words.js";

@@ -11,7 +11,7 @@ import { useText, type Text } from "../../text/index.js";
 import { clock } from "../stage/clock.js";
 import { Facts } from "../stage/DoorSheet.js";
 import { Break, DoorLine, Fact, Heavy, Note, useLinePlace } from "../stage/DoorLine.js";
-import { Address, Said, SaidWith } from "../stage/Said.js";
+import { Address, Said, SaidWith } from "../../text/Said.js";
 import { StepUpDialog } from "../step-up/StepUpDialog.js";
 import type { AuthorizeDesktopDoor, AuthorizeDesktopState } from "./door.js";
 

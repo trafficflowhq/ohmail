@@ -62,6 +62,11 @@ export type UnboundCall =
   | "POST /auth/step-up/webauthn/verify"
   | "POST /auth/verify-email"
   | "POST /auth/verify-email/resend"
+  // apps/webapp/app/(product)/mailbox/calendar-oauth.ts
+  | "POST /calendar/oauth/google/complete"
+  | "POST /calendar/oauth/google/start"
+  | "POST /calendar/oauth/microsoft/complete"
+  | "POST /calendar/oauth/microsoft/start"
   | "GET /consent"
   | "GET /consent/reset"
   | "POST /consent/reset"

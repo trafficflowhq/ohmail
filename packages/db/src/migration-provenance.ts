@@ -181,6 +181,7 @@ export function classifyDrift(
   try {
     history = reader.history(dir, m.tag);
   } catch (err: unknown) {
+    // Carry the read failure into the verdict if the shipped provenance cannot resolve it.
     const why = err instanceof Error ? err.message.split("\n")[0] : String(err);
     unreadable = why ?? "git could not be run";
   }

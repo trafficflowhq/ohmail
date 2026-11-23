@@ -11,8 +11,8 @@ import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
 import { DoorForm } from "../stage/DoorForm.js";
 import { refusalOf, SignOutAgain } from "../stage/pending.js";
-import { Said, SaidWith } from "../stage/Said.js";
-import { SentenceBlank } from "../stage/SentenceBlank.js";
+import { Said, SaidWith } from "../../text/Said.js";
+import { SentenceBlank } from "../../text/SentenceBlank.js";
 import type { VerifyDoor, VerifyField, VerifyState } from "./door.js";
 
 export function VerifyPage({ door }: { door: VerifyDoor | None }): ReactNode {
