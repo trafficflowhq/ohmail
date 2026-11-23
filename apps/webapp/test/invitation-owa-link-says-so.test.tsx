@@ -115,8 +115,14 @@ async function mount(segment: Segment, text: string) {
     engine, junkWire: segment === "Junk" ? junkWire : "none",
   }));
   await tick(500);
-  fireEvent.click(view.getByRole("button", { name: new RegExp(`^${segment}(?:$|[, ])`) }));
+  const section = segment === "Junk" ? "Spam" : segment;
+  fireEvent.click(view.getByRole("button", { name: new RegExp(`^${section}(?:$|[, ])`) }));
   await tick(500);
+  if (segment === "Junk") {
+    const providerRow = view.getByRole("option", { name: /Think tank held/ });
+    fireEvent.click(providerRow);
+    await tick(500);
+  }
   const reading = within(view.getByRole("region", { name: en.frame.landmark.reading }));
   const article = reading.getByRole("article");
   expect(article.textContent).toContain("Think tank held");

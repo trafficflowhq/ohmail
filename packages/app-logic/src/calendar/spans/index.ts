@@ -52,6 +52,7 @@ export {
 export type { HeldEdge, RangeActs, RangeDevice, RangeInput, ViewEvent, ViewEventRef } from "./view.js";
 export {
   clockTime,
+  clockTimeAt,
   dayAndMonth,
   dayDate,
   dayLong,

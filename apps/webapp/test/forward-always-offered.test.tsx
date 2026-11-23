@@ -74,7 +74,10 @@ describe("the forward ask stands in the dock until it is answered", () => {
 const DOORS: Array<[string, RegExp]> = [
   ["packages/app/src/reader/actions/ActionBar.tsx", /id: "forward",[\s\S]*?onPress: \(\) => act\("forward"\)/],
   ["packages/app/src/reader/actions/LetterMenu.tsx", /<MenuItem icon="forward" onPress=\{answers\("forward"\)\}>/],
-  ["packages/app/src/reader/actions/use-verbs.ts", /if \(answer !== null && \(action === "reply" \|\| action === "reply_all" \|\| action === "forward"\)\)/],
+  [
+    "packages/app/src/reader/actions/use-verbs.ts",
+    /if \(message === null\) return;\s*let action = asked;\s*if \(action === "reply" \|\| action === "reply_all" \|\| action === "forward"\) \{\s*const target = \(action === "forward" \? message : replyTo\) \?\? message;\s*if \(answer !== null\) \{\s*answer\(target\.id, action\);\s*return;\s*\}/,
+  ],
   [
     "packages/app/src/reader/keys.ts",
     /FORWARD_KEY = "shift\+f";[\s\S]*if \(open && open\.canAnswerKey\?\.\(open\.letter\.id\) !== false\) open\.verbs\.act\(action\);[\s\S]*\.\.\.\(open === null \? \{ disabled: true, disabledReason: "no_cursor" \} : \{\}\),[\s\S]*answer\(FORWARD_KEY, "key\.forward", "forward"\)/,

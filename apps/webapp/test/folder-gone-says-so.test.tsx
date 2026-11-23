@@ -100,7 +100,7 @@ describe("the folder page and a folder that leaves", () => {
     await tick(30_000);
     await goHash(`#/folder/${FOLDER_ID}`);
     await tick(1_000);
-    const sentence = en.folder.gone.replace("{name}", "Clients");
+    const sentence = en.folder.gone.replace("{name}", "Clients").replace(/\.$/, "");
     expect(textOf(el), "the precondition: the folder page is open").toContain(holdsNone(el));
     expect(document.body.textContent ?? "").not.toContain(sentence);
 

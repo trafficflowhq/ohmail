@@ -14,3 +14,5 @@ export {
   checkCalendarConnection, removeCalendarConnection, setCalendar, signInCalendarAgain,
   CALENDAR_CHECK_EVERY_MS, CALENDAR_REMOVE_STEPS_PER_REQUEST,
 } from "./connect-acts.js";
+export { keepCalendarConnection, requireCalendarConnectionRoom } from "./connect.js";
+export { calendarAuthorizeUrl, consumeCalendarOAuth, exchangeCalendarCode, type CalendarOAuthClient, type CalendarOAuthProvider } from "./oauth.js";

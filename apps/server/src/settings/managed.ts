@@ -23,6 +23,7 @@ import { pgTransportReason } from "@trafficflow/db/cloud";
  */
 export const DEFAULT_RP_ID = "ohmail.app";
 export const DEFAULT_ORIGINS = ["https://ohmail.app"];
+export const MANAGED_API_ORIGIN = "https://api.ohmail.app";
 /**
  * Hosts on which the `tf_session` cookie is an accepted credential. All three
  * are browser surfaces: `ohmail.app`, `admin.ohmail.app`, and

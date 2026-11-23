@@ -18,7 +18,7 @@ import { repeatDeleteScopes } from "@ohmail/cal-providers/repeat-shapes";
  */
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calWrites, messageInvitations, messages } from "@trafficflow/db/mail";
-import { fenceErased, fencedAccountOf, recordCalendarChanges, invitationCalendarId, invitationStanding, sameAddress, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
+import { fenceErased, fencedAccountOf, recordCalendarChanges, invitationCalendarId, invitationStanding, sameAddress, storedAuthScreens, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   CALENDAR_WRITE_LIMITS, CONTINUED_FIELDS, CalendarConnectionGone, asCalendarWriteFault, changedDaysOf, exceptionBaseOf, holdCalendarConnection, isWriteKey, ownOrganizerAddresses,
   parseCalendarAct, parseWritePayload, someoneElses, writeActRefusal, writePayloadOf, writeRowOf, type CalendarWriteException, type CalendarWritePayload, type ContinuedField,
@@ -436,7 +436,7 @@ async function reviewedInvitationCopy(
 ) {
   const letter = await calendarLetter(tx, accountId, messageId);
   const invitation = letter?.invitation;
-  if (!invitation || letter?.auth === "fail" || invitation.method !== "REQUEST" || !invitation.organizer || !invitation.invitedAddress ||
+  if (!invitation || storedAuthScreens(letter.auth) || invitation.method !== "REQUEST" || !invitation.organizer || !invitation.invitedAddress ||
     (invitation.answer !== "accepted" && invitation.answer !== "tentative") || invitationCalendarId(invitation) !== act.eventId)
     return false;
   const start = eventTimeOf(storedTime(act.event.start));
@@ -464,7 +464,7 @@ async function cancelledByLetter(
 ) {
   const letter = await calendarLetter(tx, accountId, id);
   const cancellation = letter?.invitation;
-  if (!cancellation || letter?.auth === "fail" || cancellation.method !== "CANCEL" || !cancellation.invitedAddress ||
+  if (!cancellation || storedAuthScreens(letter.auth) || cancellation.method !== "CANCEL" || !cancellation.invitedAddress ||
     !sameAddress(cancellation.organizer, letter?.sender)) return false;
   if (cancellation.recurrenceId !== at) return false;
   const standing = await invitationStanding(tx, cancellation);

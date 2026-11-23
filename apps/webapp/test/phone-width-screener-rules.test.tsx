@@ -21,6 +21,7 @@ async function visit(width: number, coarse: boolean, check: (page: Page) => Prom
         ? route.fulfill({ contentType: "text/html", body: html })
         : route.abort()
     ));
+    await page.addInitScript("window.process = { env: {} };");
     await page.goto(origin);
     await row(page).waitFor({ timeout: 5000 });
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(coarse);

@@ -43,10 +43,11 @@ function calendarWrites(creates: CalendarEventAct[]) {
 async function startEvent(sheet: ReturnType<typeof within>, title: string) {
   await clickMounted(sheet.getByRole("menuitem", { name: "New event" }));
   await tick(500);
+  const editor = within(screen.getByRole("dialog", { name: "New event" }));
   await act(async () => {
-    fireEvent.change(screen.getByRole("textbox", { name: "Event title" }), { target: { value: title } });
+    fireEvent.change(editor.getByRole("textbox", { name: "New event" }), { target: { value: title } });
   });
-  return within(screen.getByRole("dialog", { name: "New event" }));
+  return editor;
 }
 
 const records = {

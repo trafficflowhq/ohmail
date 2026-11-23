@@ -114,12 +114,13 @@ async function atTheMailboxStep() {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  expect(host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
+  expect(host.querySelector("h1")?.textContent?.trim()).toBe(en.onboarding.providerFirst);
   /* The step is the one connect form: its tiles by their names, its password field by its label. */
   const probes = mailboxProbes(host, en, act);
   const pick = async (startsWith: string) => {
     await probes.choose(startsWith);
     await settle();
+    expect(host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
   };
   const password = () => probes.field("join-mb-pass");
   const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === label) ?? null;
@@ -135,7 +136,7 @@ async function atTheMailboxStep() {
 describe("the wizard's Microsoft tile, where the server can run the sign-in", () => {
   it("offers Connect with Microsoft as the main button, the sign-in note, and the password behind a link", async () => {
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     expect(ui.button(en.mailboxes.oauthContinue), "the main button is the sign-in").toBeTruthy();
     expect(ui.button(en.join.connectMailbox), "no password connect on the sign-in path").toBeNull();
     expect(ui.host.textContent).toContain(en.mailboxes.microsoftOauthNote);
@@ -152,7 +153,7 @@ describe("the wizard's Microsoft tile, where the server can run the sign-in", ()
 
   it("the press asks whose browser this is, then leaves for Microsoft with /join as the way back", async () => {
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     calls = [];
     await ui.press(en.mailboxes.oauthContinue);
     const start = calls.findIndex((c) => c.url.includes("/oauth/microsoft/start"));
@@ -164,7 +165,7 @@ describe("the wizard's Microsoft tile, where the server can run the sign-in", ()
 
   it("a browser now signed in as somebody else starts nothing and says so", async () => {
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     sessionAccount = "b2";
     await ui.press(en.mailboxes.oauthContinue);
     expect(calls.some((c) => c.url.includes("/oauth/microsoft/start"))).toBe(false);
@@ -174,7 +175,7 @@ describe("the wizard's Microsoft tile, where the server can run the sign-in", ()
 
   it("the wizard's sentence goes when the password way is taken, as the step's press cleared it", async () => {
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     sessionAccount = "b2";
     await ui.press(en.mailboxes.oauthContinue);
     const changed = en.join.accountChanged.replace("{email}", "b2@family.example");
@@ -188,7 +189,7 @@ describe("the wizard's Microsoft tile, where the server can run the sign-in", ()
     let answer: (a: { status: number; body: unknown }) => void = () => {};
     startHeld = new Promise((r) => { answer = r; });
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     await ui.press(en.mailboxes.oauthContinue);
     const working = ui.button(en.join.working);
     expect(working, "the press keeps its name while the start runs").toBeTruthy();
@@ -204,7 +205,7 @@ describe("the wizard's Microsoft tile, where the server can run the sign-in", ()
   ])("%s, answered to the start, is the wizard's own screen, as every refused press of the wizard's", async (_what, refused) => {
     start = refused;
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     await ui.press(en.mailboxes.oauthContinue);
     expect(navigated).toBeNull();
     expect(ui.host.textContent).toContain(en.join.expiredOpen);
@@ -213,7 +214,7 @@ describe("the wizard's Microsoft tile, where the server can run the sign-in", ()
 
   it("the account recorded at the press is the one the return completes for", async () => {
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     await ui.press(en.mailboxes.oauthContinue);
     expect(navigated).toBe(AUTHORIZE);
     await unmount!();
@@ -238,7 +239,7 @@ describe("where the server cannot run the redirect sign-in", () => {
   it("no door: the Microsoft tile keeps the app-password form and its note", async () => {
     door = { status: 200, body: { available: false, device: false } };
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     expect(ui.host.textContent).toContain(en.providerPicker.note_microsoft);
     expect(ui.password()).toBeTruthy();
     expect(ui.button(en.mailboxes.oauthContinue)).toBeNull();
@@ -247,7 +248,7 @@ describe("where the server cannot run the redirect sign-in", () => {
   it("an unreadable availability is a shut door, never a button that fails", async () => {
     door = { status: 503, body: { error: { code: "db_busy", message: "busy" } } };
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     expect(ui.button(en.mailboxes.oauthContinue)).toBeNull();
     expect(ui.password()).toBeTruthy();
   });
@@ -255,7 +256,7 @@ describe("where the server cannot run the redirect sign-in", () => {
   it("device-code only: the tile points to Settings → Mailboxes after setup", async () => {
     door = { status: 200, body: { available: false, device: true } };
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     expect(ui.host.textContent).toContain(en.join.mailboxMicrosoftAfterSetup);
     expect(ui.button(en.mailboxes.oauthContinue)).toBeNull();
     expect(ui.password(), "the app password still works here").toBeTruthy();
@@ -264,7 +265,7 @@ describe("where the server cannot run the redirect sign-in", () => {
   it("device-code only: Microsoft's own app-password help stands under that sentence, which says an app password works", async () => {
     door = { status: 200, body: { available: false, device: true } };
     const ui = await atTheMailboxStep();
-    await ui.pick("Microsoft 365");
+    await ui.pick(en.providerPicker.microsoftShort);
     expect(ui.host.textContent).toContain(en.join.mailboxMicrosoftAfterSetup);
     expect(ui.link(en.providerPicker.help_microsoft)?.getAttribute("href")).toMatch(/^https:\/\/support\.microsoft\.com\//);
   });

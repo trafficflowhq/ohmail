@@ -893,6 +893,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["devices", "revoked_at"],
   // The calendar feed and export read this column to keep availability identities stable.
   ["cal_calendars", "availability_key"],
+  // The invitation reader and calendar feed require these fields on the rows they serve.
+  ["message_invitations", "proposal"],
+  ["cal_events", "removed_occurrences"],
+  ["cal_calendars", "native_move"],
+  ["cal_events", "portable_copy"],
+  ["message_invitations", "hosted_details"],
 ] as const;
 
 /**
@@ -1330,7 +1336,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0218_account_settings_draft_replies";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0219_hosted_invitation_details";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

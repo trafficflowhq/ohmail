@@ -396,6 +396,13 @@ export async function otherTabRenewalSettled(): Promise<boolean> {
   return true;
 }
 
+/** The wake stream uses the browser's jar directly, so it must wait before opening. */
+export async function waitForWakeSession(): Promise<boolean> {
+  if (refreshInFlight()) await refreshSettled();
+  else await otherTabRenewalSettled();
+  return !refreshInFlight() && !sessionIsDead();
+}
+
 /** A renewal's name in the shared record, young, over a jar its answer has not moved yet. */
 function renewalOutElsewhere(): boolean {
   let owed: Partial<PendingAttempt> | null = null;

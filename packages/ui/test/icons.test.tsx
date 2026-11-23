@@ -63,6 +63,14 @@ describe("the icon set", () => {
 });
 
 describe("Icon", () => {
+  it("keeps the same drawing through a render between pointer down and up", () => {
+    const { container, rerender } = render(<Icon name="more" size={20} />);
+    const shape = container.querySelector("svg")?.firstElementChild;
+    expect(shape).not.toBeNull();
+    rerender(<Icon name="more" size={20} className="focused" />);
+    expect(container.querySelector("svg")?.firstElementChild).toBe(shape);
+  });
+
   it("beside a word is hidden from a screen reader", () => {
     const svg = render(<Icon name="send" size={18} />).container.querySelector("svg")!;
     expect(svg.getAttribute("aria-hidden")).toBe("true");

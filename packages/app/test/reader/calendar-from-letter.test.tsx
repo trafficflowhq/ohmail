@@ -84,9 +84,7 @@ it("v opens the letter's draft without writing and stays out of text fields", as
   fireEvent.keyDown(document.body, { key: "v" });
   expect(address.read()).toBe("#/cal/week?panel=new");
   const form = within(await screen.findByRole("dialog", { name: "New event" }));
-  expect((form.getByRole("textbox", { name: "Event title" }) as HTMLInputElement).value).toBe(
-    message.subject,
-  );
+  expect((form.getByRole("textbox", { name: "New event" }) as HTMLInputElement).value).toBe(message.subject);
   expect(form.getByRole("button", { name: "Invite Ben Kiln" })).toBeTruthy();
   expect(form.getByRole("button", { name: "Invite June Potter" })).toBeTruthy();
   expect(press).not.toHaveBeenCalled();
@@ -126,12 +124,12 @@ it("confirms accepted letter guests and manually added guests together", async (
   fireEvent.click(form.getByRole("button", { name: "Invite June Potter" }));
   fireEvent.click(form.getByRole("button", { name: "Invitees" }));
   const picker = within(screen.getByRole("dialog", { name: "Add invitees" }));
-  fireEvent.change(picker.getByRole("textbox", { name: "Name or email address" }), {
+  fireEvent.change(picker.getByRole("textbox", { name: "Name or address" }), {
     target: { value: ["Mara <mara", "example.test>"].join("@") },
   });
-  fireEvent.click(picker.getByRole("button", { name: "Add person" }));
+  fireEvent.click(picker.getByRole("menuitem", { name: /^Mara\s/ }));
   fireEvent.click(form.getByRole("button", { name: /^Mara/ }));
-  fireEvent.click(screen.getByRole("menuitemradio", { name: "Optional" }));
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Optional", checked: false }));
   fireEvent.click(form.getByRole("button", { name: "Add" }));
   expect(press).not.toHaveBeenCalled();
   const ask = within(screen.getByRole("dialog", { name: /Mara.*Ben Kiln.*June Potter/ }));

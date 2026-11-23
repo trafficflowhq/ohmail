@@ -5,6 +5,7 @@ import type { MutationResult } from "@ohmail/client-engine";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import tagWords from "../../messages/tags.en.json" with { type: "json" };
 import newsWords from "../../messages/news.en.json" with { type: "json" };
+import { MailGround, mailPlaces } from "../../src/mail/index.js";
 import { issue, mountStreamFrame } from "../streams/registered-world.js";
 import { fakeMail, letter, mountReader, WORDS } from "./support/mail.js";
 
@@ -50,6 +51,7 @@ it("filters the reader's tags, applies with the keyboard and removes with the po
     letters: [letter(letterId, { labels: ["studio"] })],
     open: letterId,
     rows: { ...tags, "tag:kiln": { id: "kiln", name: "Kiln", hue: "rosewood" } },
+    host: { places: mailPlaces(), above: MailGround },
     words: { ...WORDS.en, ...tagWords },
   });
   const bar = within(screen.getByRole("toolbar", { name: "Actions" }));

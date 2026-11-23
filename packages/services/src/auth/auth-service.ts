@@ -3651,6 +3651,7 @@ export class AuthService extends SessionLifecycle {
         }
       }
       for (let j = 0; j < toDelete.length; j += GRANT_PRUNE_BATCH) {
+        // scoped-by: unusedMailboxGrant limits accounts to those of the revoked sessions.
         await db.delete(table).where(and(
           unusedMailboxGrant,
           inArray(table.state, toDelete.slice(j, j + GRANT_PRUNE_BATCH)),

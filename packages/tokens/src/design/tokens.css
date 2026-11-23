@@ -675,6 +675,7 @@
 :root[data-device="fold"]{
   --cgutter: 46px;
 }
+
 :root[data-face="ohmarchy"][data-device="fold"]{
   --cal-rail-swatch-top: 14px;
 }

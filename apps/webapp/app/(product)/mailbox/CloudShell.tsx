@@ -38,6 +38,7 @@ import { useServerWords } from "../../server-words";
 import { useUserInvites } from "./use-user-invites";
 import { useManageOffer } from "./use-manage-offer";
 import { beginOAuthReturn, noJoinLanding, oauthLandsInJoin, subscribeOAuthOutcome } from "./oauth-return";
+import { completeCalendarOAuth, readCalendarOAuthReturn } from "./calendar-oauth";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 import { useFirstPaintGate } from "./useFirstPaintGate";
 import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
@@ -65,6 +66,7 @@ import { ConfirmBrowserFaceOwner } from "../confirm-browser-face-owner";
  */
 pendApiOwner(readOwner());
 beginOAuthReturn();
+let calendarOAuthReturn = readCalendarOAuthReturn();
 
 /** What the demo says of itself when `?demo=1` boots through this page: this build's service and send ceiling. */
 /** The staged attachment ceiling supported by this deployment. */
@@ -174,6 +176,12 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
       window.history.replaceState(window.history.state, "", destination.href);
     }
     setAccount({ id: accountId, address: address ?? null, displayName });
+    if (calendarOAuthReturn !== null) {
+      const back = calendarOAuthReturn;
+      calendarOAuthReturn = null;
+      const stillCurrent = () => boundApiOwner() === accountId && apiOwnerHolds("/calendar/connect");
+      void completeCalendarOAuth(back, accountId, stillCurrent);
+    }
   }, [confirmFaceOwner, listenFor, wakeSession]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left

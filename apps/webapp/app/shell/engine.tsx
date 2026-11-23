@@ -33,6 +33,7 @@ import { MailboxOpening } from "./BootSkeleton";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { accountCleanupOwed, finishRetiredComposeCleanup, isolateAccountScope, otherAccountCleanup, readIsolatedScope } from "../pending-sign-out-storage";
 import { listenBrowserSession, readSessionFamily } from "../signed-out-signal";
+import { waitForWakeSession } from "../session-refresh";
 import { setDemoStorage } from "@ohmail/app-logic/storage/storage-owner";
 import { markStartup } from "@ohmail/app-logic/session/ui-vitals";
 import {
@@ -650,6 +651,7 @@ export function EngineProvider({
       onDraining: markDrain,
       ...(syncsWhileHidden() ? { visibility: null, online: null } : {}),
       wake: cloudWakeStream(),
+      waitForWake: waitForWakeSession,
       // The service worker's push wake, heard by a tab with notifications on (web live only).
       pushWakes: cloudPushWakes(),
       // A return reads its delta first, then the rest a few at a time (web live only).

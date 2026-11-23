@@ -134,7 +134,11 @@ describe("the projection the sidecar reads matches the table", () => {
     // 210 -> 211 with conditional Discard, the same draft write with a required precondition.
     // 211 -> 212 with a receipt's calendar suggestion, dismissed and restored on the account's
     // server like the calendar's other writes.
-    expect(RELAY_ALLOWLIST.length).toBe(212);
+    // 212 -> 213 with calendar proposals. Sending the proposal and its invitation reply belongs
+    // to the signed-in account's server, like the calendar's other invitation responses.
+    expect(everyRoute().get("POST /calendar/proposals")?.route.relay).toBe(true);
+    expect(mayRelay("POST", "/calendar/proposals")).toBe(true);
+    expect(RELAY_ALLOWLIST.length).toBe(213);
   });
 
   it("every pattern in the projection is a real route", () => {

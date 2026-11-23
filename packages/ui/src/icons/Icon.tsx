@@ -5,7 +5,10 @@ import data from "./icons.json" with { type: "json" };
 export const icons = data.icons;
 export type IconName = keyof typeof icons;
 export type ComposerIconName = keyof typeof data.composer;
-const drawings = { ...icons, ...data.composer };
+// Keep the SVG children mounted when a control re-renders between pointer down and up.
+const markup = Object.fromEntries(
+  Object.entries({ ...icons, ...data.composer }).map(([name, { svg }]) => [name, { __html: svg }]),
+);
 
 /** The sizes an icon is drawn at. `icons.json` lists the same ones; the icons' test holds the two equal. */
 export const ICON_SIZES = [16, 18, 20, 22, 24] as const;
@@ -36,7 +39,7 @@ export function Icon({ name, size, label, className }: IconProps) {
       stroke="currentColor"
       {...named}
       // The markup is this package's own file, and its test admits shapes and geometry only.
-      dangerouslySetInnerHTML={{ __html: drawings[name].svg }}
+      dangerouslySetInnerHTML={markup[name]}
     />
   );
 }

@@ -426,7 +426,7 @@ describe("the reading pane offers the in-app viewer on the types the web preview
     // `isPreviewable` names) beside the look the host hands: no host's exception.
     const app = resolve(shared, "../../../packages/app/src/reader");
     expect(readFileSync(resolve(app, "Letter.tsx"), "utf8")).toMatch(
-      /<LetterFiles messageId=\{message\.id\} selection=\{previewSelection\} parts=\{parts\} \/>/,
+      /<LetterFiles\s+messageId=\{message\.id\}\s+selection=\{previewSelection\}\s+parts=\{parts\}\s[^>]*\/>/,
     );
     const pane = readFileSync(resolve(app, "files/Files.tsx"), "utf8");
     expect(pane).toMatch(/const look = fileLookOf\(item\.mimeType\) !== "other" \? preview : null;/);

@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { clockTime } from "@ohmail/app-logic/calendar";
 import type { CalendarNoticeChoices } from "@ohmail/client-engine";
 import type { CalendarChoiceSetter } from "@ohmail/app-logic/notices/browser-channels";
 import { Menu, MenuItem, Slot } from "@ohmail/ui/base";
@@ -127,13 +128,6 @@ function SummaryLine({ choices, set }: { choices: CalendarNoticeChoices; set: Ca
   const locale = useLocale();
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const clock = new Intl.DateTimeFormat(locale, {
-    timeZone: "UTC",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
-  const time = (minute: number) => clock.format(new Date(minute * 60_000));
   return (
     <SettingLine
       label={t("dailySummary")}
@@ -148,7 +142,7 @@ function SummaryLine({ choices, set }: { choices: CalendarNoticeChoices; set: Ca
       {choices.cal_summary ? (
         <>
           <Slot ref={anchor} label={t("summaryTime")} expanded={open} onPress={() => setOpen(true)}>
-            {time(choices.summaryAt)}
+            {clockTime(choices.summaryAt, locale)}
           </Slot>
           <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} label={t("summaryTime")}>
             {SUMMARY_TIMES.map((minute) => (
@@ -160,7 +154,7 @@ function SummaryLine({ choices, set }: { choices: CalendarNoticeChoices; set: Ca
                   set("summaryAt", minute);
                 }}
               >
-                {time(minute)}
+                {clockTime(minute, locale)}
               </MenuItem>
             ))}
           </Menu>

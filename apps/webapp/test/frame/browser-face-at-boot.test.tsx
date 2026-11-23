@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { useTheme } from "@ohmail/ui/theme";
+import { armSchemeTransitions } from "@ohmail/ui";
 import { act, cleanup, render } from "@testing-library/react";
 import { useContext, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -50,6 +51,26 @@ function firstFace(owner: string | null) {
   for (const script of body.content.querySelectorAll("script")) new Function(script.textContent ?? "")();
   return document.documentElement.dataset.face ?? "paper";
 }
+
+it("applies a new scheme while the browser's controls stay available", () => {
+  const startViewTransition = vi.fn((apply: () => void) => apply());
+  Object.defineProperty(document, "startViewTransition", { configurable: true, value: startViewTransition });
+  function Probe() {
+    const { setTheme } = useTheme();
+    return <button onClick={() => setTheme("dark")}>Dark</button>;
+  }
+  try {
+    const { getByRole } = render(<Providers><Probe /></Providers>);
+    armSchemeTransitions();
+    act(() => { getByRole("button", { name: "Dark" }).click(); });
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.classList.contains("scheme-shift")).toBe(true);
+    expect(startViewTransition).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(document, "startViewTransition");
+    delete document.documentElement.dataset.theme;
+  }
+});
 
 it("uses the confirmed account's saved face in the document head", () => {
   expect(firstFace(ACCOUNT)).toBe("ohmarchy");

@@ -2,11 +2,9 @@
  * Google's sign-in, as far as this package goes: the address a person is sent to, the trade of what
  * comes back for a lasting sign-in, and the trade of the lasting sign-in for a short one.
  *
- * Until the product has a public name Google can return to, the sign-in is the one Google allows a
- * program on a person's own machine: it returns to a port on 127.0.0.1. Opening the browser,
- * listening on that port, and making the state and the proof are the connect step's; nothing here
- * listens, draws a random number or keeps anything between two calls. The registration's secret and
- * the lasting sign-in are revealed in one place, where the form for Google's token address is written.
+ * The host owns the redirect, state and PKCE. This helper accepts an HTTPS callback or a loopback
+ * port for the installed-app flow. The registration's secret and the lasting sign-in are revealed
+ * only to write the request to Google's token endpoint.
  */
 import { jsonOf, refuse, type Json, type Refused } from "../json-answers.js";
 import type { Answer, Clock, Credential } from "../port.js";
@@ -129,14 +127,15 @@ export async function exchangeGoogleCode(
   deps: SignInDeps,
   o: { readonly client: GoogleClient; readonly code: string; readonly codeVerifier: string; readonly redirectUri: string },
   signal: AbortSignal,
-): Promise<Answer<GoogleGrant>> {
+): Promise<{ readonly ok: true; readonly value: GoogleGrant } | (Refused & { readonly missingPermissions?: true })> {
   const form = { grant_type: "authorization_code", code: o.code, code_verifier: o.codeVerifier, redirect_uri: o.redirectUri, client_id: o.client.id, client_secret: o.client.secret.reveal() };
   const answer = await trade(deps, form, false, signal);
   if (!answer.ok) return answer;
   const access = accessOf(answer.json, deps.clock.now());
   if (access === null) return refuse("unreadable");
   const lasting = answer.json.refresh_token;
-  if (typeof lasting !== "string" || lasting === "" || lasting.length > MAX_SIGN_IN_CHARS || !grantsAll(answer.json.scope)) return refuse("sign_in_incomplete");
+  if (!grantsAll(answer.json.scope)) return { ...refuse("sign_in_incomplete"), missingPermissions: true };
+  if (typeof lasting !== "string" || lasting === "" || lasting.length > MAX_SIGN_IN_CHARS) return refuse("sign_in_incomplete");
   return { ok: true, value: { ...access, refreshToken: new Secret(lasting) } };
 }
 

@@ -208,9 +208,10 @@ describe("the label counts addresses, not removed copies", () => {
 
 describe("Settings → Folders lists live mailboxes only", () => {
   const perMailbox = (el: HTMLElement): string[] => {
-    const head = within(el).queryByRole("heading", { name: messages.settings.folders.mailboxesTitle, level: 2 });
-    const sheet = head?.closest<HTMLElement>(".oh-settingssheet");
-    return sheet ? within(sheet).getAllByRole("switch").map((control) => control.getAttribute("aria-label") ?? "") : [];
+    const master = within(el).queryByRole("switch", { name: messages.settings.folders.useTitle });
+    const sheet = master?.closest<HTMLElement>(".oh-settingssheet");
+    return sheet ? within(sheet).getAllByRole("switch").filter((control) => control !== master)
+      .map((control) => control.getAttribute("aria-label") ?? "") : [];
   };
 
   it("one live mailbox beside its removed copies gets no per-mailbox switch", async () => {

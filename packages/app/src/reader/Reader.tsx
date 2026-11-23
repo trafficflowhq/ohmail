@@ -12,7 +12,7 @@ import { Sheet } from "@ohmail/ui/mail";
 import { baseSubject, isForwardedByUs, isProtected, type ThreadWalk } from "@ohmail/app-logic/reader";
 import { scrollByHand } from "@ohmail/app-logic/session/programmatic-scroll";
 import type { PaneProps, Route } from "../frame/contract.js";
-import { useText } from "../text/index.js";
+import { useText, useTextLookup } from "../text/index.js";
 import { useNewEvent } from "../calendar/use-new-event.js";
 import { NONE } from "../host/index.js";
 import { useReaderOpen } from "../frame/commands.js";
@@ -87,8 +87,7 @@ interface ConversationProps {
 }
 
 function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyboard }: ConversationProps) {
-  const t = useText("reader");
-  const later = useText("later");
+  const text = useTextLookup();
   const {
     commands,
     host,
@@ -120,10 +119,10 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     under,
   } = useConversationColumn(route, openId, keysHere, keyboard, phone);
   useHeadingStepBack(scroller, phone, opened !== null);
-  const back = phone ? readerBack(from, t("back"), () => commands.open(null)) : undefined;
+  const back = phone ? readerBack(from, text("reader")("back"), () => commands.open(null)) : undefined;
   const calendarAction = useCalendarAction(opened, host.features.calendar !== NONE);
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
-  if (opened === null) return <Sheet kind="reading" label={t("pane")} back={back} />;
+  if (opened === null) return <Sheet kind="reading" label={text("reader")("pane")} back={back} />;
   const place = phone ? "top" : narrow ? "heading" : "column";
   const threaded = messages.length > 1;
   const squares = threaded && (
@@ -140,14 +139,15 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
       onWheel={(event) => scrollConversation(event, scroller.current)}
       role={step ? "dialog" : undefined}
       aria-modal={step ? true : undefined}
-      aria-label={step ? later("run.label") : undefined}
+      aria-label={step ? text("later")("run.label") : undefined}
     >
       <Sheet
         kind="reading"
         extendTop={!phone}
+        coverFoot={phone && (route.place === "news" || route.place === "receipts")}
         flushFoot
         manualScrollAnchor={threaded}
-        label={t("pane")}
+        label={text("reader")("pane")}
         back={back}
         top={phone ? squares : undefined}
         gutter={place === "column" ? squares : undefined}

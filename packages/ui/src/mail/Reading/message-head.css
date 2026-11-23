@@ -445,18 +445,12 @@
 }
 
 @container stream-card (inline-size < 400px) {
-  :root:not([data-device="phone"])
-    [data-stream-window][data-receipts]
-    .oh-messagehead[data-preview]
-    > .oh-messagehead-sender {
+  [data-stream-window][data-receipts] .oh-messagehead[data-preview] > .oh-messagehead-sender {
     grid-column: 1 / -1;
     grid-row: 1;
   }
 
-  :root:not([data-device="phone"])
-    [data-stream-window][data-receipts]
-    .oh-messagehead[data-preview]
-    > .oh-messagehead-tools {
+  [data-stream-window][data-receipts] .oh-messagehead[data-preview] > .oh-messagehead-tools {
     grid-row: 2;
   }
 }

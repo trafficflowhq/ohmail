@@ -35,6 +35,7 @@
 !packages/organizer
 !packages/cal-core
 !packages/cal-providers
+!packages/wire
 
 # …minus anything inside them that must never be copied in: no test trees, no stale local
 # compile output, no previous bundle run.

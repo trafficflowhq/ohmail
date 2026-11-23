@@ -1,5 +1,5 @@
 /**
- * The mailbox OAuth ceremony store (cloud 0009) — mint, consume ONCE, prune. One writer of
+ * The redirect OAuth ceremony store (cloud 0009) — mint, consume ONCE, prune. One writer of
  * `consumed_at`: {@link consumeOAuthCeremony}. The consume is ONE UPDATE (`SET consumed_at WHERE
  * state = $1 AND consumed_at IS NULL RETURNING`) — the entire replay defence: two browsers
  * replaying one code arrive as two UPDATEs on one row, and the second matches nothing. PGlite
@@ -52,6 +52,7 @@ export interface CreateOAuthCeremonyInput {
   codeVerifierEnc: string;
   codeVerifierKeyVersion: number;
   returnTo?: string | null;
+  purpose?: "mailbox" | "calendar";
   now: Date;
 }
 
@@ -61,6 +62,7 @@ export async function createOAuthCeremony(tx: Tx, input: CreateOAuthCeremonyInpu
     state: input.state,
     accountId: input.accountId,
     provider: input.provider,
+    purpose: input.purpose ?? "mailbox",
     codeVerifierEnc: input.codeVerifierEnc,
     codeVerifierKeyVersion: input.codeVerifierKeyVersion,
     returnTo: input.returnTo ?? null,
@@ -84,24 +86,44 @@ export interface ConsumeOAuthCeremonyInput {
   state: string;
   now: Date;
   ttlMs?: number;
+  scope?: { purpose: "calendar"; provider: string; accountId: string };
 }
 
 /** Spend a ceremony exactly once. See the module header — this is the whole replay defence. */
+export function consumeOAuthCeremony(
+  tx: Tx, input: ConsumeOAuthCeremonyInput & { scope: NonNullable<ConsumeOAuthCeremonyInput["scope"]> },
+): Promise<ConsumeOAuthCeremonyOutcome | { outcome: "wrong_account" }>;
+export function consumeOAuthCeremony(
+  tx: Tx, input: Omit<ConsumeOAuthCeremonyInput, "scope"> & { scope?: never },
+): Promise<ConsumeOAuthCeremonyOutcome>;
 export async function consumeOAuthCeremony(
   tx: Tx, input: ConsumeOAuthCeremonyInput,
-): Promise<ConsumeOAuthCeremonyOutcome> {
+): Promise<ConsumeOAuthCeremonyOutcome | { outcome: "wrong_account" }> {
   // An empty `state` must never be a predicate that could match a row. It cannot today (the column
   // is NOT NULL and every writer supplies 43 base64url characters), and the check is here because a
   // falsy value reaching a `WHERE state = ''` is one typo away from being the callback's happy path.
   if (!input.state) return { outcome: "unknown" };
-  const [row] = await tx.update(mailboxOauthCeremonies)
+  const table = mailboxOauthCeremonies;
+  const { scope } = input;
+  const matching = and(
+    eq(table.state, input.state),
+    eq(table.purpose, scope?.purpose ?? "mailbox"),
+    scope && eq(table.provider, scope.provider),
+    isNull(table.consumedAt),
+  );
+  const [row] = await tx.update(table)
     .set({ consumedAt: input.now })
-    .where(and(
-      eq(mailboxOauthCeremonies.state, input.state),
-      isNull(mailboxOauthCeremonies.consumedAt),
-    ))
+    .where(and(matching, scope && eq(table.accountId, scope.accountId)))
     .returning();
-  if (!row) return { outcome: "unknown" };
+  if (!row) {
+    if (scope) {
+      // The exact state key may read this row under RLS. Return only the reason, even when the
+      // browser has switched accounts. Only the account in the UPDATE may spend the state.
+      const [held] = await tx.select({ accountId: table.accountId }).from(table).where(matching).limit(1);
+      if (held && held.accountId !== scope.accountId) return { outcome: "wrong_account" };
+    }
+    return { outcome: "unknown" };
+  }
   const out: OAuthCeremonyRow = {
     state: row.state,
     accountId: row.accountId,

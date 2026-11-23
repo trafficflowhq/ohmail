@@ -63,6 +63,7 @@ function calendarSpanQueries(db: Db, span: CalendarSpanMs) {
     eq(exception.accountId, calEvents.accountId), eq(exception.calendarId, calEvents.calendarId),
     eq(exception.uid, calEvents.uid), ne(exception.recurrenceId, ""), heldBySpanSql(span, exception),
   );
+  // scoped-by: exceptionInSpan matches the enclosing event’s account, calendar and series.
   const children = db.select({ id: exception.id }).from(exception).where(exceptionInSpan);
   return { exception, exceptionInSpan, heldRows: or(heldBySpanSql(span), exists(children))! };
 }
@@ -83,6 +84,7 @@ async function narrowToCeiling(db: Db, accountId: string, span: CalendarSpanMs, 
   const at = sql`${now.toISOString()}::timestamptz`;
   const { exception, exceptionInSpan, heldRows } = calendarSpanQueries(db, span);
   // A series served only for a changed occurrence belongs at that occurrence's distance.
+  // scoped-by: exceptionInSpan matches the enclosing event’s account, calendar and series.
   const nearest = db.select({ distance: sql`min(${distanceFrom(at, exception)})` }).from(exception).where(exceptionInSpan);
   const distance = sql<string>`least(${distanceFrom(at, calEvents)}, (${nearest}))`;
   const [row] = await db.select({ seconds: distance }).from(calEvents)
@@ -124,6 +126,7 @@ export async function calendarSnapshotPage(db: Db, accountId: string, q: Calenda
   const span = q.span ?? await narrowToCeiling(db, accountId, windowSpan(q.now, q.window), q.now, q.window.maxRows);
   const after = q.after;
   const { exception, exceptionInSpan, heldRows } = calendarSpanQueries(db, span);
+  // scoped-by: exceptionInSpan matches the enclosing event’s account, calendar and series.
   const firstChild = db.select({ start: sql`min(${exception.startsAt})` }).from(exception).where(exceptionInSpan);
   // A series fetched only for a moved exception follows that exception in the snapshot walk.
   // An earlier page can then prune without losing the series before its child is present.

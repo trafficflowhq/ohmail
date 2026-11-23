@@ -1,3 +1,4 @@
+import { performance, PerformanceObserver, type PerformanceEntry } from "node:perf_hooks";
 import type { EngineMessage, MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { BUILD_SLICE_MS, SearchIndex } from "../src/search.js";
@@ -169,6 +170,8 @@ async function sliced(store: MemoryMirrorStore, sliceMs?: number, clock?: Return
   slices: number;
   longest: number;
   wallLongest: number;
+  slowestStart: number;
+  slowestEnd: number;
   total: number;
 }> {
   const read = clock ? clock.at : () => performance.now();
@@ -178,14 +181,25 @@ async function sliced(store: MemoryMirrorStore, sliceMs?: number, clock?: Return
   let last = read();
   let wallLast = performance.now();
   const t0 = wallLast;
+  let slowestStart = t0;
+  let slowestEnd = t0;
+  const recordStretch = () => {
+    const elapsed = read() - last;
+    const wallEnd = performance.now();
+    if (elapsed > longest) {
+      longest = elapsed;
+      slowestStart = wallLast;
+      slowestEnd = wallEnd;
+    }
+    wallLongest = Math.max(wallLongest, wallEnd - wallLast);
+  };
   const index = await SearchIndex.buildSliced(store, {
     ...(sliceMs !== undefined ? { sliceMs } : {}),
     ...(clock ? { now: clock.now } : {}),
     yieldTo: () =>
       new Promise<void>((r) => {
         slices++;
-        longest = Math.max(longest, read() - last);
-        wallLongest = Math.max(wallLongest, performance.now() - wallLast);
+        recordStretch();
         setTimeout(() => {
           last = read();
           wallLast = performance.now();
@@ -193,9 +207,32 @@ async function sliced(store: MemoryMirrorStore, sliceMs?: number, clock?: Return
         }, 0);
       }),
   });
-  longest = Math.max(longest, read() - last);
-  wallLongest = Math.max(wallLongest, performance.now() - wallLast);
-  return { index, slices, longest, wallLongest, total: performance.now() - t0 };
+  recordStretch();
+  return { index, slices, longest, wallLongest, slowestStart, slowestEnd, total: performance.now() - t0 };
+}
+
+async function slicedWithGcTrace(store: MemoryMirrorStore, clock: ReturnType<typeof workClock>) {
+  const entries: PerformanceEntry[] = [];
+  const observer = new PerformanceObserver((list) => entries.push(...list.getEntries()));
+  observer.observe({ entryTypes: ["gc"] });
+  try {
+    const run = await sliced(store, undefined, clock);
+    if (run.longest >= FRAME_BUDGET_MS) {
+      // Let the observer deliver entries from the last stretch before reading the trace.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const overlapping = [...entries, ...observer.takeRecords()]
+        .filter((entry) =>
+          entry.startTime < run.slowestEnd && entry.startTime + entry.duration > run.slowestStart)
+        .map((entry) => ({
+          offsetMs: Number((entry.startTime - run.slowestStart).toFixed(2)),
+          durationMs: Number(entry.duration.toFixed(2)),
+        }));
+      console.log(`  Garbage collection during the longest CPU stretch: ${JSON.stringify(overlapping)}`);
+    }
+    return run;
+  } finally {
+    observer.disconnect();
+  }
 }
 
 describe("no body text enters the instant index", () => {
@@ -257,7 +294,7 @@ describe("the build is handed back to the event loop", () => {
   it(`yields repeatedly and no synchronous stretch crosses ${FRAME_BUDGET_MS} ms`, async () => {
     const store = await mirrorOf(N_SLICE, false);
     const clock = workClock();
-    const run = await sliced(store, undefined, clock);
+    const run = await slicedWithGcTrace(store, clock);
 
     expect(run.index).not.toBeNull();
     expect(run.index!.coverage().messages).toBe(N_SLICE);

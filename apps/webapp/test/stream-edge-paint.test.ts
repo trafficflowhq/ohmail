@@ -85,15 +85,19 @@ for (const width of [390, WIDTH]) for (const face of ["paper", "ohmarchy"]) {
       await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
       await page.goto(`${ORIGIN}/?face=${face}&geometry=reads`);
       const reading = page.getByRole("region", { name: "News stream", exact: true });
-      const bar = reading.getByRole("toolbar", { name: "Actions", exact: true });
+      if (touch) await reading.getByRole("heading", { name: "Short letter", exact: true }).click();
+      const bar = (touch ? page : reading).getByRole("toolbar", { name: "Actions", exact: true });
       await bar.waitFor();
+      const card = touch ? "[data-conv-id]" : "[data-stream-item]";
       await page.addStyleTag({
         content: `
-          [data-stream-item] { min-height: 1200px; background: #0f0 !important; }
-          [data-stream-item] .oh-message { background: #0f0 !important; }
+          ${card} { min-height: 1200px; background: #0f0 !important; }
+          ${card} .oh-message { background: #0f0 !important; }
         `,
       });
-      const scroller = reading.locator("[data-reading-scroll]");
+      const scroller = touch
+        ? page.locator(".oh-sheet").filter({ has: bar }).locator(".oh-sheet-scroll")
+        : reading.locator("[data-reading-scroll]");
       await scroller.evaluate((el) => { el.scrollTop = 200; });
       expect(await scroller.evaluate((el) => el.scrollTop)).toBe(200);
       const barY = Math.ceil((await bar.boundingBox())!.y);

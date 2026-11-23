@@ -11,6 +11,7 @@ import { useTimeZone, useTranslations } from "next-intl";
 import { NONE, type FrameSupplies, type GapLettersWire, type OrganizerNoticeWire, type HostContract, type HostDevice } from "@ohmail/app/host";
 import { calendar } from "@ohmail/app/calendar";
 import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
+import { startCalendarOAuth } from "./calendar-oauth";
 import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
 import type { FrameNotice } from "@ohmail/app/frame";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
@@ -231,7 +232,10 @@ export function useWebHost(
       mayRun: () => engine.calendarQueueReady() && readOwner() === scope && sessionMayAsk(),
       settings: transport.calendarSettings,
       setSuggestionDismissed: transport.setSuggestionDismissed,
-      setup: setup ? calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()) : undefined,
+      setup: setup ? {
+        ...calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()),
+        startOAuth: (provider) => startCalendarOAuth(provider, scope, () => readOwner() === scope && sessionMayAsk()),
+      } : undefined,
       held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
     });
   }, [engine, scope, confirmed, server.calendar]);

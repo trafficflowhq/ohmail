@@ -283,8 +283,9 @@ function proposedTime(line: ContentLine | undefined): CalendarTime | null {
   if (time.allDay) return raw.length === 8 ? { kind: "date", value: raw } : null;
   const seconds = Number(raw.slice(13, 15));
   if (seconds >= 60) return null;
-  if (time.epochMs === null) return time.tzid === null ? { kind: "floating", value: raw } : null;
-  const value = icalInstant(time.epochMs + seconds * 1000);
+  const { epochMs: instantMs, tzid } = time;
+  if (instantMs === null) return tzid === null ? { kind: "floating", value: raw } : null;
+  const value = icalInstant(instantMs + seconds * 1000);
   return { kind: "instant", value };
 }
 

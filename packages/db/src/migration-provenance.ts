@@ -10,11 +10,13 @@
  * One more source of known versions, asked only when history does not identify the hash: the
  * pre-publication versions `migration-provenance-record.ts` names by exact (journal, tag,
  * recorded hash). It identifies a version and nothing more; the comparison stays the one below.
+ * An allowance names both hashes for a specific journal and tag, so an archive without Git
+ * history can still verify that exact pair.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join, relative, sep } from "node:path";
-import { allowanceFor, type MigrationAllowance } from "./migration-allowances.js";
+import { allowanceFor } from "./migration-allowances.js";
 import {
   PRE_PUBLICATION_VERSIONS, prePublicationVersionFor, type PrePublicationVersion,
 } from "./migration-provenance-record.js";
@@ -172,21 +174,19 @@ export function classifyDrift(
 
   if (m.recorded === null || m.rowsAtWhen > 1) return { ...base, kind: "rows-collide" };
 
-  // History first, so every version git identifies reads exactly as it always has. A history that
-  // cannot be read is HELD, not returned: the record can still identify the version without git —
-  // it can answer yes, never no — and only when it does not is the entry refused as unreadable.
+  // Prefer comparing the applied SQL from history or the provenance record. If neither can
+  // identify it, an allowance can still prove one exact pair of fingerprints.
   let history: HistoricalSql[] = [];
   let unreadable: string | null = null;
   try {
     history = reader.history(dir, m.tag);
   } catch (err: unknown) {
-    // Held, not dropped: the record below may still identify the version; only if it cannot is `unreadable` the verdict.
     const why = err instanceof Error ? err.message.split("\n")[0] : String(err);
     unreadable = why ?? "git could not be run";
   }
 
-  let provenance: NonNullable<MigrationDrift["provenance"]>;
-  let sameProgram: boolean;
+  let provenance: MigrationDrift["provenance"] = null;
+  let sameProgram = false;
   const applied = history.find((h) => sha256Utf8(h.sql) === m.recorded);
   const known = applied ? null : prePublicationVersionFor(journal, m.tag, m.recorded, record);
   if (applied) {
@@ -197,22 +197,20 @@ export function classifyDrift(
     // here, against the file this tree ships: the record identifies, it never decides.
     provenance = { commit: known.introducedBy, at: known.label, source: "record" };
     sameProgram = known.executable === sha256Utf8(normalizeSql(shippedSql));
-  } else if (unreadable !== null) {
-    return { ...base, kind: "unreadable", note: unreadable };
-  } else {
-    return { ...base, kind: "unknown-provenance" };
   }
 
   if (sameProgram) return { ...base, kind: "comment-only", provenance };
-  const allowance: MigrationAllowance | null = allowanceFor(journal, m.tag, m.recorded, m.expected);
+  const allowance = allowanceFor(journal, m.tag, m.recorded, m.expected);
   if (allowance) return { ...base, kind: "allowed", provenance, note: allowance.reason };
-  return { ...base, kind: "executable", provenance };
+  if (provenance) return { ...base, kind: "executable", provenance };
+  if (unreadable !== null) return { ...base, kind: "unreadable", note: unreadable };
+  return { ...base, kind: "unknown-provenance" };
 }
 
 /** The one-line record of an admitted drift, per tag, for the operator's log. */
 export function driftSentence(d: MigrationDrift): string {
   const where = !d.provenance
-    ? "no applied blob"
+    ? "exact recorded and shipped fingerprints"
     : d.provenance.source === "record"
       ? `applied version ${d.provenance.commit}, a ${d.provenance.at} the provenance record names`
       : `applied blob from ${d.provenance.commit} (${d.provenance.at})`;

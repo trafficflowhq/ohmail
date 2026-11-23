@@ -162,7 +162,6 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
     return (
       <PartsContext.Provider value={parts}>
         <StreamConversation
-          key={addressed ? "open" : "card"}
           messages={members}
           openedId={message.id}
           scroller={scroller}

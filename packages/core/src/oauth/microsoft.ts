@@ -350,6 +350,8 @@ export interface ExchangeResult {
   expiresAtMs: number;
   /** The OIDC identity token, raw. {@link addressFromIdToken} is the only reader. */
   idToken: string | null;
+  /** Present when Microsoft reports the permissions returned with this grant. */
+  scope?: string;
 }
 
 /**
@@ -400,7 +402,7 @@ export async function exchangeAuthorizationCode(
     throw new OAuthExchangeFailedError(error, res.status);
   }
 
-  let ok: TokenSuccess & { refresh_token?: unknown; id_token?: unknown };
+  let ok: TokenSuccess & { refresh_token?: unknown; id_token?: unknown; scope?: unknown };
   try { ok = (await res.json()) as TokenSuccess & { refresh_token?: unknown; id_token?: unknown }; } catch {
     throw new OAuthProviderUnavailableError("token endpoint returned an unparseable success body");
   }
@@ -412,6 +414,7 @@ export async function exchangeAuthorizationCode(
     refreshToken: typeof ok.refresh_token === "string" && ok.refresh_token.length > 0 ? ok.refresh_token : null,
     expiresAtMs: startedAt + expiresInSec * 1000,
     idToken: typeof ok.id_token === "string" && ok.id_token.length > 0 ? ok.id_token : null,
+    ...(typeof ok.scope === "string" ? { scope: ok.scope } : {}),
   };
 }
 

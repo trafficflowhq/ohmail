@@ -1,10 +1,9 @@
 /** @vitest-environment jsdom */
 /**
- * A WAY OUR SERVER DOES NOT OFFER IS NEVER DRAWN: Google and Microsoft have no capsule, no step and no address that
- * reaches one; a failing list reads as none; and where connecting has no door nothing is offered at all.
+ * A way must be named by the server and have a working door in this host.
  */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarWay } from "@ohmail/app-logic/calendar/setup";
 import { mirror, mountFrame, NONE, setupPort } from "./world.js";
 
@@ -32,6 +31,38 @@ describe("the ways drawn", () => {
     await act(async () => undefined);
     expect(capsules()).toEqual(["A subscription", "iCloud", "Another CalDAV server"]);
     expect(screen.queryByText(/Google|Microsoft/)).toBeNull();
+  });
+
+  it.each([
+    ["google", "Google"],
+    ["microsoft", "Microsoft"],
+  ] as const)("starts %s from its offered provider button", async (provider, label) => {
+    const startOAuth = vi.fn(async () => undefined);
+    mountFrame(
+      "#/cal/cal-setup",
+      mirror(),
+      setupPort(async () => [provider], { startOAuth }),
+    );
+    const button = await screen.findByRole("button", { name: new RegExp(label) });
+    await act(async () => fireEvent.click(button));
+    expect(startOAuth).toHaveBeenCalledTimes(1);
+    expect(startOAuth).toHaveBeenCalledWith(provider);
+  });
+
+  it.each([
+    ["provider_off", "This calendar provider is unavailable."],
+    ["calendar_off", "Turn on your calendar before connecting."],
+    ["email_unverified", "Verify your email before connecting a calendar."],
+    ["conflict", "Remove a calendar connection before adding another."],
+  ] as const)("shows the reason when provider sign-in cannot start (%s)", async (reason, sentence) => {
+    mountFrame(
+      "#/cal/cal-setup",
+      mirror(),
+      setupPort(async () => ["google"], { startOAuth: async () => reason }),
+    );
+    const button = await screen.findByRole("button", { name: /Google Calendar/ });
+    await act(async () => fireEvent.click(button));
+    expect(screen.getByText(sentence, { selector: "[role=status]" })).toBeTruthy();
   });
 
   it("narrows to nothing while the typed words fit no way that is drawn", async () => {

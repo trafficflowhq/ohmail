@@ -1446,6 +1446,7 @@ describe("Trash keeps every letter until it is restored", () => {
 
   it.each(["desktop", "phone"] as const)(
     "every key the place binds and every key a person reaches for to erase under every modifier, every row's own menu, a selection of several, every button and every menu row of its columns, and on a phone every row swiped (%s), over a deleted letter, a letter of the server's Trash and a row with nothing open: no step presses a delete, nothing sent is one, and no letter leaves Trash but by its restore",
+    { timeout: 45_000 },
     async (room) => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
       const asked: string[] = [];

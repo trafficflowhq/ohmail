@@ -180,7 +180,7 @@ const secretField = (el: HTMLElement) => within(el).queryByLabelText<HTMLInputEl
 async function typedForm(locale: "en" | "de" = "en"): Promise<HTMLDivElement> {
   const host = await openConnect(locale);
   const said = locale === "de" ? deMessages : messages;
-  await click(press(host, said.providerPicker.otherLabel));
+  await click(press(host, said.providerPicker.otherShort));
   await typeInto(addressField(host), "person@example.test");
   await typeInto(server(host, "imap"), "mail.example.test");
   await typeInto(server(host, "smtp"), "smtp.example.test");
@@ -299,7 +299,7 @@ describe("Settings > Connect asks for the address first", () => {
     expect(checked(el)).toEqual([]);
     expect(addressField(el), "the address is on screen before a choice").toBeTruthy();
     await address(el, personalAt("fixture.person", "icloud.com"));
-    expect(checked(el)).toEqual(["iCloud Mail"]);
+    expect(checked(el)).toEqual(["iCloud"]);
     await address(el, "person@acme-workspace.example");
     expect(checked(el)).toEqual(["Gmail"]);
     expect(mockLookups).toEqual([{ domain: "acme-workspace.example" }]);
@@ -309,6 +309,7 @@ describe("Settings > Connect asks for the address first", () => {
     mockCreateThrows = refused("connect", { transport: "smtp" });
     const el = await openForm();
     await address(el, personalAt("fixture.person", "t-online.de"));
+    await click(press(el, "t-online"));
     await typeInto(secretField(el), "app-password-fixture");
     await ceremony(el);
     const said = within(el).queryByRole("alert")?.textContent ?? "";
@@ -321,6 +322,7 @@ describe("Settings > Connect asks for the address first", () => {
     const el = await openForm();
     await address(el, personalAt("fixture.person", "t-online.de"));
     expect(checked(el)).toEqual(["t-online"]);
+    await click(press(el, "t-online"));
     await typeInto(secretField(el), "app-password-fixture");
     await ceremony(el);
     expect(within(el).queryByRole("alert")?.textContent).toBe(copy.probe_auth_tonline);
@@ -335,7 +337,7 @@ describe("Settings > Connect asks for the address first", () => {
     const el = await openForm();
     await address(el, "person@acme-srv.example");
     expect(checked(el), "an unknown provider leaves the choice to the person").toEqual([]);
-    await click(press(el, picker.otherLabel!));
+    await click(press(el, picker.otherShort!));
     await typeInto(server(el, "imap"), "mail.acme-srv.example");
     await typeInto(server(el, "smtp"), "mail.acme-srv.example");
     await typeInto(secretField(el), "app-password-fixture");

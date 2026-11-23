@@ -216,10 +216,6 @@ const SETTLED: OnboardingFacts = {
 describe("R33-01: ↵ on every setup step does what the step's ↵ button does", () => {
   it("a first run, ↵ from wherever focus lands, through every step to Open ohmail", async () => {
     const s = await mount({ facts: FIRST_RUN });
-    expect(s.heading()).toBe(t.mapTitle);
-    expect(inStepForm(s), `opened with focus on ${focusWord()}`).toBe(true);
-    await enter();
-
     expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(inStepForm(s), `the window step left focus on ${focusWord()}`).toBe(true);
     expect(focusWord(), "a radio group is entered on its checked choice").toBe(`BUTTON "${t.agree}↵"`);
@@ -264,10 +260,8 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     expect(s.el.textContent, "↵ asked to cancel setup").not.toContain(t.cancelConfirm);
     expect(s.heading(), "↵ walked past the check").toBe(t.resumeCheckingTitle);
     await s.set((f) => ({ ...f, mailbox: { ...f.mailbox!, organizerChecked: true } }));
-    expect(s.heading()).toBe(t.mapTitle);
-    expect(focusWord(), "the check answered and focus stayed put").toBe(`BUTTON "${t.continue}↵"`);
-    await enter();
-    expect(focusWord()).toBe(`BUTTON "${t.agree}↵"`);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
+    expect(focusWord(), "the check answered and focus stayed put").toBe(`BUTTON "${t.agree}↵"`);
     await enter();
     expect(s.counts.organized, "↵ did not agree once the check answered").toBe(1);
   });
@@ -283,9 +277,8 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
 
   it("control: while the ↵ control is shut (Connect before a test passed), focus on the card goes to the first field and ↵ connects nothing", async () => {
     const s = await mount({ facts: { ...FIRST_RUN, mailbox: null }, add: true });
-    expect(s.heading()).toBe(t.mailboxTitle);
-    /* The mailbox step is the one connect form: its fields stand once a provider is chosen. */
-    await act(async () => { s.button(P.otherLabel).click(); });
+    expect(s.heading()).toBe(t.providerAnother);
+    await act(async () => { s.button(P.otherShort).click(); });
     await flush();
     expect(s.button(t.connect).disabled).toBe(true);
     await act(async () => { s.card().focus(); });
@@ -297,7 +290,7 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
 
   it("a place the person chose stays theirs: the next render does not pull focus back to the entry", async () => {
     const s = await mount({ facts: FIRST_RUN });
-    expect(focusWord()).toBe(`BUTTON "${t.continue}↵"`);
+    expect(focusWord()).toBe(`BUTTON "${t.agree}↵"`);
     await act(async () => { s.button(t.back).focus(); });
     await s.set((f) => ({ ...f, queuedSenders: 4 }));
     expect(focusWord(), "a render took focus from where the person put it").toBe(`BUTTON "${t.back}"`);
@@ -321,7 +314,7 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     expect(focusWord(), "the question opened with focus left in the step").toBe(`BUTTON "${t.cancelConfirm}↵"`);
     await enter();
     expect(s.counts, "↵ in the question did not close setup").toMatchObject({ completed: 1, left: 1, organized: 0 });
-    expect(s.heading(), "↵ in the question moved the step behind it").toBe(t.mapTitle);
+    expect(s.heading(), "↵ in the question moved the step behind it").toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 
   it("Start over asks with focus on its first verb, and taking the question back puts focus in the step's form", async () => {
@@ -340,10 +333,10 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     const s = await mount({
       facts: { ...SETTLED, account: { onboardingCompletedAt: "2026-10-12T00:23:10.000Z" } }, rerun: true,
     });
-    expect(s.heading()).toBe(t.mapTitle);
-    expect(focusWord()).toBe(`BUTTON "${t.continue}↵"`);
-    await enter();
     expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
+    expect(focusWord()).toBe(`BUTTON "${t.agree}↵"`);
+    await enter();
+    expect(s.counts.organized).toBe(1);
   });
 
   it("the code prompt takes focus; Cancel and Verify each put it back in a step's form", async () => {
@@ -351,8 +344,7 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
       facts: { ...SETTLED, mailbox: { ...SETTLED.mailbox!, organizerRole: "reader", organizeConsentedAt: null } },
       answers: ["step_up", "step_up", "stored"],
     });
-    expect(s.heading()).toBe(t.mapTitle);
-    await enter();
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await enter();
     expect(prompt(s.el), "no code prompt").not.toBeNull();
     expect(prompt(s.el)!.contains(document.activeElement),

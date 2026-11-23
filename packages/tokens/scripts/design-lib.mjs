@@ -67,6 +67,7 @@ const AFTER_ACCENTS = [
   ["calendar.paper.touch", { touch: "1" }],
   ["calendar.paper.phone", { device: "phone" }],
   ["calendar.paper.fold", { device: "fold" }],
+  ["calendar.ohmarchy.fold", { face: "ohmarchy", device: "fold" }],
   ["product.cal", { product: "cal" }],
   ["calendar.ohmarchy.light", { face: "ohmarchy" }],
   ["calendar.ohmarchy.dark", { face: "ohmarchy", scheme: "dark" }],

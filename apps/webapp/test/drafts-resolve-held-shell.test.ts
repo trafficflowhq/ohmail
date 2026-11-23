@@ -133,7 +133,7 @@ describe("the shell asks about the hold BEFORE it opens a reply", () => {
       "the composer is handed no way to answer for the send it is holding",
     ).toMatch(/const row = readComposeRow\(scope\);[\s\S]*?const hold = holdOf\(engine, \{ lane: COMPOSE_SEND_KEY, draftId: row/);
     expect(FRAME, "the composer's status is handed no way to answer for the send it is holding")
-      .toMatch(/const said = \{ send: w\.composeSend, held, locked, onResolve: w\.resolveHeldSend \}/);
+      .toMatch(/const said = \{\s+send: w\.composeSend,\s+held,\s+locked,\s+showShortSending: w\.composeReopenedSending,\s+onResolve: w\.resolveHeldSend,\s+\}/);
   });
 
   /** The mounted Drafts tests exercise these invariants with two attempts for one row. */

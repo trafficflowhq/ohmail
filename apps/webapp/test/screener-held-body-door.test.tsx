@@ -297,7 +297,9 @@ describe("a sender's held letters open on the newest three", () => {
     expect(subjects()).toEqual(ids(10, 12).map((id) => `Subject ${id}`));
     expect(wire.batches.flat().sort(), "bodies asked for letters nobody can see").toEqual(ids(10, 12));
     expect([...wire.lists].sort(), "attachment lists read for letters nobody can see").toEqual(ids(10, 12));
-    expect(within(region()).getByText("12 letters", { exact: true })).toBeTruthy();
+    const countSurface = segment === "screened" ? region() : within(host!).getByRole("listbox", { name: messages.screener.title });
+    expect(within(countSurface).getByText("12 held", { exact: true })).toBeTruthy();
+    expect(articles().map((article) => article.getAttribute("aria-setsize"))).toEqual(["12", "12", "12"]);
   });
 
   it("reaching the top of the column mounts three older letters and asks for their bodies, until all twelve are on screen", async () => {

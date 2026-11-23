@@ -25,6 +25,7 @@ import { lookupIdempotent, replayOf } from "../idempotency.js";
 import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { readBody } from "../routes/shared.js";
+import { calendarOAuthClient } from "./oauth.js";
 
 const doorOf = (deps: ApiDeps): CalendarConnectDoor => ({ port: deps.services?.calendarConnect, keys: deps.keyProvider });
 
@@ -56,8 +57,14 @@ export const calendarConnectRoutes: Route[] = [
     wire: true,
     relay: true,
     cost: "read",
-    handler: async (req, deps) =>
-      answer<"GET /calendar/connect">()(await calendarConnectState(serviceContext(deps, req), deps.services?.calendarConnect)),
+    handler: async (req, deps) => {
+      const state = await calendarConnectState(serviceContext(deps, req), deps.services?.calendarConnect);
+      const ways = await Promise.all(state.ways.map(async (way) => {
+        if (way === "google" || way === "microsoft") return (await calendarOAuthClient(deps, way)) ? way : null;
+        return way;
+      }));
+      return answer<"GET /calendar/connect">()({ ...state, ways: ways.filter((way) => way !== null) });
+    },
   },
   {
     /**

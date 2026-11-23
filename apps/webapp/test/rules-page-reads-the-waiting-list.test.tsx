@@ -133,7 +133,8 @@ describe("the shell's Rules page lists what waits on the organizer", () => {
     const el = await rulesPane(reader(), []);
     await tick(50);
     const row = onlyRule(el);
-    expect(textOf(el)).toContain("Studio laptop organizes your mail");
+    expect(textOf(el)).toContain("Studio laptop");
+    expect(textOf(el)).toContain("It organizes your mail, and these are the rules it files by. A change you make here goes to Studio laptop.");
     expect(fileDestination(row)).toContain("Files into Receipts");
     expect(fileDestination(row)).not.toContain("Files into News");
     const buttons = [
@@ -160,7 +161,8 @@ describe("the shell's Rules page lists what waits on the organizer", () => {
     expect(textOf(el)).not.toContain("organizes your mail");
     expect(textOf(el)).not.toContain("goes to Studio laptop");
     expect(textOf(el), "the refusal line left the page").toContain(refusal);
-    expect(textOf(el)).toContain("These are the rules Studio laptop last published.");
+    expect(textOf(el)).toContain("Studio laptop");
+    expect(textOf(el)).toContain("These are the rules it last published.");
     const row = onlyRule(el);
     expect(fileDestination(row)).toContain("Files into Receipts");
     expect([
@@ -194,19 +196,21 @@ describe("a rule made on the organizer is revoked from this page, through the re
     for (const r of roots) r.unmount();
     roots = [];
     container?.remove();
+    vi.useRealTimers();
   });
   const waitFor = async (p: () => boolean | Promise<boolean>, what: string, timeout = 8000): Promise<void> => {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       if (await p()) return;
-      await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+      await tick(40);
     }
     throw new Error(`timed out waiting for: ${what}`);
   };
 
   it("Revoke sends one rule.delete by its key, writes no rule row, and the row says the removal waits", async () => {
-    const { db, deps } = await withNodeBlobs(() => makeDeps(FIXED_NOW));
-    const s = await seedSession(db, { now: FIXED_NOW });
+    const now = FIXED_NOW;
+    const { db, deps } = await withNodeBlobs(() => makeDeps(now));
+    const s = await seedSession(db, { now });
     const address = "me@lichtgrat.example";
     const mailboxId = await seedMailbox(db, { accountId: s.accountId, address });
     await db.update(mailboxes).set({
@@ -214,7 +218,7 @@ describe("a rule made on the organizer is revoked from this page, through the re
       organizedByCapabilities: "requests,rules",
     }).where(eq(mailboxes.id, mailboxId));
     await db.insert(mailboxProfileMirror).values({
-      mailboxId, accountId: s.accountId, readAt: FIXED_NOW,
+      mailboxId, accountId: s.accountId, readAt: now,
       doc: { v: 2, rules: [{ kind: "sender", match: "lena@atelier.example", destination: "ohmail/Receipts", priority: 0, enabled: true }] },
     });
     const fetchImpl: FetchLike = async (url, init) => {
@@ -222,6 +226,9 @@ describe("a rule made on the organizer is revoked from this page, through the re
       headers.set("authorization", `Bearer ${s.token}`);
       return app.handle(new Request(url, { ...init, headers }), { ...(deps as ApiDeps), session: null, idempotency: null });
     };
+    // The client measures how long the server’s request has been waiting.
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
     const store = new MemoryMirrorStore();
     await store.load();
     const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }), store });
@@ -262,7 +269,7 @@ describe("a rule made on the organizer is revoked from this page, through the re
     expect(fileDestination(row()!)).toContain("Files into Receipts");
     await act(async () => { within(row()!).getByRole("button", { name: "Revoke" }).click(); });
     await act(async () => {
-      within(within(document.body).getByRole("dialog", { name: "Revoke this rule" })).getByRole("button", { name: "Revoke this rule" }).click();
+      within(within(document.body).getByRole("dialog", { name: "Revoke 1 rule" })).getByRole("button", { name: "Revoke" }).click();
     });
     await waitFor(async () => (await db.select().from(organizerRequests)).length > 0, "the request");
     expect((await db.select().from(organizerRequests)).map((r) => [r.kind, r.payload])).toEqual([["rule.delete", {

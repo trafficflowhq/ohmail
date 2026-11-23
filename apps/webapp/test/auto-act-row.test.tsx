@@ -92,7 +92,10 @@ async function mount({
   await tick(3000);
   const pane = within(host).getByRole("region", { name: messages.settings.screener });
   const sw = () => within(pane).getByRole<HTMLButtonElement>("switch", { name: messages.screener.suggest.actTitle });
-  return { pane, sw, calls };
+  const details = () => within(pane).getByRole("button", {
+    name: messages.settingsScreener.details.replace("{title}", messages.screener.suggest.actTitle),
+  });
+  return { pane, sw, calls, details };
 }
 
 async function press(button: HTMLElement): Promise<void> {
@@ -102,7 +105,8 @@ async function press(button: HTMLElement): Promise<void> {
 
 describe("the act on suggestions' switch", () => {
   it("says what it agrees to, word for word, and writes on a press when suggestions are on", async () => {
-    const { pane, sw, calls } = await mount();
+    const { pane, sw, calls, details } = await mount();
+    await press(details());
     expect(pane.textContent).toContain(TITLE);
     expect(pane.textContent).toContain(DESCRIPTION);
     expect(en.screener.suggest.actDescription).toBe(DESCRIPTION);
@@ -117,7 +121,8 @@ describe("the act on suggestions' switch", () => {
 
   it("claims the mark only where the Rules pane shows it", async () => {
     capabilities.rulesMarked = false;
-    const { pane } = await mount();
+    const { pane, details } = await mount();
+    await press(details());
     expect(pane.textContent).toContain(UNMARKED);
     expect(pane.textContent).not.toContain("marked as ohmail's");
     expect(en.screener.suggest.actDescriptionUnmarked).toBe(UNMARKED);
@@ -155,7 +160,8 @@ describe("the act on suggestions' switch", () => {
   });
 
   it("renders in German from the German catalogue", async () => {
-    const { pane } = await mount({ suggestOn: false, locale: "de" });
+    const { pane, details } = await mount({ suggestOn: false, locale: "de" });
+    await press(details());
     expect(pane.textContent).toContain(de.screener.suggest.actTitle);
     expect(pane.textContent).toContain(de.screener.suggest.actDescription);
     expect(within(pane).getByText(de.screener.suggest.actNeedsSuggest)).toBeTruthy();

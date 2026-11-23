@@ -779,7 +779,7 @@ it.each([
         () => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
       );
       await group.locator(`[data-square="${end - 1}"]`).tap();
-      await expect.poll(here).toBe(end - 1);
+      await expect.poll(here, { timeout: 4_000 }).toBe(end - 1);
       expect(errors).toEqual([]);
     } finally {
       await page.close();

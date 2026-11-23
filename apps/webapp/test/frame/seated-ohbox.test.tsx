@@ -434,8 +434,8 @@ describe("one surface a report", () => {
     await waitFor(() => letterShown("m1"), "m1 open");
     await act(async () => { row("m1").focus(); });
     await key("Backspace");
-    await waitFor(() => inTheFramesSlot().includes(en.ohbox.toastDeleted), "the delete said in the frame's slot");
-    expect(inTheCapsule(), "no second report surface").not.toContain(en.ohbox.toastDeleted);
+    await waitFor(() => inTheFramesSlot().includes(en.ohbox.toastDeleted.replace(/\.$/, "")), "the delete said in the frame's slot");
+    expect(inTheCapsule(), "no second report surface").not.toContain(en.ohbox.toastDeleted.replace(/\.$/, ""));
     expect(deletes(s), "the delete is held for its window: nothing left yet").toEqual([]);
 
     await visit("#/history");
@@ -691,7 +691,7 @@ describe("the keyboard at the seated Ohbox", () => {
     await press(row("m1"), "the row of m1");
     await waitFor(() => letterShown("m1"), "m1 over the list");
     await key("Backspace");
-    await waitFor(() => inTheFramesSlot().includes(en.ohbox.toastDeleted), "the delete said in the frame's slot");
+    await waitFor(() => inTheFramesSlot().includes(en.ohbox.toastDeleted.replace(/\.$/, "")), "the delete said in the frame's slot");
     await waitFor(() => readers().length === 0, "the letter left the screen");
     expect(window.location.hash, "the address names no letter").toBe("#/ohbox");
     expect(rows().map((r) => r.getAttribute("aria-label")), "the list stands without the deleted row").toEqual([row("m2").getAttribute("aria-label")]);
@@ -886,7 +886,7 @@ describe("a mailbox another install organizes", () => {
       return screen.getByRole("menuitem", { name: "News" });
     })();
     await press(news, "News");
-    const refused = en.screener.readerMoveRefused.replace("{name}", "ohmail Cloud");
+    const refused = en.screener.readerMoveRefused.replace("{name}", "ohmail Cloud").replace(/\.$/, "");
     await waitFor(() => inTheFramesSlot().includes(refused), "the refusal said in the frame's slot");
     await rounds(8);
     expect(s.sent.slice(before), "nothing reached the wire").toEqual([]);

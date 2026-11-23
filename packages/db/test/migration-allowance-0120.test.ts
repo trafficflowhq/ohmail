@@ -69,6 +69,15 @@ describe("mail 0120's drift is admitted by a named allowance and by nothing else
       "the released text and the flat text are the same file").not.toBe(FLAT);
   });
 
+  it("admits the exact listed fingerprints without Git history", () => {
+    const drift = classifyDrift(
+      "mail", MAIL_JOURNAL.dir,
+      { tag: TAG, when: 1791602600024, expected: sha256Utf8(FLAT), recorded: ALLOWANCE!.recorded, rowsAtWhen: 1 },
+      FLAT, { history() { throw new Error("not a git repository"); } }, [],
+    );
+    expect(drift).toMatchObject({ kind: "allowed", provenance: null, note: ALLOWANCE!.reason });
+  });
+
   it("a recorded hash no version carries is `unknown-provenance`, never admitted", () => {
     const d = classifyDrift(
       "mail", MAIL_JOURNAL.dir,

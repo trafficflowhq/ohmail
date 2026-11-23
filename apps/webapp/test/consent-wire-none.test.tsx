@@ -68,6 +68,7 @@ const AT_REST = {
   themeFace: null,
   themeFaceKnown: false,
   resurfaceTime: null,
+  draftReplies: null,
   known: false,
   foldersStorable: false,
   onboardingCompletedAt: null,

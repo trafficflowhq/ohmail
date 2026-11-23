@@ -6,6 +6,7 @@ import {
   type Notice,
   type NoticeTaken,
 } from "@ohmail/client-engine";
+import { dayKeyAt } from "../calendar/spans/format.js";
 import { postCalendarSummaryOnce } from "./browser-channels.js";
 import type { HostNoticeEmitter, NoticeReads } from "./notice-reads.js";
 
@@ -51,7 +52,7 @@ export class CalendarSummary {
       }
       this.nextAtMs = calendar.summary(scope, nowMs, time)?.summary.atMs ?? null;
       if (!summary.agenda) return;
-      const day = new Intl.DateTimeFormat("sv-SE", { timeZone: zone }).format(summary.atMs);
+      const day = dayKeyAt(summary.atMs, zone);
       if (this.lastSummaryDay === day) return;
       this.lastSummaryDay = day;
       const current = () => {

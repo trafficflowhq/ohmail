@@ -16,7 +16,7 @@ import {
   type StoredCredential,
 } from "@ohmail/cal-providers/connect";
 import type { KeyProvider } from "@trafficflow/core";
-import { recordCalendarChanges } from "@trafficflow/db";
+import { recordCalendarChanges, type Tx } from "@trafficflow/db";
 import { isWriteUuid } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { calConnections, calCredentials, calSettings } from "@trafficflow/db/mail";
@@ -28,7 +28,6 @@ import { bridgeDb, bridgeTx, claimOrLose, withAccountTx, type IdempotencyClaim, 
 import { ServiceError } from "../errors.js";
 import { CALENDAR_BUILDERS, calendarEnabledAt } from "./feed.js";
 import { requireCalendarOn } from "./settings-service.js";
-import { wakeCalendarConnection } from "./writes.js";
 
 /**
  * Connections one account may hold. Every connection is an address this deployment's worker asks
@@ -37,6 +36,19 @@ import { wakeCalendarConnection } from "./writes.js";
  * other and none passes it.
  */
 export const CALENDAR_CONNECTION_CEILING = 20;
+async function requireConnectionRoom(db: Tx, accountId: string): Promise<void> {
+  const [held] = await db.select({ n: sql<number>`count(*)::int` }).from(calConnections).where(eq(calConnections.accountId, accountId));
+  if (Number(held?.n ?? 0) >= CALENDAR_CONNECTION_CEILING) {
+    throw new ServiceError("conflict", 409, "Remove a calendar connection before adding another.", { limit: CALENDAR_CONNECTION_CEILING });
+  }
+}
+
+/** Check before sending a person to consent or trading their code. The write repeats it under lock. */
+export async function requireCalendarConnectionRoom(ctx: ServiceContext): Promise<void> {
+  await requireCalendarOn(ctx);
+  await requireConnectionRoom(bridgeTx(ctx.db), ctx.accountId);
+}
+
 /** A user's name at a CalDAV server: a mail address at its longest, and room. */
 export const CALDAV_USER_MAX_CHARS = 320;
 /** A password as typed. An app password has 16 to 19 characters; a person's own may be a sentence. */
@@ -169,11 +181,8 @@ export function parseSignInAsk(body: unknown): CalendarSignInAsk {
 
 // ── the ways ─────────────────────────────────────────────────────────────────────
 
-/**
- * Whether the sign-in ceremony of each way that needs one is built. Neither is: the task that
- * builds one turns its word here, in the change that adds its routes.
- */
-export const CALENDAR_CEREMONIES_BUILT: Readonly<Record<"google" | "microsoft", boolean>> = { google: false, microsoft: false };
+/** Both browser sign-in ceremonies are mounted with the calendar's connect routes. */
+export const CALENDAR_CEREMONIES_BUILT: Readonly<Record<"google" | "microsoft", boolean>> = { google: true, microsoft: true };
 
 /**
  * The ways a composition offers. With no port, none. `google` and `microsoft` only with the
@@ -283,7 +292,7 @@ export async function serverSealedFor(ctx: ServiceContext, keys: KeyProvider, at
  * `POST /calendar/connections`. In order: the account's calendar is on; the way is one this
  * composition offers and this door takes; the address by its shape; the ceiling; the seal; then
  * ONE fenced transaction: the connection, its sealed sign-in, the change, and the key's claim with
- * the record as the answer a second arrival is given. After the commit the connection is pulled due.
+ * the record as the answer a second arrival is given. The first poll is due at commit.
  *
  * `claim` is the press's key with a hash that names the way and the id and nothing typed. A
  * concurrent arrival under the same key loses the claim, or finds the id taken: the route answers
@@ -305,39 +314,50 @@ export async function connectCalendar(
   const credential: StoredCredential = ask.way === "ics"
     ? { kind: "address", url: ask.address }
     : { kind: "basic", server: place.serverUrl ?? "", user: ask.user, password: ask.password };
-  const sealed = await sealCredential(door.keys, credential, { accountId: ctx.accountId, connectionId: ask.connectionId });
+  return keepCalendarConnection(ctx, door.keys, {
+    id: ask.connectionId, provider: ask.way === "ics" ? "ics" : "caldav", ...place,
+  }, { credential }, claim);
+}
 
-  const done = await withAccountTx(ctx, async (tx) => {
+/** Keep the connection, its account-bound credential and its first poll in the same transaction. */
+export async function keepCalendarConnection(
+  ctx: ServiceContext, keys: KeyProvider,
+  place: {
+    readonly id: string;
+    readonly provider: "google" | "microsoft" | "caldav" | "ics";
+    readonly serverUrl: string | null;
+    readonly sourceHost: string | null;
+  },
+  signIn: { credential: StoredCredential; meta?: unknown }, claim?: IdempotencyClaim,
+): Promise<{ record: CalendarConnectionRecord; seq: bigint }> {
+  const { credential, meta } = signIn;
+  const sealed = await sealCredential(keys, credential, { accountId: ctx.accountId, connectionId: place.id });
+  return withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
     // The account's settings row is the one row every account with a calendar has: taken for update, it lets one
     // connect of the account count at a time. Nothing else is locked before it here, and the new row is nobody's yet.
-    await dialect(t).forUpdate(
-      t.select({ accountId: calSettings.accountId }).from(calSettings).where(eq(calSettings.accountId, ctx.accountId)).limit(1),
+    const [settings] = await dialect(t).forUpdate(
+      t.select({ enabledAt: calSettings.enabledAt }).from(calSettings).where(eq(calSettings.accountId, ctx.accountId)).limit(1),
       { mode: "update" },
     );
-    const [held] = await t.select({ n: sql<number>`count(*)::int` }).from(calConnections).where(eq(calConnections.accountId, ctx.accountId));
-    if (Number(held?.n ?? 0) >= CALENDAR_CONNECTION_CEILING) {
-      throw new ServiceError("conflict", 409, "this account holds as many calendar connections as it may", { limit: CALENDAR_CONNECTION_CEILING });
-    }
+    if (settings?.enabledAt == null) throw new ServiceError("calendar_off", 409, "Turn on your calendar before connecting.");
+    await requireConnectionRoom(t, ctx.accountId);
     // The id is the device's and the row's own key: one that is taken makes no second row, whoever holds it.
     // No conflict target is named: the row has two unique keys (its id, and its id with its account), and a
     // same-key arrival that waited on the other one would be raised as a fault instead of found taken.
     const [made] = await t.insert(calConnections).values({
-      id: ask.connectionId, accountId: ctx.accountId, provider: ask.way === "ics" ? "ics" : "caldav", label: "", status: "active",
-      serverUrl: place.serverUrl, sourceHost: place.sourceHost, nextPollAt: null,
+      ...place, accountId: ctx.accountId, label: "", status: "active", nextPollAt: sql`now()`,
     }).onConflictDoNothing().returning({ id: calConnections.id });
     if (made === undefined) throw new CalendarConnectionTaken();
     await t.insert(calCredentials).values({
-      accountId: ctx.accountId, connectionId: ask.connectionId, kind: credential.kind,
-      secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
+      accountId: ctx.accountId, connectionId: place.id, kind: credential.kind,
+      secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion, meta,
     });
-    const record = await connectionRecord(ctx, tx, ask.connectionId);
-    const [seq] = await recordCalendarChanges(tx, ctx.accountId, [{ kind: "calendar_connection", id: ask.connectionId, op: "create" }]);
+    const record = await connectionRecord(ctx, tx, place.id);
+    const [seq] = await recordCalendarChanges(tx, ctx.accountId, [{ kind: "calendar_connection", id: place.id, op: "create" }]);
     await claimOrLose(tx, ctx, claim, { status: 202, json: record, seq: Number(seq) });
     return { record, seq: seq! };
   });
-  await wakeCalendarConnection(ctx, ask.connectionId);
-  return done;
 }
 
 /** The connection's record as the feed builds it, read inside the caller's transaction. */

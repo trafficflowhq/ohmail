@@ -67,6 +67,7 @@ export interface ConnectForm {
   readonly codeElsewhere: boolean;
   /** A password stands refused on a tile whose provider signs people in here: that sign-in may be offered beside it. */
   readonly signInInstead: boolean;
+  readonly signInReturnedWithoutConnection: boolean;
   /** A sign-in by code, as the shell says to draw it. */
   readonly code: CodeCeremony | null;
   readonly hosts: HostsNow;
@@ -179,12 +180,9 @@ function readyOf(machine: Machine, facts: ConnectFacts, door: ConnectFormInput["
 
 export function useConnectForm(input: ConnectFormInput): ConnectForm {
   const { door, purpose, subject } = input;
-  const pendingLocalTest = useSyncExternalStore(
-    localTestPending.subscribe,
-    localTestPending.read,
-    localTestPending.read,
-  );
-  const longWait = door.localServerWait && pendingLocalTest;
+  const longWait =
+    useSyncExternalStore(localTestPending.subscribe, localTestPending.read, localTestPending.read) &&
+    door.localServerWait;
   const edits = purpose === "edit" || purpose === "reconnect";
   const ways = useWays(door.signIn);
   const runsCode = door.signIn !== NONE && door.signIn.code !== NONE;
@@ -213,7 +211,7 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
     chosenByHand: state.typed.byHand,
     choose: (id) => dispatch({ kind: "provider", id, byHand: false }),
   });
-  useSignInReturn(input, machine);
+  const signInReturnedWithoutConnection = useSignInReturn(input, machine);
   /* The tile's own sign-in, where the password way was taken on it: what a refused password there is answered by. */
   const instead = !edits && state.typed.byPassword ? wayOf(preset?.id ?? null, ways, runsCode, false) : null;
   const signIn = useSignInPress(input, machine, way, instead);
@@ -259,6 +257,7 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
     codeElsewhere: !edits && codeElsewhere(preset?.id ?? null, ways, runsCode),
     signInInstead:
       instead !== null && state.shown !== null && !state.shown.calm && state.lastReason === "auth",
+    signInReturnedWithoutConnection,
     code: signIn.code,
     hosts,
     lines: linesOf(state.consents, hosts),

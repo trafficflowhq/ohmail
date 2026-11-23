@@ -60,7 +60,7 @@ import {
   type ServerConfig, type StorageConfig,
 } from "./config.js";
 import { wiringOf, type Wiring } from "./differences.js";
-import type { CustomerMail } from "./settings.js";
+import { MANAGED_API_ORIGIN, type CustomerMail } from "./settings.js";
 import { privateNetworkFetch } from "./settings/private-network-fetch.js";
 import { ensureSetupTokenInvariant } from "./setup-token.js";
 
@@ -405,9 +405,10 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
     // leaves this program and every answer is the one it gave before there was a calendar.
     ...(cfg.calendar.enabled ? {
       calendar: calendarFeed,
-      // The connect door beside it: what a typed address may name here, and the ways' switches. It
-      // is handed no resolver and no way out: the door dials nothing.
       calendarConnect: { policy: cfg.calendar.policy, ceremonies: cfg.calendar.connect },
+      ...(chosen.flavor === "managed" ? {
+        calendarOAuth: { origin: MANAGED_API_ORIGIN, google: cfg.calendar.google },
+      } : {}),
       // The door a provider's notices ring, mounted with the calendar's routes: one for the program,
       // which holds what is in flight and says its counts on the program's own logger.
       calendarNotices: makeCalendarNoticeDoor({

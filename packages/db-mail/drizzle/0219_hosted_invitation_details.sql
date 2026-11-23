@@ -1,1 +1,1 @@
-ALTER TABLE "message_invitations" ADD COLUMN "hosted_details" jsonb;
+ALTER TABLE "message_invitations" ADD COLUMN IF NOT EXISTS "hosted_details" jsonb;
