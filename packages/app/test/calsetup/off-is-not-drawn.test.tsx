@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { CalendarSetupPort } from "@ohmail/app-logic/calendar/setup";
 /**
  * A way must be named by the server and have a working door in this host.
  */
@@ -64,6 +65,45 @@ describe("the ways drawn", () => {
     await act(async () => fireEvent.click(button));
     expect(screen.getByText(sentence, { selector: "[role=status]" })).toBeTruthy();
   });
+
+  it("uses an existing Apple ID without sending any typed sign-in", async () => {
+    const port = setupPort(async () => ["icloud"], {
+      icloudMailboxes: async () => [{ id: "mailbox-id", address: ["studio", "example.test"].join("@") }],
+    });
+    const { address } = mountFrame("#/cal/cal-setup?step=signin&way=icloud", mirror(), port);
+    const button = await screen.findByRole("button", { name: /Use the same Apple ID/ });
+    await act(async () => fireEvent.click(button));
+    expect(port.connect).toHaveBeenCalledTimes(1);
+    expect(port.connect).toHaveBeenCalledWith({
+      way: "icloud",
+      fromMailbox: "mailbox-id",
+      connectionId: expect.any(String),
+    });
+    expect(address.read()).toContain("step=calendars");
+  });
+
+  it.each(["", "&from=settings"])(
+    "retries the same saved Apple ID once after the second factor%s",
+    async (from) => {
+      const connect = vi
+        .fn<NonNullable<Exclude<CalendarSetupPort["connect"], "none">>>()
+        .mockResolvedValueOnce({ kind: "step_up" })
+        .mockResolvedValueOnce({ kind: "taken" });
+      const port = setupPort(async () => ["icloud"], {
+        connect,
+        icloudMailboxes: async () => [{ id: "mailbox-id", address: ["studio", "example.test"].join("@") }],
+        factor: ({ onVerified }) => <button onClick={onVerified}>Verify factor</button>,
+      });
+      const { address } = mountFrame(`#/cal/cal-setup?step=signin&way=icloud${from}`, mirror(), port);
+      fireEvent.click(await screen.findByRole("button", { name: /Use the same Apple ID/ }));
+      const verify = await screen.findByRole("button", { name: "Verify factor" });
+      expect(connect).toHaveBeenCalledTimes(1);
+      await act(async () => fireEvent.click(verify));
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(connect.mock.calls[0]).toEqual(connect.mock.calls[1]);
+      expect(address.read()).toContain("step=calendars");
+    },
+  );
 
   it("narrows to nothing while the typed words fit no way that is drawn", async () => {
     mountFrame(

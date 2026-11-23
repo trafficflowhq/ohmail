@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { AiPane, useAiDoor, type AiDoor } from "@ohmail/app/settings/ai";
+import { AiPane, useAiDoor, type AiDoor, type AiCredits } from "@ohmail/app/settings/ai";
 import { aiSettings } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { TextFromIntl } from "../../shell/LocaleContext";
@@ -11,7 +11,7 @@ import { useRefusalSentence } from "../refusal-sentence";
 /** The account's AI switches, with any budget already supplied by the access read. */
 export function AiSection({ owner, draftReplies, credits, toPlans }: {
   owner?: string | null;
-  credits?: { remaining: number; total?: number } | null;
+  credits?: AiCredits | null;
   toPlans?: () => void;
   draftReplies?: { enabled: boolean; set(next: boolean): Promise<void> };
 }) {

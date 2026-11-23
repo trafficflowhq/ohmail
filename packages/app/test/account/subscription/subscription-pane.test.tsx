@@ -62,11 +62,20 @@ const line = (name: string) => screen.getByRole("group", { name });
 
 function drawn(
   model: SubscriptionModel,
-  { toStorage = null as (() => void) | null, lang = "en" as "en" | "de" } = {},
+  {
+    toStorage = null as (() => void) | null,
+    lang = "en" as "en" | "de",
+    addStorage,
+  }: {
+    toStorage?: (() => void) | null;
+    lang?: "en" | "de";
+    addStorage?: () => void;
+  } = {},
 ) {
+  const storage = { addStorage: addStorage && { press: addStorage, busy: false } };
   return render(
     <TextProvider locale={lang} messages={WORDS[lang]} timeZone="Europe/Zurich">
-      <SubscriptionPane model={model} toStorage={toStorage} />
+      <SubscriptionPane model={model} toStorage={toStorage} {...storage} />
     </TextProvider>,
   );
 }
@@ -76,6 +85,14 @@ const withStanding = (
 ): SubscriptionModel => ({
   ...model,
   status: { ...TRIAL, standing },
+});
+
+it("opens the offered storage purchase directly from Subscription", () => {
+  const addStorage = vi.fn();
+  drawn(withStanding({ state: "active" }), { addStorage });
+  expect(addStorage).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Add storage" }));
+  expect(addStorage).toHaveBeenCalledOnce();
 });
 
 describe("where the account stands, from the access answer alone", () => {

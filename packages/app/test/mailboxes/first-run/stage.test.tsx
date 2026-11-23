@@ -8,6 +8,8 @@ import type {
   FirstRunRow,
 } from "@ohmail/app-logic/mailboxes/first-run/ground";
 import type { FrameHost } from "../../../src/frame/contract.js";
+import { calendar } from "../../../src/calendar/entry.js";
+import { mirror, setupPort, WORDS as CALENDAR_WORDS } from "../../calsetup/world.js";
 import { Frame } from "../../../src/frame/Frame.js";
 import { NONE, type FirstRunWire, type HostCapabilities } from "../../../src/host/index.js";
 import { firstRunStage, type FirstRunSlots } from "../../../src/mailboxes/first-run/index.js";
@@ -92,6 +94,7 @@ function stage(o: {
   door?: "local" | "cloud" | "selfhost";
   factor?: FirstRunSlots["factor"];
   connect?: ReturnType<typeof fakeDoor>["door"];
+  calendar?: ReturnType<typeof setupPort>;
 }) {
   const facts = movable(o.ground);
   const seen = { asks: [] as Parameters<NonNullable<Exclude<FirstRunSlots["factor"], typeof NONE>>>[0][] };
@@ -106,8 +109,16 @@ function stage(o: {
     calendar: NONE,
     ground: useGround,
   };
+  const calendarWorld = o.calendar && mirror();
   const made = fakeHost({
-    engine: NO_ENGINE,
+    engine: calendarWorld?.engine ?? NO_ENGINE,
+    ...(calendarWorld
+      ? {
+          calendar,
+          products: "both",
+          wires: { calendar: { ...calendarWorld.port, setup: o.calendar } },
+        }
+      : {}),
     service: "self",
     scope: "acct-1",
     stages: { firstRun: firstRunStage(slots) },
@@ -120,7 +131,11 @@ function stage(o: {
     wires: { ...made.host.wires, firstRun: o.verbs, connect: o.connect ?? NONE },
   };
   render(
-    <TextProvider locale="en" messages={MESSAGES} timeZone="UTC">
+    <TextProvider
+      locale="en"
+      messages={o.calendar ? { ...CALENDAR_WORDS.en, ...MESSAGES } : MESSAGES}
+      timeZone="UTC"
+    >
       <Frame host={host} />
     </TextProvider>,
   );
@@ -131,6 +146,43 @@ beforeEach(() => {
   Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
 afterEach(cleanup);
+
+describe("calendar at the end of the first run", () => {
+  const ready = ground({
+    rows: [{ ...MAILBOX, organizeConsentedAt: "2026-11-01T00:00:00Z", importOver: true }],
+  });
+
+  it("skips in one press and completes mail setup without enabling Calendar", async () => {
+    const v = verbs({ ai: "off" });
+    const calendar = setupPort(async () => ["icloud"]);
+    const { address, facts } = stage({ verbs: v, ground: ready, calendar });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /^Skip calendar/ }));
+    await settle();
+    expect(v.complete).toHaveBeenCalledOnce();
+    expect(calendar.saveSettings).not.toHaveBeenCalled();
+    expect(address.read()).toBe("#/ohbox");
+    act(() => {
+      facts.set({ ...ready, account: { onboardingCompletedAt: "2026-11-02T00:00:00Z" } });
+      address.write("#/first-run", "push");
+    });
+    await settle();
+    expect(screen.queryByRole("button", { name: /^Set up calendar/ })).toBeNull();
+  });
+
+  it("enables Calendar and finishes mail setup before opening calendar setup", async () => {
+    const v = verbs({ ai: "off" });
+    const calendar = setupPort(async () => ["icloud"]);
+    const { address } = stage({ verbs: v, ground: ready, calendar });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /^Set up calendar/ }));
+    await settle();
+    expect(calendar.saveSettings).toHaveBeenCalledWith({ enabled: true });
+    expect(v.complete).toHaveBeenCalledOnce();
+    expect(address.read()).toMatch(/^#\/cal\/cal-setup/);
+    expect(await screen.findByRole("button", { name: "iCloud" })).toBeTruthy();
+  });
+});
 
 it("starts with provider tiles and asks for the address after a provider is chosen", async () => {
   stage({ verbs: verbs(), ground: ground({ rows: [] }), door: "selfhost", connect: fakeDoor().door });

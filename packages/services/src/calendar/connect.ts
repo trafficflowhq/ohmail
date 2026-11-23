@@ -10,7 +10,7 @@
  * sealed; only the envelope reaches a statement, so a store's error can quote nothing typed. A
  * refusal is a fixed sentence with a word of the closed list beside it, never anything typed.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import {
   ICLOUD_CALDAV_START, MAX_URL_CHARS, Secret, parseCredential, readTypedAddress, serializeCredential, type CredentialPlace,
   type StoredCredential,
@@ -19,7 +19,7 @@ import type { KeyProvider } from "@trafficflow/core";
 import { recordCalendarChanges, type Tx } from "@trafficflow/db";
 import { isWriteUuid } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
-import { calConnections, calCredentials, calSettings } from "@trafficflow/db/mail";
+import { calConnections, calCredentials, calSettings, mailboxCredentials, mailboxes } from "@trafficflow/db/mail";
 import type {
   CalendarConnectRefusal, CalendarConnectWire, CalendarConnectionRecord, CalendarSyncFault, CalendarWay,
 } from "@ohmail/wire";
@@ -63,6 +63,7 @@ export interface CalendarConnectDoor {
 /** What a person typed, read once. Every secret is held in a `Secret` from here on. */
 export type CalendarConnectAsk =
   | { readonly way: "icloud"; readonly connectionId: string; readonly user: string; readonly password: Secret }
+  | { readonly way: "icloud"; readonly connectionId: string; readonly fromMailbox: string }
   | { readonly way: "caldav"; readonly connectionId: string; readonly server: string; readonly user: string; readonly password: Secret }
   | { readonly way: "ics"; readonly connectionId: string; readonly address: Secret }
   /** The two ways that sign in at their provider: named, and never taken by this door. */
@@ -155,6 +156,12 @@ export function parseConnectAsk(body: unknown): CalendarConnectAsk {
   if (typeof b.way !== "string" || !WAYS.has(b.way)) throw invalid("way must be a way a calendar is connected");
   if (!isWriteUuid(b.connectionId)) throw invalid("connectionId must be the new connection's id, a uuid in lower case");
   const connectionId = b.connectionId;
+  if ("fromMailbox" in b) {
+    if (b.way !== "icloud" || !isWriteUuid(b.fromMailbox) || "user" in b || "password" in b || "server" in b) {
+      throw invalid("choose one iCloud mailbox to use its sign-in");
+    }
+    return { way: "icloud", connectionId, fromMailbox: b.fromMailbox };
+  }
   switch (b.way as CalendarWay) {
     case "icloud":
       return { way: "icloud", connectionId, user: userOf(b.user), password: passwordOf(b.password) };
@@ -207,7 +214,13 @@ export function offeredWays(
  */
 export async function calendarConnectState(ctx: ServiceContext, port: CalendarConnectPort | undefined): Promise<CalendarConnectWire> {
   const on = (await calendarEnabledAt(ctx.db, ctx.accountId)) !== null;
-  return { ways: on ? offeredWays(port) : [], connections: await connectionsHeld(ctx) };
+  const ways = on ? offeredWays(port) : [];
+  const held = await connectionsHeld(ctx);
+  if (!ways.includes("icloud")) return { ways, ...held };
+  const icloudMailboxes = await ctx.db.select({ id: mailboxes.id, address: mailboxes.address }).from(mailboxes)
+    .innerJoin(mailboxCredentials, mailboxImapJoin)
+    .where(icloudMailboxWhere(ctx.accountId)).orderBy(asc(mailboxes.createdAt), asc(mailboxes.id));
+  return { ways, ...held, ...(icloudMailboxes.length > 0 ? { icloudMailboxes } : {}) };
 }
 
 /**
@@ -218,11 +231,58 @@ export async function calendarConnectState(ctx: ServiceContext, port: CalendarCo
  * the feed's own, which selects no sign-in. An account holds at most its ceiling of connections
  * made here, and one for each mailbox a calendar rides.
  */
-async function connectionsHeld(ctx: ServiceContext): Promise<CalendarConnectionRecord[]> {
-  const rows = await ctx.db.select({ id: calConnections.id }).from(calConnections)
-    .where(eq(calConnections.accountId, ctx.accountId)).orderBy(asc(calConnections.createdAt), asc(calConnections.id));
+async function connectionsHeld(ctx: ServiceContext): Promise<Omit<CalendarConnectWire, "ways">> {
+  const rows = await ctx.db.select({
+    id: calConnections.id,
+    sourceMailboxId: sql<string | null>`${calCredentials.meta}->>'sourceMailboxId'`,
+  }).from(calConnections).leftJoin(calCredentials, and(
+    eq(calCredentials.accountId, calConnections.accountId),
+    eq(calCredentials.connectionId, calConnections.id),
+    eq(calCredentials.kind, "basic"),
+  )).where(eq(calConnections.accountId, ctx.accountId)).orderBy(asc(calConnections.createdAt), asc(calConnections.id));
   const built = await CALENDAR_BUILDERS.calendar_connection(ctx.db, ctx.accountId, rows.map((r) => r.id));
-  return rows.flatMap((r) => built.get(r.id) ?? []);
+  const connections = rows.flatMap((r) => built.get(r.id) ?? []);
+  const linkedMailboxIds = [...new Set(rows.map((r) => r.sourceMailboxId).filter(isWriteUuid))];
+  return linkedMailboxIds.length > 0 ? { connections, linkedMailboxIds } : { connections };
+}
+
+const mailboxImapJoin = and(eq(mailboxes.id, mailboxCredentials.mailboxId), eq(mailboxes.accountId, mailboxCredentials.accountId));
+
+/** An IMAP password can be sent to Apple only if its configured IMAP host was Apple's. */
+function icloudMailboxWhere(accountId: string, id?: string) {
+  return and(
+    eq(mailboxes.accountId, accountId), eq(mailboxCredentials.accountId, accountId),
+    eq(mailboxes.provider, "icloud"), eq(mailboxes.authKind, "password"), eq(mailboxCredentials.transport, "imap"),
+    ne(mailboxes.status, "disabled"), isNull(mailboxes.erasedAt),
+    sql`lower(${mailboxCredentials.meta}->>'host') = ${"imap.mail.me.com"}`,
+    id === undefined ? undefined : eq(mailboxes.id, id),
+  );
+}
+
+function mailboxSignInQuery(db: Tx, accountId: string, mailboxId: string) {
+  return db.select({
+    address: mailboxes.address, user: sql<string | null>`${mailboxCredentials.meta}->>'user'`,
+    secretEnc: mailboxCredentials.secretEnc, keyVersion: mailboxCredentials.keyVersion,
+  }).from(mailboxes).innerJoin(mailboxCredentials, mailboxImapJoin)
+    .where(icloudMailboxWhere(accountId, mailboxId)).limit(1);
+}
+
+async function sealMailboxSignIn(ctx: ServiceContext, keys: KeyProvider, at: CredentialPlace, mailboxId: string) {
+  const [source] = await mailboxSignInQuery(bridgeTx(ctx.db), at.accountId, mailboxId);
+  if (source === undefined) throw new ServiceError("not_found", 404, "That iCloud mailbox is unavailable.");
+  let user: string;
+  let password: Secret;
+  try {
+    user = userOf(source.user || source.address);
+    password = passwordOf(await keys.decrypt(source.secretEnc, source.keyVersion));
+  } catch {
+    throw connectRefusal("sign_in_refused");
+  }
+  const credential = { kind: "basic", server: ICLOUD_CALDAV_START, user, password } as const;
+  return {
+    kind: credential.kind, meta: { sourceMailboxId: mailboxId }, source,
+    ...(await sealCredential(keys, credential, at)),
+  };
 }
 
 // ── the address and the seal ─────────────────────────────────────────────────────
@@ -309,14 +369,15 @@ export async function connectCalendar(
   const place = ask.way === "ics"
     ? placedAddress("ics", ask.address.reveal(), port.policy)
     : placedAddress("caldav", ask.way === "icloud" ? ICLOUD_CALDAV_START : ask.server, port.policy);
-  // A password is sealed with the server it is for: the start as placed, the very value the row is written with below
-  // (at iCloud, Apple's own). A CalDAV place always has one; a text without one would not be written.
-  const credential: StoredCredential = ask.way === "ics"
-    ? { kind: "address", url: ask.address }
-    : { kind: "basic", server: place.serverUrl ?? "", user: ask.user, password: ask.password };
+  // A password is sealed with the server it is for (at iCloud, Apple's own).
+  const signIn = "fromMailbox" in ask ? { fromMailbox: ask.fromMailbox } : {
+    credential: (ask.way === "ics"
+      ? { kind: "address", url: ask.address }
+      : { kind: "basic", server: place.serverUrl ?? "", user: ask.user, password: ask.password }) satisfies StoredCredential,
+  };
   return keepCalendarConnection(ctx, door.keys, {
     id: ask.connectionId, provider: ask.way === "ics" ? "ics" : "caldav", ...place,
-  }, { credential }, claim);
+  }, signIn, claim);
 }
 
 /** Keep the connection, its account-bound credential and its first poll in the same transaction. */
@@ -328,10 +389,16 @@ export async function keepCalendarConnection(
     readonly serverUrl: string | null;
     readonly sourceHost: string | null;
   },
-  signIn: { credential: StoredCredential; meta?: unknown }, claim?: IdempotencyClaim,
+  signIn: { credential: StoredCredential; meta?: unknown } | { fromMailbox: string }, claim?: IdempotencyClaim,
 ): Promise<{ record: CalendarConnectionRecord; seq: bigint }> {
-  const { credential, meta } = signIn;
-  const sealed = await sealCredential(keys, credential, { accountId: ctx.accountId, connectionId: place.id });
+  const at = { accountId: ctx.accountId, connectionId: place.id };
+  const sourceMailboxId = "fromMailbox" in signIn ? signIn.fromMailbox : null;
+  if (sourceMailboxId !== null && (place.provider !== "caldav" || place.serverUrl !== ICLOUD_CALDAV_START)) {
+    throw connectRefusal("provider_off");
+  }
+  const sealed = "fromMailbox" in signIn ? await sealMailboxSignIn(ctx, keys, at, signIn.fromMailbox) : {
+    kind: signIn.credential.kind, meta: signIn.meta, ...(await sealCredential(keys, signIn.credential, at)),
+  };
   return withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
     // The account's settings row is the one row every account with a calendar has: taken for update, it lets one
@@ -342,6 +409,14 @@ export async function keepCalendarConnection(
     );
     if (settings?.enabledAt == null) throw new ServiceError("calendar_off", 409, "Turn on your calendar before connecting.");
     await requireConnectionRoom(t, ctx.accountId);
+    if (sourceMailboxId !== null && "source" in sealed) {
+      const [current] = await dialect(t).forUpdate(mailboxSignInQuery(t, ctx.accountId, sourceMailboxId), { mode: "share" });
+      const before = sealed.source;
+      if (current === undefined || current.secretEnc !== before.secretEnc || current.keyVersion !== before.keyVersion ||
+          (current.user || current.address) !== (before.user || before.address)) {
+        throw new ServiceError("conflict", 409, "This mailbox's sign-in changed. Try again.");
+      }
+    }
     // The id is the device's and the row's own key: one that is taken makes no second row, whoever holds it.
     // No conflict target is named: the row has two unique keys (its id, and its id with its account), and a
     // same-key arrival that waited on the other one would be raised as a fault instead of found taken.
@@ -350,8 +425,8 @@ export async function keepCalendarConnection(
     }).onConflictDoNothing().returning({ id: calConnections.id });
     if (made === undefined) throw new CalendarConnectionTaken();
     await t.insert(calCredentials).values({
-      accountId: ctx.accountId, connectionId: place.id, kind: credential.kind,
-      secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion, meta,
+      accountId: ctx.accountId, connectionId: place.id, kind: sealed.kind,
+      secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion, meta: sealed.meta,
     });
     const record = await connectionRecord(ctx, tx, place.id);
     const [seq] = await recordCalendarChanges(tx, ctx.accountId, [{ kind: "calendar_connection", id: place.id, op: "create" }]);

@@ -146,7 +146,7 @@ export interface StorageOffer {
   interval: (typeof PLAN_HINT_INTERVALS)[number];
   plans: StorageOfferPlan[];
   /** The storage add-on: the room one unit adds, its price and how many one account may hold. */
-  addon: { unitBytes: number; amount: number; maxUnits: number } | null;
+  addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
   current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" };
   fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
   canChange: boolean;

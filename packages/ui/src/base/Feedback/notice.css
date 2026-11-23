@@ -49,6 +49,22 @@
   .oh-notice:not([data-progress]) .oh-notice-say + .oh-notice-acts {
     margin-top: var(--s2);
   }
+  .oh-notice[data-collapsed] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
+  }
+  .oh-notice[data-collapsed] .oh-notice-say {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-notice[data-collapsed] .oh-notice-say + .oh-notice-acts {
+    flex-shrink: 0;
+    margin-top: 0;
+  }
   .oh-notice-related {
     margin-top: var(--s1);
   }

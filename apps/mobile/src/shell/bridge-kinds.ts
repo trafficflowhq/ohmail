@@ -198,7 +198,7 @@ export type ShellAct =
    */
   | { readonly act: "wake.want"; readonly wanted: boolean };
 
-export type BrowserAccountPane = "account" | "devices" | "invites" | "security";
+export type BrowserAccountPane = "account" | "devices" | "invites" | "security" | "calendar";
 export type PairGrant = "device-pair" | "invite";
 
 export type PhoneAccountRequest = { readonly scope: string } & (
@@ -606,7 +606,7 @@ function isPhoneAccountRequest(m: Record<string, unknown>): boolean {
     case "deletePage":
       return phoneFields(m, "scope");
     case "settingsPage":
-      return typeof m.pane === "string" && ["account", "devices", "invites", "security"].includes(m.pane) &&
+      return typeof m.pane === "string" && ["account", "devices", "invites", "security", "calendar"].includes(m.pane) &&
         phoneFields(m, "scope", "pane");
     case "activate":
       return typeof m.code === "string" && /^\d{6}$/.test(m.code) && phoneFields(m, "scope", "code");

@@ -142,6 +142,12 @@
       "node": "./dist/settings/screener/index.js",
       "default": "./src/settings/screener/index.ts"
     },
+    "./settings/ai/budget": {
+      "types": "./src/settings/ai/budget.ts",
+      "ohmail-source": "./src/settings/ai/budget.ts",
+      "node": "./dist/settings/ai/budget.js",
+      "default": "./src/settings/ai/budget.ts"
+    },
     "./settings/ai": {
       "types": "./src/settings/ai/index.ts",
       "ohmail-source": "./src/settings/ai/index.ts",

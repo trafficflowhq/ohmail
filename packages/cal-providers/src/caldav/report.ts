@@ -17,7 +17,7 @@
 import { DEFAULT_LIMITS, MAX_ZONE_NAME_CHARS, readCalendar } from "@ohmail/cal-core";
 import { MAX_CALENDAR_NAME_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { CalendarInfo } from "../port.js";
-import { addressOf, allowsMove, ask, bodyOf, isSelf, isUnder, propfindOf, refuse, sameMemberKey, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
+import { addressOf, allowsMove, ask, bodyOf, finding, isSelf, isUnder, propfindOf, refuse, sameMemberKey, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
 import { APPLE_ICAL, CALDAV, CALENDARSERVER, DAV, childOf, childrenOf, propOf, type DavResponse, type Multistatus } from "./multistatus.js";
 
 /** What a response that names no usable address is listed under: the start of what it wrote. */
@@ -61,9 +61,12 @@ function zoneOf(response: DavResponse): string | null {
   return read.ok ? (read.calendar.timezones[0]?.tzid ?? null) : null;
 }
 
+/** A home named by the signed-in principal may locate itself with a redirect. */
+export const askHome = (s: Session, home: string) => ask(finding(s), "PROPFIND", home, "1", HOME);
+
 /** The home's children that are calendars for events (RFC 4791 sections 4.2 and 5.2.3), in the order the server lists them. */
 export async function calendarsOf(s: Session, home: string, principal: string): Promise<{ readonly ok: true; readonly calendars: readonly CalendarInfo[] } | Refused> {
-  const asked = await ask(s, "PROPFIND", home, "1", HOME);
+  const asked = await askHome(s, home);
   if (!asked.ok) return refuse(asked.reason, asked.retryAfterMs);
   const scope = scopeOf(asked.url);
   const calendars: CalendarInfo[] = [];

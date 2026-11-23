@@ -15,12 +15,12 @@ export interface NoticeAct {
    * of the person who pressed it stay on it. An answer taken away while it runs drops them onto the page.
    */
   busy?: boolean;
+  /** A quiet act stays a word even when it is the only answer. */
+  kind?: "quiet";
 }
 
 type NoticeButton = Omit<NoticeAct, "onPress"> & {
   onPress: MouseEventHandler<HTMLButtonElement>;
-  /** A dismissal is a word even where it is the only answer. */
-  kind?: "quiet";
 };
 
 export interface NoticeProps {
@@ -38,19 +38,29 @@ export interface NoticeProps {
   acts?: readonly [NoticeButton] | readonly [NoticeButton, NoticeButton];
   /** Related controls when the notice must keep existing ways to act. */
   related?: ReactNode;
+  /** Keep the title visible while folding away the detail and its actions. */
+  disclosure?: { collapsed: boolean; label: string; onPress: () => void };
 }
 
 /** Something needs you. It stands in the one slot, one at a time. */
-export function Notice({ place, title, hot, progress, line, acts, related }: NoticeProps) {
+export function Notice({ place, title, hot, progress, line, acts, related, disclosure }: NoticeProps) {
   /* Said when it appears: its words are given to a screen reader once the region stands; its answers at once. */
   const held = useSaidOnArrival(true) ? true : undefined;
+  const collapsed = disclosure?.collapsed === true;
   return (
-    <div className="oh-notice" role="status" data-place={place} data-progress={progress || undefined}>
+    <div
+      className="oh-notice"
+      role="status"
+      data-place={place}
+      data-progress={progress || undefined}
+      data-collapsed={collapsed || undefined}
+    >
       <p className="oh-text oh-notice-say" aria-hidden={held}>
         <b className="oh-notice-title">
           <EndDot kind={hot || progress ? "hot" : "ink"}>{title}</EndDot>
         </b>
-        {line &&
+        {!collapsed &&
+          line &&
           (progress ? (
             <>
               {" "}
@@ -61,23 +71,29 @@ export function Notice({ place, title, hot, progress, line, acts, related }: Not
           ))}
       </p>
       {progress ? <ActivityLine /> : null}
-      {acts ? (
+      {acts || disclosure ? (
         <div className="oh-notice-acts">
-          {acts?.map((act, i) => (
-            <Button
-              key={act.label}
-              size="s"
-              kind={act.kind ?? (i ? "quiet" : "ink")}
-              onPress={act.onPress}
-              disabled={act.disabled}
-              busy={act.busy}
-            >
-              {act.label}
+          {!collapsed &&
+            acts?.map((act, i) => (
+              <Button
+                key={act.label}
+                size="s"
+                kind={act.kind ?? (i ? "quiet" : "ink")}
+                onPress={act.onPress}
+                disabled={act.disabled}
+                busy={act.busy}
+              >
+                {act.label}
+              </Button>
+            ))}
+          {disclosure ? (
+            <Button size="s" kind="quiet" expanded={!collapsed} onPress={disclosure.onPress}>
+              {disclosure.label}
             </Button>
-          ))}
+          ) : null}
         </div>
       ) : null}
-      {related ? <div className="oh-notice-acts oh-notice-related">{related}</div> : null}
+      {!collapsed && related ? <div className="oh-notice-acts oh-notice-related">{related}</div> : null}
     </div>
   );
 }

@@ -26,6 +26,7 @@ import type { LinkInTarget } from "../../src/shell/bridge-kinds";
 import { otherAppDoor } from "./other-app";
 import { note, type Bridge } from "./bridge";
 import { readCalendarDevice } from "./calendar-device";
+import { phoneSettingsFactor } from "./hosted-settings";
 import { accountFetch } from "./account-fetch";
 import { bridgeFetch } from "./bridge-fetch";
 import { createPhoneEngine, keptStoreOf } from "./engine";
@@ -105,7 +106,10 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
     engine, transport, clock: { uuid: () => crypto.randomUUID(), now: Date.now },
     mayRun: () => engine.calendarQueueReady(), settings: transport.calendarSettings,
     setSuggestionDismissed: transport.setSuggestionDismissed,
-    setup: setup ? calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()) : undefined,
+    setup: setup ? {
+      ...calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()),
+      factor: phoneSettingsFactor(bridge, config, "calendar"),
+    } : undefined,
     held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
   }) : undefined;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;

@@ -9,6 +9,7 @@ async function connect(call: () => Promise<unknown>, refresh: () => void): Promi
     await call();
   } catch (error) {
     if (!(error instanceof MutationRejectedError)) throw error;
+    if (error.status === 403 && error.code === "step_up_required") return { kind: "step_up" };
     const fault = (error.details as { fault?: unknown } | null)?.fault;
     if (typeof fault !== "string" || !Object.hasOwn(CONNECT_FAULT_KEYS, fault)) throw error;
     return { kind: "refused", fault: fault as CalendarSyncFault };
@@ -23,14 +24,25 @@ export function calendarSetupPortOf(
   sync: () => Promise<void>,
   uuid: () => string,
 ): CalendarSetupPort {
-  const { calendarConnections, saveCalendarSettings: saveSettings } = transport;
+  const {
+    calendarConnections,
+    icloudMailboxes,
+    linkedMailboxIds,
+    saveCalendarSettings: saveSettings,
+  } = transport;
   const refresh = () => {
     void sync().catch(() => undefined);
   };
   return {
     ways: () => transport.calendarWays(),
     ...(calendarConnections ? { hasConnections: async () => (await calendarConnections()).length > 0 } : {}),
-    connect: (ask) => connect(() => transport.connectCalendar(ask, uuid()), refresh),
+    ...(icloudMailboxes ? { icloudMailboxes } : {}),
+    ...(linkedMailboxIds ? { linkedMailboxIds } : {}),
+    connect: (ask) =>
+      connect(
+        () => transport.connectCalendar(ask, "fromMailbox" in ask ? ask.connectionId : uuid()),
+        refresh,
+      ),
     signInAgain: (ask) =>
       connect(
         () =>

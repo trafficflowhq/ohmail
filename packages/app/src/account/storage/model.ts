@@ -112,6 +112,7 @@ export interface StorageFigures {
   readonly plans: {
     readonly lines: readonly StoragePlan[];
     readonly addon: {
+      readonly atLimit?: boolean;
       readonly unit: string;
       readonly letters: number;
       readonly most: number;

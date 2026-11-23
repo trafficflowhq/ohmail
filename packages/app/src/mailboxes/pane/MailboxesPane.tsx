@@ -38,6 +38,7 @@ export interface MailboxesPaneProps {
   readonly holdEdit?: ConnectAsk["holdLeave"];
   /** The calendar's half of a mailbox, where a shell has one. */
   readonly calendar: CalendarHalfSlot | None;
+  readonly calendarReuse?: (id: string) => Promise<boolean>;
   /** The route's word for a mailbox: a claim, opened only where the account's own rows hold it. */
   readonly opened: string | null;
   /** The first run can open: its add run and its run again. */
@@ -178,7 +179,7 @@ function Listed(
         <SetupAgain again={() => props.go("again")} />
       ) : null}
       {/* The removal's confirmation over the window, for the row it was opened on; the factor's dialog over it. */}
-      <Removal model={model} verbs={verbs} />
+      <Removal model={model} verbs={verbs} calendarReuse={props.calendarReuse} />
       {/* The one second-factor dialog, for the press the server parked; its line names which write it authorises. */}
       {model.gated.asking !== null && factor !== NONE && model.gated.state.at === "asking"
         ? factor({ ...model.gated.asking, line: say({ key: FACTOR_LINE[model.gated.state.act.verb] }) })

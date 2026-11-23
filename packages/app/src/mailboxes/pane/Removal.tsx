@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Dialog, Field, RadioLines } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import type { RowProps } from "./Row.js";
@@ -10,11 +10,40 @@ import { useSay } from "./say.js";
  * filled in; the safe answer has the keys. A refusal is said in it, with what was typed kept. The press is tried
  * first and asks the second factor only on the server's refusal; Escape and the scrim are Keep it.
  */
-export function Removal(props: Pick<RowProps, "model" | "verbs">): ReactNode {
-  const { model, verbs } = props;
+export function Removal({
+  model,
+  verbs,
+  calendarReuse,
+}: Pick<RowProps, "model" | "verbs"> & { calendarReuse?: (id: string) => Promise<boolean> }): ReactNode {
   const say = useSay();
   const removing = model.removal.removing;
+  const id = removing?.id;
+  const [calendar, setCalendar] = useState<{
+    id: string;
+    read: typeof calendarReuse;
+    linked: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (id === undefined || calendarReuse === undefined) {
+      setCalendar(null);
+      return;
+    }
+    let live = true;
+    void calendarReuse(id).then(
+      (yes) => {
+        if (live) setCalendar({ id, read: calendarReuse, linked: yes });
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [id, calendarReuse]);
   if (removing === null) return null;
+  const linked =
+    calendar && calendar.id === removing.id && calendar.read === calendarReuse ? calendar.linked : undefined;
+  const mayHaveCalendar =
+    calendarReuse !== undefined && model.list.rows?.some((row) => row.id === id && row.provider === "icloud");
   const { erase, typed, address } = removing;
   const gate = model.gated.state;
   const mine = gate.at !== "idle" && gate.act.verb !== "organize" && gate.act.id === removing.id;
@@ -50,6 +79,11 @@ export function Removal(props: Pick<RowProps, "model" | "verbs">): ReactNode {
       <SettingNote>{say({ key: "removeStops" })}</SettingNote>
       <SettingNote>{say({ key: "removeMailSafe" })}</SettingNote>
       <SettingNote>{say({ key: "removeCredential" })}</SettingNote>
+      {linked === true ? (
+        <SettingNote>{say({ key: "removeCalendarConnection" })}</SettingNote>
+      ) : linked === undefined && mayHaveCalendar ? (
+        <SettingNote>{say({ key: "removeCalendarPossible" })}</SettingNote>
+      ) : null}
       <SettingNote>{say({ key: "removeScheduled" })}</SettingNote>
       <SettingNote>{say({ key: erase ? "removeCopyErased" : "removeCopyStays" })}</SettingNote>
       {verbs.erase ? (

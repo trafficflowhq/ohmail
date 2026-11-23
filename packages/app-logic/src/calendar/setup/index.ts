@@ -8,6 +8,7 @@ export {
   type CalendarWay,
   type ConnectAnswer,
   type ConnectAsk,
+  type TypedConnectAsk,
 } from "./port.js";
 export type { CalendarSettingsBody, CalendarSyncFault } from "@ohmail/wire";
 export {

@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
+import { aiCreditsOf, type AiCredits } from "@ohmail/app/settings/ai";
 import { Button } from "@ohmail/ui/base";
 import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { StoragePane } from "../../webapp/app/shell/StoragePane";
@@ -58,6 +59,7 @@ export interface ManageOffer {
   withdrawManage: () => void;
   /** The same answer's storage block (`storage-state.ts`), for the emptied-text notice; null for none. */
   storage: StorageFacts | null;
+  aiCredits: AiCredits | null;
   /** The same answer's lifecycle state. */
   lifecycleState: string | null;
   /** Ask again now, after a storage write (a dismissal, the mails switch). */
@@ -76,9 +78,10 @@ type OfferState = "unknown" | "offered" | "not-offered";
  * A return to the window asks again through the shell's own schedule: at once while unknown, else after
  * the quiet floor, which keeps the storage block (the emptied-text notice's facts) current.
  */
-export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
+export function useDesktopManageOffer(accountDoor: boolean, scope: string | null): ManageOffer {
   const [state, setState] = useState<OfferState>("unknown");
   const [storage, setStorage] = useState<StorageFacts | null>(null);
+  const [credits, setCredits] = useState<{ scope: string | null; value: AiCredits | null } | null>(null);
   const [lifecycleState, setLifecycleState] = useState<string | null>(null);
   /** The account door an answer belongs to: one for an earlier door is dropped. */
   const door = useRef(0);
@@ -93,7 +96,9 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
     const asked = door.current;
     const read = (async (): Promise<boolean> => {
       let next: OfferState | null = null;
-      let body = null as { metered?: unknown; storage?: unknown; lifecycle?: { state?: unknown } } | null;
+      let body = null as {
+        metered?: unknown; access?: unknown; aiCredits?: unknown; storage?: unknown; lifecycle?: { state?: unknown };
+      } | null;
       try {
         const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
         if (res.status === ACCESS_REFUSED) next = "offered";
@@ -106,12 +111,13 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
       answeredAt.current = Date.now();
       setState(withdrawn.current ? "not-offered" : next);
       setStorage(body?.metered === true ? storageFactsOf(body.storage) : null);
+      setCredits({ scope, value: body?.metered === true && body.access === "open" ? aiCreditsOf(body.aiCredits) : null });
       setLifecycleState(typeof body?.lifecycle?.state === "string" ? body.lifecycle.state : null);
       return true;
     })().finally(() => { if (flight.current === read) flight.current = null; });
     flight.current = read;
     return read;
-  }, []);
+  }, [scope]);
   useEffect(() => {
     door.current += 1;
     flight.current = null;
@@ -121,6 +127,7 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
        hosted account and no server holding this state, so asking would put a route on the wire
        that nothing behind this door serves. Any offer an earlier door made goes with it. */
     setStorage(null);
+    setCredits(null);
     setLifecycleState(null);
     if (!accountDoor) {
       setState("not-offered");
@@ -141,7 +148,10 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   // A withdrawal holds for the session: a later answer does not bring the pane back.
   const withdrawManage = useCallback(() => { withdrawn.current = true; setState("not-offered"); }, []);
   const reread = useCallback(() => { void readOffer(); }, [readOffer]);
-  return { manageOffered: state === "offered", withdrawManage, storage, lifecycleState, reread };
+  return {
+    manageOffered: state === "offered", withdrawManage, storage, lifecycleState, reread,
+    aiCredits: accountDoor && scope !== null && credits?.scope === scope ? credits.value : null,
+  };
 }
 
 /** What the account door's one session read says: whose account, and the reuse sweeps to tell. */
@@ -230,11 +240,19 @@ export function AccountPageLink(
   return <Button ref={link} href={href} outside onFollow={onFollow}>{label}</Button>;
 }
 
-export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
+export function DesktopSubscription({
+  onNowhere, storageOffer, openStorage,
+}: {
+  onNowhere: () => void;
+  storageOffer?: NonNullable<StorageFacts["offer"]> | null;
+  openStorage?: () => Promise<void>;
+}) {
   const t = useTranslations("settings");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const { href, show, followed } = useMintedPage();
+  const change = useDesktopStorageChange(openStorage);
+  const addon = storageOffer?.addon;
   /** The pane can be left mid-press; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -272,6 +290,12 @@ export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
   return (
     <SettingsSheet title={t("webBillingTitle")}>
       {failed ? <p className="acct-warn" role="alert">{t("subscriptionManageFailed")}</p> : null}
+      {storageOffer?.canChange && addon && storageOffer.current.addonUnits < addon.maxUnits ? (
+        <SettingLine label={t("storageAddonName")} tag={t("storageTagAddon")}>
+          <Button kind="two" size="s" icon="plus" onPress={change.press}>{t("storageAddStorage")}</Button>
+        </SettingLine>
+      ) : null}
+      {change.note}
       <SettingLine label={t("subscription")}>
         {href !== null
           ? <AccountPageLink href={href} label={t("subscriptionOpen")} onFollow={followed} />

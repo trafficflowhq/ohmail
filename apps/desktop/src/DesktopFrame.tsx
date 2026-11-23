@@ -24,6 +24,8 @@ import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
 import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
 import { readerZone } from "@ohmail/app-logic/reader";
 import { useConsent } from "@ohmail/app-logic/consent";
+import { useText } from "@ohmail/app/text";
+import { Dialog } from "@ohmail/ui/base";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { liveMailboxes } from "@ohmail/app-logic/mail-state/mail-state";
 import { useWriting } from "@ohmail/app/write";
@@ -49,6 +51,7 @@ import { bridgeFetch, desktopCalendarSetup, desktopCalendarWrites, readDesktopCa
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { useDefaultMailNotice } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
+import type { AiCredits } from "@ohmail/app/settings/ai";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { DesktopPairingDevices } from "./DesktopDevices.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
@@ -101,6 +104,7 @@ export interface DesktopFrameProps {
   freshness: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
   account: string | null;
   storage: StorageFacts | null;
+  aiCredits?: AiCredits | null;
   mayLinkOut: boolean;
   /** The service serves a page for the account's subscription. */
   manageOffered: boolean;
@@ -199,6 +203,23 @@ function DesktopMailboxesPane({ goToSetup }: {
       {mailboxes.door === "local" ? <MailboxSelfCheck check={checkMailboxHere} /> : null}
     </>
   );
+}
+
+function CalendarBrowserFactor({ line, onCancel }: { line?: string; onCancel: () => void }) {
+  const t = useText("calsetup");
+  const [failed, setFailed] = useState(false);
+  return <Dialog
+    open
+    title={t("signin.factorBrowserTitle")}
+    line={line}
+    onClose={onCancel}
+    cancel={{ label: t("back") }}
+    confirm={{
+      label: t("signin.factorBrowserOpen"),
+      onPress: () => void openWeb("calendar").then(onCancel, () => setFailed(true)),
+    }}
+    {...(failed ? { said: { line: t("signin.factorBrowserFailed"), refused: true } } : {})}
+  />;
 }
 
 const MAILBOXES_PARTS = { factor: NONE, calendar: NONE, device: DesktopMailboxesPane } as const;
@@ -408,8 +429,13 @@ export function DesktopFrame(p: DesktopFrameProps) {
       mailboxes: entry("mailboxes", null, function useMailboxNotices() {
         return [...MAILBOXES_NOTICES(), ...useAwayNotice(awayFeed)];
       }),
-      ai: entry("ai", <DesktopAiAccount />),
-      subscription: entry("subscription", <DesktopSubscription onNowhere={withdrawManage} />),
+      ai: entry("ai", <DesktopAiAccount key={p.scope} credits={p.aiCredits} />),
+      subscription: entry("subscription", <DesktopSubscription
+        key={p.scope}
+        onNowhere={withdrawManage}
+        storageOffer={mayLinkOut ? storage?.offer : null}
+        openStorage={server === null ? undefined : openStorage}
+      />),
       storage: entry("storage", storage ? <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} openServer={server === null ? undefined : openStorage} /> : null),
       storageCard: entry("storageCard", storage ? <DesktopStorageNotice facts={storage} linksOut={mayLinkOut} reread={rereadAccess} openServer={server === null ? undefined : openStorage} /> : null),
       /* The reuse sweeps the account's session read lists, acknowledged over the bridge: one notice. */
@@ -431,7 +457,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
       help: entry("help", null),
     };
     // The entries change with the door and what they draw; the callbacks above are stable.
-  }, [status, storage, mayLinkOut, server, openStorage, p.ai, p.firstRunOpen, sweeps, withdrawManage, rereadAccess, recheckSweeps, awayFeed]);
+  }, [status, storage, mayLinkOut, server, openStorage, p.scope, p.ai, p.aiCredits, p.firstRunOpen, sweeps, withdrawManage, rereadAccess, recheckSweeps, awayFeed]);
 
   const draftReply = useMemo(() => draftReplyOverBridgeFor(status), [status]);
   const { noticeDocument, noticeSession } = status;
@@ -462,6 +488,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
             await openServerPane(provider === "google" ? "calendar-google" : "calendar-microsoft");
           },
         } : {}),
+        factor: (ask) => <CalendarBrowserFactor {...ask} />,
       },
       held: () => engine.calendarHeld(),
       load: NONE,

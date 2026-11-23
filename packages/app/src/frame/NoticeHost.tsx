@@ -8,6 +8,10 @@ import { NoticeSlot } from "@ohmail/ui/base";
 import type { NoticeStore } from "./notice-store.js";
 import { useText, useTextPending } from "../text/index.js";
 
+function staysFolded(known: readonly string[] | undefined, failures: readonly string[] = []): boolean {
+  return known !== undefined && failures.every((id) => known.includes(id));
+}
+
 export function NoticeHost({
   store,
   place,
@@ -24,6 +28,18 @@ export function NoticeHost({
   const notices = stored.filter(
     (n) => (feed === undefined || n.feed === feed) && (!pending || n.title !== ""),
   );
+  const [folded, setFolded] = useState<ReadonlyMap<string, readonly string[]>>(() => new Map());
+  useEffect(() => {
+    setFolded((was) => {
+      const standing = new Map(was);
+      for (const [id, known] of was) {
+        const notice = stored.find((n) => n.id === id);
+        if (!notice || !staysFolded(known, notice.failedSendIds)) standing.delete(id);
+      }
+      return standing.size === was.size ? was : standing;
+    });
+  }, [stored]);
+
   const [front, setFront] = useState<string | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const standing = front !== undefined && notices.some((n) => n.id === front);
@@ -42,7 +58,26 @@ export function NoticeHost({
     <>
       <NoticeSlot
         place={place}
-        notices={notices}
+        notices={notices.map((notice) => {
+          if (!notice.collapsible) return notice;
+          const collapsed = staysFolded(folded.get(notice.id), notice.failedSendIds);
+          return {
+            ...notice,
+            title:
+              collapsed && notice.id === "notSent" && notice.line ? t("notice.sendFailed") : notice.title,
+            disclosure: {
+              collapsed,
+              label: t(collapsed ? "notice.show" : "notice.collapse"),
+              onPress: () =>
+                setFolded((was) => {
+                  const next = new Map(was);
+                  if (collapsed) next.delete(notice.id);
+                  else next.set(notice.id, notice.failedSendIds ?? []);
+                  return next;
+                }),
+            },
+          };
+        })}
         front={standing ? front : undefined}
         onFront={setFront}
         more={{ label: t("notice.more", { count }), name: t("notice.moreName", { count }) }}

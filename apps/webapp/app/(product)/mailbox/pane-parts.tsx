@@ -123,7 +123,9 @@ function useWebAiSummary() {
   const credits = accessAiCredits(useWebAccess());
   const t = useText("settingsAi");
   return credits ? {
-    detail: t(credits.total === undefined ? "creditsBalance" : "creditsDetail", credits),
+    detail: t(credits.total === undefined ? "creditsBalance" : "creditsDetail", {
+      remaining: credits.remaining, total: credits.total ?? 0,
+    }),
     hot: credits.remaining === 0,
   } : null;
 }

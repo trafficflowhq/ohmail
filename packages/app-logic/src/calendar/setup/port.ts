@@ -4,8 +4,16 @@
  *
  * What a person types for a connection reaches the port once, in `connect` or `signInAgain`, and nowhere else.
  */
+import type { ReactNode } from "react";
+import type { GatedAsk } from "../../mailboxes/connect/gate.js";
 import type { CalendarOAuthResult } from "./steps.js";
-import type { CalendarSettingsBody, CalendarSettingsWire, CalendarSyncFault } from "@ohmail/wire";
+import type {
+  CalendarConnectBody,
+  CalendarMailboxSource,
+  CalendarSettingsBody,
+  CalendarSettingsWire,
+  CalendarSyncFault,
+} from "@ohmail/wire";
 
 /** Every way a calendar can be connected, as our server names it. */
 export const CALENDAR_WAYS = ["icloud", "caldav", "ics", "google", "microsoft"] as const;
@@ -16,26 +24,15 @@ export function isCalendarOAuthProvider(way: unknown): way is CalendarOAuthProvi
   return way === "google" || way === "microsoft";
 }
 
-/** One connection asked for: iCloud's Apple Account and app password, another CalDAV server, or a subscription. */
-export type ConnectAsk =
-  | {
-      readonly way: "icloud";
-      readonly connectionId: string;
-      readonly user: string;
-      readonly password: string;
-    }
-  | {
-      readonly way: "caldav";
-      readonly connectionId: string;
-      readonly server: string;
-      readonly user: string;
-      readonly password: string;
-    }
-  | { readonly way: "ics"; readonly connectionId: string; readonly address: string };
+/** A sign-in typed for an existing connection carries no source mailbox. */
+export type TypedConnectAsk = Exclude<CalendarConnectBody, { fromMailbox: string }>;
+export type ConnectAsk = CalendarConnectBody;
 
 /** What our server made of an ask: taken (the reading follows by the feed), or refused by its shape at once. */
 export type ConnectAnswer =
-  { readonly kind: "taken" } | { readonly kind: "refused"; readonly fault: CalendarSyncFault };
+  | { readonly kind: "taken" }
+  | { readonly kind: "step_up" }
+  | { readonly kind: "refused"; readonly fault: CalendarSyncFault };
 
 /** A change to one calendar: shown or hidden, or its name here. */
 export interface CalendarChange {
@@ -48,6 +45,9 @@ export interface CalendarSetupPort {
   ways(): Promise<readonly CalendarWay[]>;
   /** True or false only after the server confirms what the account has connected. */
   hasConnections?(): Promise<boolean>;
+  icloudMailboxes?(): Promise<readonly CalendarMailboxSource[]>;
+  linkedMailboxIds?(): Promise<readonly string[]>;
+  readonly factor?: (ask: GatedAsk) => ReactNode;
   /**
    * One ask, once. A rejection means the ask was not sent and nothing was connected: the step says so, and a new press
    * is a new ask with a new connection id.
@@ -60,7 +60,7 @@ export interface CalendarSetupPort {
    * A new sign-in for the connection the ask names. A rejection means the ask was not sent and the connection is as
    * it was.
    */
-  readonly signInAgain: ((ask: ConnectAsk) => Promise<ConnectAnswer>) | "none";
+  readonly signInAgain: ((ask: TypedConnectAsk) => Promise<ConnectAnswer>) | "none";
   readonly remove: ((connectionId: string) => Promise<void>) | "none";
   /** Reads the connection now. */
   readonly check: ((connectionId: string) => Promise<void>) | "none";

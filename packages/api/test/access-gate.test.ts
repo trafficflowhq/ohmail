@@ -191,12 +191,14 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
       ok: true,
       limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: false },
       aiCredits: { remaining: 0, total: 2000 },
+      prices: { classify_ingest: 1, screener: 1, draft: 17, propose: 20, workflow: 15 },
     }));
     const { db, deps } = await depsWith(stubPort({ access: read }));
     const session = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
     const res = await H(req("GET", "/account/access", { bearer: session.token }), deps);
     expect(res.status).toBe(200);
-    expect((await res.json()).aiCredits).toEqual({ remaining: 0, total: 2000 });
+    const body = await res.json();
+    expect(body.aiCredits).toEqual({ remaining: 0, total: 2000, draftCost: 17 });
     expect(read.mock.calls.some(([id]) => id === session.accountId)).toBe(true);
   });
 

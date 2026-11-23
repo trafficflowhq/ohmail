@@ -8,10 +8,11 @@ import { Blank, Button, Dot, Page, Sentence } from "@ohmail/ui/base";
 import {
   type CalendarSetupPort,
   type ConnectAnswer,
-  type ConnectAsk,
+  type TypedConnectAsk,
   type SteppedWay,
 } from "@ohmail/app-logic/calendar/setup";
 import { useText } from "../text/index.js";
+import { useSavedAppleSignIn } from "./SavedAppleSignIn.js";
 import { setupFaultKeyOf } from "./setup-fault.js";
 
 /** The blanks each way asks for, in the order the sentence says them. */
@@ -34,7 +35,11 @@ function kindOf(
 }
 
 /** The ask from what the fields hold; null where a field is empty. Only a password keeps its spaces. */
-function askOf(way: SteppedWay, connectionId: string, read: (name: BlankName) => string): ConnectAsk | null {
+function askOf(
+  way: SteppedWay,
+  connectionId: string,
+  read: (name: BlankName) => string,
+): TypedConnectAsk | null {
   const v = (name: BlankName) => (name === "password" ? read(name) : read(name).trim());
   if (BLANKS[way].some((name) => v(name) === "")) return null;
   if (way === "icloud") return { way, connectionId, user: v("user"), password: v("password") };
@@ -66,10 +71,13 @@ export function SignInStep({ way, again, port, back, trail, taken }: SignInStepP
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<Said>(null);
   const door = again === null ? port.connect : port.signInAgain;
-
   const clear = () => {
     for (const el of drawn.current) el.value = "";
   };
+  const saved = useSavedAppleSignIn(port, way === "icloud" && again === null, taken, busy, () => {
+    clear();
+    setSaid(null);
+  });
   useEffect(() => {
     const all = drawn.current;
     return () => {
@@ -78,21 +86,15 @@ export function SignInStep({ way, again, port, back, trail, taken }: SignInStepP
     };
   }, []);
 
-  const press = async () => {
-    if (asking.current || door === "none") return;
-    const connectionId = again ?? crypto.randomUUID();
-    const ask = askOf(way, connectionId, (name) => fields.current[name]?.value ?? "");
+  const send = async (connectionId: string, connect: () => Promise<ConnectAnswer>) => {
+    if (asking.current) return;
     clear();
-    if (ask === null) {
-      setSaid({ key: "signin.empty" });
-      return;
-    }
     asking.current = true;
     setBusy(true);
     setSaid(null);
     let answer: ConnectAnswer | null = null;
     try {
-      answer = await door(ask);
+      answer = await connect();
     } catch {
       answer = null;
     }
@@ -100,7 +102,21 @@ export function SignInStep({ way, again, port, back, trail, taken }: SignInStepP
     setBusy(false);
     if (answer === null) setSaid({ key: "signin.notSent" });
     else if (answer.kind === "refused") setSaid({ key: setupFaultKeyOf(answer.fault, way) });
+    else if (answer.kind === "step_up") setSaid({ key: "signin.factorExpired" });
     else taken(connectionId);
+  };
+
+  const press = () => {
+    if (asking.current || saved.busy || door === "none") return;
+    const connectionId = again ?? crypto.randomUUID();
+    const ask = askOf(way, connectionId, (name) => fields.current[name]?.value ?? "");
+    saved.dismiss();
+    if (ask === null) {
+      clear();
+      setSaid({ key: "signin.empty" });
+      return;
+    }
+    void send(connectionId, () => door(ask));
   };
 
   const blank = (name: BlankName) => (
@@ -127,10 +143,11 @@ export function SignInStep({ way, again, port, back, trail, taken }: SignInStepP
     <Page
       back={back}
       trail={trail}
-      refusal={said ? [t(said.key)] : undefined}
+      refusal={said ? [t(said.key)] : saved.refusal ? [saved.refusal] : undefined}
+      material={saved.material}
       acts={
         door === "none" ? null : (
-          <Button kind="ink" size="l" disabled={busy} onPress={() => void press()} keyHint="↵">
+          <Button kind="ink" size="l" disabled={busy || saved.busy} onPress={() => void press()} keyHint="↵">
             {busy ? t("signin.asking") : t("signin.connect")}
           </Button>
         )

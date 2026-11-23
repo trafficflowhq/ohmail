@@ -18,8 +18,8 @@ import { NONE, type None } from "../host/contract.js";
 import { ProductKeys, ProductSwitch } from "./ProductSwitch.js";
 import { PlaceChords } from "./chords.js";
 import { Columns } from "./Columns.js";
-import type { ConnectionFeed, FrameInner } from "./commands.js";
-import { useConnectionNotice } from "./connection.js";
+import type { FrameInner } from "./commands.js";
+import { ConnectionHost } from "./ConnectionHost.js";
 import {
   OVER_IDS,
   type CalendarEntry,
@@ -54,44 +54,6 @@ import type { useReportSlot } from "./report-slot.js";
 import { useProductArrival } from "./product-arrival.js";
 import { Stage } from "./Stage.js";
 import { useText } from "../text/index.js";
-
-const NO_SIGNAL = { read: () => null, subscribe: () => () => undefined };
-
-/** The connection, read off the host and today's views, said in the one slot. */
-function ConnectionHost({
-  host,
-  feed,
-  notices,
-  commands,
-}: {
-  host: FrameHost;
-  feed: Feed<ConnectionFeed>;
-  notices: NoticeStore;
-  commands: FrameCommands;
-}) {
-  const fed = useSignal(feed);
-  const quiet = useSignal(host.signals.hostConnection === NONE ? NO_SIGNAL : host.signals.hostConnection);
-  const setup = fed.setupHref;
-  const notice = useConnectionNotice(
-    {
-      mail: fed.mail,
-      online: fed.online,
-      session: host.session.state,
-      host: quiet,
-      copyAsOf: fed.copyAsOf ?? null,
-    },
-    {
-      recover: host.session.recover,
-      mailboxes: () => commands.go({ place: "settings", sub: "mailboxes" }),
-      help: () => commands.go({ place: "settings", sub: "help" }),
-      follow: fed.follow,
-      ...(setup !== null ? { connect: () => fed.follow(setup) } : {}),
-    },
-    fed.reason ?? null,
-  );
-  useEffect(() => notices.post("connection", notice ? [notice] : []));
-  return null;
-}
 
 /**
  * The dock at a phone's foot, by the design's rule: it stands over the list or a wide pane, and never while a letter

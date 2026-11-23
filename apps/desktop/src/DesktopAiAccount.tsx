@@ -10,7 +10,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useText } from "@ohmail/app/text";
-import { AiPane } from "@ohmail/app/settings/ai";
+import { AiPane, type AiCredits } from "@ohmail/app/settings/ai";
+import { useConsent } from "@ohmail/app-logic/consent";
+import { useFrame } from "@ohmail/app/frame";
+import { NONE } from "@ohmail/app/host";
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { useWindowReturn } from "./window-return.js";
@@ -25,7 +28,9 @@ export const ACCOUNT_AI_PATH = "/account/ai";
 
 const online = () => typeof navigator === "undefined" || navigator.onLine !== false;
 
-export function DesktopAiAccount() {
+export function DesktopAiAccount({ credits }: { credits?: AiCredits | null }) {
+  const { host, commands } = useFrame();
+  const { draftReplies, setDraftReplies } = useConsent();
   const t = useText("settings");
   /** `null` = not answered. Drawn, not pressable — never a guessed position. See the web twin. */
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -111,5 +116,20 @@ export function DesktopAiAccount() {
     })();
   }, [enabled, load, t]);
 
-  return <AiPane model={{ enabled, problem, noModel: false, toggle }} noModelSaid="" />;
+  return <AiPane
+    model={{ enabled, problem, noModel: false, toggle }}
+    noModelSaid=""
+    credits={credits}
+    cloudModel={host.capabilities.service === "managed" && enabled === true && problem === null}
+    toPlans={host.features.subscription === NONE ? undefined : () => commands.go({ place: "settings", sub: "billing" })}
+    draftReplies={draftReplies === null || !setDraftReplies ? undefined : {
+      enabled: draftReplies,
+      toggle: (next) => {
+        setProblem(null);
+        void setDraftReplies(next).catch(() => {
+          if (alive.current) setProblem(t("aiUnreadable"));
+        });
+      },
+    }}
+  />;
 }

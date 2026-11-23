@@ -19,18 +19,10 @@ export interface StoragePlansProps {
  */
 export function StoragePlans({ model, plans, linksOut }: StoragePlansProps) {
   const t = useText("settings");
-  const own = useText("accountStorage");
-  const devices = useText("devices");
-  const accessLock = useText("accessLock");
-  const refused = model.refusal === null ? null : refusalSaid({ settings: t, accessLock }, model.refusal);
-  const nothingRan = model.nothingRan ? devices("stepUpCancelledNothingRan") : null;
-  const said = refused ?? nothingRan;
+  const { wants, note } = useStorageChangeFeedback(model);
   return (
-    <SettingsSheet
-      title={t("storagePlansHead")}
-      wants={said === null ? undefined : { word: own("notOpened"), line: said }}
-    >
-      {refused !== null && nothingRan !== null ? <SettingNote warn>{nothingRan}</SettingNote> : null}
+    <SettingsSheet title={t("storagePlansHead")} wants={wants}>
+      {note}
       {plans.lines.map((plan) => (
         <PlanLines key={plan.plan} t={t} plan={plan} linksOut={linksOut} />
       ))}
@@ -45,6 +37,20 @@ export function StoragePlans({ model, plans, linksOut }: StoragePlansProps) {
       )}
     </SettingsSheet>
   );
+}
+
+export function useStorageChangeFeedback(model?: Pick<StorageModel, "refusal" | "nothingRan">) {
+  const t = useText("settings");
+  const own = useText("accountStorage");
+  const devices = useText("devices");
+  const accessLock = useText("accessLock");
+  const refused = !model?.refusal ? null : refusalSaid({ settings: t, accessLock }, model.refusal);
+  const nothingRan = model?.nothingRan ? devices("stepUpCancelledNothingRan") : null;
+  const said = refused ?? nothingRan;
+  return {
+    wants: said === null ? undefined : { word: own("notOpened"), line: said },
+    note: refused !== null && nothingRan !== null ? <SettingNote warn>{nothingRan}</SettingNote> : null,
+  };
 }
 
 export function StoragePlanActions({ model, add }: { readonly model: StorageModel; readonly add: boolean }) {

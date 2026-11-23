@@ -618,7 +618,8 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * on some paths only ("Rendered more hooks than during the previous render"). `accountDoor`
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
-  const { manageOffered, withdrawManage, storage, reread: rereadAccess } = useDesktopManageOffer(accountDoor);
+  const { manageOffered, withdrawManage, storage, aiCredits, reread: rereadAccess } =
+    useDesktopManageOffer(accountDoor, authKey);
   const { accountId: hostedAccountId, address: hostedAddress, reuseSweeps, recheck: recheckHostedSession } = useHostedSession(accountDoor, authKey);
   /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
   /** May this build point at a purchase at all (not the Mac App Store)? */
@@ -1425,6 +1426,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
             freshness={freshness}
             account={hostedAccountId}
             storage={accountDoor ? storage : null}
+            aiCredits={aiCredits}
             mayLinkOut={mayLinkOut}
             manageOffered={manageOffered}
             withdrawManage={withdrawManage}

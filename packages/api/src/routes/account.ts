@@ -225,7 +225,10 @@ export const accountRoutes: Route[] = [
         // from the two above — an account may hold every mailbox it is entitled to and have AI
         // off, or the other way round.
         aiEnabled: verdict.limits.aiEnabled,
-        ...(answered && verdict.aiCredits ? { aiCredits: verdict.aiCredits } : {}),
+        ...(answered && verdict.aiCredits ? { aiCredits: {
+          ...verdict.aiCredits,
+          ...(verdict.prices ? { draftCost: verdict.prices.draft } : {}),
+        } } : {}),
         ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
         ...(trialProgress !== null ? { trialProgress } : {}),
         exportPath: "/account/export",

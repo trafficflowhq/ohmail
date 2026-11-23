@@ -25,11 +25,12 @@ import { bindDb, calSettings } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
 import { calendarFeed } from "@trafficflow/services/calendar";
+import { mailboxCredentials } from "@trafficflow/db/mail";
 import type { CalendarConnectionRecord } from "@ohmail/wire";
 import { calendarSyncPass } from "../packages/organizer/src/calendar/sync-pass.js";
 import { calendarWriteDrain } from "../packages/organizer/src/calendar/write-drain.js";
 import { AVAILABLE, ZONES, capturedLog, depsFor, openWorld, providersOf, recordWrite, type World } from "../packages/organizer/test/_calendar-world.js";
-import { makeDeps, req, seedSession } from "../packages/api/test/helpers.js";
+import { makeDeps, req, seedMailbox, seedSession } from "../packages/api/test/helpers.js";
 import { makeReader, makeWriter } from "../packages/cal-providers/src/caldav/index.js";
 import { guardedRequest } from "../packages/cal-providers/src/request/guarded.js";
 import { startCalDavStandIn, type StandIn, type StandInOptions } from "../packages/cal-providers/test/caldav-stand-in.js";
@@ -49,10 +50,12 @@ const DAY_MS = 24 * 3_600_000;
  * machine's own address under the name it was meant for. The gate, the sign-in's hosts and the
  * redirects are the real ones.
  */
-function caldavByName() {
+function caldavByName(apple?: StandIn) {
   const http = guardedRequest({
     writes: true,
-    resolver,
+    resolver: apple ? {
+      resolve: (name) => name === "caldav.icloud.com" ? Promise.resolve(["127.0.0.1"]) : resolver.resolve(name),
+    } : resolver,
     policy: { kind: "own-network" },
     hosts: null,
     limits: { connectMs: CONNECT_TIMEOUT_MS, totalMs: ANSWER_TIMEOUT_MS, maxRedirects: MAX_REDIRECTS, maxBodyBytes: FETCH_BODY_MAX_BYTES },
@@ -60,6 +63,10 @@ function caldavByName() {
       const named = new URL(url);
       const here = new URL(url);
       here.hostname = "127.0.0.1";
+      if (apple && named.hostname === "caldav.icloud.com") {
+        here.protocol = "http:";
+        here.port = String(apple.port);
+      }
       return pinnedHttpRequest(here.href, { ...opts, headers: { ...opts.headers, host: named.host } });
     },
   });
@@ -105,7 +112,7 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
    * A person connects `start` at the door, on their own network, and a worker that keeps running
    * takes the connection's turns: one memory for all of them, so that only its first turn lists.
    */
-  async function connected(start: string) {
+  async function connected(start: string, options: { onePage?: boolean; apple?: StandIn } = {}) {
     const { deps } = await makeDeps(new Date());
     // The api role's pool, minted for the request as the host mints its own: bound to nothing.
     deps.db = bindDb(served.db, { account: null });
@@ -113,18 +120,31 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
     deps.keyProvider = w.keys;
     deps.logger = createLogger({ service: "api", level: "debug", sink: () => {} });
     deps.services = { ...deps.services, calendar: calendarFeed, calendarConnect: { policy: "own-network", ceremonies: { google: NO_WAY, microsoft: NO_WAY } } } as never;
-    const s = await seedSession(w.db as never, { now: new Date() });
+    const s = await seedSession(w.db as never, { now: new Date(), ...(options.apple ? { lastTwofaAt: new Date() } : {}) });
     await w.db.insert(calSettings).values({ accountId: s.accountId, enabledAt: new Date() });
+    const connectionId = randomUUID();
+    let body: unknown = { way: "caldav", connectionId, server: start, user: "mila", password };
+    if (options.apple) {
+      const fromMailbox = await seedMailbox(w.db, { accountId: s.accountId, provider: "icloud" });
+      const sealed = await w.keys.encrypt(`revoked-${password}`);
+      await w.db.insert(mailboxCredentials).values({
+        accountId: s.accountId, mailboxId: fromMailbox, transport: "imap",
+        secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
+        meta: { host: "imap.mail.me.com", user: options.apple.options.user },
+      });
+      body = { way: "icloud", connectionId, fromMailbox };
+    }
     const made = await app.handle(
       req("POST", "/calendar/connections", {
-        bearer: s.token, body: JSON.stringify({ way: "caldav", connectionId: randomUUID(), server: start, user: "mila", password }),
+        bearer: s.token, body: JSON.stringify(body),
         headers: { "x-requested-with": "ohmail", "idempotency-key": randomUUID() },
       }),
       { ...deps, session: null, idempotency: null } as ApiDeps,
     );
     expect(made.status).toBe(202);
+    if (options.apple) expect((await made.clone().text()).includes(password)).toBe(false);
     const id = (await made.json() as CalendarConnectionRecord).id;
-    const worker = depsFor(w, caldavByName(), { drainWrites: calendarWriteDrain({ clock: { now: () => Date.now() }, zones: ZONES, log: capturedLog().log }) });
+    const worker = depsFor(w, caldavByName(options.apple), { ...(options.onePage ? { turn: { pages: 1, ms: 60_000 } } : {}), drainWrites: calendarWriteDrain({ clock: { now: () => Date.now() }, zones: ZONES, log: capturedLog().log }) });
     const due = { accountId: s.accountId, id, provider: "caldav", status: "active" as const };
     return {
       id, accountId: s.accountId,
@@ -157,6 +177,32 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
       },
     };
   }
+
+  it("asks for a new calendar sign-in when the mailbox's stored app password has been revoked", async () => {
+    const apple = await server();
+    const c = await connected("", { apple });
+    expect(await c.turn()).toBe("stopped sign_in_refused");
+    expect(await c.stands()).toMatchObject({ status: "reconnect", word: "sign_in_refused" });
+    expect(apple.seen.length).toBeGreaterThan(0);
+    expect(apple.seen.every(({ withCredential, signedIn }) => withCredential && !signedIn)).toBe(true);
+  }, 120_000);
+
+  it("resumes a paged first sync when the provider names the numbered host through its home redirect", async () => {
+    const store = await server({ truncateAt: 1 });
+    store.put("work", "two.ics", eventText("two", "Glaze firing"));
+    const numbered = at(BESIDE, store, store.paths.home);
+    let home = numbered;
+    const alias = "/calendar-home/";
+    const typed = await server({ homeHref: () => home, sendsOn: { [alias]: numbered } });
+    const c = await connected(at(TYPED, typed, typed.paths.start), { onePage: true });
+    expect(await c.turn()).toBe("synced");
+    expect(await c.titles()).toEqual(["Kiln check"]);
+
+    home = alias;
+    expect(await c.turn()).toBe("synced");
+    expect(await c.stands()).toMatchObject({ status: "active", word: null });
+    expect(await c.titles()).toEqual(["Glaze firing", "Kiln check"]);
+  }, 120_000);
 
   const REFUSED = { status: "failing", word: "host_changed", waitsAboutADay: true };
 

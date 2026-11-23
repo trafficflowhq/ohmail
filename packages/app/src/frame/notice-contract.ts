@@ -20,6 +20,8 @@ interface NoticeSaid {
   readonly kind: NoticeKind;
   /** Where one kind stands more than once (one per mailbox): what tells them apart. */
   readonly id?: string;
+  /** Attempts in a failed-send notice. A newly failed attempt brings its details back into view. */
+  readonly failedSendIds?: readonly string[];
   readonly title: string;
   readonly hot?: boolean;
   readonly line?: string;

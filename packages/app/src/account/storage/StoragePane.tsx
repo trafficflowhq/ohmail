@@ -47,7 +47,7 @@ export function StoragePane({ model, body, factor, sheet }: StoragePaneProps) {
       >
         <SettingLine
           label={t("storageMail")}
-          tag={t("storageMailSub")}
+          description={t("storageMailSub")}
           toggle={{ on: model.mail.on, onChange: model.setMail }}
           off={model.mail.busy}
         />

@@ -333,7 +333,9 @@ describe("the storage mails' switch", () => {
     expect(sw().getAttribute("aria-checked")).toBe("true");
     fireEvent.click(sw());
     expect(model.setMail).toHaveBeenCalledWith(false);
-    expect(line(said("storageMail")).textContent).toContain(said("storageMailSub"));
+    expect(
+      screen.getByRole("switch", { name: said("storageMail"), description: said("storageMailSub") }),
+    ).toBe(sw());
   });
 
   it("is off while a write is on its way, and says a refused write", () => {
@@ -343,6 +345,14 @@ describe("the storage mails' switch", () => {
     drawn(STATES.mailRefused.model);
     expect(seen(said("storageMailFailed"))).toBe(true);
     expect(seen(said("notSaved"))).toBe(true);
+  });
+
+  it.each([
+    ["en", "Email me when storage is almost full", "At 90% and when it is full"],
+    ["de", "E-Mail, wenn der Speicher fast voll ist", "Bei 90 % und wenn er voll ist"],
+  ] as const)("names the storage email setting plainly in %s", (lang, label, description) => {
+    drawn(STATES.rest.model, { lang });
+    expect(screen.getByRole("switch", { name: label, description })).toBeTruthy();
   });
 
   it("stands where the build may not link out too", () => {

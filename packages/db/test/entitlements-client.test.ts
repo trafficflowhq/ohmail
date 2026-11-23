@@ -1362,6 +1362,28 @@ describe("access — the storage offer and the confirmed decrease (cloud 0057's 
   const withBlocks = (blocks: Record<string, unknown>): Record<string, unknown> =>
     ({ ...(wire("access-200-trialing") as Record<string, unknown>), ...blocks });
 
+  it("reads the billing program's nested offer and its monthly storage add-on on a yearly plan", async () => {
+    const c = client([{ status: 200, body: withBlocks({ storageOffer: {
+      card: {
+        currency: "usd", interval: "year",
+        plans: [{ plan: "plus", mailboxes: 5, storageBytes: 5_000_000_000, priceMinor: 15_000 }],
+        storageUnit: { bytes: 10_000_000_000, priceMinor: 1_000, interval: "month", maxUnits: 10 },
+      },
+      current: { ...OFFER.current, plan: "plus" },
+      fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, planPriceMinor: 15_000,
+        storagePriceMinor: 1_000, keepsAll: true },
+      canChange: true, reason: null,
+    } }) }]);
+    const v = await c.port.access(ACC, { fresh: true, storageNeed: NEED });
+    expect(v.ok && v.storageOffer).toMatchObject({
+      interval: "year", canChange: true,
+      plans: [{ plan: "plus", mailboxes: 5, roomBytes: 5_000_000_000, amount: 15_000 }],
+      addon: { unitBytes: 10_000_000_000, amount: 1_000, interval: "month", maxUnits: 10 },
+      fit: { amount: 27_000 },
+    });
+    expect(c.faults).toEqual([]);
+  });
+
   it("a read carrying the need sends it, and the offer the program sized comes back narrowed", async () => {
     const c = client([{ status: 200, body: withBlocks({ storageOffer: { ...OFFER, extra: "dropped" } }) }]);
     const v = await c.port.access(ACC, { fresh: true, storageNeed: NEED });

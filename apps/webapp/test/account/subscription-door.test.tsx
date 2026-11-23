@@ -5,18 +5,21 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountLifecycle } from "../../app/api-client";
 import { NONE } from "@ohmail/app/host";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { forgetOwner, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { SubscriptionModel } from "@ohmail/app/account";
 import { fillOver, TextProvider, type Messages } from "@ohmail/app/text";
 import { useSubscription } from "../../../../packages/app/src/account/subscription/index.js";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { mailSettings, MailStateMount, NO_PANE_PARTS } from "@ohmail/app/mail";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
 import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 import ownDe from "../../../../packages/app/messages/account-subscription.de.json";
 import ownEn from "../../../../packages/app/messages/account-subscription.en.json";
 import { de, en, json, OFFLINE, published, refusal, serve, settle, type Server } from "./storage-harness";
-import { NEAR, open } from "./storage-fixtures";
+import { NEAR, OFFER, open } from "./storage-fixtures";
 
 /**
  * SETTINGS › SUBSCRIPTION OVER THE WEB'S OWN FILLING (`subscription-door.ts`): the address is made by the press and
@@ -38,6 +41,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  forgetOwner();
   server.restore();
 });
 
@@ -60,18 +64,21 @@ async function filled(withdraw: () => void = () => {}, scope: string | null = nu
   return renderHook(() => useSubscriptionDoor(scope, withdraw), { wrapper: Words });
 }
 /** The mounted Settings place and the web section the host offers with its access answer. */
-async function mounted(withdraw: () => void = () => {}) {
-  const [{ useSubscriptionDoor }, { MailFrame }, { WEB_PANE_PARTS }, { SubscriptionSection }] = await Promise.all([
+async function mounted(withdraw: () => void = () => {}, account?: string) {
+  const [{ useSubscriptionDoor }, { MailFrame }, { WEB_PANE_PARTS }, { MountedSubscriptionSection, SubscriptionSection }] = await Promise.all([
     import("../../app/(product)/mailbox/subscription-door"),
     import("../../app/shell/browser-mail"),
     import("../../app/(product)/mailbox/pane-parts"),
     import("../../app/(product)/mailbox/SubscriptionSection"),
   ]);
+  if (account) rememberOwner(account);
   await published();
   server.forget();
   const { host } = fakeHost({
-    scope: "subscription-test",
-    engine: NO_ENGINE,
+    scope: account ?? "subscription-test",
+    account,
+    engine: account ? new OhmailEngine({ adapter: new FixturesAdapter() }) : NO_ENGINE,
+    above: account ? MailStateMount : NONE,
     service: "managed",
     address: fakeAddress("#/settings/billing"),
     places: { settings: mailSettings({
@@ -80,7 +87,12 @@ async function mounted(withdraw: () => void = () => {}) {
       billingHasFoot: WEB_PANE_PARTS.billingHasFoot,
     }) },
     features: {
-      subscription: { name: "subscription", render: (sheet) => <SubscriptionSection onNowhere={withdraw} sheet={sheet} /> },
+      subscription: {
+        name: "subscription",
+        render: (sheet) => account
+          ? <MountedSubscriptionSection onNowhere={withdraw} sheet={sheet} />
+          : <SubscriptionSection onNowhere={withdraw} sheet={sheet} />,
+      },
     },
   });
   function SubscriptionFrame() {
@@ -178,6 +190,18 @@ describe("the press over the real filling", () => {
     expect(server.on(MINT).map((request) => request.body)).toEqual([
       { lang: "en", plan: "plus", interval: "month" },
     ]);
+  });
+
+  it.each([
+    { canChange: true, addonUnits: OFFER.addon.maxUnits - 1, offered: true },
+    { canChange: false, addonUnits: 0, offered: false },
+    { canChange: true, addonUnits: OFFER.addon.maxUnits, offered: false },
+  ])("offers storage only when changes are allowed and room remains below the unit cap ($canChange, $addonUnits)", async ({ canChange, addonUnits, offered }) => {
+    access = open({ ...NEAR, offer: { ...OFFER, canChange, current: { ...OFFER.current, addonUnits } } });
+    await mounted(() => {}, "account-subscription");
+    await settle();
+    expect(screen.queryByRole("button", { name: en.settings.storageAddStorage }) !== null).toBe(offered);
+    expect(server.sent).toEqual([]);
   });
 
   it("makes no address by being drawn, and asks nothing to draw the pane", async () => {

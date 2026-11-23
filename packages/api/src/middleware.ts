@@ -564,16 +564,16 @@ export function accountErasedResponse(): Response {
  * every protected step-up route `withSession` still answers first and this branch stays
  * unreachable.
  */
-export const withStepUp: Middleware = (next, route) => async (req, deps, params) => {
-  if (route.options?.stepUp) {
-    const s = deps.session;
-    if (!s) return errorResponse("unauthorized", 401, "authentication required");
-    const withinWindow =
-      s.lastTwofaAt != null && deps.now().getTime() - s.lastTwofaAt.getTime() <= deps.authConfig.stepUpWindowMs;
-    if (!withinWindow) return errorResponse("step_up_required", 403, "recent two-factor authentication required");
-  }
-  return next(req, deps, params);
-};
+export function stepUpRefusal(deps: ApiDeps): ReturnType<typeof errorResponse> | null {
+  const s = deps.session;
+  if (!s) return errorResponse("unauthorized", 401, "authentication required");
+  const withinWindow =
+    s.lastTwofaAt != null && deps.now().getTime() - s.lastTwofaAt.getTime() <= deps.authConfig.stepUpWindowMs;
+  return withinWindow ? null : errorResponse("step_up_required", 403, "recent two-factor authentication required");
+}
+
+export const withStepUp: Middleware = (next, route) => async (req, deps, params) =>
+  (route.options?.stepUp ? stepUpRefusal(deps) : null) ?? next(req, deps, params);
 
 /**
  * An unverified account must not be able to generate meaningful cost. Every route declares a

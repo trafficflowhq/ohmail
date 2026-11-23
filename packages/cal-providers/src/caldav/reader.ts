@@ -26,10 +26,11 @@ import { DEFAULT_LIMITS, readCalendar } from "@ohmail/cal-core";
 import { CURSOR_MAX_CHARS, MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT, TOKEN_MAX_CHARS } from "../limits.js";
 import type { Answer, CalendarInfo, CalendarReader, ChangeItem, ChangePage, ChangeToken, Connection, LeftReason } from "../port.js";
 import type { AdapterDeps } from "../request/index.js";
+import { hopOf } from "../request/shape.js";
 import { addressOf, finding, refuse, tlsAlone, type Refused, type Session } from "./ask.js";
 import { findHomes, findPrincipal, typedAddress, type Typed } from "./discover.js";
 import { turnHostsOf } from "./hosts.js";
-import { calendarsOf, fetchMembers, listBySync, listByTags, tagOf, type FoundMembers, type Listed, type Listing } from "./report.js";
+import { askHome, calendarsOf, fetchMembers, listBySync, listByTags, tagOf, type FoundMembers, type Listed, type Listing } from "./report.js";
 
 /**
  * Multiget reports one page may send. One is the rule. More are sent only where an answer was past
@@ -167,7 +168,7 @@ async function find(s: Session, typed: Typed): Promise<Found> {
  * this turn. THE ONE BUILDER OF A CALDAV SIGN-IN: the reader and the writer both make it here, and
  * the turn is the caller's `Connection` object (`hosts.ts`).
  */
-export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSignal): { readonly ok: true; readonly session: Session; readonly typed: Typed } | Refused {
+export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSignal, continuing?: string): { readonly ok: true; readonly session: Session; readonly typed: Typed } | Refused {
   if (c.credential.kind !== "basic") return refuse("sign_in_refused");
   const typed = c.start === null ? null : typedAddress(c.start);
   if (typed === null) return refuse("address_invalid");
@@ -179,7 +180,18 @@ export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSig
     auth: { credential: c.credential, admits: hosts.admits, tlsOnly: typed.secured === null },
     locate: () => hosts.once(async () => {
       const found = await find(session, typed);
-      return found.ok ? null : found.reason;
+      if (!found.ok) return found.reason;
+      if (continuing !== undefined) {
+        const collection = hopOf(new URL(continuing), null);
+        if (hosts.admits(collection)) return null;
+        // A provider may name a home alias. Re-follow only the principal's homes to recover its redirect.
+        const discover = found.tlsOnly ? tlsAlone(session) : session;
+        for (const home of found.homes) {
+          const answer = await askHome(discover, home);
+          if (hosts.admits(collection)) return answer.ok ? null : answer.reason;
+        }
+      }
+      return null;
     }),
   };
   return { ok: true, typed, session };
@@ -219,12 +231,12 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
     },
 
     async readChanges(c, cal, since, page, signal): Promise<Answer<ChangePage>> {
-      const opened = open(c, signal);
+      const collection = addressOf(cal.id);
+      const opened = caldavSession(deps, c, signal, page.cursor !== null ? collection ?? undefined : undefined);
       if (!opened.ok) return opened;
       const s = opened.session;
       const began = page.cursor === null ? standingOf(since) : readCursor(page.cursor);
       if (began === null) return refuse("token_gone");
-      const collection = addressOf(cal.id);
       if (collection === null) return refuse("not_found");
 
       // The listing: what changed since the token, or everything.
