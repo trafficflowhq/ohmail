@@ -12,7 +12,9 @@ const QUEUE = [sender("one", "One")];
 function running(progress: Progress | null): ScreenerSuggestControl {
   return {
     available: 40, resuggestable: 0, pool: 40, sizes: [40], size: 40, phase: "running",
-    quote: { senders: 40, credits: 40 }, notice: null, progress,
+    quote: { senders: 40, credits: 40 },
+    notice: progress === null ? null : `${progress.done} of ${progress.total} suggested…`,
+    progress,
     open: () => {}, openAgain: () => {}, choose: () => {}, confirm: () => {}, cancel: () => {},
   };
 }

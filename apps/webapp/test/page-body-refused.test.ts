@@ -145,15 +145,19 @@ describe("the matcher sends every page's body-carrying request to the middleware
     }
   });
 
-  it("a plain GET off the literal list costs no edge invocation, and the hot path is never matched", async () => {
+  it("only admitted paths match a plain GET, with the API prefix carrying the address proof", async () => {
     const runs = await compile();
     expect(runs("/no-such-page")).toBe(false);
     expect(runs("/demo")).toBe(false);
     for (const path of [
-      "/api", "/api/sync/changes", "/auth/refresh", "/auth/refresh/logout", "/_next/static/chunk.js",
+      "/auth/refresh", "/auth/refresh/logout", "/_next/static/chunk.js",
     ]) {
       expect(runs(path, { "content-type": "application/json", "next-action": "x" }), path).toBe(false);
     }
+    for (const path of ["/api", "/api/sync/changes", "/API/sync/changes"]) {
+      expect(runs(path), path).toBe(true);
+    }
+    expect(runs("/apix")).toBe(false);
     // …and the exclusion is exact: a path merely BELOW the door is a page request like any other.
     expect(runs("/auth/refresh/logout/x", { "content-type": "application/json" })).toBe(true);
   });
@@ -165,7 +169,9 @@ describe("the matcher sends every page's body-carrying request to the middleware
     for (const path of ["/site-assets/x", "/landing/x", "/.well-known/org.flathub.VerifiedApps.txt", "/flathub-verification"]) {
       expect(runs(path), path).toBe(true);
     }
-    expect(runs("/api/waitlistx", { "content-type": "application/json" }), "the literal is exact").toBe(false);
+    expect(runs("/api/waitlistx", { "content-type": "application/json" }), "the general API prefix").toBe(true);
+    expect(config.matcher).toContain("/api/waitlist");
+    expect(config.matcher).not.toContain("/api/waitlistx");
   });
 
   it("the path literals come first, so the textual drift guards read every one of them", () => {

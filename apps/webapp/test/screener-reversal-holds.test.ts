@@ -207,6 +207,21 @@ function installWorld(): void {
       if (w.holdMove) return new Promise<Response>(() => {});
       return w.moveOne(mv[1]!, folder);
     }
+    if ((method === "POST" && url.endsWith("/rules")) ||
+        (method === "PATCH" && /\/rules\/[^/?]+$/.test(url))) {
+      const { release } = JSON.parse(String(init?.body ?? "{}")) as {
+        release?: { messageIds: string[]; from: string; to: string };
+      };
+      if (release) {
+        expect(release.from).toBe(QUARANTINE);
+        for (const id of release.messageIds) w.posts.push(`move ${id} → ${release.to}`);
+        if (w.refuseMove) {
+          return new Response(JSON.stringify({ error: { code: "not_found", message: "message not found" } }),
+            { status: 404, headers: { "content-type": "application/json" } });
+        }
+        throw new Error("the test world did not expect a successful atomic release");
+      }
+    }
     const scn = /\/screener\/([^/?]+)$/.exec(url);
     if (scn && method === "POST") {
       const dest = (JSON.parse(String(init?.body ?? "{}")) as { dest?: string }).dest ?? "INBOX";

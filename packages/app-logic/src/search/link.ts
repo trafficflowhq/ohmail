@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { filterOf, folderKeyOf, type Pressed } from "./facets.js";
+import { filterOf, folderKeyOf, NONE_PRESSED, type Pressed } from "./facets.js";
 import { dayBounds, type SearchNarrowing } from "./question.js";
 import type { Translator } from "../text/translator.js";
 import type { SearchListInput } from "./types.js";
@@ -19,6 +19,7 @@ type LinkWords = Readonly<Record<string, string>>;
 
 export function filtersFromLink(words: LinkWords, t: Translator): Pressed {
   const { folder, sender, files } = words;
+  if (!folder && !sender && files !== "1") return NONE_PRESSED;
   return [
     ...(folder
       ? [filterOf({ group: "folder", key: folderKeyOf(folder), raw: folder, exactPath: true }, t)]

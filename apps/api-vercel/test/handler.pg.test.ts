@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql as raw } from "drizzle-orm";
 import {
   API_MAX_DURATION_MS, closePooledDbs, makePooledDb, POOLED_ACQUIRE_TIMEOUT_MS, POOLED_IDLE_TIMEOUT_S,
-  POOLED_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS,
+  POOLED_MAX_CONNECTIONS, POOLED_WRITE_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS,
 } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { accounts, drafts, mailboxes, refreshTokens, scheduledSendFiles, sessions, users } from "@trafficflow/db";
@@ -107,15 +107,14 @@ const at = (path: string, init: RequestInit = {}): Request =>
   new Request(`https://api.ohmail.app${path}`, init);
 
 /**
- * EVERY connection of the pool `buildDeps` hands out, busy for `seconds`. The pool is
- * module-cached per URL, so these are the request's own connections; each holder needs one of
- * its own, so all are dialled first — one holder on a four-connection pool starves nothing.
+ * Fill the request pool for the given kind of route. Dial its connections first so each
+ * holder takes one, including when a session door uses a shorter wait on the same pool.
  */
-async function occupyEveryConnection(seconds: number): Promise<Promise<unknown>[]> {
-  const pooled = makePooledDb(PG_TEST_URL);
-  await Promise.all(Array.from({ length: POOLED_MAX_CONNECTIONS },
-    () => pooled.execute(raw`select pg_sleep(0.05)`)));
-  const holders = Array.from({ length: POOLED_MAX_CONNECTIONS }, () => {
+async function occupyEveryConnection(seconds: number, purpose?: "write"): Promise<Promise<unknown>[]> {
+  const pooled = makePooledDb(PG_TEST_URL, { purpose });
+  const length = purpose === "write" ? POOLED_WRITE_MAX_CONNECTIONS : POOLED_MAX_CONNECTIONS;
+  await Promise.all(Array.from({ length }, () => pooled.execute(raw`select pg_sleep(0.05)`)));
+  const holders = Array.from({ length }, () => {
     const h = Promise.resolve(pooled.execute(raw`select pg_sleep(${raw.raw(String(seconds))})`));
     h.catch(() => { /* awaited by the caller; this only prevents an unhandled rejection */ });
     return h;
@@ -198,7 +197,10 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
     // statement — the pool refuses first, which is exactly the answer being timed. Each answer
     // also waits out the fault record's own budget, whose write meets the same saturated pool:
     // measured 6.0 s at the session doors, so the bound is the ceiling plus that budget.
-    const holders = await occupyEveryConnection(19);
+    const holders = (await Promise.all([
+      occupyEveryConnection(19),
+      occupyEveryConnection(19, "write"),
+    ])).flat();
     const bearer = { authorization: "Bearer 00000000000000000000000000000000000000000000" };
     const [session, refresh, write] = await Promise.all([
       timed(at("/auth/session", { headers: bearer })),

@@ -35,6 +35,7 @@ export {
  * top of `index.ts`.
  */
 export { schema } from "./schema.js";
+export { POOLED_WRITE_MAX_CONNECTIONS } from "./handle-table.js";
 export {
   makeDb, closeDb, makeOwnedDb, makePooledDb, closePooledDbs, acquireCeilingHandle,
   WORKER_TIMEOUTS, WORKER_POOL_MAX,

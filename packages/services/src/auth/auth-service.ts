@@ -27,7 +27,7 @@ import {
   erasedBearerAccount,
   KNOWN_CLIENT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
-import { assertPassWalk, bridgeTx, credentialContext, keyedCredentialDb, type Db, type PassRoster, type ServiceContext, type UnboundDb } from "../context.js";
+import { assertPassWalk, bridgeTx, credentialContext, keyedCredentialDb, registrationContext, type Db, type PassRoster, type ServiceContext, type UnboundDb } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { pruneWakeRows } from "../push-service.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
@@ -810,7 +810,7 @@ export class AuthService extends SessionLifecycle {
     // network call with its own timeout, and holding a Postgres transaction (and its connection,
     // on a small serverless pool) across one is a self-inflicted outage — and a mail failure can
     // then never roll back a committed account.
-    const registration = { ...ctx, db: ctx.credentialDb ?? ctx.db, accountId: "" };
+    const registration = registrationContext(ctx);
     const created = await this.inTransaction(registration, async (txCtx) => {
       assertBinding(txCtx.db, null);
       await rebindTx(txCtx.db, { key: email });

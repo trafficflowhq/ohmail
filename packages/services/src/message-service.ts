@@ -11,7 +11,7 @@ import {
   folderMoveNameError, validateFolderMovePayload, resolveFolderDestination, carryBinding,
   type ChangeInput, type InventoryFolder, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
-import { dialect } from "@trafficflow/db/dialect";
+import { dialect, pgOnly } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import {
   createLogger, httpsUnsubscribeUri, unsubscribeHeaderState,
@@ -810,6 +810,7 @@ export class MessageService {
    * each month's newest row in one pass over the account. */
   private async lockedMonths(ctx: ServiceContext, zone: string): Promise<unknown[][]> {
     const d = dialect(ctx.db);
+    if (d.name !== "pg") throw new Error("locked history requires Postgres");
     const at = datedKey(d, "m");
     let normalized = "UTC";
     try {
@@ -818,16 +819,16 @@ export class MessageService {
       if (!(error instanceof RangeError)) throw error;
     }
     const read = (zoneName: string) => {
-      const timeZone = /^[+-]/.test(zoneName) ? sql`${zoneName}::interval` : sql`${zoneName}::text`;
+      const timeZone = /^[+-]/.test(zoneName) ? pgOnly(sql`${zoneName}::interval`) : pgOnly(sql`${zoneName}::text`);
       // scoped-by: ownedMessages pins the account and excludes deleted rows.
-      return d.exec(ctx.db, sql`
+      return d.exec(ctx.db, pgOnly(sql`
         select distinct on (bucket) ${d.castInt(sql`count(*) over (partition by bucket)`)} as c,
           instant as d, id, to_char(bucket, 'YYYY-MM') as month
         from (
           select m.id, ${at} as instant, date_trunc('month', ${at} at time zone ${timeZone}) as bucket
           from messages m where ${ownedMessages(ctx.accountId, "m")}
         ) dated
-        order by bucket, instant desc nulls last, id desc`);
+        order by bucket, instant desc nulls last, id desc`));
     };
     try {
       return await read(normalized);
