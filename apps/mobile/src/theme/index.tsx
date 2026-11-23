@@ -18,6 +18,7 @@ import { type as typePresets } from "./type";
 import { HIT, layout, motion, radius, space, zLayer } from "./tokens";
 import { FIRST_READING, readProbe, textCapOf, textKeyOf } from "./text-scale";
 import { useTextEpoch } from "./text-epoch";
+import { MailThemeContext } from "./mail-context";
 
 export * from "./face";
 export * from "./oklch";
@@ -52,6 +53,8 @@ export interface ThemeMotion {
 
 export interface Theme {
   scheme: SchemeName;
+  /** The mail routes opt into the Paper design tokens. */
+  mail?: true;
   /** The face actually rendered right now. Always concrete — `paper` is the resting value. */
   face: FaceName;
   /**
@@ -96,7 +99,8 @@ export interface Theme {
 const ThemeContext = createContext<Theme | null>(null);
 
 export function useTheme(): Theme {
-  const t = useContext(ThemeContext);
+  const root = useContext(ThemeContext);
+  const t = useContext(MailThemeContext) ?? root;
   if (!t) throw new Error("useTheme() outside <ThemeProvider>");
   return t;
 }

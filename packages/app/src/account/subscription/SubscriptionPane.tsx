@@ -6,7 +6,7 @@ import type { PaneSheet } from "../../settings/contract.js";
 import { StorageInfo } from "../storage/StoragePane.js";
 import type { PlanName, Standing, SubscriptionModel } from "./model.js";
 import { readPlansOf, SubscriptionPayment, SubscriptionPlans } from "./SubscriptionPlans.js";
-import "./trial-progress.css";
+import { TrialProgress } from "./TrialProgress.js";
 
 export interface SubscriptionPaneProps {
   readonly model: SubscriptionModel;
@@ -125,22 +125,7 @@ function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPanePro
           : undefined
       }
     >
-      {progress ? (
-        <>
-          <SettingLine label={own("trialDay")} value={own("trialDayOf", progress)} />
-          <div className="trial-progress" aria-hidden="true">
-            {Array.from({ length: Math.min(progress.total, 31) }, (_, index) => (
-              <span
-                className="trial-progress-day"
-                key={index}
-                data-elapsed={
-                  index < (progress.day * Math.min(progress.total, 31)) / progress.total ? "" : undefined
-                }
-              />
-            ))}
-          </div>
-        </>
-      ) : null}
+      {progress ? <TrialProgress progress={progress} /> : null}
       {standing?.state === "trial" && standing.ends ? (
         <SettingLine label={own("trialEnds")} value={standing.ends} />
       ) : null}

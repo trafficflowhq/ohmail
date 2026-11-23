@@ -154,6 +154,7 @@ export interface ShellConfig {
   readonly serverName: string;
   readonly build: { readonly version: string | null; readonly commit: string | null };
   readonly language: "en" | "de";
+  readonly languageChoice?: "en" | "de" | null;
   /** Where to return to after the web view's process ended, or null for the first place. */
   readonly place: string | null;
   /** The phone's old copy of this mailbox waits to be handed across once (`oldCopy.page`). */
@@ -178,12 +179,15 @@ export interface ShellConfig {
 export type ShellAct =
   | { readonly act: "signOut" }
   | { readonly act: "openServers" }
+  | { readonly act: "language.set"; readonly choice: ShellConfig["language"] | null }
   | { readonly act: "chrome"; readonly scheme: "light" | "dark" }
   | { readonly act: "notifications.permission" }
   | { readonly act: "notifications.request" }
   | { readonly act: "backup.read" }
+  | { readonly act: "about.page"; readonly page: "privacy" | "subprocessors" | "imprint" }
   /** Draw one mail notice. Native writes its words; what was done with it comes back as `notice`. */
   | { readonly act: "notices.post"; readonly notice: BridgeNotice; readonly details?: MailNoticeDetails }
+  | { readonly act: "calendar.guests"; readonly to: readonly string[]; readonly subject: string }
   | { readonly act: "calendar.snapshot"; readonly snapshot: CalendarSnapshot; readonly publication?: string }
   | { readonly act: "calendar.clear"; readonly publication: string }
   | { readonly act: "calendar.resolve"; readonly generation: string }
@@ -193,6 +197,18 @@ export type ShellAct =
    * takes it down at the server and at the distributor while it is false.
    */
   | { readonly act: "wake.want"; readonly wanted: boolean };
+
+export type BrowserAccountPane = "account" | "devices" | "invites" | "security";
+export type PairGrant = "device-pair" | "invite";
+
+export type PhoneAccountRequest = { readonly scope: string } & (
+  | { readonly do: "pairs" }
+  | { readonly do: "deletePage" }
+  | { readonly do: "settingsPage"; readonly pane: BrowserAccountPane }
+  | { readonly do: "mint"; readonly grant: PairGrant; readonly name: string }
+  | { readonly do: "revoke"; readonly grant: PairGrant; readonly pairId: string }
+  | { readonly do: "activate"; readonly code: string }
+);
 
 export type PhoneOrganizerRequest =
   | { readonly do: "read" }
@@ -284,7 +300,12 @@ export interface Requests {
     readonly answer: {
       readonly permission?: NoticePermission; readonly backup?: "excluded" | "included" | "unknown";
       readonly notice?: NoticePosted; readonly calendar?: CalendarKept; readonly widget?: WidgetTarget;
+      readonly language?: ShellConfig["language"];
     };
+  };
+  readonly "phone.account": {
+    readonly ask: PhoneAccountRequest;
+    readonly answer: { readonly result?: Requests["http"]["answer"] };
   };
   readonly "phone.wake": {
     readonly ask: WakePaneRequest;
@@ -444,8 +465,8 @@ const isStr = (v: unknown, max = 4096): v is string => typeof v === "string" && 
 /** Each closed set once, as a record its union types: a member the guard does not list fails to compile. */
 const METHODS: Record<HttpMethod, true> = { GET: true, HEAD: true, POST: true, PUT: true, PATCH: true, DELETE: true };
 const ACTS: Record<ShellAct["act"], true> = {
-  signOut: true, openServers: true, chrome: true, "notifications.permission": true, "notifications.request": true,
-  "backup.read": true, "notices.post": true, "calendar.snapshot": true, "calendar.clear": true, "calendar.resolve": true, "wake.want": true,
+  signOut: true, openServers: true, "language.set": true, chrome: true, "notifications.permission": true, "notifications.request": true,
+  "backup.read": true, "about.page": true, "notices.post": true, "calendar.guests": true, "calendar.snapshot": true, "calendar.clear": true, "calendar.resolve": true, "wake.want": true,
 };
 const NOTES: Record<NoteWhat, true> = {
   mounted: true, durabilityLost: true, keeperRefused: true, pieceDropped: true, foreignEpoch: true, deadlinePassed: true,
@@ -532,10 +553,10 @@ const isSnapshotPost = (m: Record<string, unknown>): boolean =>
   && (m.publication === undefined || isWidgetGeneration(m.publication))
   && readCalendarSnapshot(m.snapshot) !== null;
 
-const CALENDAR_REQUEST_KEYS = new Set(["id", "epoch", "kind", "act"]);
+const ACT_REQUEST_KEYS = new Set(["id", "epoch", "kind", "act"]);
 function isCalendarHandle(m: Record<string, unknown>, key: "publication" | "generation"): boolean {
   return Object.prototype.hasOwnProperty.call(m, key) && isWidgetGeneration(m[key]) &&
-    Reflect.ownKeys(m).every((name) => name === key || (typeof name === "string" && CALENDAR_REQUEST_KEYS.has(name)));
+    Reflect.ownKeys(m).every((name) => name === key || (typeof name === "string" && ACT_REQUEST_KEYS.has(name)));
 }
 
 /** The keys the act `wake.want` crosses with: the envelope's three, the act and its one boolean. */
@@ -544,6 +565,17 @@ const WANT_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "w
 const isWakeWant = (m: Record<string, unknown>): boolean =>
   Reflect.ownKeys(m).every((key) => typeof key === "string" && WANT_KEYS.has(key)) &&
   Object.prototype.hasOwnProperty.call(m, "wanted") && (m.wanted === true || m.wanted === false);
+
+function calendarGuestRequest(m: Record<string, unknown>): boolean {
+  return Array.isArray(m.to) && m.to.length > 0 && m.to.length <= 64 &&
+    m.to.every((v) => isStr(v, 320) && /^[^\s@,?&:]+@[^\s@,?&:]+$/.test(v)) &&
+    isStr(m.subject, 998) && !/[\r\n]/.test(m.subject) &&
+    Object.keys(m).every((key) => key === "to" || key === "subject" || ACT_REQUEST_KEYS.has(key));
+}
+
+const isLanguageChoice = (m: Record<string, unknown>): boolean =>
+  Reflect.ownKeys(m).every((key) => key === "choice" || (typeof key === "string" && ACT_REQUEST_KEYS.has(key))) &&
+  Object.prototype.hasOwnProperty.call(m, "choice") && (m.choice === null || m.choice === "en" || m.choice === "de");
 
 const WAKE_PANE_KEYS = ["id", "epoch", "kind", "do"];
 const isWakePaneRequest = (m: Record<string, unknown>, app: ShellApp | null): boolean => {
@@ -565,6 +597,29 @@ function isPhoneNameRequest(m: Record<string, unknown>, app: ShellApp | null): b
 
 function phoneFields(m: Record<string, unknown>, ...fields: string[]): boolean {
   return Object.keys(m).every((key) => NAME_READ_KEYS.has(key) || fields.includes(key));
+}
+
+function isPhoneAccountRequest(m: Record<string, unknown>): boolean {
+  if (!isStr(m.scope, 128) || m.scope === "") return false;
+  switch (m.do) {
+    case "pairs":
+    case "deletePage":
+      return phoneFields(m, "scope");
+    case "settingsPage":
+      return typeof m.pane === "string" && ["account", "devices", "invites", "security"].includes(m.pane) &&
+        phoneFields(m, "scope", "pane");
+    case "activate":
+      return typeof m.code === "string" && /^\d{6}$/.test(m.code) && phoneFields(m, "scope", "code");
+    case "mint":
+      return (m.grant === "device-pair" || m.grant === "invite") &&
+        isStr(m.name, 100) && phoneFields(m, "scope", "grant", "name");
+    case "revoke":
+      return (m.grant === "device-pair" || m.grant === "invite") &&
+        typeof m.pairId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(m.pairId) &&
+        phoneFields(m, "scope", "grant", "pairId");
+    default:
+      return false;
+  }
 }
 
 function phoneMailboxId(m: Record<string, unknown>): boolean {
@@ -642,11 +697,18 @@ const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp
   http: (m) => isStr(m.scope, 128) && member(METHODS, m.method) && isRootRelative(m.path) &&
     isHeaders(m.headers) && isBody(m.body),
   cancel: (m) => isId(m.of),
-  act: (m) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark") &&
+  act: (m, app) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark") &&
+    (m.act !== "language.set" || isLanguageChoice(m)) &&
+    (m.act !== "about.page" || (
+      (m.page === "privacy" || m.page === "subprocessors" || m.page === "imprint") &&
+      Object.keys(m).every((key) => key === "page" || ACT_REQUEST_KEYS.has(key))
+    )) &&
+    (m.act !== "calendar.guests" || (app === "ohcal" && calendarGuestRequest(m))) &&
     (m.act !== "notices.post" || isNoticePost(m)) && (m.act !== "calendar.snapshot" || isSnapshotPost(m)) &&
     (m.act !== "calendar.clear" || isCalendarHandle(m, "publication")) &&
     (m.act !== "calendar.resolve" || isCalendarHandle(m, "generation")) &&
     (m.act !== "wake.want" || isWakeWant(m)),
+  "phone.account": isPhoneAccountRequest,
   "phone.wake": isWakePaneRequest,
   "phone.name": isPhoneNameRequest,
   "phone.organize": isOrganizerRequest,

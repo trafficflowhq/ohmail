@@ -6,7 +6,7 @@
  * leaves it at the press.
  */
 import { useState, type ReactNode } from "react";
-import { Button, Page, type PageLinePart } from "@ohmail/ui/base";
+import { Button, Page, Sentence, type PageLinePart } from "@ohmail/ui/base";
 import { DoorForm } from "../doors/stage/DoorForm.js";
 import { SaidWith } from "../text/Said.js";
 import { SentenceBlank } from "../text/SentenceBlank.js";
@@ -64,6 +64,24 @@ export function ServerStep({ door, seed, to, back }: StepProps): ReactNode {
       () => live.current && setAt({ k: "refused", said: null }),
     );
   };
+  if (at.k === "refused" && at.said?.code === "managedDeferred") {
+    return (
+      <Page
+        smaller
+        back={<Button kind="quiet" icon="back" label={t("back")} onPress={back} />}
+        refusal={[say(at.said)]}
+        acts={
+          <Button size="l" onPress={back}>
+            {t("terms.chooseOther")}
+          </Button>
+        }
+      >
+        <Sentence size="xl" level={1} end="hot">
+          {t("server.cloud")}
+        </Sentence>
+      </Page>
+    );
+  }
   const line: PageLinePart[] | undefined =
     at.k === "reached"
       ? [

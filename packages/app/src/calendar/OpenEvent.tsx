@@ -26,7 +26,7 @@ import { EventAnswers, type InvitationActions } from "../invitations/EventAnswer
 import { NONE, type HostContract } from "../host/index.js";
 import { useFrame } from "../frame/commands.js";
 import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
-import { useKnownOwnAddresses } from "../frame/room.js";
+import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { useDraftRestore } from "./draft-undo.js";
 import type { EventDraft } from "./event-draft.js";
 import { EditEvent } from "./EditEvent.js";
@@ -56,7 +56,7 @@ function useEventCardRows(
   letters: ReturnType<typeof useEventLetters>["links"],
 ): EventCardRow[] {
   const locale = useLocale();
-  const own = useKnownOwnAddresses();
+  const own = useCalendarOwnAddresses();
   const rows = rowsOf(event, host, t, locale, own);
   if (letters.length) {
     rows.push({
@@ -206,7 +206,7 @@ function OpenEventCard({
         ref={card}
         {...seat?.card}
         frame={plan.device === "phone" ? "sheet" : "card"}
-        neutralHead={invited}
+        neutralHead={invited && plan.device !== "phone"}
         onKeyDown={onKeyDown}
         keyShortcuts={
           edit && event.start.kind === "date" && event.end.kind === "date"
@@ -239,7 +239,7 @@ function OpenEventCard({
 function useStoredEdit(event: CalendarEventFace) {
   const { host } = useFrame();
   const port = host.wires.calendar;
-  const known = useKnownOwnAddresses();
+  const known = useCalendarOwnAddresses();
   const allowed = useCallback(
     () => (port === NONE || event.viewOnly ? null : editableEvent(host, port, event, known)),
     [port, event, host, known],

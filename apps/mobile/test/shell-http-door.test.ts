@@ -334,6 +334,56 @@ describe("the shell's HTTP door", () => {
   });
 });
 
+describe("account management through the native HTTP door", () => {
+  const signal = new AbortController().signal;
+  const ask = { scope: SCOPE, do: "activate", code: "123456" } as const;
+  const mint = { scope: SCOPE, do: "mint", grant: "device-pair", name: "Travel phone" } as const;
+  const hosted = (send: ShellSession["send"], flavor: ServerProfile["flavor"] = "managed") => {
+    const session = sessionOver(async (url, init) => send(new URL(url).pathname, init as RequestInit));
+    return { ...session, profile: { ...session.profile, flavor } };
+  };
+  it("activates a factor without returning session material to the page", async () => {
+    const send = async (path: string, init: RequestInit) => {
+      expect(path).toBe("/auth/2fa/totp/activate");
+      expect(JSON.parse(String(init.body))).toEqual({ code: "123456" });
+      return Response.json({ accessToken: "fixture-access", refreshToken: "fixture-refresh", user: { accountId: "acct-1" } });
+    };
+    const door = doorOver(hosted(send));
+    expect(await door.account(ask, signal)).toMatchObject({ result: { status: 204, body: null, headers: [] } });
+  });
+
+  it("constructs the one-use device link from the bound origin and filters its answer", async () => {
+    const send = async (path: string, init: RequestInit) => {
+      expect(path).toBe("/pair");
+      expect(JSON.parse(String(init.body))).toEqual({ grant: "device-pair", label: "Travel phone" });
+      return Response.json({ id: "one-link", label: "Travel phone", token: "fixture", grant: "device-pair", expiresAt: "2026-11-04T10:05:00Z", extra: "elsewhere" });
+    };
+    const door = doorOver(hosted(send));
+    const answer = await door.account(mint, signal);
+    expect("result" in answer && answer.result?.body).toEqual({ as: "text", text: JSON.stringify({
+      id: "one-link", label: "Travel phone", expiresAt: "2026-11-04T10:05:00Z", link: `${ORIGIN}/pair#fixture`,
+    }) });
+  });
+
+  it("rejects a different profile and a grant the managed service cannot issue", async () => {
+    const send = async () => { throw new Error("Unexpected account request"); };
+    const door = doorOver(hosted(send));
+    expect(await door.account({ ...mint, scope: "different" }, signal)).toEqual({ refused: "foreignScope" });
+    expect(await door.account({ ...mint, grant: "invite" }, signal)).toMatchObject({ result: { status: 403 } });
+  });
+
+  it("drops a code minted after the person switches accounts", async () => {
+    const reply = deferred<Response>();
+    const session = hosted(() => reply.promise);
+    let live = true;
+    const door = doorOver(session, { live: () => live ? { session, scope: SCOPE } : null });
+    const pending = door.account(mint, signal);
+    live = false;
+    reply.resolve(Response.json({ id: "one-link", label: "Travel phone", token: "fixture", grant: "device-pair", expiresAt: "2026-11-04T10:05:00Z" }));
+    expect(await pending).toEqual({ refused: "foreignScope" });
+  });
+});
+
 describe("the bridge's native end", () => {
   it("runs nothing for a message that is not the page's main frame or not this web view's", async () => {
     const t = transport();

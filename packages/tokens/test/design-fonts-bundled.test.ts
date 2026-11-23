@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readSource } from "../scripts/design-lib.mjs";
 import { generate } from "../scripts/generate-design.mjs";
-import { fontFiles, fontLicenceFiles, fonts, fontsDir } from "../src/design/fonts.js";
+import { fontFiles, fontLicenceFiles, fonts, fontsDir, nativeFontFiles } from "../src/design/fonts.js";
 import { design } from "../src/design/tokens.js";
 
 const pkg = fileURLToPath(new URL("../", import.meta.url));
@@ -56,15 +56,17 @@ describe("fonts/", () => {
   const dir = resolve(pkg, "src/design", fontsDir);
 
   it("holds the font files, the licence texts and the list, and nothing else", () => {
-    expect(readdirSync(dir).sort()).toEqual([...fontFiles, ...fontLicenceFiles, "FONTS.md"].sort());
+    expect(nativeFontFiles).toHaveLength(7);
+    expect(readdirSync(dir).sort()).toEqual([...fontFiles, ...nativeFontFiles, ...fontLicenceFiles, "FONTS.md"].sort());
   });
 
-  const pinnedFiles: { file: string; sha256: string }[] = [];
-  for (const family of fonts) pinnedFiles.push(...family.files);
-
-  it.each(pinnedFiles)("$file is the bytes the source pins", ({ file, sha256: pinned }) => {
+  const pinnedFiles = fonts.flatMap((family) => [
+    ...family.files.map((file) => ({ ...file, signature: "774f4632" })),
+    ...family.nativeFiles.map((file) => ({ ...file, signature: "00010000" })),
+  ]);
+  it.each(pinnedFiles)("$file is the bytes and format the source pins", ({ file, sha256: pinned, signature }) => {
     expect(sha256(join(dir, file))).toBe(pinned);
-    expect(readFileSync(join(dir, file)).subarray(0, 4).toString("latin1")).toBe("wOF2");
+    expect(readFileSync(join(dir, file)).subarray(0, 4).toString("hex")).toBe(signature);
   });
 
   it.each(fonts.map((family) => [family.family, family.licence] as const))("%s travels with its licence and its copyright line", (_family, licence) => {
@@ -100,6 +102,10 @@ describe("the generator refuses a typeface it cannot vouch for", () => {
     ["a path out of the folder", (f: any[]) => { f[0].files[0].file = "../a.woff2"; }, /is not a file/],
     ["a file without its checksum", (f: any[]) => { delete f[0].files[0].sha256; }, /is not a sha256/],
     ["a file two faces name", (f: any[]) => { f[1].files[0].file = f[0].files[0].file; }, /is named twice/],
+    ["a native file from another folder", (f: any[]) => { f[0].nativeFiles[0].file = "../bricolage.ttf"; }, /is not a nativeFile/],
+    ["a native file without its checksum", (f: any[]) => { delete f[1].nativeFiles[0].sha256; }, /is not a sha256/],
+    ["a native file two faces name", (f: any[]) => { f[1].nativeFiles[0].file = f[0].nativeFiles[0].file; }, /is named twice/],
+    ["a variable weight for a native file", (f: any[]) => { f[2].nativeFiles[0].weight = "100 800"; }, /is not a nativeWeight/],
     ["a family without a licence text", (f: any[]) => { delete f[2].licence.file; }, /is not a licenceFile/],
     ["another licence", (f: any[]) => { f[2].licence.name = "Proprietary"; }, /is not a licence this package bundles under/],
     ["a family name that closes the string", (f: any[]) => { f[0].family = 'A"; src: url(x)'; }, /is not a family/],

@@ -2,16 +2,25 @@
  * THE PRODUCT A ROUTE STANDS IN: mail or the calendar. Pure, and shared by the frame, the address doors and the
  * calendar's root, so each tells the two apart the same way.
  */
+import { NONE } from "../host/contract.js";
 import {
   CALENDAR_PLACE_IDS,
   type AnyPlaceId,
   type CalendarPlaceId,
+  type CalendarEntry,
   type EventRef,
+  type FrameHost,
   type PlaceId,
   type Product,
 } from "./contract.js";
 
 const CALENDAR_PLACES: ReadonlySet<string> = new Set(CALENDAR_PLACE_IDS);
+
+/** The calendar's entry on hosts that mount it, including the standalone calendar app. */
+export function calendarOf(host: FrameHost): CalendarEntry | null {
+  const entry = host.features.calendar;
+  return host.capabilities.products !== NONE && entry !== NONE ? entry : null;
+}
 
 export function isCalendarPlace(place: AnyPlaceId): place is CalendarPlaceId {
   return CALENDAR_PLACES.has(place);

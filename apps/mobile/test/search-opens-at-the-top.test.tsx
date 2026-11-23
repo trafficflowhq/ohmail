@@ -24,7 +24,16 @@ const list = vi.hoisted(() => ({
   /** The last commit's stack: each child's key, top and height. */
   stack: [] as { key: string; top: number; h: number }[],
 }));
+const appearance = vi.hoisted(() => ({ paper: false }));
 const input = vi.hoisted(() => ({ change: null as null | ((text: string) => void) }));
+
+vi.mock("../src/ui/Sheet", () => ({
+  Sheet: ({ open, children }: { open: boolean; children: unknown }) => open ? children : null,
+  SheetRow: ({ label, onPress }: { label: string; onPress: () => void }) =>
+    h("button", { onClick: onPress }, label),
+}));
+
+vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
 
 vi.mock("react-native", async () => {
   const { rnDom } = await import("./_rendered-dom");
@@ -70,7 +79,7 @@ vi.mock("react-native", async () => {
   };
 });
 vi.mock("../src/theme", () => ({
-  useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), type: { body: {} }, radius: new Proxy({}, { get: () => 10 }), textCap: 2 }),
+  useTheme: () => ({ mail: appearance.paper, c: new Proxy({}, { get: () => "#000" }), type: { body: {} }, radius: new Proxy({}, { get: () => 10 }), textCap: 2 }),
 }));
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
@@ -81,13 +90,16 @@ vi.mock("../src/ui/base", async () => {
     Tap: (p: { children?: unknown; onPress?: () => void; accessibilityLabel?: string }) =>
       React.createElement("div", { onClick: p.onPress, "data-label": p.accessibilityLabel }, p.children as never),
     Txt: line,
+    ViewHead: () => null,
     Section: line,
     panelSurface: () => ({}),
     pullRefreshControl: () => undefined,
     useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 }),
   };
 });
-vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null, PaneTop: () => null }));
+vi.mock("../src/ui/MailPlaceDock", () => ({ MailPlaceDock: ({ children }: { children: unknown }) => children }));
+vi.mock("../src/ui/MailCalendarSwitch", () => ({ MailCalendarSwitch: () => null }));
+vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null, PaneTop: () => null, TopBar: () => null }));
 vi.mock("../src/ui/Gated", () => ({ Gated: ({ children }: { children: unknown }) => children }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: ({ children }: { children: unknown }) => children }));
 vi.mock("../src/ui/MailRow", async () => {
@@ -104,10 +116,11 @@ vi.mock("../src/ui/Segmented", async () => {
 });
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/net/network-door", () => ({ useNetworkNow: () => "online" }));
-const nav = vi.hoisted(() => ({ pushed: [] as unknown[], path: "/more" }));
+const nav = vi.hoisted(() => ({ pushed: [] as unknown[], path: "/more", folder: undefined as string | undefined }));
 vi.mock("expo-router", () => ({
   router: { push: (to: unknown) => { nav.pushed.push(to); } },
   usePathname: () => nav.path,
+  useLocalSearchParams: () => ({ folder: nav.folder }),
 }));
 vi.mock("../src/state/live", () => ({ addressShaped: (q: string) => (q.includes("@") ? q.trim() : null), unansweredSaid: () => "" }));
 
@@ -115,6 +128,7 @@ vi.mock("../src/state/live", () => ({ addressShaped: (q: string) => (q.includes(
 const device = (q: string) => (q.trim().length < 2 ? [] : Array.from({ length: 11 }, (_, i) => ({ id: `${q.trim()}-d${i}` })));
 vi.mock("../src/state/world", () => ({
   useWorld: () => ({
+    folders: { list: [] },
     search: {
       warm: () => undefined, query: (q: string) => ({ items: q.includes("@") ? [] : device(q), similar: [], indexing: false }),
       address: (_a: string, d: "any" | "from" | "to") => ({ items: around[d], counts: { any: 2, from: 1, to: 1 }, indexing: false }),
@@ -130,15 +144,18 @@ vi.mock("../src/state/world", () => ({
 const around = vi.hoisted(() => ({ any: [{ id: "d0" }, { id: "d1" }], from: [{ id: "d0" }], to: [{ id: "d1" }] }));
 const archive = vi.hoisted(() => ({ asked: [] as [string, string, (o: unknown) => void][] }));
 /** The whole-mailbox pass: searching, then its page of `length` slots. */
-const store = vi.hoisted(() => ({ ready: false, length: 0 }));
+const store = vi.hoisted(() => ({ ready: false, length: 0, question: null as null | { query: string; folder?: string } }));
 vi.mock("../src/state/store-views", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useStoreSearch: (q: string) => ({
-    verdict: q.trim().length < 2 ? "idle" : store.ready ? "ready" : "searching",
-    ready: store.ready, length: store.length, total: store.length, totalExact: true, about: null, tier: "exact",
-    ms: 47, importing: false, indexedPercent: null, bounded: false,
-    rowAt: (i: number) => ({ id: `s${i}` }), sourceAt: () => null, want: () => undefined, loadMore: () => undefined, retry: () => undefined,
-  }),
+  useStoreSearch: (q: string, _ids: readonly string[], filters: { folder?: string } = {}) => {
+    store.question = { query: q, ...filters };
+    return {
+      verdict: q.trim().length < 2 ? "idle" : store.ready ? "ready" : "searching",
+      ready: store.ready, length: store.length, total: store.length, totalExact: true, about: null, tier: "exact",
+      ms: 47, importing: false, indexedPercent: null, bounded: false,
+      rowAt: (i: number) => ({ id: `s${i}` }), sourceAt: () => null, want: () => undefined, loadMore: () => undefined, retry: () => undefined,
+    };
+  },
 }));
 
 const { default: SearchScreen } = await import("../app/search");
@@ -152,9 +169,9 @@ beforeEach(() => {
   archive.asked = [];
   screen = mount(h(SearchScreen));
 });
-afterEach(() => { screen?.unmount(); screen = null; nav.pushed = []; nav.path = "/more"; });
+afterEach(() => { appearance.paper = false; screen?.unmount(); screen = null; nav.pushed = []; nav.path = "/more"; nav.folder = undefined; });
 
-const type = (text: string): void => { screen!.render(h(SearchScreen)); input.change!(text); screen!.render(h(SearchScreen)); };
+const type = (text: string): void => { screen!.render(h(SearchScreen)); act(() => input.change!(text)); screen!.render(h(SearchScreen)); };
 const answer = (length: number): void => { store.ready = true; store.length = length; screen!.render(h(SearchScreen)); };
 const dragTo = (y: number): void => { list.props!.onScrollBeginDrag?.(); list.offset = y; };
 const topOf = (key: string): number => list.stack.find((c) => c.key === key)!.top;
@@ -186,6 +203,13 @@ describe("a search opens at its top", () => {
     answer(80);
     expect(list.offset).toBe(900);
   });
+});
+
+it("opens an older-mail search in the folder the person was reading", () => {
+  screen!.unmount();
+  nav.folder = "Projects/Older";
+  screen = mount(h(SearchScreen));
+  expect(store.question).toEqual({ query: "", folder: "Projects/Older" });
 });
 
 describe("a press on a result lands with the keyboard up", () => {
@@ -278,4 +302,18 @@ describe("the address view asks the archive, one direction at a time", () => {
       around.any = [{ id: "d0" }, { id: "d1" }];
     }
   });
+});
+
+
+it("clears the query and keeps the selected folder", () => {
+  screen?.unmount();
+  appearance.paper = true;
+  nav.folder = "Archive";
+  screen = mount(h(SearchScreen));
+  type("fenwick");
+  expect(store.question).toEqual({ query: "fenwick", folder: "Archive" });
+  const clear = screen.el.querySelector<HTMLElement>('[data-label="Clear search"]');
+  expect(clear).not.toBeNull();
+  act(() => clear!.click());
+  expect(store.question).toEqual({ query: "", folder: "Archive" });
 });

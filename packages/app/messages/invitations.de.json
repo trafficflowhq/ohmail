@@ -3,6 +3,9 @@
     "title": "Einladungen",
     "close": "Schließen",
     "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
+    "position": "{group} · {index} von {count}",
+    "previous": "Die vorherige",
+    "next": "Die nächste",
     "noZone": "Die Einladungen können nicht aufgelistet werden: Dieses Gerät kennt seine Zeitzone nicht.",
     "group": {
       "toAnswer": "Zu beantworten",

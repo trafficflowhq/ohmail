@@ -1,5 +1,5 @@
 /** Settings › Storage. A shell's registration draws {@link StoragePane} over `useStorage` and a {@link StorageDoor} it fills. */
-export { StoragePane, type StoragePaneProps } from "./StoragePane.js";
+export { StoragePane, StorageExplanation, StorageInfo, type StoragePaneProps } from "./StoragePane.js";
 export {
   STORAGE_START,
   storageChangeAnswer,

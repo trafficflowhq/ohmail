@@ -46,6 +46,14 @@ function rowOf(wire: AwayResponderWire): AwayRow {
 
 /** The frame remounts this pane when the signed-in account changes. */
 export function AwaySettings() {
+  return <AwayConfiguration />;
+}
+
+export function PhoneAwaySettings() {
+  return <AwayConfiguration phone />;
+}
+
+function AwayConfiguration({ phone = false }: { phone?: boolean }) {
   const { host } = useFrame();
   const wire = host.wires.away;
   const runsOn = host.capabilities.awayRunsOn;
@@ -54,7 +62,7 @@ export function AwaySettings() {
   const t = useText("away");
   const tOhbox = useText("ohbox");
   const tScreener = useText("screener");
-  const { state, saved, draft, step, anchor, setAnchor, leave, save } = useAwayControls(
+  const { state, saved, draft, step, anchor, setAnchor, leave, drop, save } = useAwayControls(
     wire,
     host.device.address,
   );
@@ -105,7 +113,7 @@ export function AwaySettings() {
   };
   return (
     <>
-      <AwayPane model={model} rules={AWAY_RULES} />
+      <AwayPane model={model} rules={AWAY_RULES} discardEdit={phone ? drop : undefined} />
       {picker}
     </>
   );
@@ -152,7 +160,10 @@ function useAwayControls(
   }, [wire, invalidateSave]);
 
   const { saved, draft } = state;
-  const leave = useAwayLeave(address, state, AWAY_RULES, () => step({ kind: "discard" }));
+  const drop = () => {
+    step({ kind: "discard" });
+  };
+  const leave = useAwayLeave(address, state, AWAY_RULES, drop);
   const watchForApplied = (askedAt: string | null, gen: number): void => {
     if (wire === NONE) return;
     watchAwayApplied(
@@ -188,5 +199,5 @@ function useAwayControls(
     );
   };
 
-  return { state, saved, draft, step, anchor, setAnchor, leave, save };
+  return { state, saved, draft, step, anchor, setAnchor, leave, drop, save };
 }

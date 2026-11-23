@@ -11,15 +11,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Refusal } from "../src/refusal";
 import { sayRefusal } from "../src/refusal";
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
 import { discardAdmission, parsePairLink, type PairAdmission } from "../src/net/pairing";
-import { Button, Panel, Screen, Scroller, Txt } from "../src/ui/base";
+import { Txt } from "../src/ui/base";
 import { PairConfirm } from "../src/ui/PairConfirm";
-import { DetailBar } from "../src/ui/chrome";
+import { OnboardingButton, OnboardingPage, useOnboardingLook } from "../src/ui/OnboardingPage";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
@@ -50,6 +50,7 @@ function ScanBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
+  const { palette } = useOnboardingLook();
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>({ k: "scanning", badCode: false });
   /** Armed = the next decoded frame may act. Disarmed while parsing/redeeming/failed. */
@@ -135,74 +136,86 @@ function ScanBody() {
     setPhase({ k: "scanning", badCode: false });
   }, []);
 
+  const back = router.canGoBack() ? () => router.back() : undefined;
+  if (phase.k === "confirming") {
+    return (
+      <PairConfirm
+        admission={phase.admission}
+        busy={phase.busy}
+        onConfirm={confirm}
+        onCancel={decline}
+        back={back}
+      />
+    );
+  }
+
+  const granted = permission?.granted === true;
+  const denied = permission !== null && !granted;
+  const failed = phase.k === "failed";
+  const manual = () => router.replace({ pathname: "/connect", params: { method: "link" } });
+  const allow = () => void requestPermission();
+  const retry = () => {
+    armed.current = true;
+    setPhase({ k: "scanning", badCode: false });
+  };
+  const feedback = phase.k === "probing" ? Copy.pairingBusy : phase.k === "scanning" && phase.badCode ? Copy.scanBadCode : null;
+
   return (
-    <Screen>
-      <DetailBar title={Copy.scanTitle} />
-
-      {/* THE CAMERA IS PUT AWAY FOR THE CONFIRMATION. A live viewfinder under three facts a person
-          is being asked to read is both a distraction and a second scanner: the phase disarms the
-          callback, and taking the view down means there is nothing left to re-arm it. */}
-      {phase.k === "confirming" ? (
-        <Scroller bounded>
-          <PairConfirm
-            admission={phase.admission}
-            busy={phase.busy}
-            onConfirm={confirm}
-            onCancel={decline}
-          />
-        </Scroller>
-      ) : null}
-
-      {permission?.granted && phase.k !== "failed" && phase.k !== "confirming" ? (
-        <View style={{ flex: 1 }}>
-          <CameraView
-            style={{ flex: 1 }}
-            facing="back"
-            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-            onBarcodeScanned={phase.k === "scanning" ? onScanned : undefined}
-          />
-          <View style={{ paddingHorizontal: 20, paddingVertical: 14, gap: 10 }}>
-            <Txt variant="hint" tone="ink3">
-              {phase.k === "probing"
-                ? Copy.pairingBusy
-                : phase.badCode
-                  ? Copy.scanBadCode
-                  : Copy.scanHint}
-            </Txt>
-            <Button label={Copy.scanManual} variant="quiet" onPress={() => router.replace("/connect")} />
+    <OnboardingPage
+      showUnsaved
+      back={back}
+      row
+      actions={
+        <>
+          {failed ? <OnboardingButton label={Copy.scanAgain} grow onPress={retry} /> : null}
+          {denied && !failed ? <OnboardingButton label={Copy.scanAllow} grow onPress={allow} /> : null}
+          <OnboardingButton label={Copy.scanManual} kind="soft" grow onPress={manual} />
+        </>
+      }
+    >
+      {failed ? (
+        <Txt accessibilityRole="alert" style={{ color: palette.ink }}>{sayRefusal(phase.reason)}</Txt>
+      ) : (
+        <>
+          <View
+            style={[styles.camera, { backgroundColor: palette.line }]}
+            accessibilityLabel={denied ? Copy.scanCameraOff : Copy.scanHint}
+            accessible
+          >
+            {granted ? (
+              <CameraView
+                style={StyleSheet.absoluteFill}
+                facing="back"
+                barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                onBarcodeScanned={phase.k === "scanning" ? onScanned : undefined}
+              />
+            ) : null}
+            <View pointerEvents="none" style={styles.guide}>
+              {corners.map((corner, index) => (
+                <View key={index} style={[styles.corner, corner, { borderColor: granted ? palette.sheet : palette.ink2 }]} />
+              ))}
+            </View>
           </View>
-        </View>
-      ) : null}
-
-      {permission && !permission.granted && phase.k !== "confirming" ? (
-        <Panel style={{ margin: 12, paddingVertical: 16 }}>
-          <View style={{ paddingHorizontal: 20, gap: 10 }}>
-            <Txt variant="hint" tone="ink2">
-              {Copy.scanCameraOff}
-            </Txt>
-            <Button label={Copy.scanAllow} variant="solid" onPress={() => void requestPermission()} />
-            <Button label={Copy.scanManual} variant="quiet" onPress={() => router.replace("/connect")} />
-          </View>
-        </Panel>
-      ) : null}
-
-      {phase.k === "failed" ? (
-        <Panel style={{ margin: 12, paddingVertical: 16 }}>
-          <View style={{ paddingHorizontal: 20, gap: 10 }}>
-            <Txt variant="settingsLabel" tone="accent">{Copy.connectRefusedTitle}</Txt>
-            <Txt variant="hint" tone="ink2">{sayRefusal(phase.reason)}</Txt>
-            <Button
-              label={Copy.scanAgain}
-              variant="solid"
-              onPress={() => {
-                armed.current = true;
-                setPhase({ k: "scanning", badCode: false });
-              }}
-            />
-            <Button label={Copy.scanManual} variant="quiet" onPress={() => router.replace("/connect")} />
-          </View>
-        </Panel>
-      ) : null}
-    </Screen>
+          <Txt style={[styles.tag, { backgroundColor: palette.soft, color: palette.ink2 }]}>{Copy.scanDevices}</Txt>
+          {feedback !== null ? (
+            <Txt accessibilityLiveRegion="polite" style={{ color: palette.ink, marginTop: 8 }}>{feedback}</Txt>
+          ) : null}
+        </>
+      )}
+    </OnboardingPage>
   );
 }
+
+const styles = StyleSheet.create({
+  camera: { width: "100%", aspectRatio: 1, borderRadius: 20, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  guide: { width: "56%", height: "56%" },
+  corner: { position: "absolute", width: 32, height: 32 },
+  tag: { alignSelf: "flex-start", marginTop: 24, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: "hidden" },
+});
+
+const corners = [
+  { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 12 },
+  { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 12 },
+  { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 12 },
+  { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 12 },
+];

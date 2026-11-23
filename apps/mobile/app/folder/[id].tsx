@@ -8,14 +8,16 @@
  * on this phone", never "nothing in this folder" (`Copy.folderEmptyTitle`).
  * The tail states the same boundary under a populated list.
  */
-import { useLocalSearchParams } from "expo-router";
+import { MailAppearance } from "../../src/theme/mail";
+import { router, useLocalSearchParams } from "expo-router";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import { folderLeafOf, folderParentOf } from "../../src/state/folders";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld } from "../../src/state/world";
-import { Empty, Screen, Scroller, Tail, Txt } from "../../src/ui/base";
+import { useTheme } from "../../src/theme";
+import { Button, Empty, Screen, Scroller, Tail, Txt, ViewHead } from "../../src/ui/base";
 import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
@@ -37,9 +39,11 @@ export default function FolderScreen({ inPane = false, id }: {
   useLocale();
   return (
     <SurfaceBoundary surface="folder">
-      <Gated>
-        <FolderBody inPane={inPane} paneId={id} />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <FolderBody inPane={inPane} paneId={id} />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
@@ -48,6 +52,7 @@ function FolderBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
   const param = useLocalSearchParams<{ id: string }>().id;
   const id = inPane ? paneId : param;
   const w = useWorld();
+  const theme = useTheme();
   const pull = usePullToSync();
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
@@ -63,7 +68,7 @@ function FolderBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
   if (!folder) {
     return (
       <Screen>
-        {inPane ? <PaneTop /> : <DetailBar />}
+        {inPane ? <PaneTop /> : <DetailBar backCapsule={theme.mail} />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
             {Copy.folderGone}
@@ -83,18 +88,22 @@ function FolderBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      {inPane ? <PaneTop /> : <DetailBar />}
+      {inPane ? <PaneTop /> : <DetailBar backCapsule={theme.mail} />}
       <MailList
         groups={[
-          { key: "fresh", title: Copy.groupNew, rows: fresh },
-          { key: "seen", title: Copy.groupSeen, rows: seen },
+          { key: "fresh", title: Copy.groupNew, rows: fresh, count: fresh.length },
+          { key: "seen", title: Copy.groupSeen, rows: seen, count: seen.length },
         ]}
         rowKey={(m) => m.id}
         renderRow={(m) => <MailRow m={m} onPress={() => openRow(m.id)} swipe />}
         // The empty sentence stands on the canvas; the silhouette and the rows on the panel.
         surface={surface !== "empty"}
         refresh={pull}
-        head={
+        head={theme.mail ? (
+          <ViewHead title={leaf} meta={metaWhen(surface, Copy.metaUnreadOf(unread, total))}>
+            {parent ? <Txt variant="caption" tone="ink2" numberOfLines={1}>{folder.name}</Txt> : null}
+          </ViewHead>
+        ) : (
           <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
             <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
               <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>
@@ -112,7 +121,7 @@ function FolderBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
               </Txt>
             ) : null}
           </View>
-        }
+        )}
         empty={
           surface === "skeleton" ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
@@ -122,6 +131,10 @@ function FolderBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
             <Empty title={Copy.folderEmptyTitle} hint={Copy.folderEmptyHint} />
           ) : null
         }
+        foot={theme.mail && w.store.searchAvailable && surface !== "skeleton" ? (
+          <Button label={Copy.folderOlderSearch} variant="quiet" style={{ alignSelf: "center", marginTop: 12 }}
+            onPress={() => router.push({ pathname: "/search", params: { folder: folder.name } })} />
+        ) : null}
         tail={surface === "content" ? <Tail>{Copy.folderTail(total)}</Tail> : null}
       />
     </Screen>

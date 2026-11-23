@@ -19,6 +19,7 @@
     "languageAria": "Language",
     "languageFailed": "Couldn't save that — try again.",
     "languageName": {
+      "system": "Phone",
       "en": "English",
       "de": "Deutsch"
     },
@@ -569,6 +570,7 @@
     "untilPast": "The end date passed on {date}. Nothing is sent.",
     "untilExpired": "Pick a date in the future, or turn the responder off.",
     "localNote": "Replies are sent while ohmail is open on this computer.",
+    "phoneNote": "Replies are sent while ohmail is open on this phone.",
     "hostNote": "Replies are sent while ohmail is open on {host}.",
     "save": "Save",
     "saving": "Saving…",

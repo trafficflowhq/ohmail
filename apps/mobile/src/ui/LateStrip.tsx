@@ -5,6 +5,8 @@
  * the mailboxes says fetching runs again. `late-lines.ts` decides the words; the top bar's line
  * wins while the phone has no network or its server does not answer, the nearer fact.
  */
+import { useContext } from "react";
+import { MailThemeContext } from "../theme/mail-context";
 import { useConnection } from "../net/connection";
 import { useNetworkNow } from "../net/network-door";
 import { activeLocale } from "../i18n/locale";
@@ -15,6 +17,7 @@ import { lateStripSaid, lateWho } from "./late-lines";
 
 export function LateStrip() {
   const w = useWorld();
+  const compact = useContext(MailThemeContext)?.mail === true;
   const conn = useConnection();
   const network = useNetworkNow();
   const top = topLineSaid({
@@ -22,8 +25,15 @@ export function LateStrip() {
   });
   if (top?.alert === true) return null;
   const session = conn.state.k === "live" ? conn.state.session : null;
-  const said = lateStripSaid(w.mailboxes.rows, Date.now(), readerZone(), activeLocale(), lateWho(session));
+  const said = lateStripSaid(w.mailboxes.rows, Date.now(), readerZone(), activeLocale(), lateWho(session), compact);
   if (said === null) return null;
+  if (compact) return (
+    <Panel style={{ marginHorizontal: 12, marginBottom: 12, paddingHorizontal: 16, paddingVertical: 11 }}>
+      <Txt variant="body" accessibilityRole="summary">
+        <Txt variant="rowSubject">{said.title}</Txt>{" "}{said.line}
+      </Txt>
+    </Panel>
+  );
   return (
     <Panel style={{ marginHorizontal: 6, marginBottom: 12, padding: 14, gap: 6 }}>
       <Txt variant="body" accessibilityRole="summary">{said.title}</Txt>

@@ -149,7 +149,7 @@ function Screens() {
       {/* LAST, so it draws over every screen, the rail and the dock: absolute, outside the shell
           boundary that holds the navigator and the rail, outside every sheet's modal subtree.
           `toast-pill-placement.test.ts` holds it. */}
-      <Toast />
+      <Toast mail={navDrawn} />
     </BottomChromeProvider>
     </NavDrawnContext.Provider>
   );

@@ -28,8 +28,9 @@ import {
 } from "@ohmail/app-logic/calendar";
 import { NONE } from "../host/index.js";
 import { hoursInView } from "../calsettings/hours.js";
+import { useCalendarDevice } from "../calsettings/device.js";
 import { useCalendarSettings } from "../calsettings/settings-read.js";
-import { useKnownOwnAddresses } from "../frame/room.js";
+import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { useFrame } from "../frame/commands.js";
 import type { AnyPlaceId, CalendarPlaceId, Route } from "../frame/contract.js";
 import { isCalendarPlace } from "../frame/product.js";
@@ -79,16 +80,19 @@ export function useNow(active = true): number {
 /** The account's calendar settings, asked once per port; until they answer, the plain defaults. */
 export function useSettings(port: CalendarPort | typeof NONE): CalendarViewSettings {
   const { said } = useCalendarSettings(port === NONE ? null : port, "none");
+  const device = useCalendarDevice()?.settings;
+  const weekStart = device?.weekStart ?? 0;
+  const weekends = device?.weekends ?? true;
   return useMemo(
     () => ({
-      /* The settings carry no week start yet: Monday. */
       ...(said === null ? {} : { newEventsCalendarId: said.newEventsCalendarId }),
-      weekStart: 0,
+      weekStart,
+      weekends,
       weekNumbers: said?.weekNumbers ?? false,
       secondZone: said?.secondZone ?? null,
       hours: hoursInView(said),
     }),
-    [said],
+    [said, weekStart, weekends],
   );
 }
 
@@ -242,7 +246,8 @@ export function useFaces(
   zone: string,
   zones: ZoneSource,
 ) {
-  const own = useKnownOwnAddresses();
+  const own = useCalendarOwnAddresses();
+  const showDeclined = useCalendarDevice()?.settings.showDeclined ?? true;
   const first = span?.first ?? null;
   const last = span?.last ?? null;
   return useMemo(() => {
@@ -253,18 +258,20 @@ export function useFaces(
     const occurrences = occurrencesIn({ ...sources, query: { from, to }, zone, zones });
     return {
       capped: occurrences.capped,
-      events: occurrences.shown.map((o): CalendarEventFace =>
-        faceOf(
-          o,
-          sources.connections,
-          sources.faceWords,
-          sources.tones.get(o.calendar.id) ?? "neutral",
-          own,
-          !!port.holdProposal,
+      events: occurrences.shown
+        .filter((o) => showDeclined || o.record.myAnswer !== "declined")
+        .map((o): CalendarEventFace =>
+          faceOf(
+            o,
+            sources.connections,
+            sources.faceWords,
+            sources.tones.get(o.calendar.id) ?? "neutral",
+            own,
+            !!port.holdProposal,
+          ),
         ),
-      ),
       /* The held window moves with the version, as the records do. */
       edge: edgeOf({ from, to }, port.held(), at),
     };
-  }, [sources, first, last, today, zone, zones, port, own]);
+  }, [sources, first, last, today, zone, zones, port, own, showDeclined]);
 }

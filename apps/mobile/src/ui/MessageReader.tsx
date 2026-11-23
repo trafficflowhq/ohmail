@@ -1,3 +1,4 @@
+import type { ReplyRunState } from "@ohmail/app-logic/piles/reply-run";
 /**
  * The reading view, as a component two hosts mount: the pushed `/message/[id]` route (one
  * pane) and the list-detail's reading pane (two panes — the iPad, the unfolded Duo, Android
@@ -10,7 +11,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { router, useIsFocused } from "expo-router";
-import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier } from "../state/live";
+import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier, type WorldMail } from "../state/live";
 import { invitationNote, junkLeaving, mailboxStatusOf, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
 import {
@@ -19,19 +20,25 @@ import {
 } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { mailSize } from "../theme/mail";
+import { MailAvatar } from "./MailAvatar";
 import { useBodyStamp, useFilesStamp, useWorld, useWorldToast } from "../state/world";
 import { openConfirmedLink } from "../mail/frame-nav";
 import { beginMark, endMark } from "../engine/ui-marks";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
-import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt, useListInsets } from "./base";
+import { Button, Chip, Panel, Screen, Scroller, Tap, TagChip, Txt, useListInsets } from "./base";
 import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { BodyPages } from "./BodyPages";
 import { HistoryFold, HistoryRow } from "./HistoryFold";
+import { MailFoundEvents, useMailFoundEvents } from "./MailFoundEvents";
 import { EventCards } from "./EventCard";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { FadeOut } from "./FadeOut";
-import { MessageActions, useReaderVerbMode } from "./MessageActions";
+import { replyOpen } from "./compose-route";
+import { ComposeSheet, MessageActions, useReaderVerbMode } from "./MessageActions";
+import { SurfaceBoundary } from "./ErrorBoundary";
+import type { ReplyOpen } from "./compose-route";
 import { EmptiedLetter } from "./EmptiedLetter";
 import { AttachmentPreview, type PreviewFile } from "./AttachmentPreview";
 import { hasPaneScroll, panePlaceOf, paneScrollOf, recordPanePlace, recordPaneScroll } from "./pane-memory";
@@ -65,11 +72,13 @@ export function MessageReader({
   id,
   inPane = false,
   selectMember = false,
+  runReply,
   onClose,
 }: {
   id: string;
   /** A message explicitly selected to read its full body from a thread. */
   selectMember?: boolean;
+  runReply?: ReplyRunState;
   /** Mounted beside its list — no back bar of its own; the pane or the rail carries Back. */
   inPane?: boolean;
   /** Leaves the reader: `router.back()` on the route, clearing the selection in a pane. */
@@ -89,6 +98,16 @@ export function MessageReader({
   const verbMode = useReaderVerbMode(inPane);
   const railBack = verbMode === "rail";
   const bare = inPane || railBack;
+  const phoneSheet = t.mail === true && !bare && verbMode === "compact";
+  const found = useMailFoundEvents(m, phoneSheet);
+  const eventWords = found?.rows.find((row) => row.sourceWords)?.sourceWords ?? undefined;
+  const [reply, setReply] = useState<{ reader: string; world: string; message: WorldMail; open: ReplyOpen } | null>(
+    () => runReply && m ? { reader: id, world: w.worldKey, message: m, open: replyOpen(w.actions.keptReply(m.id), "reply") } : null,
+  );
+  const inline = reply?.reader === id && reply.world === w.worldKey ? reply : null;
+  const revealed = useRef<typeof inline>(null);
+  const closeReply = () => setReply(null);
+  const [detailsFor, setDetailsFor] = useState<string | null>(null);
   /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
   const [textFor, setTextFor] = useState<string | null>(null);
   /** An emptied letter's text, loaded from the mail server for this view only (`EmptiedLetter`). */
@@ -602,6 +621,10 @@ export function MessageReader({
     </Panel>
   );
 
+  const rail = railItems.length > 0 ? (
+    <ReaderRail items={railItems} here={here} over={chromeOver} onJump={pressSquare} marks={markHold} horizontal={phoneSheet} />
+  ) : null;
+
   return (
     <Screen fullWindow={!inPane}>
       {/* A message in one of the user's OWN folders is titled by that folder's leaf — the
@@ -615,9 +638,18 @@ export function MessageReader({
           opened from. In a PANE the list is beside this view, so the bar and its Back yield. */}
       {bare ? <PaneTop /> : (
         <DetailBar
-          title={m.historyPlace ? Copy.history : m.gateHeld ? Copy.screener : m.folderLeaf ?? placeName(m.place)}
+          title={runReply ? Copy.replyLater : m.historyPlace ? Copy.history : m.gateHeld ? Copy.screener : m.folderLeaf ?? placeName(m.place)}
+          backCapsule={phoneSheet}
+          back={runReply?.exit}
+          right={phoneSheet ? rail : undefined}
         />
       )}
+      {runReply ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 14, paddingBottom: 6, alignItems: "center" }}>
+          <Txt variant="rowSender">{Copy.replyRunStart}</Txt>
+          <Txt variant="meta" tone="ink2" style={{ flex: 1 }}>{Copy.replyRunProgress(runReply.step, runReply.total)}</Txt>
+        </View>
+      ) : null}
       {/* The reader's top edge: text scrolled under the bar ends in canvas, not in sliced glyphs.
           A zero-height row drawn above the scroller, so it takes no room and no touch. A pane's
           `PaneTop` draws its own. */}
@@ -630,13 +662,12 @@ export function MessageReader({
           air above the from-line, or the back bar reads as part of the mail. */}
       <View style={{ flex: 1, flexDirection: "row" }}>
       {/* The rail follows the letters in time order. */}
-      {railItems.length > 0 ? (
-        <ReaderRail items={railItems} here={here} over={chromeOver} onJump={pressSquare} marks={markHold} />
-      ) : null}
+      {phoneSheet ? null : rail}
       <Scroller
         key={scrollKey}
         scrollRef={scrollRef}
-        contentStyle={{ paddingHorizontal: 0 }}
+        avoidKeyboard={t.mail}
+        contentStyle={phoneSheet ? { paddingLeft: 0, paddingRight: 0 } : { paddingHorizontal: 0 }}
         contentOffset={startAt}
         onScroll={onScroll}
         onScrollBeginDrag={() => { handOver(); seen.pin(null); markHold.drop(); }}
@@ -653,7 +684,11 @@ export function MessageReader({
         }}
       >
         <View
-          style={{ paddingHorizontal: 20, paddingTop: 18, opacity: unplaced ? 0 : 1 }}
+          style={{
+            paddingHorizontal: phoneSheet ? mailSize.inset : 20,
+            paddingTop: phoneSheet ? mailSize.inset : 18,
+            opacity: unplaced ? 0 : 1,
+          }}
           onLayout={(e) => { seen.offset("padded", e.nativeEvent.layout.y); anchor.layout(); }}
         >
           {/* The members older than the addressed message stand above it. */}
@@ -662,38 +697,79 @@ export function MessageReader({
               {above.map((h) => memberPanel(h, "above"))}
             </View>
           ) : null}
-          <View onLayout={(e) => { seen.offset("opened", e.nativeEvent.layout.y, e.nativeEvent.layout.height); anchor.layout(); }}>
+          <View
+            style={phoneSheet ? {
+              paddingHorizontal: 20,
+              paddingTop: 24,
+              paddingBottom: 32,
+              borderRadius: mailSize.sheetRadius,
+              backgroundColor: t.c.panel,
+              borderWidth: 1,
+              borderColor: m.unread ? t.c.accentSoft : t.c.panel,
+            } : undefined}
+            onLayout={(e) => { seen.offset("opened", e.nativeEvent.layout.y, e.nativeEvent.layout.height); anchor.layout(); }}
+          >
           {/* The opened message's unread tint, under its section (the Ohbox only). */}
           {inOhbox ? (
-            <ReadTint unread={m.unread === true} style={{ top: -18, left: -20, right: -20, height: openedEndY + 32 }} />
+            <ReadTint unread={m.unread === true} edge={!phoneSheet} style={phoneSheet
+              ? { top: 0, left: 0, right: 0, bottom: 0, borderRadius: mailSize.sheetRadius }
+              : { top: -18, left: -20, right: -20, height: openedEndY + 32 }} />
           ) : null}
           {/* THE NAME IS THE FACT, THE ADDRESS THE DETAIL: the address yields first, and below 360 dp
               it takes its own line under the name, so a name is the last thing to truncate. */}
           <View
-            style={{ flexDirection: "row", alignItems: "baseline", gap: 9 }}
+            style={{ flexDirection: "row", alignItems: phoneSheet ? "center" : "baseline", gap: phoneSheet ? 12 : 9 }}
             onLayout={(e) => seen.openedFrom(e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
           >
-            <Txt variant="button" style={{ flexShrink: 0, maxWidth: "60%" }} numberOfLines={1}>
-              {m.from.name}
-            </Txt>
-            {narrowFrom ? null : (
-              <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}>
-                {m.from.address}
+            {phoneSheet ? <MailAvatar person={m.from} unread={m.unread} surface={inOhbox && m.unread ? t.c.unreadWash : t.c.panel} /> : null}
+            <View style={{ flex: 1, minWidth: 0, flexDirection: phoneSheet ? "column" : "row", gap: phoneSheet ? 0 : 9 }}>
+              <Txt variant="rowSender" style={phoneSheet ? undefined : { flexShrink: 0, maxWidth: "60%" }} numberOfLines={1}>
+                {m.from.name}
               </Txt>
-            )}
-            <View style={{ flex: 1 }} />
+              {phoneSheet || !narrowFrom ? (
+                <Txt variant="caption" tone="ink2" numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}>
+                  {m.from.address}
+                </Txt>
+              ) : null}
+            </View>
             {/* Mark unread has one home: where the bar's read slot offers it, the head has no ⋯. */}
-            {inOhbox && markUnreadOffered({ read: !m.unread, own: m.ownMail === true })
+            {!phoneSheet && inOhbox && markUnreadOffered({ read: !m.unread, own: m.ownMail === true })
               && (verbMode === "rail" || !readSlotMarksUnread(m))
               ? <MoreDots onPress={() => setMenuFor(m.id)} /> : null}
-            <Txt variant="caption" tone="ink3" tabular style={{ flexShrink: 0 }}>
+            {phoneSheet && (m.recipients || m.html || (inOhbox && !m.unread && !m.ownMail))
+              ? <MoreDots onPress={() => setMenuFor(m.id)} /> : null}
+            <Txt variant="caption" tone="ink2" tabular style={{ flexShrink: 0 }}>
               {m.time}
             </Txt>
           </View>
-          {narrowFrom ? (
+          {!phoneSheet && narrowFrom ? (
             <Txt variant="caption" tone="ink3" numberOfLines={1}>
               {m.from.address}
             </Txt>
+          ) : null}
+          {phoneSheet && m.recipients && (m.recipients.to.length > 0 || m.recipients.cc.length > 0) ? (
+            <View style={{ paddingLeft: mailSize.avatar + 12, marginTop: 5, gap: 4 }}>
+              <Tap accessibilityRole="button" accessibilityLabel={Copy.readerRecipientDetails}
+                accessibilityState={{ expanded: detailsFor === m.id }} onPress={() => setDetailsFor(detailsFor === m.id ? null : m.id)}>
+                <Txt variant="caption" tone="ink2" numberOfLines={1}>
+                  {Copy.readerToLine(m.recipients.to.map((person) =>
+                    w.mailboxes.ownAddresses.some((own) => own.toLowerCase() === person.address.toLowerCase())
+                      ? Copy.readerMarkYou : person.name || person.address).join(", "))}
+                  {m.recipients.cc.length > 0 ? ` · ${Copy.readerCcLine(m.recipients.cc.map((person) => person.name || person.address).join(", "))}` : ""}
+                  {" "}<Txt variant="caption" style={{ textDecorationLine: "underline" }}>{Copy.readerDetailsShort}</Txt>
+                </Txt>
+              </Tap>
+              {detailsFor === m.id ? (
+                <View style={{ gap: 3 }}>
+                  {m.recipients.to.length ? <Txt variant="caption" tone="ink2">
+                    {Copy.forwardTo}{" · "}{m.recipients.to.map((person) => person.address).join(", ")}
+                  </Txt> : null}
+                  {m.recipients.cc.length ? <Txt variant="caption" tone="ink2">
+                    {Copy.composeCc}{" · "}{m.recipients.cc.map((person) => person.address).join(", ")}
+                  </Txt> : null}
+                </View>
+              ) : null}
+            </View>
           ) : null}
           {/* THE IDENTITY FACT, under the address it is about — always drawn, never folded away, behind
               the shield the sender detail and the web draw. A check the provider failed comes first. */}
@@ -732,7 +808,7 @@ export function MessageReader({
             {m.subject}
           </Txt>
 
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, alignItems: "center", marginBottom: 20 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, alignItems: "center", marginBottom: m.rationale || m.trackerNote || m.amount || m.mailboxLabel || m.tags?.length ? 20 : 0 }}>
             {m.rationale ? (
               <Chip icon="route" style={{ maxWidth: "100%" }}>
                 {m.rationale}
@@ -798,13 +874,14 @@ export function MessageReader({
               ) : null}
               {/* The invitation's event, once, above the mail (`EventCards`). */}
               <EventCards events={m.events} />
+              <MailFoundEvents found={found} />
               <View style={{ height: 0 }} onLayout={(e) => seen.openedBody(e.nativeEvent.layout.y)} />
               {/* The html part renders in the frame (the web's rules, `MailBodyFrame`); the
                   text part is the fallback AND the reader's own "Show as text" choice. */}
               {m.html != null && m.html !== "" && textFor !== m.id ? (
                 <>
                   {openedHistory === "leading" ? historyRow : null}
-                  <MailBodyFrame m={m} onShowAsText={() => setTextFor(m.id)}
+                  <MailBodyFrame m={m} onShowAsText={() => setTextFor(m.id)} highlight={eventWords}
                     onFinal={(final) => setFrameFinalFor((was) => (final ? m.id : was === m.id ? null : was))}
                     historyOpen={historyFor === m.id}
                     onHistory={(at) => setFrameHistory(at === null ? null : { id: m.id, at })} />
@@ -826,7 +903,7 @@ export function MessageReader({
                       sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
                       at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
                   <HistoryFold foldKey={m.id} html={m.html} subject={m.subject} end={<View style={{ height: 0 }} onLayout={(e) => seen.openedEnd(e.nativeEvent.layout.y)} />}>
-                    <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={loaded ?? m.body} />
+                    <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={loaded ?? m.body} highlight={eventWords} />
                   </HistoryFold>
                 </>
               )}
@@ -851,13 +928,43 @@ export function MessageReader({
             </View>
           ) : null}
 
+          {inline ? (
+            <View style={{ marginTop: 12 }} onLayout={() => {
+              if (revealed.current === inline) return;
+              revealed.current = inline;
+              requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: !t.reduceMotion }));
+            }}>
+              <SurfaceBoundary surface="composer" frame="inline" onClose={closeReply}>
+                <ComposeSheet
+                  m={inline.message} mode={inline.open.compose} draft={inline.open.draft}
+                  replyAside={inline.open.aside} onClose={closeReply} inline doneOnSend={runReply !== undefined} run={runReply}
+                  inlineHeading={
+                    <View style={{ gap: 4, paddingHorizontal: mailSize.edge }}>
+                      <Txt variant="body">
+                        {inline.open.compose === "replyAll" && inline.message.replyAllHead
+                          ? Copy.replyToAll(inline.message.replyAllHead.to)
+                          : Copy.replyTo(inline.message.from.name)}
+                      </Txt>
+                      <Txt variant="rowSubject" numberOfLines={2}>{inline.message.subject}</Txt>
+                    </View>
+                  }
+                />
+              </SurfaceBoundary>
+            </View>
+          ) : null}
         </View>
       </Scroller>
       </View>
       {/* A message's ⋯: Mark unread, for a read message that is not the account's own. It stays
           unread for the rest of this visit. */}
       <Sheet open={menuFor !== null} onClose={() => setMenuFor(null)} label={Copy.readerMessageActions}>
-        <SheetRow
+        {phoneSheet && menuFor === m.id && m.recipients ? (
+          <SheetRow icon="person" label={Copy.readerRecipientDetails} onPress={() => {
+            setMenuFor(null);
+            setDetailsFor(detailsFor === m.id ? null : m.id);
+          }} />
+        ) : null}
+        {menuFor !== m.id || (inOhbox && markUnreadOffered({ read: !m.unread, own: m.ownMail === true })) ? <SheetRow
           icon="x"
           label={Copy.actionMarkUnread}
           onPress={() => {
@@ -867,20 +974,30 @@ export function MessageReader({
             record.keepUnread(mid);
             w.actions.markSeen(mid, true);
           }}
-        />
+        /> : null}
+        {phoneSheet && menuFor === m.id && m.html ? (
+          <SheetRow icon="reads" label={textFor === m.id ? Copy.mailShowOriginal : Copy.mailShowAsText} onPress={() => {
+            setMenuFor(null);
+            setTextFor(textFor === m.id ? null : m.id);
+          }} />
+        ) : null}
       </Sheet>
       {/* The verbs place themselves by posture (`MessageActions`): the compact glass bar at
           the thumb, the desktop ActionBar pinned at this pane's foot, or the right-edge rail.
           A confirmed delete leaves this reader at once: the tombstone already dropped the row,
           and "no longer here" over the reader's own act would read as a failure. */}
-      <MessageActions
+      {inline ? null : <MessageActions
         m={m}
         replyTo={replyId === id ? m : w.message(replyId) ?? m}
         onDeleted={onClose}
         onBack={onClose}
         inPane={inPane}
         record={record}
-      />
+        onInlineReply={phoneSheet ? (message, open) => {
+          handOver();
+          setReply({ reader: id, world: w.worldKey, message, open });
+        } : undefined}
+      />}
     </Screen>
   );
 }
@@ -949,24 +1066,33 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
                 flexDirection: "row",
                 alignItems: "center",
                 gap: 8,
-                borderRadius: t.radius.pill,
+                borderRadius: t.mail ? t.radius.row : t.radius.pill,
                 backgroundColor: t.c.panel,
-                paddingHorizontal: 15,
-                paddingVertical: 9,
+                paddingHorizontal: t.mail ? 8 : 15,
+                paddingVertical: t.mail ? 7 : 9,
                 maxWidth: "100%",
               },
-              t.lift("l0"),
+              t.mail ? null : t.lift("l0"),
             ]}
           >
             {busy === a.id ? (
               <ActivityIndicator size="small" color={t.c.ink2} />
+            ) : t.mail ? (
+              <View style={{ width: 40, height: 38, borderRadius: 8, borderWidth: 1, borderColor: t.c.hair, alignItems: "center", justifyContent: "center", backgroundColor: t.c.panel }}>
+                <Txt variant="caption" tone="ink2">{a.filename.includes(".") ? a.filename.split(".").at(-1)?.slice(0, 4).toUpperCase() : null}</Txt>
+              </View>
             ) : (
               <Icon name="clip" size={13} color={t.c.ink2} />
             )}
-            <Txt variant="button" numberOfLines={1} ellipsizeMode="middle" style={{ flexShrink: 1 }}>
-              {a.filename}
-            </Txt>
-            {a.size ? (
+            {t.mail ? (
+              <View style={{ flexShrink: 1 }}>
+                <Txt variant="button" numberOfLines={1} ellipsizeMode="middle">{a.filename}</Txt>
+                {a.size ? <Txt variant="caption" tone="ink2">{a.size}</Txt> : null}
+              </View>
+            ) : (
+              <Txt variant="button" numberOfLines={1} ellipsizeMode="middle" style={{ flexShrink: 1 }}>{a.filename}</Txt>
+            )}
+            {!t.mail && a.size ? (
               <Txt variant="caption" tone="ink3" style={{ flexShrink: 0 }}>
                 {a.size}
               </Txt>
@@ -976,6 +1102,7 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
                 {Copy.attachmentEmbedded}
               </Txt>
             ) : null}
+            {t.mail ? <Icon name="attachmentDownload" size={15} color={t.c.ink2} /> : null}
           </Tap>
           {note?.id === a.id ? (
             <Txt variant="caption" tone="ink3" accessibilityRole="alert" style={{ marginTop: 4 }}>
@@ -1036,7 +1163,7 @@ const ANCHOR_PLACE_BOUND_MS = 400;
  * was on screen for the dwell) it settles over the fade; back to unread it returns quicker. Reduced
  * motion: instant.
  */
-function ReadTint({ unread, style }: { unread: boolean; style: object }) {
+function ReadTint({ unread, style, edge = true }: { unread: boolean; style: object; edge?: boolean }) {
   const t = useTheme();
   const v = useRef(new Animated.Value(unread ? 1 : 0)).current;
   const was = useRef(unread);
@@ -1057,7 +1184,7 @@ function ReadTint({ unread, style }: { unread: boolean; style: object }) {
       style={[
         StyleSheet.absoluteFill,
         style,
-        { opacity: v, backgroundColor: t.c.unreadWash, borderLeftWidth: 3, borderLeftColor: t.c.accent },
+        { opacity: v, backgroundColor: t.c.unreadWash, borderLeftWidth: edge ? 3 : 0, borderLeftColor: t.c.accent },
       ]}
     />
   );
@@ -1073,7 +1200,7 @@ function ReadTint({ unread, style }: { unread: boolean; style: object }) {
  * (`useSquaresWindow`), the squares at an edge that hides more tapered and "+N" there counting them,
  * so the ringed square is always whole in view and nothing scrolls.
  */
-function ReaderRail({ items, here, over, onJump, marks }: {
+function ReaderRail({ items, here, over, onJump, marks, horizontal }: {
   items: readonly RailItem[];
   here: string | null;
   /** What of the bottom chrome stands over the rail's foot. */
@@ -1081,23 +1208,28 @@ function ReaderRail({ items, here, over, onJump, marks }: {
   onJump: (id: string) => void;
   /** The held square: the reader's, so its own drag drops the sheet too. */
   marks: MarkHold;
+  horizontal: boolean;
 }) {
+  const t = useTheme();
   const n = items.length;
-  const [height, setHeight] = useState<number | null>(null);
-  const room = height === null ? null : Math.max(0, height - over);
+  const [extent, setExtent] = useState<number | null>(null);
+  const edge = horizontal ? mailSize.inset : RAIL_TOP;
+  const win = useWindowDimensions();
+  const pitch = horizontal ? 20 : RAIL_PITCH;
+  const headerWidth = Math.min(win.width * 0.48, n * pitch + 2 * edge + 2);
+  const room = extent === null ? null : Math.max(0, extent - (horizontal ? 2 * edge : over));
   const at = items.findIndex((it) => it.id === here);
-  const run = useSquaresWindow(n, at, room === null ? null : room - RAIL_TOP, RAIL_PITCH, RAIL_MORE);
+  const run = useSquaresWindow(n, at, room === null ? null : room - (horizontal ? 0 : edge), pitch, RAIL_MORE);
   const older = run?.from ?? 0;
   const newer = run === null ? 0 : n - run.to;
-  const slots = items.map((_, i) => slotOf(RAIL_PITCH, run?.scale[i] ?? 1));
-  const ringAt = ringRest(slots, at, RAIL_TOP + (older > 0 ? RAIL_MORE : 0));
+  const slots = items.map((_, i) => slotOf(pitch, run?.scale[i] ?? 1));
+  const ringAt = ringRest(slots, at, edge + (older > 0 ? RAIL_MORE : 0));
   /* A held square's sheet stands right of the rail under its square (over it near the foot), never on a square. */
   const { held, hold, release, drop } = marks;
   const heldAt = held === null ? -1 : items.findIndex((it) => it.id === held);
   const [sheetH, setSheetH] = useState(0);
-  const win = useWindowDimensions();
   const more = (k: number, side: "old" | "new") => (
-    <View testID={`more-${side}`} pointerEvents="none" style={{ height: RAIL_MORE, flexDirection: "row" }}>
+    <View testID={`more-${side}`} pointerEvents="none" style={{ height: horizontal ? 30 : RAIL_MORE, width: horizontal ? RAIL_MORE : undefined, flexDirection: "row" }}>
       {/* as wide as the count from the rail's start: a short one centred on the rail, "+109" runs on beside it */}
       <View style={{ position: "absolute", left: 0, top: 0, bottom: 0, minWidth: 22, flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
         <Txt variant="caption" tone="ink3" tabular numberOfLines={1}>{Copy.rowMarksMore(k)}</Txt>
@@ -1119,12 +1251,14 @@ function ReaderRail({ items, here, over, onJump, marks }: {
       delayLongPress={MARK_HOLD_MS}
       onPressOut={release}
       hitSlop={RAIL_HIT_SLOP}
-      style={{ height: slots[i], width: 22, alignItems: "center", justifyContent: "center" }}
+      style={{ height: horizontal ? 30 : slots[i], width: horizontal ? slots[i] : 22, alignItems: "center", justifyContent: "center" }}
     >
       <View
         style={{
           // never taller than its slot: a hidden square's box would take presses beside it
-          width: MARK_RING, height: Math.min(MARK_RING, slots[i]!), alignItems: "center", justifyContent: "center",
+          width: horizontal ? Math.min(MARK_RING, slots[i]!) : MARK_RING,
+          height: horizontal ? MARK_RING : Math.min(MARK_RING, slots[i]!),
+          alignItems: "center", justifyContent: "center",
         }}
       >
         <MarkSquare kind={it.kind} scale={run?.scale[i] ?? 1} />
@@ -1137,21 +1271,28 @@ function ReaderRail({ items, here, over, onJump, marks }: {
     <View
       accessibilityRole="toolbar"
       accessibilityLabel={Copy.readerMarksAria}
-      style={{ width: 22, alignSelf: "stretch", zIndex: heldAt >= 0 ? 2 : 1 }}
-      onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
+      style={horizontal ? {
+        width: headerWidth, flexShrink: 1, zIndex: 2, borderRadius: t.radius.pill,
+        backgroundColor: t.c.panel, borderWidth: 1, borderColor: t.c.hair,
+      } : { width: 22, alignSelf: "stretch", zIndex: heldAt >= 0 ? 2 : 1 }}
+      onLayout={(e) => setExtent(horizontal ? e.nativeEvent.layout.width - 2 : e.nativeEvent.layout.height)}
     >
       {/* no clip: the window fits the room, and a long count runs on over the reader's margin */}
-      <View style={{ paddingTop: RAIL_TOP, ...(room !== null ? { maxHeight: room } : {}) }}>
+      <View style={horizontal
+        ? { paddingHorizontal: edge, flexDirection: "row", alignItems: "center", minHeight: 30 }
+        : { paddingTop: edge, ...(room !== null ? { maxHeight: room } : {}) }}>
         {older > 0 ? more(older, "old") : null}
         {squares}
         {newer > 0 ? more(newer, "new") : null}
-        {ringAt === null ? null : <MarkRing testID="ring-rail" along="top" at={ringAt} cross={(22 - MARK_RING) / 2} />}
+        {ringAt === null ? null : <MarkRing testID="ring-rail" along={horizontal ? "left" : "top"} at={ringAt} cross={((horizontal ? 30 : 22) - MARK_RING) / 2} />}
       </View>
       {heldAt >= 0 ? (
         <MarkSheet
           item={items[heldAt]!}
           onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
-          style={{ position: "absolute", left: 28, top: sheetTop, width: Math.min(320, win.width - 60) }}
+          style={horizontal
+            ? { position: "absolute", right: 0, top: 38, width: Math.min(320, win.width - 24) }
+            : { position: "absolute", left: 28, top: sheetTop, width: Math.min(320, win.width - 60) }}
         />
       ) : null}
     </View>

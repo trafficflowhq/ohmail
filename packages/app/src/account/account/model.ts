@@ -20,7 +20,7 @@ export interface AccountDoor {
   who(): Promise<Answer<AccountIdentity, AccountWord>>;
   /**
    * Signs this browser out: the session is ended at the server and this browser's copy of the mail is wiped. `left`:
-   * the door has left by a full load. `blocked`: the copy is still here, so it stays. `unverified`: this browser
+   * the door has left by a full load. `opened`: this host has opened the confirmation. `blocked`: the copy is still here, so it stays. `unverified`: this browser
    * will not say what it holds, so it stays.
    */
   signOut(): Promise<SignOutOutcome>;
@@ -50,7 +50,7 @@ export interface AccountModel {
   /** The sign-out is on its way. */
   readonly signingOut: boolean;
   /** Why the last sign-out stayed on the page. */
-  readonly stayed: Exclude<SignOutOutcome, "left"> | null;
+  readonly stayed: Exclude<SignOutOutcome, "left" | "opened"> | null;
   /** The press. On the whole pane it signs out; where the sign-out stands alone it asks first. */
   signOut(): void;
   /** The question's own Confirm. */
@@ -122,6 +122,6 @@ export function accountStep(body: AccountBody, state: AccountPaneState, event: A
     case "signedOut":
       return event.outcome === "left"
         ? stays(state)
-        : stays({ ...state, signingOut: false, stayed: event.outcome });
+        : stays({ ...state, signingOut: false, stayed: event.outcome === "opened" ? null : event.outcome });
   }
 }

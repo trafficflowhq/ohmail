@@ -1,7 +1,7 @@
 /**
  * The four doors, on a phone — one component for the first-run screen and the Servers screen,
- * under one heading that names what the four are. A door that answers in place renders its answer
- * inside itself (`doors-answer.ts`). The fourth door, an engine inside this app dialling the
+ * under one heading that names what the four are. A door renders its page
+ * from that choice (`doors-answer.ts`). The fourth door, an engine inside this app dialling the
  * person's IMAP server, is offered only where an engine is registered (`standaloneAvailable`) — a
  * build fact, not a flag. The other three: ohmail Cloud (negotiates `/hello`; a non-pairing server
  * gets a sentence), your own server (the address step, so address faults become address
@@ -10,17 +10,22 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { refuse, sayRefusal, type Refusal } from "../refusal";
-import { Platform, TextInput, View } from "react-native";
+import { Linking, Modal, Platform, View } from "react-native";
 import { Copy } from "../copy";
 import { phoneEngineStart } from "../engine/engine-artifact";
 import { standaloneAvailable } from "../engine/standalone-door";
 import { useConnection } from "../net/connection";
+import { WEB_APP_URL } from "../net/account";
 import type { Negotiation, PickerStep } from "../net/pairing";
 import { MANAGED_ORIGIN, nextStep, stashPairOrigin, unreachableSaid } from "../net/pairing";
 import { canPin, isNotTls } from "../net/host-pinning";
 import { addressProblem, parseServerAddress } from "../net/server-base";
-import { useTheme } from "../theme";
+import { linksOutToBilling } from "../distribution";
 import { Button, Panel, Rule, Section, TapRow, Txt } from "./base";
+import { Field } from "./Field";
+import { Icon, type IconName } from "./Icon";
+import { NavDrawnContext } from "./nav-drawn";
+import { OnboardingButton, OnboardingPage, OnboardingTag, OnboardingTitle, useOnboardingLook, useOnboardingButton } from "./OnboardingPage";
 import { IDLE, pressDoor, probeUnder, type AnsweringDoor, type OpenDoor, type Probe } from "./doors-answer";
 
 /** One sentence per non-pairing outcome — the honest end of a flow, never a dead control. */
@@ -52,15 +57,19 @@ export function Doors({
   onStandalone,
   /** `true` on the first-run screen, which is the one place the lead sentence is worth its room. */
   lead = false,
+  recovery = false,
 }: {
   onScan: () => void;
   onTypeToken: () => void;
   onStandalone?: () => void;
   lead?: boolean;
+  recovery?: boolean;
 }) {
   const conn = useConnection();
+  const { palette } = useOnboardingLook();
   const [open, setOpen] = useState<OpenDoor>(null);
   const [address, setAddress] = useState("");
+  const [computer, setComputer] = useState(false);
   const [probe, setProbe] = useState<Probe>(IDLE);
   /**
    * Which check is the newest — the request-identity guard, and it closes a real state bleed.
@@ -139,6 +148,21 @@ export function Doors({
     },
     [conn],
   );
+  const close = () => {
+    latest.current += 1;
+    setOpen(null);
+    setProbe(IDLE);
+    setComputer(false);
+  };
+  const scan = () => {
+    close();
+    onScan();
+  };
+  const manual = () => {
+    close();
+    onTypeToken();
+  };
+
   /** The address step's own probe — never another door's check that landed late. */
   const selfProbe = probeUnder("self", open, probe);
 
@@ -152,15 +176,17 @@ export function Doors({
         </View>
       ) : null}
 
-      <Panel style={{ paddingBottom: 16 }}>
-        <Section style={{ paddingTop: 16 }}>{Copy.doorsHead}</Section>
+      <Panel style={{ paddingBottom: 16, ...(recovery ? { backgroundColor: palette.sheet, boxShadow: [] } : {}) }}>
+        {recovery ? (
+          <Txt variant="settingsLabel" style={{ padding: 20 }}>{Copy.phoneServersConnectTo}</Txt>
+        ) : <Section style={{ paddingTop: 16 }}>{Copy.doorsHead}</Section>}
 
         {/* THE ORDER IS FEWEST CONDITIONS FIRST — see the deck's own note. Cloud, then a server
             the person runs, then a computer on their network, whose code carries a key and whose
-            phone half is Android today. A door that answers renders the answer INSIDE itself, so
-            it stands under the option pressed and nowhere else. */}
+            phone half is Android today. Each choice owns the page it opens. */}
         <Door
           name={Copy.doorCloud}
+          icon={recovery ? "ohbox" : undefined}
           say={Copy.doorCloudSay}
           onPress={() => {
             /* The Cloud card NEGOTIATES for real rather than routing on this deck's word: if the
@@ -171,14 +197,15 @@ export function Doors({
           }}
         >
           {open === "cloud" ? (
-            <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
-              <Result probe={probeUnder("cloud", open, probe)} onScan={onScan} onTypeToken={onTypeToken} />
-            </View>
+            <DoorModal close={close}>
+              <Result probe={probeUnder("cloud", open, probe)} back={close} onScan={scan} onTypeToken={manual} />
+            </DoorModal>
           ) : null}
         </Door>
         <Rule inset={20} />
         <Door
           name={Copy.doorOwnServer}
+          icon={recovery ? "folder" : undefined}
           say={Copy.doorOwnServerSay}
           onPress={() => {
             setOpen((v) => pressDoor(v, "self"));
@@ -186,44 +213,46 @@ export function Doors({
           }}
         >
           {open === "self" ? (
-            <View style={{ paddingHorizontal: 16, paddingTop: 6, gap: 10 }}>
-              <Txt variant="hint" tone="ink3">
-                {Copy.doorSelfLead}
-              </Txt>
-              <AddressField
-                value={address}
-                onChange={setAddress}
-                /* LOCKED FROM THE MOMENT THE CHECK STARTS, not from the moment it answers: editable
-                   while asking, a typed B could be locked under A's answer and B's token sent to A.
-                   Editable only while nothing is in flight and nothing is proved. */
-                locked={selfProbe.k === "asking" || selfProbe.k === "probed"}
+            <DoorModal close={close}>
+              <Result
+                probe={probeUnder("self", open, probe)}
+                back={close}
+                onScan={scan}
+                onTypeToken={manual}
+                ask={() => {
+                  if (address.includes("#")) setAddress("");
+                  void check(address, "self");
+                }}
+                address={
+                  <Field
+                    value={address}
+                    onChange={setAddress}
+                    locked={selfProbe.k === "asking" || selfProbe.k === "probed"}
+                    label={Copy.doorSelfAddress}
+                    sentence={{
+                      before: Copy.phoneServerSentence,
+                      placeholder: Copy.phoneServerBlank,
+                      compact: true,
+                      end: selfProbe.k === "probed" ? "ink" : "hot",
+                    }}
+                    input={{ keyboardType: "url" }}
+                  />
+                }
+                empty={!address.trim()}
               />
-              <Txt variant="hint" tone="ink3">
-                {Copy.doorSelfCert}
-              </Txt>
-              <Button
-                label={selfProbe.k === "asking" ? Copy.doorSelfChecking : Copy.doorSelfGo}
-                variant="solid"
-                disabled={selfProbe.k === "asking" || selfProbe.k === "probed" || !address.trim()}
-                onPress={() => void check(address, "self")}
-              />
-              <Result probe={probeUnder("self", open, probe)} onScan={onScan} onTypeToken={onTypeToken} />
-            </View>
+            </DoorModal>
           ) : null}
         </Door>
         <Rule inset={20} />
-        <Door name={Copy.doorDesktop} say={Copy.doorDesktopSay} onPress={onScan} />
-        {/* THE ONE CONDITION THIS DOOR HAS, BEFORE THE SCAN RATHER THAN AFTER IT. `canPin()` is
-            false where the pinning half is absent, and there a same-network code is refused by the
-            seam — so a person could follow the tile exactly and be stopped. See
-            `doorDesktopNoPin`: the remedy that works, named where it is needed and nowhere else. */}
-        {canPin() ? null : (
-          <View style={{ paddingHorizontal: 20, paddingTop: 2 }}>
-            <Txt variant="hint" tone="ink2">
-              {Copy.doorDesktopNoPin}
-            </Txt>
-          </View>
-        )}
+        <Door name={Copy.doorDesktop} say={Copy.doorDesktopSay}
+          icon={recovery ? "computer" : undefined} onPress={() => setComputer(true)}
+        >
+          {computer ? (
+            <DoorModal close={close}>
+              <ComputerDoor back={close} scan={scan} />
+            </DoorModal>
+          ) : null}
+        </Door>
 
         {/* ── THE FOURTH DOOR, UNDER THE THIRD ──────────────────────────────────────────────
             Same anatomy as the other three, no accent and no badge: position is the loudest signal
@@ -240,6 +269,7 @@ export function Doors({
             <Rule inset={20} />
             <Door
               name={Copy.doorPhone}
+              icon={recovery ? "phone" : undefined}
               say={Copy.doorPhoneSay}
               need={
                 Platform.OS === "android" ? Copy.doorPhoneNeedAndroid : Copy.doorPhoneNeedIos
@@ -259,45 +289,123 @@ export function Doors({
   );
 }
 
-/** What a probed address offers, or the sentence it ended on. Never a dead control. */
+function DoorModal({ close, children }: { close: () => void; children: ReactNode }) {
+  return (
+    <Modal animationType="slide" onRequestClose={close}>
+      {/* The underlying mailbox's rail cannot take a press through this modal. */}
+      <NavDrawnContext.Provider value={false}>{children}</NavDrawnContext.Provider>
+    </Modal>
+  );
+}
+
+function ComputerDoor({ back, scan }: { back: () => void; scan: () => void }) {
+  const { palette } = useOnboardingLook();
+  const supported = canPin();
+  return (
+    <OnboardingPage back={back} actions={<OnboardingButton label={Copy.welcomeScan} onPress={scan} />}>
+      <View style={{ gap: 16 }}>
+        <OnboardingTitle text={Copy.phoneComputerSentence} />
+        <OnboardingTag label={Copy.scanDevices} />
+        <Txt variant="body" style={{ color: palette.ink, fontWeight: "700" }}>
+          {supported ? Copy.phoneComputerAndroid : Copy.phoneComputerIos}
+        </Txt>
+        {supported ? null : <Txt variant="body" style={{ color: palette.ink2 }}>{Copy.phoneComputerNoPin}</Txt>}
+      </View>
+    </OnboardingPage>
+  );
+}
+
+/** A probe belongs to this door, even though its answer now occupies a full page. */
 function Result({
   probe,
+  back,
   onScan,
   onTypeToken,
+  ask,
+  address,
+  empty,
 }: {
   probe: Probe;
+  back: () => void;
   onScan: () => void;
   onTypeToken: () => void;
+  ask?: () => void;
+  address?: ReactNode;
+  empty?: boolean;
 }) {
-  if (probe.k === "failed") {
-    return (
-      <Txt variant="hint" tone="ink2" style={{ paddingHorizontal: 4 }}>
-        {sayRefusal(probe.sentence)}
-      </Txt>
-    );
-  }
-  if (probe.k !== "probed") return null;
+  const { palette } = useOnboardingLook();
+  const onboardingButton = useOnboardingButton();
+  const [browserRefused, setBrowserRefused] = useState(false);
+  const cloud = ask === undefined;
+  const canOpenBrowser = cloud && linksOutToBilling();
+  const reached = probe.k === "probed";
+  const checking = probe.k === "asking";
+  const browser = (page: "login" | "join") => {
+    setBrowserRefused(false);
+    void Linking.openURL(`${WEB_APP_URL}/${page}`).catch(() => setBrowserRefused(true));
+  };
+
   return (
-    <View style={{ gap: 10 }}>
-      <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 4 }}>
-        {Copy.doorSelfReached(probe.origin, probe.flavor)}
-        {/* SAID ONLY WHEN IT IS A FACT WORTH SAYING. A server whose API is at its own root has
-            nothing to report here, and a line stating the obvious on every door would train
-            people to skip the one place this detail matters. */}
-        {probe.prefixed ? ` ${Copy.doorSelfApiUnder(probe.base)}` : ""}
-      </Txt>
-      <Button label={Copy.stepScan} onPress={onScan} />
-      <Button
-        label={Copy.stepManual}
-        onPress={() => {
-          // The negotiated address travels in this PROCESS, not in the route — see
-          // `stashPairOrigin`. A route parameter here is reachable from `ohmail://connect?origin=`
-          // and the pairing token IS the credential.
-          stashPairOrigin(probe.origin);
-          onTypeToken();
-        }}
-      />
-    </View>
+    <OnboardingPage
+      back={back}
+      row={reached && !canOpenBrowser}
+      actions={
+        <>
+          {reached ? (
+            <>
+              <OnboardingButton label={Copy.stepScan} grow={!canOpenBrowser} onPress={onScan} />
+              <OnboardingButton label={Copy.stepManual} kind="soft" grow={!canOpenBrowser} onPress={() => {
+                stashPairOrigin(probe.origin);
+                onTypeToken();
+              }} />
+            </>
+          ) : ask === undefined ? (
+            checking
+              ? <Button appearance={onboardingButton} label={Copy.doorSelfChecking} disabled onPress={back} />
+              : <OnboardingButton label={Copy.phoneStandaloneBack} onPress={back} />
+          ) : (
+            <Button appearance={onboardingButton}
+              label={checking ? Copy.doorSelfChecking : Copy.doorSelfGo}
+              disabled={checking || empty}
+              onPress={ask}
+            />
+          )}
+          {canOpenBrowser ? (
+            <>
+              <OnboardingButton label={Copy.phoneCloudSignIn} kind="quiet" onPress={() => browser("login")} />
+              <OnboardingButton label={Copy.phoneCloudJoin} kind="quiet" onPress={() => browser("join")} />
+            </>
+          ) : null}
+        </>
+      }
+    >
+      <View style={{ gap: 16 }}>
+        {cloud ? <OnboardingTitle text={Copy.doorCloud} /> : address}
+        {probe.k === "failed" ? (
+          <Txt variant="body" accessibilityRole="alert" style={{ color: palette.ink, fontWeight: "700" }}>
+            {sayRefusal(probe.sentence)}
+          </Txt>
+        ) : null}
+        {reached ? (
+          <Txt variant="body" style={{ color: palette.ink, fontWeight: "700" }}>
+            {Copy.doorSelfReached(probe.origin, probe.flavor)}
+            {probe.prefixed ? ` ${Copy.doorSelfApiUnder(probe.base)}` : ""}
+          </Txt>
+        ) : null}
+        {cloud && (probe.k !== "failed" || canOpenBrowser) ? (
+          <View style={{ gap: 8 }}>
+            <Txt variant="settingsLabel" style={{ color: palette.ink }}>{Copy.phoneCloudBrowser}</Txt>
+            <Txt variant="body" style={{ color: palette.ink2 }}>{Copy.phoneCloudBrowserHint}</Txt>
+          </View>
+        ) : !reached && probe.k !== "failed" ? (
+          <View style={{ gap: 8 }}>
+            <Txt variant="body" style={{ color: palette.ink, fontWeight: "700" }}>{Copy.phoneServerHint}</Txt>
+            <Txt variant="body" style={{ color: palette.ink2 }}>{Platform.OS === "android" ? Copy.phoneServerAndroid : Copy.phoneServerIos}</Txt>
+          </View>
+        ) : null}
+        {browserRefused ? <Txt variant="body" accessibilityRole="alert">{Copy.phoneCloudBrowserRefused}</Txt> : null}
+      </View>
+    </OnboardingPage>
   );
 }
 
@@ -306,6 +414,7 @@ function Door({
   name,
   say,
   need,
+  icon,
   onPress,
   children,
 }: {
@@ -313,10 +422,12 @@ function Door({
   say: string;
   /** The third line — what the door asks for next, or (door four) the condition it comes with. */
   need?: string;
+  icon?: IconName;
   onPress: () => void;
   /** This door's answer, rendered under its row. The routing doors have none. */
   children?: ReactNode;
 }) {
+  const { palette } = useOnboardingLook();
   return (
     <View>
       <TapRow
@@ -332,61 +443,16 @@ function Door({
          * choice — it IS the choice.
          */
         accessibilityLabel={Copy.ariaNameThenSentence(name, need === undefined ? say : `${say} ${need}`)}
-        style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}
+        style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 8, flexDirection: "row" }}
       >
-        <Txt variant="navLabel">{name}</Txt>
-        <Txt variant="hint" tone="ink3">{say}</Txt>
-        {/* THE THIRD LINE IS IN THE LABEL TOO, for the reason the second one is: on door four it is
-            the decision-bearing sentence, and a reader who heard "Standalone on this phone" and not
-            "only while the app is open" has been told the wrong thing. */}
-        {need !== undefined ? <Txt variant="hint" tone="ink3">{need}</Txt> : null}
+        {icon ? <Icon name={icon} size={18} color={palette.ink2} /> : null}
+        <View style={{ flex: 1, gap: 3 }}>
+          <Txt variant={icon ? "settingsLabel" : "navLabel"}>{name}</Txt>
+          <Txt variant={icon ? "body" : "hint"} tone={icon ? "ink2" : "ink3"}>{say}</Txt>
+          {need !== undefined ? <Txt variant="hint" tone="ink3">{need}</Txt> : null}
+        </View>
       </TapRow>
       {children}
-    </View>
-  );
-}
-
-function AddressField({
-  value,
-  onChange,
-  locked,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  locked: boolean;
-}) {
-  const t = useTheme();
-  return (
-    <View>
-      <View
-        style={[
-          { paddingHorizontal: 14, borderRadius: t.radius.input, backgroundColor: t.c.canvas },
-          t.lift("l0"),
-        ]}
-      >
-        {/* NO SCHEME IN THE PLACEHOLDER, and it is not a census dodge: the parse accepts a bare
-            host and completes it to https and nothing else (`cloud-origin.ts` — the only value it
-            ever invents, and only ever in the safe direction), so a bare host is the shortest TRUE
-            example. What https is for is said in `doorSelfCert`, and the refusal for a
-            badly-shaped address spells the full form. */}
-        <TextInput
-          maxFontSizeMultiplier={t.textCap}
-          disableFullscreenUI
-          keyboardAppearance={t.scheme}
-          value={value}
-          onChangeText={onChange}
-          editable={!locked}
-          autoCorrect={false}
-          autoCapitalize="none"
-          keyboardType="url"
-          placeholder={Copy.doorSelfAddressPlaceholder}
-          accessibilityLabel={Copy.doorSelfAddress}
-          style={[t.type.msgBody, { color: t.c.ink, paddingVertical: 12 }]}
-        />
-      </View>
-      <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
-        {Copy.doorSelfAddressHint}
-      </Txt>
     </View>
   );
 }

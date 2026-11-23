@@ -8,6 +8,8 @@ interface ButtonLook {
   kind?: "ink" | "two" | "quiet";
   /** `s` small, `l` a decision. Left out: the button's own height. */
   size?: "s" | "l";
+  /** The paper-colored secondary action for a page on the stage. */
+  surface?: "sheet";
   /**
    * A mark after the word: the arrow of a control that opens a short menu, or the way off once what it opens
    * has been set. It is drawn, never said: the word and the control's state say what a press does.
@@ -93,6 +95,7 @@ export function Button(props: ButtonProps) {
     className: "oh-control oh-button",
     "data-kind": kind,
     "data-size": size,
+    "data-surface": props.surface,
     "data-bare": children === undefined ? "" : undefined,
     "data-mark": mark ? "" : undefined,
     "aria-label": label,

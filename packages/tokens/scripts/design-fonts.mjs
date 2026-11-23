@@ -18,12 +18,14 @@ const SHAPE = {
   stretch: /^\d{2,3}%( \d{2,3}%)?$/,
   display: /^(swap|block|fallback|optional)$/,
   file: /^[a-z0-9-]+\.woff2$/,
+  nativeFile: /^[a-z0-9-]+\.ttf$/,
+  nativeWeight: /^[1-9]00$/,
   unicodeRange: /^U\+[0-9A-Fa-f]{4}(-[0-9A-Fa-f]{4})?(,U\+[0-9A-Fa-f]{4}(-[0-9A-Fa-f]{4})?)*$/,
   sha256: /^[0-9a-f]{64}$/,
   licenceFile: /^OFL-[A-Za-z]+\.txt$/,
   version: /^\d+\.\d+$/,
 };
-const FAMILY_KEYS = ["family", "weight", "stretch", "display", "files", "licence", "upstream"];
+const FAMILY_KEYS = ["family", "weight", "stretch", "display", "files", "nativeFiles", "licence", "upstream"];
 
 function shaped(value, shape, path) {
   if (typeof value !== "string" || !SHAPE[shape].test(value)) refuse(`${path} is not a ${shape}`);
@@ -48,12 +50,24 @@ export function fontsOf(fonts) {
       };
     });
     if (files.length === 0) refuse(`${path} names no file`);
+    const nativeFiles = (entry.nativeFiles ?? []).map((f, j) => {
+      const entryPath = `${path}.nativeFiles[${j}]`;
+      const file = shaped(f.file, "nativeFile", `${entryPath}.file`);
+      if (seen.has(file)) refuse(`${entryPath}.file: ${file} is named twice`);
+      seen.add(file);
+      return {
+        file,
+        weight: shaped(f.weight, "nativeWeight", `${entryPath}.weight`),
+        sha256: shaped(f.sha256, "sha256", `${entryPath}.sha256`),
+      };
+    });
     return {
       family: shaped(entry.family, "family", `${path}.family`),
       weight: shaped(entry.weight, "weight", `${path}.weight`),
       ...(entry.stretch === undefined ? {} : { stretch: shaped(entry.stretch, "stretch", `${path}.stretch`) }),
       display: shaped(entry.display, "display", `${path}.display`),
       files,
+      nativeFiles,
       licence: {
         name: entry.licence?.name === "OFL-1.1" ? "OFL-1.1" : refuse(`${path}.licence.name is not a licence this package bundles under`),
         file: shaped(entry.licence?.file, "licenceFile", `${path}.licence.file`),
@@ -96,8 +110,11 @@ export const fontsDir = ${JSON.stringify(FONTS_DIR)};
 /** The bundled typefaces: their descriptors, their files with a sha256 each, their version and licence. */
 export const fonts = ${JSON.stringify(listed, null, 2)} as const;
 
-/** Every font file, in fonts/. */
+/** Every web font file, in fonts/. */
 export const fontFiles = ${JSON.stringify(families.flatMap((family) => family.files.map((f) => f.file)))} as const;
+
+/** Every native TrueType font file, in fonts/. */
+export const nativeFontFiles = ${JSON.stringify(families.flatMap((family) => family.nativeFiles.map((f) => f.file)))} as const;
 
 /** The licence texts, in fonts/. A copy of a font file is passed on with its licence text. */
 export const fontLicenceFiles = ${JSON.stringify(licences)} as const;
@@ -124,11 +141,14 @@ ${table(
     families.map((f) => [f.family, f.upstream.version, f.licence.copyright.replace(/^Copyright /, ""), f.upstream.project, f.licence.file]),
   )}
 
-The files are variable fonts in two subsets each, Latin and Latin Extended.
+The web files are variable fonts in two subsets each, Latin and Latin Extended. The phone apps bundle static TrueType faces.
 
 ${table(
-    ["File", "Family", "sha256"],
-    families.flatMap((f) => f.files.map((file) => [file.file, f.family, `\`${file.sha256}\``])),
+    ["File", "Family", "Weight", "sha256"],
+    families.flatMap((family) => [
+      ...family.files.map((f) => [f.file, family.family, family.weight, `\`${f.sha256}\``]),
+      ...family.nativeFiles.map((f) => [f.file, family.family, f.weight, `\`${f.sha256}\``]),
+    ]),
   )}
 `;
 }

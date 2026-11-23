@@ -29,7 +29,15 @@ const PILE_WORD = {
  * refusal say which responder is STORED, and an unsaved edit says it has not reached it, with its own Save; a held
  * leave asks there before the edit is dropped.
  */
-export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly rules: AwayRules }) {
+export function AwayPane({
+  model,
+  rules,
+  discardEdit,
+}: {
+  readonly model: AwayModel;
+  readonly rules: AwayRules;
+  readonly discardEdit?: () => void;
+}) {
   const t = useText("away");
   const own = useText(AWAY_NAMESPACE);
   const settings = useText("settings");
@@ -40,35 +48,10 @@ export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly
       <SettingsSheet wants={{ word: own("notRead"), line: t("unreachable") }} />
     ) : null;
   }
-  const unsaved = awayUnsaved(draft, saved, rules);
-  const stillSaid = saved.enabled ? t("unsavedStillOn") : t("unsavedStillOff");
   const saveWord = pending ? t("saving") : t("save");
-  const wants = !unsaved
-    ? undefined
-    : model.leaving
-      ? {
-          word: settings("notSaved"),
-          line: `${stillSaid} ${t("leaveAsk")}`,
-          acts: (
-            <>
-              <Button kind="ink" size="s" onPress={() => model.discard()}>
-                {t("leaveDiscard")}
-              </Button>
-              <Button kind="quiet" size="s" onPress={() => model.keep()}>
-                {t("leaveKeep")}
-              </Button>
-            </>
-          ),
-        }
-      : {
-          word: settings("notSaved"),
-          line: stillSaid,
-          acts: (
-            <Button kind="ink" size="s" disabled={pending} onPress={() => model.save()}>
-              {saveWord}
-            </Button>
-          ),
-        };
+  const wants = awayUnsaved(draft, saved, rules)
+    ? awayUnsavedMessage(model, saved.enabled, saveWord, settings("notSaved"), t, discardEdit)
+    : undefined;
 
   return (
     <SettingsSheet wants={wants}>
@@ -142,12 +125,57 @@ export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly
       ) : null}
       <AwayRate throttle={draft.throttle} set={(throttle) => model.edit({ throttle })} />
       {whereAwayRuns(model.runsOn, t)}
-      <Button kind="ink" size="s" disabled={pending} onPress={() => model.save()}>
-        {saveWord}
-      </Button>
+      {discardEdit ? null : (
+        <Button kind="ink" size="s" disabled={pending} onPress={() => model.save()}>
+          {saveWord}
+        </Button>
+      )}
       {model.state.outcome ? <Outcome outcome={model.state.outcome} storedOn={saved.enabled} /> : null}
     </SettingsSheet>
   );
+}
+
+function awayUnsavedMessage(
+  model: AwayModel,
+  storedOn: boolean,
+  saveWord: string,
+  notSaved: string,
+  t: Text,
+  discardEdit: (() => void) | undefined,
+) {
+  const { pending } = model.state;
+  const stillSaid = storedOn ? t("unsavedStillOn") : t("unsavedStillOff");
+  return model.leaving
+    ? {
+        word: notSaved,
+        line: `${stillSaid} ${t("leaveAsk")}`,
+        acts: (
+          <>
+            <Button kind="ink" size="s" onPress={() => model.discard()}>
+              {t("leaveDiscard")}
+            </Button>
+            <Button kind="quiet" size="s" onPress={() => model.keep()}>
+              {t("leaveKeep")}
+            </Button>
+          </>
+        ),
+      }
+    : {
+        word: notSaved,
+        line: stillSaid,
+        acts: (
+          <>
+            <Button kind="ink" size="s" disabled={pending} onPress={() => model.save()}>
+              {saveWord}
+            </Button>
+            {discardEdit ? (
+              <Button kind="quiet" size="s" disabled={pending} onPress={discardEdit}>
+                {t("leaveDiscard")}
+              </Button>
+            ) : null}
+          </>
+        ),
+      };
 }
 
 /** How often one person gets a reply: the rate's word opens its menu. */
@@ -227,6 +255,8 @@ function outcomeSaid(outcome: AwayOutcome, storedOn: boolean, t: Text, settings:
 function whereAwayRuns(runsOn: AwayModel["runsOn"], t: Text) {
   return runsOn === "thisComputer" ? (
     <SettingNote>{t("localNote")}</SettingNote>
+  ) : runsOn === "thisPhone" ? (
+    <SettingNote>{t("phoneNote")}</SettingNote>
   ) : typeof runsOn === "object" ? (
     <SettingNote>{t("hostNote", { host: runsOn.host })}</SettingNote>
   ) : null;

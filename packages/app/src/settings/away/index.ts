@@ -1,6 +1,6 @@
 /** Settings › Away responder: the one control that sends mail on its own. A shell's hook steps {@link awayStep}. */
 export { AwayPane } from "./AwayPane.js";
-export { AwaySettings } from "./AwaySettings.js";
+export { AwaySettings, PhoneAwaySettings } from "./AwaySettings.js";
 export {
   AWAY_START,
   awayPileChoices,

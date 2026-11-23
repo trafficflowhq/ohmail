@@ -139,7 +139,7 @@ function pressOf(verb: Parked["verb"], machine: Machine, facts: ConnectFacts): P
   const preset = presetOf(typed, facts);
   if (preset === null || facts.purpose === "edit" || facts.purpose === "reconnect") return null;
   const mode = verb === "connect" ? MODE_OF[facts.purpose] : null;
-  const body = inputOf(typed, preset, pass, claims);
+  const body = inputOf(typed, preset, pass, claims, facts.purpose === "standalone");
   return Object.freeze({ verb, subject: null, mode, body, sent: Object.freeze({ ...hosts }) });
 }
 
@@ -234,12 +234,11 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
     // A name that cannot be stored sends nothing and says so; only the mount that asks for one can hold one.
     if (senderNameOf(state.typed.displayName ?? "") === undefined)
       return dispatch({ kind: "said", shown: { said: NAME_REFUSED, calm: false } });
-    if (!edits) return press("connect");
-    // A port is optional; one that is none sends nothing and says so.
+    const separatePorts = edits || (facts.purpose === "standalone" && preset?.manual === true);
     const bad = (port: string): boolean => filled(port) && !validPort(port.trim());
-    if (bad(state.typed.imapPort) || bad(state.typed.smtpPort))
+    if (separatePorts && (bad(state.typed.imapPort) || bad(state.typed.smtpPort)))
       return dispatch({ kind: "said", shown: { said: PORT_INVALID, calm: false } });
-    press("edit");
+    press(edits ? "edit" : "connect");
   };
 
   return {

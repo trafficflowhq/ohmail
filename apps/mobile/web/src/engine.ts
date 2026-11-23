@@ -10,6 +10,7 @@ import { BROWSER_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import type { ShellConfig } from "../../src/shell/bridge-kinds";
 import { accountGuarded } from "./account-guard";
 import type { Bridge } from "./bridge";
+import { accountFetch } from "./account-fetch";
 import { bridgeFetch } from "./bridge-fetch";
 
 export interface PhoneEngine {
@@ -40,6 +41,9 @@ export function createPhoneEngine(
     // The two `/hello` reads a paired server answers; the phone's own engine is this same build.
     forwardPartsCheck: paired,
     scheduleFilesCheck: paired,
+    ...(config.app === "ohcal" ? {
+      saveCalendarSettings: (body) => accountFetch(bridge, config.scope)("/calendar/settings", "PATCH", body),
+    } : {}),
   });
   const engine = new OhmailEngine({
     adapter: accountGuarded(adapter, config.accountId),

@@ -42,6 +42,9 @@
     box-shadow: var(--oh-ring-btn);
     color: var(--ink);
   }
+  .oh-button[data-kind="two"][data-surface="sheet"] {
+    --oh-soft: var(--sheet);
+  }
   .oh-button[data-kind="quiet"] {
     --oh-button-pad: 0 var(--cap-q);
     background: transparent;

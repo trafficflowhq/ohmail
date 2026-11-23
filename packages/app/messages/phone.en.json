@@ -24,6 +24,7 @@
       "notACode": "Not an ohmail code."
     },
     "server": {
+      "cloud": "ohmail Cloud.",
       "say": "My server is at <blank></blank>.",
       "label": "Your server’s address",
       "blank": "its address",
@@ -50,6 +51,14 @@
       "scan": "Scan a code"
     },
     "terms": {
+      "folders": "Where your mail lives",
+      "inbox": "Ohbox shows mail from people you said yes to. History shows older mail. Both are views of your inbox.",
+      "folderScreener": "Mail from people you haven’t decided about waits in Screener.",
+      "folderNews": "Newsletters and things to read later.",
+      "folderReceipts": "Receipts, orders and tickets.",
+      "folderScreened": "Mail you screened out.",
+      "folderQuarantine": "Mail marked as spam.",
+      "folderOther": "Sent, Drafts, Trash, Junk and your own folders stay as they are.",
       "say": "Organize on this phone.",
       "while": {
         "android": "It organizes while its notification is shown. Dismiss the notification to stop.",
@@ -62,6 +71,13 @@
       "chooseOther": "Choose differently"
     },
     "form": {
+      "serverSettings": "Server settings",
+      "hostPorts": "Host and ports",
+      "passwordHelp": "Password help",
+      "pickAnother": "Pick another",
+      "later": "Later",
+      "provider": "My mail is with",
+      "providerChosen": "My mail is with {provider}.",
       "iAm": "I’m <address></address> with password <password></password>.",
       "iAmAppPassword": "I’m <address></address> with app password <password></password>.",
       "seenAs": "People see me as <name></name>.",
@@ -78,6 +94,7 @@
       "smtpHost": "Outgoing server (SMTP)",
       "smtpPort": "SMTP port",
       "tls": "Implicit TLS",
+      "tlsPorts": "Switches the incoming port between 993 and 143. Port 143 starts with STARTTLS.",
       "twoStep": "2-Step Verification on",
       "whereToMake": "Where to make one",
       "appOnlyNote": "Some work, school and Advanced Protection accounts cannot create App Passwords, and ohmail cannot connect those yet.",
@@ -194,6 +211,29 @@
     }
   },
   "phoneSettings": {
+    "legalTitle": "What happens to your mail",
+    "privacy": "Privacy",
+    "subprocessors": "Subprocessors",
+    "imprint": "Imprint",
+    "mailboxCount": "{count, number}",
+
+    "factorBrowser": "Use the same account in your browser to confirm with a passkey.",
+    "openBrowser": "Open in browser",
+    "invitesEmpty": "No invites",
+    "noAccount": "No account",
+    "accountLoading": "Loading your account.",
+    "plan": "Plan",
+    "status": "Status",
+    "storageEmpty": "No storage usage to show",
+    "subscriptionEmpty": "No plan yet",
+    "companion": {
+      "title": "Open ohmail",
+      "line": "You can get ohmail from this phone’s app store.",
+      "failed": "This phone could not open the app.",
+      "appStore": "Open the App Store",
+      "playStore": "Open Google Play",
+      "cancel": "Cancel"
+    },
     "thisPhone": {
       "title": "This phone",
       "tag": {

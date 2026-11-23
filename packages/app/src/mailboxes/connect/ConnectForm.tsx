@@ -13,6 +13,7 @@ import { DeviceSignIn } from "./DeviceSignIn.js";
 import { Credentials, Head, ManualSignIn } from "./Fields.js";
 import { Acts, Outcome, WaysOut } from "./Lines.js";
 import { ProviderChoice } from "./ProviderChoice.js";
+import { StandaloneCredentials } from "./StandaloneCredentials.js";
 import { FORM_WORDS } from "./words.js";
 import "./placement.css";
 
@@ -85,8 +86,9 @@ function Opened({
     return page ? page(code, form.stopCode) : code;
   }
   const asking = form.asking;
+  const standalone = page !== undefined && kind === "standalone";
   const material = (
-    <div className="mbx-connect-part" data-page-filling-form={manual ? "" : undefined}>
+    <div className="mbx-connect-part" data-page-filling-form={manual || standalone ? "" : undefined}>
       {leave.leaving ? (
         <Dialog
           open
@@ -117,6 +119,8 @@ function Opened({
       >
         {manual ? (
           <ManualSignIn d={d} back={step.back} heading={title} />
+        ) : standalone ? (
+          <StandaloneCredentials d={d} />
         ) : (
           <>
             <Head
@@ -127,9 +131,11 @@ function Opened({
             {hasManualStep && form.preset?.manual ? null : <Credentials d={d} />}
           </>
         )}
-        <Outcome d={d} />
+        {standalone ? null : <Outcome d={d} />}
         {form.code?.kind === "ended" ? <DeviceSignIn result={form.code} stop={form.stopCode} /> : null}
-        {hasManualStep && form.preset?.manual && !manual ? null : <Acts d={d} manual={manual} />}
+        {hasManualStep && form.preset?.manual && !manual ? null : (
+          <Acts d={d} manual={manual} atFoot={standalone} />
+        )}
       </form>
       {/* The second factor, asked beside the form it unblocks and outside it: the dialog is a form of its own. */}
       {asking !== null && factor !== NONE
@@ -165,8 +171,8 @@ function useConnectStep(
     else if (returning.current) {
       returning.current = false;
       formNode.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus();
-    } else if (paged) formNode.current?.querySelector("input")?.focus();
-  }, [choosing, manual, paged]);
+    } else if (paged && kind !== "standalone") formNode.current?.querySelector("input")?.focus();
+  }, [choosing, kind, manual, paged]);
   const back = () => {
     if (paged && (form.busy || form.state.leaving || form.asking)) return;
     form.password.current?.clear();

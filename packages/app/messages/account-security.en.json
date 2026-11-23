@@ -1,5 +1,6 @@
 {
   "accountSecurity": {
+    "setupQr": "Authenticator setup QR code",
     "notRead": "Not read",
     "notDone": "Not done",
     "cancelled": "Cancelled",

@@ -13,16 +13,22 @@ import { AppState, View } from "react-native";
 import { useSeenRun } from "../../src/ui/stream-seen";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
+import { useTheme } from "../../src/theme";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { GroupedSweepLedger } from "../../src/state/sweep";
-import { useWorld, type WorldMail } from "../../src/state/world";
+import { useFilesStamp, useWorld, type WorldMail } from "../../src/state/world";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MailFoundEvents, useMailFoundEvents } from "../../src/ui/MailFoundEvents";
+import { EventCards } from "../../src/ui/EventCard";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { Empty, Screen, Tail, ViewHead, Waterline, useListInsets } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MailList, type ListGroup, type RowFrame } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
+import { StreamMailMenu } from "../../src/ui/StreamMailMenu";
+import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
+import { MailListMenu } from "../../src/ui/MailListMenu";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -51,6 +57,7 @@ function ReceiptsBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  const t = useTheme();
   const pull = usePullToSync();
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
@@ -126,9 +133,11 @@ function ReceiptsBody() {
 
   const dayGroups: ListGroup<WorldMail>[] = groups.map((g) => ({
     key: groupKeyOf(g),
-    title: g.label,
+    title: t.mail ? undefined : g.label,
     rows: g.items,
   }));
+
+  const markStream = () => actions.markAllSeen(unreadIds, rows[0] ? { place: "receipts", upToId: rows[0].id } : undefined);
 
   const list = (
     <Screen>
@@ -141,10 +150,14 @@ function ReceiptsBody() {
             {/* The line stands ABOVE the newest receipt already seen at the last
                 visit — this stream's own anchor, independent of Reads'. */}
             {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
-            <MailRow m={m} onPress={() => openRow(m.id)} swipe />
+            <View style={{ marginBottom: 12 }}>
+              <MailRow m={m} onPress={() => openRow(m.id)} swipe receipt
+                receiptDetail={t.mail ? <ReceiptEvents m={m} /> : null} />
+              {t.mail ? <StreamMailMenu onRead={() => openRow(m.id)} /> : null}
+            </View>
           </>
         )}
-        rowInset={6}
+        surface={false}
         onRowFrame={onRowFrame}
         onRowGone={onRowGone}
         {...gestures}
@@ -154,17 +167,15 @@ function ReceiptsBody() {
           <ViewHead
             style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}
             title={Copy.receipts}
+            attention={newCount > 0}
             meta={metaWhen(surface, meta) ?? " "}
             /* Reads' press: flip the stream's unread and commit its line above the newest receipt. */
-            right={
-              <MarkAllRead
-                unreadCount={unreadIds.length}
-                freshCount={newCount}
-                onPress={() =>
-                  actions.markAllSeen(unreadIds, rows[0] ? { place: "receipts", upToId: rows[0].id } : undefined)
-                }
-              />
-            }
+            leading={t.mail ? <MailCalendarSwitch /> : null}
+            right={t.mail ? (
+              <MailListMenu unread={unreadIds.length} fresh={newCount} onMarkAll={markStream} />
+            ) : (
+              <MarkAllRead unreadCount={unreadIds.length} freshCount={newCount} onPress={markStream} />
+            )}
           >
             {/* Letters here from senders nobody let in, and the press — the web's note. */}
             <View style={{ marginTop: 12 }}>
@@ -178,7 +189,7 @@ function ReceiptsBody() {
               <SkeletonList stalled={w.boot.syncFailure} />
             </View>
           ) : surface === "empty" ? (
-            <Empty title={Copy.receiptsEmptyTitle} hint={Copy.receiptsEmptyHint} />
+            <Empty title={t.mail ? Copy.mailEmptyTitle : Copy.receiptsEmptyTitle} hint={t.mail ? undefined : Copy.receiptsEmptyHint} />
           ) : null
         }
         foot={total > 0 ? <Tail>{Copy.receiptsTail(total)}</Tail> : null}
@@ -195,4 +206,14 @@ function ReceiptsBody() {
       renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );
+}
+
+function ReceiptEvents({ m }: { m: WorldMail }) {
+  const world = useWorld();
+  useFilesStamp([m.id]);
+  const found = useMailFoundEvents(m);
+  return <>
+    <EventCards events={world.eventsOf(m.id)} style={{ marginBottom: 0 }} />
+    <MailFoundEvents found={found} />
+  </>;
 }

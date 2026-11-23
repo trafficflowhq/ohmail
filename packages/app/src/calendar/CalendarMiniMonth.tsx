@@ -17,6 +17,7 @@ import { MiniMonth } from "@ohmail/ui/calendar";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { NONE } from "../host/index.js";
 import { useFrame } from "../frame/commands.js";
+import { useCalendarDevice } from "../calsettings/device.js";
 import { useFaces, useSources } from "./where.js";
 
 export function CalendarMiniMonth({
@@ -66,6 +67,8 @@ export function CalendarMiniMonth({
   });
   const start = weekStartOf(anchor, weekStart);
   const strip = mode === "strip";
+  const weekends = useCalendarDevice()?.settings.weekends ?? true;
+  const weekdayVisible = (index: number) => !strip || weekends || (index + weekStart) % 7 < 5;
   const bands = route.place === "week" && !strip;
   const weeks = strip ? grid.weeks.filter((week) => week.id === start) : grid.weeks;
   const name = monthName(month, locale, yearOf(today));
@@ -90,9 +93,10 @@ export function CalendarMiniMonth({
               open: onMonth && { onPress: () => onMonth(firstOfMonth(month)) },
             }
       }
-      weekdays={weekdayNames(locale, weekStart, "narrow")}
+      weekdays={weekdayNames(locale, weekStart, "narrow").filter((_, index) => weekdayVisible(index))}
       days={weeks.flatMap((week) =>
-        week.days.map((d, index) => {
+        week.days.flatMap((d, index) => {
+          if (!weekdayVisible(index)) return [];
           const pieces = week.pieces.filter((piece) => piece.from <= index && index <= piece.to);
           const run =
             mode === "rail"

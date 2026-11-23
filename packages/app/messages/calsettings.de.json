@@ -43,6 +43,14 @@
       "title": "Kalenderzugänge"
     },
     "view": {
+      "opensIn": "Startansicht",
+      "startsOn": "Woche beginnt am",
+      "weekends": "Wochenenden",
+      "showDeclined": "Abgelehnte Termine zeigen",
+      "deviceSummary": "{view} · {day}",
+      "opens": { "agenda": "Agenda", "day": "Tag", "week": "Woche", "month": "Monat", "year": "Jahr" },
+      "starts": { "0": "Montag", "5": "Samstag", "6": "Sonntag" },
+
       "newEvents": "Neue Termine kommen in",
       "noWritable": "Kein Kalender zum Schreiben",
       "week": "Woche",
@@ -68,6 +76,13 @@
     "group": "Kalender",
     "close": "Einstellungen schließen",
     "mail": {
+      "readForEvents": "Nach Terminen lesen",
+      "noMailbox": "Kein Postfach",
+      "phoneOfferNote": "Wähle, aus welchen Postfächern Terminvorschläge auf diesem Telefon erscheinen.",
+      "offered": "Vorgeschlagen",
+      "evidence": { "calendar": "Kalendereinladungen", "data": "Termine in strukturierten E-Mails" },
+      "onCalendar": "Im Kalender",
+
       "title": "Mail und Kalender",
       "fromMail": "Aus Mail",
       "open": "Öffnen"

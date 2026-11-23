@@ -37,6 +37,8 @@ export interface AnswerSwitchProps {
    * while they are wider than their line (a proposed time in a letter on the unfolded phone).
    */
   fit?: SegFit;
+  /** The choices fill the width of a phone sheet. */
+  fill?: boolean;
 }
 
 /**
@@ -44,13 +46,13 @@ export interface AnswerSwitchProps {
  * list and the letter it came in. A second answer is the way back: it answers on an answered event too.
  * The three answers stand on the segmented control's track; the group is the whole row.
  */
-export function AnswerSwitch({ label, answers, acts, propose, on = "soft", fit }: AnswerSwitchProps) {
+export function AnswerSwitch({ label, answers, acts, propose, on = "soft", fit, fill }: AnswerSwitchProps) {
   const [track, fits] = useSegFit(fit, answers?.options);
   /* The three answers alone are the group themselves; with more beside them the whole row is. */
   const alone = !!answers && !acts?.length && !propose;
   const group = { role: "group", "aria-label": label } as const;
   return (
-    <div className="oh-ans" {...(alone ? null : group)} data-on={on}>
+    <div className="oh-ans" {...(alone ? null : group)} data-on={on} data-fill={fill ? "" : undefined}>
       {answers ? (
         <span ref={track} className="oh-seg" {...(alone ? group : null)} data-fit={fits}>
           {answers.options.map((option) => (

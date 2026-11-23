@@ -4,7 +4,7 @@ import type { PanelVerb } from "@ohmail/ui/mail";
 import { useCalendarMirror, useSetupPort } from "../calsetup/index.js";
 import { useFrame, useReport } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
-import { useKnownOwnAddresses } from "../frame/room.js";
+import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { isEmailAddress } from "@ohmail/app-logic/writing/compose";
 import { useText, useTimeZone } from "../text/index.js";
 import { useDuplicateDraft } from "./draft-undo.js";
@@ -69,15 +69,21 @@ export function useReadCardActions(
   return { duplicate, hide, mail, ...removal, retry: enabled ? retry : undefined };
 }
 
-function useCalendarEventMail(
+export function useCalendarEventMail(
   record: CalendarEventRecord | undefined,
-  event: CalendarEventFace,
+  event: CalendarEventFace | undefined,
 ): PanelVerb | undefined {
   const { commands, host } = useFrame();
-  const own = useKnownOwnAddresses();
+  const own = useCalendarOwnAddresses();
   const t = useText("calendar");
+  const refusal = useText("viewError");
+  const report = useReport();
+  const pairing = useRef(false);
+  const entry = host.features.calendar;
+  const outside = entry === NONE ? undefined : entry.writeGuests;
   if (
-    host.capabilities.products !== "both" ||
+    (host.capabilities.products !== "both" && !outside) ||
+    !event ||
     !own ||
     !record ||
     record.cut ||
@@ -85,7 +91,11 @@ function useCalendarEventMail(
     event.state === "off"
   )
     return undefined;
-  const catalogued = event.viewOnly ? record.organizer && [record.organizer] : record.invitees;
+  const catalogued = event.viewOnly
+    ? record.organizer && [record.organizer]
+    : outside && record.organizer
+      ? [record.organizer, ...record.invitees]
+      : record.invitees;
   const addresses = new Set(own.map((address) => address.trim().toLowerCase()));
   const to = (catalogued ?? []).flatMap(({ address }) => {
     const key = address.trim().toLowerCase();
@@ -99,7 +109,16 @@ function useCalendarEventMail(
     label: t(event.viewOnly ? "actions.emailOrganizer" : "actions.writeGuests"),
     icon: "mail",
     rank: 4,
-    onPress: () => commands.write({ to, cc: [], bcc: [], subject: record.title, body: "" }),
+    onPress: () => {
+      if (!outside) return commands.write({ to, cc: [], bcc: [], subject: record.title, body: "" });
+      if (pairing.current) return;
+      pairing.current = true;
+      void outside(to, record.title.replace(/[\r\n]+/g, " ").slice(0, 998))
+        .catch(() => report(refusal("tryAgain")))
+        .finally(() => {
+          pairing.current = false;
+        });
+    },
   };
 }
 

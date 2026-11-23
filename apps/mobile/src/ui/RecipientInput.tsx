@@ -3,7 +3,7 @@
  * known correspondents the part being typed matches stand under it (`live.ts#recipientSuggestions`),
  * and a press writes the one picked in place of that part. The value stays the one typed string.
  */
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Keyboard, Platform, TextInput, View } from "react-native";
 import { Copy } from "../copy";
 import { recipientSuggestions, withSuggestion, type AddressBookEntry } from "../state/live";
@@ -24,7 +24,7 @@ export function stepBack(step: BackStep): boolean {
 }
 
 export function RecipientInput({
-  label, value, onChangeText, editable, book, placeholder = Copy.composeToPlaceholder, autoFocus, ref, onFocus, onBlur, back,
+  label, value, onChangeText, editable, book, placeholder = Copy.composeToPlaceholder, autoFocus, ref, onFocus, onBlur, back, plain, trailing,
 }: {
   label: string;
   value: string;
@@ -39,6 +39,8 @@ export function RecipientInput({
   onFocus?: () => void;
   onBlur?: () => void;
   back?: BackStep;
+  plain?: boolean;
+  trailing?: ReactNode;
 }) {
   const t = useTheme();
   const own = useRef<TextInput | null>(null);
@@ -83,9 +85,11 @@ export function RecipientInput({
           keyboardType="email-address"
           style={[
             t.type.body,
-            { flex: 1, color: t.c.ink, backgroundColor: t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: 14, paddingVertical: 8 },
+            { flex: 1, minWidth: 0, color: t.c.ink, backgroundColor: plain ? "transparent" : t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: plain ? 2 : 14, paddingVertical: 8 },
+            plain && Platform.OS === "web" ? ({ outlineStyle: "none" } as object) : null,
           ]}
         />
+        {trailing}
       </View>
       {offered.map((entry) => (
         <Tap

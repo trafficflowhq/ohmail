@@ -6,6 +6,7 @@
  */
 import type { EngineMessage as StoreMessage } from "@ohmail/wire";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { phoneSearchQuestion, type SearchFilters, type SearchOrder } from "./search-facets";
 import { useWorld, type WorldMail } from "./world";
 import {
   createSessionReask, type AddressDirection, type SessionRenewalDoor, type StoreReadSource,
@@ -142,24 +143,30 @@ export interface PhoneStoreSearch {
  * `loadMore`, one of three verdicts on every outcome. `deviceIds` are the rows the device painted,
  * in order — under relevance they keep their places in the store's first page.
  */
-export function useStoreSearch(query: string, deviceIds: readonly string[]): PhoneStoreSearch {
+const NO_FILTERS: SearchFilters = {};
+
+export function useStoreSearch(
+  query: string, deviceIds: readonly string[], filters = NO_FILTERS, order: SearchOrder = "relevance",
+): PhoneStoreSearch {
   const w = useWorld();
-  const q = query.trim();
+  const key = useMemo(() => phoneSearchQuestion(query.trim(), filters, order), [query.trim(), filters, order]);
   const [tick, setTick] = useState(0);
   const walker = w.store.searchWalker;
   const ids = useRef(deviceIds);
   ids.current = deviceIds;
   const available = w.store.searchAvailable;
+  const asked = useRef<typeof key>(null);
 
   useEffect(() => {
     if (!walker) return undefined;
-    if (q.length < 2) {
+    asked.current = key;
+    if (key === null) {
       walker.clear();
       return undefined;
     }
-    walker.start({ query: q }, () => ids.current, STORE_SEARCH_DEBOUNCE_MS);
+    walker.start(key, () => ids.current, STORE_SEARCH_DEBOUNCE_MS);
     return () => walker.stop();
-  }, [walker, q, tick, available]);
+  }, [walker, key, tick, available]);
   useEffect(() => () => walker?.clear(), [walker]);
 
   const rev = useSyncExternalStore(walker ? walker.subscribe : noWalker, walker ? walker.revision : zero, walker ? walker.revision : zero);
@@ -173,11 +180,12 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
   // The verdict is on screen once its render commits: the walker measures the wait it states.
   useEffect(() => { if (walker?.info()) walker.painted(); }, [walker, rev]);
   return useMemo(() => {
-    const state = walker ? (renewing ? "searching" : walker.state()) : q.length < 2 ? "idle" : "unavailable";
-    const info = walker?.info() ?? null;
+    const current = walker && asked.current === key ? walker : null;
+    const state = current ? (renewing ? "searching" : current.state()) : walker ? "searching" : "unavailable";
+    const info = current?.info() ?? null;
     const at = (i: number): StoreMessage | "gone" | null => (walker ? walker.rowAt(i) : null);
     return {
-      verdict: q.length < 2 ? "idle" : state === "idle" ? "searching" : state,
+      verdict: key === null ? "idle" : state === "idle" ? "searching" : state,
       ready: info !== null,
       length: info !== null && walker ? walker.length() : 0,
       rowAt: (i) => {
@@ -202,7 +210,7 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
       retry: () => setTick((n) => n + 1),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walker, rev, q, w, renewing]);
+  }, [walker, rev, key, w, renewing]);
 }
 
 /** The archive's half of the address view, for the direction on screen. */

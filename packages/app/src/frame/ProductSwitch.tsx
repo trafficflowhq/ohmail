@@ -31,6 +31,9 @@ export function ProductSwitch({ kind, onRail }: { kind: SwitcherProps["kind"]; o
   const t = useText("frame");
   const offered = useSwitchOffered();
   const calendar = host.features.calendar;
+  if (calendar !== NONE && host.capabilities.products === "calendar" && calendar.CompanionSwitch) {
+    return <calendar.CompanionSwitch kind={kind} onRail={onRail} />;
+  }
   if (!offered || calendar === NONE || host.capabilities.products !== "both") return null;
   const props: SwitcherProps = {
     kind,

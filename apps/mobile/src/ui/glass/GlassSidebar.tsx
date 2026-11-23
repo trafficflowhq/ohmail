@@ -16,6 +16,7 @@ export function GlassSidebar({
   onClose,
   side = "left",
   label,
+  compactPlaces = false,
   children,
 }: {
   open: boolean;
@@ -23,11 +24,14 @@ export function GlassSidebar({
   /** A split mirrors the drawer to the app's own edge, like every other control. */
   side?: "left" | "right";
   label: string;
+  /** The phone’s full-height mail drawer uses its own width and corner scale. */
+  compactPlaces?: boolean;
   children: ReactNode;
 }) {
   const t = useTheme();
   if (!open) return null;
   const ms = t.ms("drawer");
+  const radius = compactPlaces ? t.radius.panel : t.radius.overlay;
   const slideIn = side === "left" ? SlideInLeft.duration(ms) : SlideInRight.duration(ms);
   const slideOut = side === "left" ? SlideOutLeft.duration(ms) : SlideOutRight.duration(ms);
   return (
@@ -51,13 +55,13 @@ export function GlassSidebar({
             bottom: 0,
             left: side === "left" ? 0 : undefined,
             right: side === "right" ? 0 : undefined,
-            width: "82%",
-            maxWidth: 268,
+            width: compactPlaces ? "80%" : "82%",
+            maxWidth: compactPlaces ? 300 : 268,
             backgroundColor: t.c.panel,
-            borderTopRightRadius: side === "left" ? t.radius.overlay : 0,
-            borderBottomRightRadius: side === "left" ? t.radius.overlay : 0,
-            borderTopLeftRadius: side === "right" ? t.radius.overlay : 0,
-            borderBottomLeftRadius: side === "right" ? t.radius.overlay : 0,
+            borderTopRightRadius: side === "left" ? radius : 0,
+            borderBottomRightRadius: side === "left" ? radius : 0,
+            borderTopLeftRadius: side === "right" ? radius : 0,
+            borderBottomLeftRadius: side === "right" ? radius : 0,
           },
           t.lift("l3"),
         ]}

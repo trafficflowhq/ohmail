@@ -47,14 +47,14 @@ export const NO_DOORS: CalendarSetupPort = {
 export function AccountsPane({ sheet }: PaneBodyProps) {
   const t = useText("calsettings");
   const check = useCalendarCheck();
-  const { commands, host, route } = useFrame();
+  const { commands, host } = useFrame();
   const report = useReport();
   const when = useWhen();
   const mirror = useCalendarMirror();
   const given = useSetupPort();
   const doors = given === NONE ? NO_DOORS : given;
   const settings = useCalendarSettings(mirror?.port ?? null, doors);
-  const [savingEnabled, setSavingEnabled] = useState(false);
+  const useCalendar = useCalendarSwitch(settings);
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   if (mirror === null) {
     const unavailable = (
@@ -75,21 +75,6 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
       ? "none"
       : (id: string) => void save({ newEventsCalendarId: id }).then((done) => done || report(t("notSaved")));
   const enabled = settings.said?.enabledAt !== null;
-  const canSwitch = host.features.places.settings !== NONE && save !== NONE && settings.said !== null;
-  const useCalendar = canSwitch
-    ? calendarToggle(t("accounts.useCalendar"), enabled, savingEnabled, (on) => {
-        if (savingEnabled) return;
-        setSavingEnabled(true);
-        const address = host.device.address.read();
-        void save({ enabled: on }).then((done) => {
-          setSavingEnabled(false);
-          if (!done) report(t("notSaved"));
-          else if (!on && route.place === "calsettings" && host.device.address.read() === address) {
-            commands.go({ place: "settings", sub: "calaccounts" }, { replace: true });
-          }
-        });
-      })
-    : null;
   const add =
     !enabled || doors.connect === "none"
       ? undefined
@@ -203,6 +188,35 @@ function AccountsToolbar({
       rank: 0,
     });
   return actions.length ? <ActionPanel label={t("accounts.title")} items={actions} /> : null;
+}
+
+function useCalendarSwitch(settings: ReturnType<typeof useCalendarSettings>) {
+  const { host, route, commands } = useFrame();
+  const t = useText("calsettings");
+  const report = useReport();
+  const { save, said } = settings;
+  const enabled = said?.enabledAt !== null;
+  const [savingEnabled, setSavingEnabled] = useState(false);
+  const canSwitch = host.features.places.settings !== NONE && save !== NONE && said !== null;
+  return canSwitch
+    ? calendarToggle(t("accounts.useCalendar"), enabled, savingEnabled, (on) => {
+        if (savingEnabled) return;
+        setSavingEnabled(true);
+        const address = host.device.address.read();
+        void save({ enabled: on }).then((done) => {
+          setSavingEnabled(false);
+          if (!done) report(t("notSaved"));
+          else if (
+            !on &&
+            host.capabilities.products === "both" &&
+            route.place === "calsettings" &&
+            host.device.address.read() === address
+          ) {
+            commands.go({ place: "settings", sub: "calaccounts" }, { replace: true });
+          }
+        });
+      })
+    : null;
 }
 
 function calendarToggle(label: string, enabled: boolean, saving: boolean, onChange: (on: boolean) => void) {

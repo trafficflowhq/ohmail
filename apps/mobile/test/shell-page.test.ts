@@ -189,7 +189,7 @@ describe("the phone shell's answers, per setting", () => {
 describe("what the page hands the frame", () => {
   const native = nativeAnswering(() => ({}));
   const bridge = createBridge(native.port, "e1");
-  const paired = { setting: "managed", scope: "p0", os: "android", build: { version: null, commit: null } } as const;
+  const paired = { setting: "managed", scope: "p0", accountId: "acct-1", serverName: "Fixture server", os: "android", build: { version: null, commit: null } } as const;
   /** A window with an address bar: a fragment, its history, and its `hashchange`. */
   function windowWith(hash: string) {
     const listeners = new Set<() => void>();
@@ -233,10 +233,12 @@ describe("what the page hands the frame", () => {
     expect(native.asked).toEqual([]);
   });
 
-  it("leaves the calendar frame without places, stages, overs or a way back of its own", () => {
+  it("offers Settings in the calendar app without mounting mail places or stages", () => {
     const mounted = ohcalMounted(bridge, paired);
     const frame = phoneFrameSupplies(mounted, null, () => {}, windowWith(""));
-    expect(Object.values(mounted.places).every((p) => p === NONE)).toBe(true);
+    const { settings, ...mail } = mounted.places;
+    expect(settings).toMatchObject({ id: "settings", body: "settings" });
+    expect(Object.values(mail).every((p) => p === NONE)).toBe(true);
     expect(Object.values(mounted.stages).every((s) => s === NONE)).toBe(true);
     expect(frame.overs).toEqual({ palette: NONE, keys: NONE });
     expect(frame.places).toBe(mounted.places);

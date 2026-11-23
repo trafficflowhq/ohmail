@@ -19,6 +19,26 @@
     flex: none;
     box-shadow: var(--oh-ans-ring);
   }
+  .oh-ans[data-fill] {
+    --oh-ans-ground: var(--seg-track);
+    --oh-ans-ring: none;
+  }
+  .oh-ans[data-fill] .oh-ans-word {
+    display: none;
+  }
+  .oh-ans[data-fill] > .oh-ans-propose {
+    background: var(--seg-track);
+    flex: 0 0 var(--h-s);
+    padding: 0;
+    justify-content: center;
+  }
+  .oh-ans[data-fill] .oh-seg {
+    flex: 1 1 auto;
+  }
+  .oh-ans[data-fill] .oh-seg-item {
+    flex: 1 1 0;
+    justify-content: center;
+  }
   .oh-ans .oh-seg-item {
     color: var(--ink);
     font-weight: var(--w-bold);

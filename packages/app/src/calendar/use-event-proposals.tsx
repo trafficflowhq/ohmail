@@ -13,7 +13,7 @@ import { EventCard } from "@ohmail/ui/calendar";
 import { ActionPanel } from "@ohmail/ui/mail";
 import { useFrame, useReport } from "../frame/commands.js";
 import { fragmentOf } from "../frame/route.js";
-import { useKnownOwnAddresses } from "../frame/room.js";
+import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { canProposeRecord, eventOwned } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
@@ -102,7 +102,7 @@ function projectProposal(
 
 export function useEventProposals(port: CalendarPort, zones: ZoneSource) {
   const { host, route, commands } = useFrame();
-  const own = useKnownOwnAddresses();
+  const own = useCalendarOwnAddresses();
   const zone = useTimeZone();
   const locale = useLocale();
   const t = useText("calendar");

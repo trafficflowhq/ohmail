@@ -33,9 +33,11 @@ function pairedOf(answer: PhonePairAnswer | null | undefined): true | SaidRefusa
 function Measured({ facts, t }: { facts: PhonePairFacts; t: DoorWords["t"] }): ReactNode {
   return (
     <DoorSheet kind="facts">
-      <SettingLine label={t("confirm.whatAnswered")} value={t(WHAT[facts.what])} />
-      <SettingLine label={t("confirm.address")} value={facts.address} />
-      {facts.key === null ? null : <SettingLine label={t("confirm.key")} value={facts.key} />}
+      <SettingLine.Table>
+        <SettingLine label={t("confirm.whatAnswered")} value={t(WHAT[facts.what])} />
+        <SettingLine label={t("confirm.address")} value={facts.address} />
+        {facts.key === null ? null : <SettingLine label={t("confirm.key")} value={facts.key} />}
+      </SettingLine.Table>
       <SettingNote>{facts.key === null ? t("confirm.noKeyFine") : t("confirm.keyFine")}</SettingNote>
     </DoorSheet>
   );
@@ -102,6 +104,7 @@ export function Confirm({ door, seed, to, back }: StepProps): ReactNode {
     );
   return (
     <Page
+      smaller
       columns={2}
       back={<Button kind="quiet" icon="back" label={t("back")} onPress={dontPair} />}
       refusal={refused === undefined ? undefined : [say(refused)]}

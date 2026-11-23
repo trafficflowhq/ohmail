@@ -234,10 +234,16 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
     walk(el.children);
     out.push(`</${tag}>`);
   };
+  let highlighted = false;
   const walk = (nodes: readonly ChildNode[]): void => {
     for (const n of nodes) {
       if (n instanceof Text) {
-        out.push(escText(n.data));
+        if (!highlighted && opts.highlight && n.data.includes(opts.highlight)) {
+          const parts = n.data.split(opts.highlight);
+          const before = parts.shift() ?? "";
+          out.push(escText(before) + "<mark>" + escText(opts.highlight) + "</mark>" + escText(parts.join(opts.highlight)));
+          highlighted = true;
+        } else out.push(escText(n.data));
         continue;
       }
       if (n instanceof Element) {

@@ -26,7 +26,7 @@ import { readerEntry } from "../../src/reader/index.js";
 import { InvitationsPanel } from "../../src/invitations/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
-import { fakeAddress, type FakeAddress } from "../support/fake-window.js";
+import { fakeAddress, fakeWindow, type FakeAddress } from "../support/fake-window.js";
 import {
   bodyDouble,
   fakeMail,
@@ -186,16 +186,23 @@ function mirror(verdictOf: (act: CalendarAct) => CalendarVerdict | null) {
   return { engine, port, put, pressed };
 }
 
-function mount(m: ReturnType<typeof mirror>, at: string, mailboxes: readonly unknown[] = []): FakeAddress {
+function mount(
+  m: ReturnType<typeof mirror>,
+  at: string,
+  mailboxes: readonly unknown[] = [],
+  phone = false,
+  writeGuests?: CalendarEntry["writeGuests"],
+): FakeAddress {
   const address = fakeAddress(at);
   const made = fakeHost({
     engine: m.engine,
     service: "managed",
     scope: "acct-1",
-    calendar: withPanel,
-    products: "both",
+    calendar: writeGuests ? { ...withPanel, writeGuests } : withPanel,
+    products: writeGuests ? "calendar" : "both",
     wires: { calendar: m.port },
     address,
+    ...(phone ? { window: fakeWindow("phone") } : {}),
   });
   /* The account's mailboxes, as the host reads them. */
   const host = { ...made.host, reads: { ...made.host.reads, mailboxes: async () => [...mailboxes] } };
@@ -236,6 +243,65 @@ afterEach(() => {
 });
 
 describe("the invitations' panel", () => {
+  it("shows conflicts on the phone invitation without answering it", async () => {
+    const m = mirror(() => ({ kind: "taken", write: null }));
+    m.put("calendar", studio.id, studio);
+    m.put(
+      "calendar_event",
+      "set-up",
+      invitation("set-up", "Stand set-up", "20261118", { myAnswer: null, organizer: null }),
+    );
+    m.put("calendar_event", "tech", invitation("tech", "Tech check", "20261118"));
+    mount(m, "#/cal/day/2026-11-18?panel=invitations", [], true);
+    await settle();
+    const compact = within(screen.getByRole("dialog", { name: "Invitations" }));
+    expect(compact.getByText(/overlaps Stand set-up/i)).toBeTruthy();
+    expect(m.pressed).toEqual([]);
+  });
+
+  it("writes to the organizer of a received phone invitation without sending an RSVP", async () => {
+    const m = mirror(() => ({ kind: "taken", write: null }));
+    const write = vi.fn(async () => {});
+    const organizer = ["organizer", "example.invalid"].join("@");
+    const own = ["here", "example.invalid"].join("@");
+    m.put("calendar", studio.id, studio);
+    m.put("calendar_connection", connection.id, connection);
+    m.put(
+      "calendar_event",
+      "tech",
+      invitation("tech", "Tech check", "20261118", {
+        organizer: { address: organizer, name: "Organizer" },
+        invitees: [{ address: own, name: "Here", role: "required", answer: "none" }],
+      }),
+    );
+    mount(m, "#/cal/day/2026-11-18/e/tech?panel=invitations", [{ address: own }], true, write);
+    await settle();
+    const compact = within(screen.getByRole("dialog", { name: "Invitations" }));
+    fireEvent.click(compact.getByRole("button", { name: "Write to invitees" }));
+    expect(write).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith([organizer], "Tech check");
+    expect(m.pressed).toEqual([]);
+  });
+
+  it("shows a single invitation on a phone and moves between invitations without answering", async () => {
+    const m = mirror(() => ({ kind: "taken", write: null }));
+    m.put("calendar", studio.id, studio);
+    m.put("calendar_event", "a", invitation("a", "Tech check", "20261118"));
+    m.put("calendar_event", "b", invitation("b", "Planning call", "20261119"));
+    const address = mount(m, "#/cal/day/2026-11-18?panel=invitations", [], true);
+    await settle();
+    const compact = within(screen.getByRole("dialog", { name: "Invitations" }));
+    expect(compact.getByRole("heading", { name: "Tech check" })).toBeTruthy();
+    expect(compact.queryByRole("heading", { name: "Planning call" })).toBeNull();
+    fireEvent.click(compact.getByRole("button", { name: "The next" }));
+    expect(compact.getByRole("heading", { name: "Planning call" })).toBeTruthy();
+    expect(address.read()).toContain("/2026-11-19/");
+    expect(m.pressed).toEqual([]);
+    fireEvent.click(compact.getByRole("button", { name: "Yes" }));
+    await settle();
+    expect(m.pressed).toMatchObject([{ kind: "calendar_event_answer", eventId: "b", answer: "accepted" }]);
+  });
+
   it("lists To answer, Changed and Answered, and answers on the open row once our server has taken it", async () => {
     const m = mirror(() => ({ kind: "taken", write: null }));
     m.put("calendar", studio.id, studio);

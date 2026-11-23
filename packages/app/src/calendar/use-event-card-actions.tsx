@@ -10,7 +10,7 @@ import type { EventActions } from "./use-event-actions.js";
 import { WeekContextMenu, type WeekContextTarget } from "../week/WeekView.js";
 import { useFrame } from "../frame/commands.js";
 import { fragmentOf } from "../frame/route.js";
-import { useKnownOwnAddresses } from "../frame/room.js";
+import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { NONE } from "../host/index.js";
 import { editableEvent, hasGuests, moveDestinations, removableEvent } from "./editable-event.js";
 import type { useNewEvent } from "./use-new-event.js";
@@ -288,7 +288,7 @@ export function EventContextMenu(props: EventContextMenuProps) {
   const { host, commands, route } = useFrame();
   const t = useText("calendar");
   const invitations = useText("invitations");
-  const known = useKnownOwnAddresses();
+  const known = useCalendarOwnAddresses();
   const zone = useTimeZone();
   const duplicate = useDuplicateDraft(port);
   const current = event.viewOnly ? null : editableEvent(host, port, event, known);

@@ -6,6 +6,7 @@ import { MonthRunScope } from "../month/MonthRunScope.js";
 import { NONE } from "../host/index.js";
 import { CalendarCheckScope } from "./check.js";
 import { CalendarFirstStepScope } from "./CalendarFirstStep.js";
+import { CalendarAddressScope } from "./own-addresses.js";
 import { CalendarKeys } from "./CalendarKeys.js";
 
 function CalendarBindings() {
@@ -21,10 +22,12 @@ export function CalendarAbove({ children }: { children: ReactNode }) {
   return (
     <CalendarSettingsScope port={port} setup={setup}>
       <CalendarFirstStepScope port={port}>
-        <CalendarCheckScope>
-          <CalendarBindings />
-          <MonthRunScope>{children}</MonthRunScope>
-        </CalendarCheckScope>
+        <CalendarAddressScope>
+          <CalendarCheckScope>
+            <CalendarBindings />
+            <MonthRunScope>{children}</MonthRunScope>
+          </CalendarCheckScope>
+        </CalendarAddressScope>
       </CalendarFirstStepScope>
     </CalendarSettingsScope>
   );

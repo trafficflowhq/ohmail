@@ -23,7 +23,20 @@ export function SettingsList({ route, plan, keysHere, panes, beside }: SettingsP
   const { host, commands } = useFrame();
   const t = useText("calsettings");
   const calendar = route.place === "calsettings";
-  const menu = [...useCalendarPanes(calendar), ...menuOf(host, panes)];
+  const hostPanes = menuOf(host, panes);
+  const mainPanes =
+    host.capabilities.products === "calendar"
+      ? hostPanes.map((pane) => ({
+          ...pane,
+          group:
+            pane.id === "notifications"
+              ? ("calendar" as const)
+              : pane.id === "general"
+                ? ("account" as const)
+                : pane.group,
+        }))
+      : hostPanes;
+  const menu = [...useCalendarPanes(calendar), ...mainPanes];
   const shown = shownOf(route.sub, menu, plan.columns, calendar ? "calaccounts" : beside.startAt);
   const oneColumn = plan.columns === 1;
   const over = oneColumn && shown !== null;

@@ -7,7 +7,8 @@
   border: 0;
   border-radius: var(--r-pill);
   background: var(--hair);
-  color: var(--hot);
+  --ai-credit-fill: var(--hot);
+  color: var(--ai-credit-fill);
 }
 
 .ai-credits-meter::-webkit-progress-bar {
@@ -17,9 +18,13 @@
 
 .ai-credits-meter::-webkit-progress-value {
   border-radius: var(--r-pill);
-  background: var(--hot);
+  background: var(--ai-credit-fill);
 }
 .ai-credits-meter::-moz-progress-bar {
   border-radius: var(--r-pill);
-  background: var(--hot);
+  background: var(--ai-credit-fill);
+}
+
+.ai-credits-meter[data-phone] {
+  --ai-credit-fill: var(--ink);
 }

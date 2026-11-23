@@ -21,6 +21,7 @@ export interface BridgeHostDeps {
   readonly config: () => ShellConfig | null;
   readonly http: HttpDoor;
   readonly act: (act: ShellAct) => Promise<Requests["act"]["answer"] | { readonly refused: Refused }>;
+  readonly account?: (request: Requests["phone.account"]["ask"], signal: AbortSignal) => Promise<Answer<"phone.account">>;
   readonly diagnostics?: PhoneDiagnosticsDoor;
   readonly organize?: (request: Requests["phone.organize"]["ask"], signal: AbortSignal) => Promise<Answer<"phone.organize">>;
   readonly mailbox?: (request: Requests["phone.mailbox"]["ask"], signal: AbortSignal) => Promise<Answer<"phone.mailbox">>;
@@ -80,6 +81,7 @@ export class BridgeHost {
       http: (r, signal) => this.deps.http.request(r, signal),
       cancel: (r) => (this.end.cancel(r.of), {}),
       act: (r) => this.deps.act(r),
+      "phone.account": (r, signal) => this.deps.account?.(r, signal) ?? NOT_READY,
       "phone.wake": (r) => this.deps.wake?.(r) ?? NOT_READY,
       "phone.diagnostics": (r, signal) => this.deps.diagnostics?.answer(r, signal) ?? NOT_READY,
       "phone.organize": (r, signal) => this.deps.organize?.(r, signal) ?? NOT_READY,

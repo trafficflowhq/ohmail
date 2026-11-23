@@ -400,3 +400,12 @@
     display: inline;
   }
 }
+
+@layer oh {
+  :root[data-device="phone"][data-product="cal"] .oh-dock-word {
+    max-inline-size: var(--s6);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}

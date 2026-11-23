@@ -37,6 +37,8 @@ export interface PageProps {
   columns?: 1 | 2;
   /** On the phone the line stands over the material. */
   lineFirst?: boolean;
+  /** Center the opening sentence above the actions on a phone. */
+  centerLead?: boolean;
   /** The page starts higher on a desktop (96 under its top), so two sheets beside its sentence stand whole. */
   high?: boolean;
   /**
@@ -68,6 +70,7 @@ export function Page(props: PageProps) {
     acts,
     columns = 1,
     lineFirst,
+    centerLead,
     high,
     stack,
     smaller,
@@ -134,6 +137,7 @@ export function Page(props: PageProps) {
       className="oh-page"
       data-columns={columns}
       data-line-first={lineFirst ? "" : undefined}
+      data-center-lead={centerLead ? "" : undefined}
       data-high={high ? "" : undefined}
       data-stack={stack ? "" : undefined}
       data-smaller={smaller ? "" : undefined}

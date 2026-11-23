@@ -57,6 +57,9 @@ vi.mock("react-native", async () => {
     StyleSheet: { absoluteFill: {}, create: (s: any) => s, hairlineWidth: 1 },
   };
 });
+vi.mock("../src/ui/MailCalendarSwitch", () => ({ MailCalendarSwitch: () => null }));
+vi.mock("../src/ui/MailListMenu", () => ({ MailListMenu: () => null }));
+vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
   const box = (p: any) => React.createElement("div", null, p.children);

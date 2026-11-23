@@ -10,12 +10,14 @@ export function AnswerChoices({
   answer,
   onAnswer,
   on,
+  fill,
   propose,
 }: {
   readonly answer: InvitationRow["answer"];
   readonly onAnswer: (value: InvitationAnswer, anchor: HTMLButtonElement) => void;
   readonly propose?: AnswerSwitchProps["propose"];
   readonly on?: "sheet";
+  readonly fill?: boolean;
 }) {
   const t = useText("invitations");
   return (
@@ -23,6 +25,7 @@ export function AnswerChoices({
       label={t("answer.label")}
       {...(on ? { on } : {})}
       propose={propose}
+      fill={fill}
       answers={{
         options: ANSWERS.map((value) => ({ value, label: t(`answer.${value}`) })),
         value: isAnswer(answer) ? answer : null,

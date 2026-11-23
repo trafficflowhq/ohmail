@@ -14,12 +14,14 @@ import { useWorld } from "../state/world";
 import type { PileKind } from "../state/model";
 import { tagHueOf } from "../theme/palette";
 import { Rule, Section, TagDot, TapRow, Txt } from "./base";
+import { DrawerGroup } from "./DrawerGroup";
 import { FoldersGroup } from "./FoldersGroup";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 import { morePaneKeyOf, type MoreHref } from "./pane-routes";
 
-export function MoreNav({ onNavigate, foot = true, selected, onPick }: {
+export function MoreNav({ onNavigate, foot = true, selected, onPick, drawer = false }: {
   onNavigate?: () => void;
+  drawer?: boolean;
   /** Settings and the pairing door at the end; the drawer pins them itself ({@link MoreNavFoot}). */
   foot?: boolean;
   /** More's pair (two panes): the open destination's key, and the pick that opens one beside the rows. */
@@ -34,18 +36,17 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick }: {
 
   return (
     <>
-      <Section style={{ paddingTop: 16 }}>{Copy.triage}</Section>
-      <Nav label={Copy.replyLater} count={pileCountOf("replyLater")} selected={at(pile("replyLater"))} onPress={() => go(pile("replyLater"))} />
-      <Nav label={Copy.setAside} count={pileCountOf("setAside")} selected={at(pile("setAside"))} onPress={() => go(pile("setAside"))} />
-      <Nav label={Copy.resurface} count={pileCountOf("resurface")} selected={at(pile("resurface"))} onPress={() => go(pile("resurface"))} />
+      {drawer ? null : <Section style={{ paddingTop: 16 }}>{Copy.triage}</Section>}
+      <Nav label={Copy.replyLater} icon={drawer ? "hourglass" : undefined} count={pileCountOf("replyLater")} selected={at(pile("replyLater"))} onPress={() => go(pile("replyLater"))} />
+      <Nav label={Copy.setAside} icon={drawer ? "pause" : undefined} count={pileCountOf("setAside")} selected={at(pile("setAside"))} onPress={() => go(pile("setAside"))} />
+      <Nav label={Copy.resurface} icon={drawer ? "up" : undefined} count={pileCountOf("resurface")} selected={at(pile("resurface"))} onPress={() => go(pile("resurface"))} />
 
       {/* TAGS — the web rail's group, above Folders as there: each tag with the count of its
           mail, opening the tag's list. Present while the account has a tag; tags are made
           from a message's Tag sheet, so a heading over nothing would teach nothing. The count
           is silent while unsettled, the piles' reason. */}
       {w.tags.length > 0 ? (
-        <>
-          <Section>{Copy.tagsTitle}</Section>
+        <DrawerGroup active={drawer} label={Copy.tagsTitle} collapsed>
           {w.tags.map((tag) => (
             <Nav
               key={tag.id}
@@ -56,7 +57,7 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick }: {
               onPress={() => go(`/tag/${encodeURIComponent(tag.id)}`)}
             />
           ))}
-        </>
+        </DrawerGroup>
       ) : null}
 
       {/* THE FOLDERS GROUP — rendered ONLY while the account's "Use folders" flag is on
@@ -67,7 +68,7 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick }: {
           folder_create/rename/delete family, plus the summary read for the delete
           confirm's server-truth counts. */}
       {w.folders.enabled ? (
-        <FoldersGroup
+        <FoldersGroup drawer={drawer}
           folders={w.folders.list}
           unread={w.folders.unread}
           onOpen={(id) => go(`/folder/${encodeURIComponent(id)}`)}
@@ -104,10 +105,10 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick }: {
           drafts and a standing "Drafts 0" would teach a phone-only reader nothing — the moment
           a send here cannot be confirmed the row carries it, which is the state this destination
           exists for. The count is silent while unsettled for the piles' reason. */}
-      {!w.boot.settled || w.drafts.length > 0 ? (
+      {!w.boot.settled || w.drafts.length > 0 || (drawer && w.scheduled.length > 0) ? (
         <Nav
           label={Copy.draftsTitle}
-          count={w.boot.settled ? w.drafts.length : undefined}
+          count={w.boot.settled ? w.drafts.length + (drawer ? w.scheduled.length : 0) : undefined}
           selected={at("/drafts")}
           onPress={() => go("/drafts")}
         />
@@ -121,7 +122,7 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick }: {
           the row goes — the composer's own "Send later" is where the feature is
           discovered, and a permanent "Scheduled 0" teaches nothing. The count is silent
           while unsettled for the same reason the piles' badges are. */}
-      {!w.boot.settled || w.scheduled.length > 0 ? (
+      {drawer ? null : !w.boot.settled || w.scheduled.length > 0 ? (
         <Nav
           label={Copy.scheduled}
           count={w.boot.settled ? w.scheduled.length : undefined}
@@ -176,6 +177,7 @@ function moreRows(onNavigate?: () => void, selected?: string | null, onPick?: (k
 
 export function Nav({
   label,
+  icon,
   sub,
   dot,
   count,
@@ -184,6 +186,7 @@ export function Nav({
   onPress,
 }: {
   label: string;
+  icon?: IconName;
   /** The rail's own second line, where the browser carries one (`rail.historyTitle`). */
   sub?: string;
   /** A tag's ink — the rail's dot before its name. */
@@ -198,7 +201,7 @@ export function Nav({
   return (
     <TapRow
       onPress={onPress}
-      selected={selected}
+      selected={t.mail ? undefined : selected}
       accessibilityState={{ selected: selected === true }}
       accessibilityRole="link"
       accessibilityLabel={
@@ -207,7 +210,7 @@ export function Nav({
           : count === undefined ? label : Copy.ariaLabelCount(label, count)
       }
       style={{
-        marginHorizontal: 8,
+        marginHorizontal: t.mail ? 0 : 8,
         paddingHorizontal: 12,
         paddingVertical: 12,
         minHeight: 46,
@@ -216,9 +219,10 @@ export function Nav({
         gap: 10,
       }}
     >
+      {icon ? <Icon name={icon} size={16} color={t.c.ink} /> : null}
       {dot !== undefined ? <TagDot ink={dot} /> : null}
       <View style={{ flexShrink: 1 }}>
-        <Txt variant="navLabel">{label}</Txt>
+        <Txt variant={t.mail ? "rowSender" : "navLabel"}>{label}</Txt>
         {sub ? (
           <Txt variant="caption" tone="ink3" numberOfLines={2} style={{ marginTop: 2 }}>
             {sub}

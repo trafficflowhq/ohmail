@@ -7,6 +7,7 @@
  * param the list-detail screens read) — the id survives the move and `pane-memory` restores
  * the scroll, which is the continuity rule: a posture change never loses the open message.
  */
+import { MailAppearance } from "../../src/theme/mail";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
@@ -34,9 +35,11 @@ export default function MessageScreen() {
   useLocale();
   return (
     <SurfaceBoundary surface="reader">
-      <Gated>
-        <MessageRoute />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <MessageRoute />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }

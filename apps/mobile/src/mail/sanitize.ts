@@ -86,6 +86,8 @@ export interface PhoneSanitizeOptions {
   resolvedRemote?: ReadonlyMap<string, string>;
   /** The account's own switch (mail 0072): a classified beacon may resolve like any picture. */
   loadPixels?: boolean;
+  /** Calendar evidence to mark in a visible text node. */
+  highlight?: string;
   /**
    * Leave the quoted history out (the shared detector's range): the document, its blocked list, its
    * parts and its links are then the folded document's own. Off, the output is unchanged.
@@ -362,6 +364,8 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
    * Depth first over an explicit stack, in the order the recursion had, so a message nested
    * thousands deep costs heap and not the call stack (2,000 nested `<b>` overflowed the reader's).
    */
+  const highlight = opts.highlight;
+  let highlighted = false;
   const walk = (nodes: readonly ChildNode[], skip: ReadonlySet<AnyNode>): void => {
     const stack: Array<{ nodes: readonly ChildNode[]; at: number; close: string | null }> = [{ nodes, at: 0, close: null }];
     while (stack.length > 0) {
@@ -374,7 +378,15 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
       const n = top.nodes[top.at++]!;
       if (skip.has(n)) continue;
       if (n instanceof Text) {
-        out.push(escText(n.data));
+        const at = highlight && !highlighted ? n.data.indexOf(highlight) : -1;
+        if (!highlight || at < 0) {
+          out.push(escText(n.data));
+        } else {
+          const end = at + highlight.length;
+          out.push(escText(n.data.slice(0, at)), "<mark>",
+            escText(n.data.slice(at, end)), "</mark>", escText(n.data.slice(end)));
+          highlighted = true;
+        }
         continue;
       }
       if (n instanceof Element) {

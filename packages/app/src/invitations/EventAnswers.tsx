@@ -8,7 +8,7 @@ import {
 } from "@ohmail/app-logic/calendar";
 import { invitedByOthers, pressAnswer, type InvitationAnswer } from "@ohmail/app-logic/calendar/invitations";
 import { useFrame, useReport } from "../frame/commands.js";
-import { useKnownOwnAddresses } from "../frame/room.js";
+import { useCalendarOwnAddresses } from "../calendar/own-addresses.js";
 import { useText } from "../text/index.js";
 import type { CalendarEventFace } from "../calendar/faces.js";
 import { CalendarRecordScope } from "../calendar/EventActionQuestion.js";
@@ -17,7 +17,7 @@ import { AnswerChoices } from "./AnswerChoices.js";
 
 export function useInvitationAnswer(port: CalendarPort) {
   const { host } = useFrame();
-  const addresses = useKnownOwnAddresses();
+  const addresses = useCalendarOwnAddresses();
   const own = useMemo(() => addresses && new Set(addresses.map((a) => a.trim().toLowerCase())), [addresses]);
   const report = useReport();
   const e = useText("event");

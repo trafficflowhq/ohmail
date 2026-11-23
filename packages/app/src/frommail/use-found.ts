@@ -18,6 +18,7 @@ import { usePressWhereOn } from "../frame/room.js";
 import { useFrame, useReport } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
 import { useText, useTimeZone } from "../text/index.js";
+import { useCalendarDevice } from "../calsettings/device.js";
 import { useCalendarSettings } from "../calsettings/settings-read.js";
 import { useSources } from "../calendar/where.js";
 
@@ -26,6 +27,7 @@ export function useFound(port: CalendarPort | typeof NONE) {
   const sources = useSources(port);
   const { said } = useCalendarSettings(port === NONE ? null : port, "none");
   const preferred = said?.newEventsCalendarId ?? null;
+  const device = useCalendarDevice()?.settings;
   const zone = useTimeZone();
   const zones = readerZones();
   const now = nowIn(Date.now(), zone, zones);
@@ -35,7 +37,14 @@ export function useFound(port: CalendarPort | typeof NONE) {
     const suggestions = host.engine.store
       .entries<CalendarSuggestionRecord | null>("calendar_suggestion")
       .map((e) => e.entity)
-      .filter((s): s is CalendarSuggestionRecord => s !== null);
+      .filter(
+        (s): s is CalendarSuggestionRecord =>
+          s !== null &&
+          (device === undefined ||
+            (device.mailOffers &&
+              !device.mailEvidenceOff.includes(s.evidence) &&
+              !device.calendarMailboxesOff.includes(s.mailboxId))),
+      );
     const rows = foundOf({
       suggestions,
       events: sources.events,
@@ -59,7 +68,7 @@ export function useFound(port: CalendarPort | typeof NONE) {
       toneOf,
       onCalendar,
     };
-  }, [host.engine, port, sources, preferred, today, zone, zones]);
+  }, [host.engine, port, sources, preferred, today, zone, zones, device]);
 }
 
 /** The found events whose Add is out, one set a port, shared by the list and the open card. */

@@ -8,7 +8,7 @@
  * classifier runs client-side, and a row without a suggestion honestly has
  * none. The shelf's rows go through `MailList`, which mounts a window of them.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
@@ -18,8 +18,11 @@ import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { relayMarkFor, type RelayMark } from "../../src/state/relay";
 import { useEngineQueuesAsk, useWorld, type ScreenerRow, type WorldScreener } from "../../src/state/world";
-import { Badge, Button, Empty, Panel, Screen, Tail, TapRow, Txt, ViewHead } from "../../src/ui/base";
+import { Badge, Button, Empty, Panel, Screen, Tail, Tap, TapRow, Txt, ViewHead } from "../../src/ui/base";
 import { Icon } from "../../src/ui/Icon";
+import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
+import { MailAvatar } from "../../src/ui/MailAvatar";
+import { mailSize } from "../../src/theme/mail";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
@@ -33,6 +36,8 @@ import { firstPassWithholds } from "../../src/state/seed-offer";
 import { standaloneHereFor } from "../../src/engine/organizer-session";
 import { useConnection } from "../../src/net/connection";
 import { ImpersonationNotice } from "../../src/ui/ImpersonationNotice";
+import { Sheet, SheetRow } from "../../src/ui/Sheet";
+import { applySuggestions, planSuggestions, type SuggestedDecision } from "../../src/ui/screener-batch";
 import { spamLettersMark } from "../../src/ui/impersonation-notice";
 
 /**
@@ -65,6 +70,7 @@ function ScreenerBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  const t = useTheme();
   /* The live session the impersonation line reads through; none, no line. */
   const conn = useConnection();
   const session = conn.state.k === "live" ? conn.state.session : null;
@@ -92,15 +98,41 @@ function ScreenerBody() {
   const say = notYet === null ? null : notOrganizingSay(notYet);
   const empty = say !== null
     ? { title: say.title, hint: say.hint, action: { label: say.press, onPress: () => router.push("/settings") } }
-    : emptyFor(seg);
+    : t.mail ? { title: Copy.mailEmptyTitle } : emptyFor(seg);
   const { waiting, screened, spam, meta, waitingPending } = w.screener;
+  const [suggestedOnly, setSuggestedOnly] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState<{ worldKey: string; plan: SuggestedDecision[] } | null>(null);
+  const latest = useRef(w);
+  latest.current = w;
+  const applying = useRef(false);
+  const startApply = (only?: string) => {
+    const plan = planSuggestions(waiting, w.actions.unsubscribeIdsOf).filter((item) => only === undefined || item.row.routeKey === only);
+    if (plan.length) setConfirmation({ worldKey: w.worldKey, plan });
+  };
+  const confirmApply = async () => {
+    if (confirmation === null || applying.current) return;
+    applying.current = true;
+    setConfirmation(null);
+    try {
+      await applySuggestions(
+        confirmation.plan,
+        () => latest.current.worldKey === confirmation.worldKey ? latest.current.screener.waiting : [],
+        (...args) => latest.current.actions.decide(...args),
+      );
+    } finally {
+      applying.current = false;
+    }
+  };
+  const requests = new Set(confirmation?.plan.flatMap((item) => item.unsubscribe)).size;
+  const suggested = planSuggestions(waiting, w.actions.unsubscribeIdsOf).length;
   // What the Spam count follows: a filing moves it, and the impersonation line asks again.
   const spamMark = useMemo(() => spamLettersMark(spam), [spam]);
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
   const shelves: Record<ScreenerSeg, ScreenerRow[]> = { waiting, screened, spam };
   // "Nobody is waiting" over a first import the gate has not judged yet is a claim nobody made.
   const firstPass = firstPassWithholds(waiting.length, w.mailboxes, Date.now(), standaloneHereFor(w));
-  const rows = shelves[seg];
+  const rows = seg === "waiting" && suggestedOnly ? waiting.filter((row) => row.ai !== null) : shelves[seg];
   /* …and the WAITING shelf has a second way of being unknown over a settled mirror: this phone
      derived it, and the account's cutline answer has not landed, so it was withheld rather than
      guessed wide (`state/live.ts#WorldScreener.waitingPending`). Only that shelf — the other two
@@ -122,7 +154,23 @@ function ScreenerBody() {
   const renderRow = (row: ScreenerRow) => {
     if (seg === "waiting") {
       const mark = relayMarkFor(row.address, w.screener.relayed, w.mailboxes.organizer?.name ?? null);
-      return <WaitingRow row={row} mark={mark} onPress={() => openRow(row.routeKey)} />;
+      return (
+        <View>
+          <WaitingRow row={row} mark={mark} onPress={() => openRow(row.routeKey)} />
+          {row.ai ? (
+            <Tap
+              accessibilityRole="button" onPress={() => startApply(row.routeKey)}
+              accessibilityLabel={Copy.screeningResolveGo(destDone(row.ai.dest))}
+              style={t.mail ? {
+                position: "absolute", right: 12, bottom: 10, maxWidth: "36%",
+                backgroundColor: t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: 10, paddingVertical: 4,
+              } : { alignSelf: "flex-end", paddingHorizontal: 16, paddingBottom: 8, minHeight: 32 }}
+            >
+              <Txt variant="caption" tone="accent">{t.mail ? `• ${destDone(row.ai.dest)}` : Copy.screeningResolveGo(destDone(row.ai.dest))}</Txt>
+            </Tap>
+          ) : null}
+        </View>
+      );
     }
     if (seg === "screened") {
       return (
@@ -168,7 +216,8 @@ function ScreenerBody() {
         refresh={pull}
         head={
           <>
-            <ViewHead style={{ paddingTop: 8, paddingBottom: 14 }} title={Copy.screener} meta={metaWhen(surface, meta) ?? " "} />
+            <ViewHead style={{ paddingTop: 8, paddingBottom: 14 }} title={Copy.screener} attention={waiting.length > 0}
+              leading={t.mail ? <MailCalendarSwitch /> : undefined} meta={t.mail ? undefined : metaWhen(surface, meta) ?? " "} />
 
             <Segmented
               style={{ marginHorizontal: 10, marginBottom: 14 }}
@@ -186,6 +235,24 @@ function ScreenerBody() {
                 { value: "spam", label: Copy.segSpam, ...(w.boot.settled ? { count: spam.length } : {}) },
               ]}
             />
+            {seg === "waiting" && t.mail ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
+                <Button label={`${suggestedOnly ? Copy.screenSuggestions : Copy.searchAll} ▾`}
+                  variant="quiet" style={{ backgroundColor: t.c.tint2 }}
+                  onPress={() => setFilterOpen(true)} />
+                <View style={{ flex: 1 }} />
+                <Button label={Copy.screenApplyShort(suggested)} accessibilityLabel={Copy.screenApplySuggestions(suggested)}
+                  disabled={suggested === 0} variant="solid" onPress={() => startApply()} />
+                <Tap accessibilityRole="button" accessibilityLabel={Copy.actionMore} onPress={() => setFilterOpen(true)}
+                  style={{ padding: 8 }}><Txt variant="button">⋯</Txt></Tap>
+              </View>
+            ) : seg === "waiting" && suggested > 0 ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
+                <Button label={suggestedOnly ? Copy.searchAll : Copy.screenSuggestions}
+                  variant="quiet" onPress={() => setSuggestedOnly(!suggestedOnly)} />
+                <Button label={Copy.screenApplySuggestions(suggested)} onPress={() => startApply()} />
+              </View>
+            ) : null}
             {seg === "waiting" ? <FailedLetters letters={w.screener.failedAtGate} onFile={w.actions.fileFailed} /> : null}
             {/* What ohmail filed to Spam for claiming a company: one line, Review, Put back and OK. */}
             {seg === "waiting" && session !== null ? <ImpersonationNotice session={session} spamMark={spamMark} /> : null}
@@ -198,6 +265,17 @@ function ScreenerBody() {
           : null
         }
       />
+      <Sheet open={filterOpen} onClose={() => setFilterOpen(false)} label={Copy.searchAll}>
+        <SheetRow label={Copy.searchAll} on={!suggestedOnly} onPress={() => { setSuggestedOnly(false); setFilterOpen(false); }} />
+        <SheetRow label={Copy.screenSuggestions} on={suggestedOnly} onPress={() => { setSuggestedOnly(true); setFilterOpen(false); }} />
+      </Sheet>
+      <Sheet open={confirmation !== null && confirmation.worldKey === w.worldKey} onClose={() => setConfirmation(null)}
+        label={Copy.screenApplySuggestions(confirmation?.plan.length ?? 0)}>
+        {requests > 0 ? <Txt variant="body" tone="ink2" style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+          {Copy.screenBulkUnsubscribe(requests)}
+        </Txt> : null}
+        <SheetRow label={Copy.screenApplySuggestions(confirmation?.plan.length ?? 0)} onPress={() => { void confirmApply(); }} />
+      </Sheet>
     </Screen>
   );
 
@@ -257,68 +335,54 @@ function WaitingRow({ row, mark, onPress }: { row: ScreenerRow; mark: RelayMark 
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={mark ? `${aria} ${mark.text}` : aria}
-      style={{ paddingHorizontal: 12, paddingVertical: 12 }}
+      style={{
+        paddingHorizontal: mailSize.edge - mailSize.rowInset,
+        paddingVertical: mailSize.inset,
+        minHeight: mailSize.row,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: mailSize.inset,
+      }}
     >
-      <View style={{ flexDirection: "row", gap: 12 }}>
-        <View
-          style={[
-            {
-              width: 34,
-              height: 34,
-              borderRadius: 17,
-              backgroundColor: t.c.float,
-              alignItems: "center",
-              justifyContent: "center",
-            },
-            t.lift("l0"),
-          ]}
-        >
-          <Txt variant="settingsLabel" tone={row.dull ? "ink3" : "ink2"}>
-            {row.initial}
-          </Txt>
-        </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Txt
-              variant={row.dull ? "rowSenderSeen" : "rowSender"}
-              tone={row.dull ? "ink2" : "ink"}
-              numberOfLines={1}
-              style={{ flexShrink: 1 }}
-            >
-              {row.name}
-            </Txt>
-            <View style={{ flex: 1 }} />
-            <Txt variant="caption" tone="ink3" tabular>
-              {row.time}
-            </Txt>
-          </View>
-          <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ marginTop: 1 }}>
-            {row.address}
-          </Txt>
+      <MailAvatar person={{ name: row.name, address: row.address }} unread />
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: mailSize.inset }}>
           <Txt
-            variant={row.dull ? "rowSubjectSeen" : "rowSubject"}
+            variant={row.dull ? "rowSenderSeen" : "rowSender"}
             tone={row.dull ? "ink2" : "ink"}
             numberOfLines={1}
-            style={{ marginTop: 5 }}
+            style={{ flexShrink: 0, maxWidth: "55%" }}
           >
-            {row.newestSubject}
+            {row.name}
           </Txt>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
-            {claim ? <Badge icon="shield">{claim}</Badge> : null}
-            {row.ai ? (
-              <Badge icon="spark" tone="accent">
-                {Copy.aiSuggests(destDone(row.ai.dest), row.ai.confidence)}
-              </Badge>
-            ) : null}
-            <Badge>{Copy.heldCaption(row.held.length)}</Badge>
-          </View>
-          {/* THE DECISION THIS PHONE SENT, until the organizer answers it (`state/relay.ts`). */}
-          {mark ? (
-            <Txt variant="caption" tone={mark.kind === "refused" ? "ink" : "ink3"} style={{ marginTop: 6 }}>
-              {mark.text}
+          {row.held.length > 1 ? <Badge>{t.mail ? Copy.screenHeldShort(row.held.length) : Copy.heldCaption(row.held.length)}</Badge> : (
+            <Txt variant="caption" tone="ink2" numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}>
+              {row.address}
             </Txt>
+          )}
+          <View style={{ flex: 1 }} />
+          <Txt variant="caption" tone="ink2" tabular>{row.time}</Txt>
+        </View>
+        <Txt variant={row.dull ? "rowSubjectSeen" : "rowSubject"} tone={row.dull ? "ink2" : "ink"} numberOfLines={1}>
+          {row.newestSubject}
+        </Txt>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: mailSize.inset, paddingRight: t.mail && row.ai ? 90 : 0 }}>
+          <Txt variant="body" tone="ink2" numberOfLines={1} style={{ flex: 1 }}>
+            {row.held.at(-1)?.body.slice(0, 160).trim().replace(/\s+/g, " ")}
+          </Txt>
+          {claim ? <Badge icon="shield">{claim}</Badge> : null}
+          {row.ai && !t.mail ? (
+            <Badge icon="spark" tone="accent">
+              {Copy.aiSuggests(destDone(row.ai.dest), row.ai.confidence)}
+            </Badge>
           ) : null}
         </View>
+        {/* THE DECISION THIS PHONE SENT, until the organizer answers it (`state/relay.ts`). */}
+        {mark ? (
+          <Txt variant="caption" tone={mark.kind === "refused" ? "ink" : "ink3"} style={{ marginTop: 6 }}>
+            {mark.text}
+          </Txt>
+        ) : null}
       </View>
     </TapRow>
   );

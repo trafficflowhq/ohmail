@@ -1,3 +1,4 @@
+import { onboardingType } from "../theme/type";
 /**
  * THE WALL — what an account the service has refused sees instead of its mail, on the phone.
  *
@@ -14,11 +15,12 @@ import { ActivityIndicator, AppState, Linking, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
-import { Button, Screen, Scroller, Txt } from "./base";
+import { Tap, Txt } from "./base";
+import { Icon } from "./Icon";
+import { OnboardingButton, OnboardingPage, OnboardingTitle, useOnboardingLook } from "./OnboardingPage";
 import { dayStamp } from "./day-stamp";
 import { wallSays, type WallAction, type WallLine } from "./wall-says";
 import { WALL_READ_MS, wallLift, type WallCheck, type WallLift } from "./wall-lift";
-import { useTheme } from "../theme";
 import {
   DELETE_ACCOUNT_URL, exportFilename, mintManageLink, opensTheWall, readAccess, readExport, SELF_HOST_GUIDE,
 } from "../net/account";
@@ -63,7 +65,7 @@ export function AccountWall(
 ) {
   const locale = useLocale();
   const router = useRouter();
-  const t = useTheme();
+  const { palette } = useOnboardingLook();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [check, setCheck] = useState<WallCheck>("idle");
@@ -96,7 +98,7 @@ export function AccountWall(
      ISO instant and never a formatted string, so a language switch redraws the dates with it. */
   const stamp = useCallback(
     (line: WallLine): WallLine =>
-      line.date === undefined ? line : { ...line, date: dayStamp(line.date, locale) },
+      line.date === undefined ? line : { ...line, date: dayStamp(line.date, locale, undefined, "weekday") },
     [locale],
   );
 
@@ -167,91 +169,95 @@ export function AccountWall(
   /* While a poll is in flight nothing else is true to offer; the way off the screen stays. */
   const shown = check === "checking" ? plan.actions.filter((a) => a.id === "servers") : plan.actions;
 
-  return (
-    <Screen>
-      <Scroller bounded contentStyle={{ paddingTop: 48, gap: 12 }}>
-        <Txt variant="h1">{say(stamp(plan.headline))}</Txt>
-        {plan.body.map((line) => (
-          <Txt
-            key={line.key}
-            variant="body"
-            /* THE ONE SENTENCE AT FULL INK is the one a person needs to believe, and it is the
-               product's oldest promise. The rest of the body is quiet. */
-            tone={line.key === "wallMailboxUntouched" ? "ink" : "ink2"}
-          >
-            {say(stamp(line))}
-          </Txt>
-        ))}
-        {plan.erasure ? (
-          <Txt variant="note" tone="ink3">{say(stamp(plan.erasure))}</Txt>
-        ) : null}
+  const manage = shown.find((action) => action.id === "manage");
+  const servers = shown.find((action) => action.id === "servers");
+  const waysOut = shown.filter((action) => action.id !== "manage" && action.id !== "servers");
 
-        {/* THE ACTIONS ARE THE SCREEN'S ONLY EMPHASIS — one column, in the order a person meets
-            them: the way back first, the way out second, the end third, and the way off the
-            screen last. Each says what it does underneath where pressing again cannot undo it. */}
-        <View style={{ gap: 10, marginTop: 20 }}>
-          {check === "checking" ? (
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
-              accessibilityRole="progressbar"
-              accessibilityLiveRegion="polite"
-            >
-              <ActivityIndicator size="small" color={t.c.accent} />
-              <Txt variant="body" tone="ink2">{Copy.wallChecking}</Txt>
-            </View>
-          ) : null}
+  return (
+    <OnboardingPage
+      actions={
+        <>
           {check === "pending" ? (
-            <View style={{ gap: 10 }}>
-              <Txt variant="body" tone="ink2" accessibilityLiveRegion="polite">{Copy.wallPending}</Txt>
-              <Button label={Copy.wallCheckAgain} variant="plain" onPress={() => lift.current?.checkAgain()} />
-            </View>
+            <OnboardingButton label={Copy.wallCheckAgain} kind="soft" onPress={() => lift.current?.checkAgain()} />
           ) : null}
-          {shown.map((action, i) => (
-            <View key={action.id} style={{ gap: 6 }}>
+          {manage !== undefined ? (
+            <>
               <View>
-                <Button
-                  label={action.id === "export" && busy ? Copy.wallMoveOutBusy : action.label}
-                  /* The browser wall's three-level emphasis, mirrored: the way back solid, the way
-                     out plain, the end and the way off the screen quiet — the end-of-account verb
-                     may not outweigh the way out (the tab draws it as its quietest control too). */
-                  variant={i === 0 && check !== "checking" ? "solid" : action.id === "export" ? "plain" : "quiet"}
-                  onPress={() => press(action)}
-                />
-                {/* MINTING: the same label with a spinner on it — the label never turns into a
-                    progress word, and the other actions stay pressable. */}
-                {minting === action.id ? (
+                <OnboardingButton label={manage.label} onPress={() => press(manage)} />
+                {minting === "manage" ? (
                   <ActivityIndicator
                     size="small"
-                    color={i === 0 && check !== "checking" ? t.c.onAccent : t.c.ink2}
+                    color={palette["on-solid"]}
                     style={{ position: "absolute", right: 16, top: 0, bottom: 0 }}
                   />
                 ) : null}
               </View>
-              {mintRefusal !== null && mintRefusal.on === action.id ? (
-                <Txt variant="note" tone="ink2" accessibilityRole="alert">
-                  {mintRefusal.why === "unverified" ? Copy.wallMintUnverified : Copy.wallMintFailed}
-                </Txt>
-              ) : null}
-              {action.id === "manage" && action.hint ? (
-                <Txt variant="note" tone="ink3">{action.hint}</Txt>
-              ) : null}
-              {action.id === "export" || action.id === "delete" || action.id === "deletePage" ? (
-                <Txt variant="note" tone="ink3">{action.hint}</Txt>
-              ) : null}
+              {manage.hint ? <Txt variant="note" style={{ color: palette.ink2 }}>{manage.hint}</Txt> : null}
+            </>
+          ) : null}
+          {servers !== undefined ? <OnboardingButton label={servers.label} kind={manage ? "quiet" : "soft"} onPress={() => press(servers)} /> : null}
+        </>
+      }
+    >
+      <View style={{ gap: 8 }}>
+        <View style={{ maxWidth: 280 }}>
+          <OnboardingTitle text={say(stamp(plan.headline))} />
+        </View>
+        {mintRefusal !== null ? (
+          <Txt variant="body" accessibilityRole="alert" style={{ color: palette.ink }}>
+            {mintRefusal.why === "unverified" ? Copy.wallMintUnverified : Copy.wallMintFailed}
+          </Txt>
+        ) : null}
+        {plan.body[0]?.key === "wallStopped" ? (
+          <Txt variant="body" style={{ color: palette.ink, ...onboardingType.wallBody, fontWeight: "700" }}>
+            {Copy.phoneWallStopped}
+          </Txt>
+        ) : plan.body.map((line) => (
+          <Txt key={line.key} variant="body" style={{ color: palette.ink2, ...onboardingType.wallBody }}>
+            {say(stamp(line))}
+          </Txt>
+        ))}
+        {plan.erasure ? (
+          <Txt variant="body" style={{ color: palette.ink2, ...onboardingType.wallBody }}>{say(stamp(plan.erasure))}</Txt>
+        ) : null}
+        {check === "checking" ? (
+          <View accessibilityRole="progressbar" accessibilityLiveRegion="polite" style={{ flexDirection: "row", gap: 8 }}>
+            <ActivityIndicator size="small" color={palette.hot} />
+            <Txt variant="body" style={{ color: palette.ink2 }}>{Copy.wallChecking}</Txt>
+          </View>
+        ) : null}
+        {check === "pending" ? (
+          <Txt variant="body" accessibilityLiveRegion="polite" style={{ color: palette.ink2 }}>{Copy.wallPending}</Txt>
+        ) : null}
+      </View>
+      {waysOut.length > 0 ? (
+        <View style={{ backgroundColor: palette.sheet, borderRadius: 20, padding: 16, marginTop: 16, gap: 16 }}>
+          {waysOut.map((action) => (
+            <View key={action.id} style={{ gap: 6 }}>
+              <Tap
+                accessibilityRole="button"
+                accessibilityLabel={action.id === "export" && busy ? Copy.wallMoveOutBusy : action.label}
+                onPress={() => press(action)}
+                style={({ pressed }) => ({ flexDirection: "row", gap: 12, opacity: pressed ? 0.86 : 1 })}
+              >
+                <Icon name={action.id === "export" ? "download" : "trash"} size={18} color={palette.ink2} />
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Txt style={{ color: palette.ink, ...onboardingType.label, fontWeight: "700" }}>
+                    {action.id === "export" && busy ? Copy.wallMoveOutBusy : action.label}
+                  </Txt>
+                  <Txt style={{ color: palette.ink2, ...onboardingType.label }}>{action.hint}</Txt>
+                </View>
+                {action.id === "delete" && minting === "delete" ? (
+                  <ActivityIndicator size="small" color={palette.ink2} />
+                ) : null}
+              </Tap>
               {action.id === "export" ? (
                 <>
-                  <Txt
-                    variant="note"
-                    tone="accent"
-                    accessibilityRole="link"
-                    onPress={() => leave(SELF_HOST_GUIDE)}
-                  >
+                  <Txt variant="note" tone="accent" accessibilityRole="link" onPress={() => leave(SELF_HOST_GUIDE)}>
                     {Copy.wallMoveOutGuide}
                   </Txt>
-                  {/* The app's own grammar for a refusal sentence (`ui/Field.tsx`): quiet ink and
-                      the alert role, not a colour this palette does not have. */}
                   {failed ? (
-                    <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+                    <Txt variant="caption" accessibilityRole="alert" style={{ color: palette.ink }}>
                       {Copy.wallMoveOutFailed}
                     </Txt>
                   ) : null}
@@ -260,7 +266,7 @@ export function AccountWall(
             </View>
           ))}
         </View>
-      </Scroller>
-    </Screen>
+      ) : null}
+    </OnboardingPage>
   );
 }

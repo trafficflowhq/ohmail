@@ -9,9 +9,10 @@
  * password (the one connect form's field and the body of the door's `open` alone), a typed pairing code after the
  * press that sent it.
  */
+import type { ReactNode } from "react";
 import type { SaidRefusal } from "@ohmail/app-logic/phone/said";
 import type { BackSignal, Signal } from "../host/index.js";
-import type { ConnectSlot } from "../mailboxes/connect/contract.js";
+import type { ConnectAsk, ConnectFormProps } from "../mailboxes/connect/contract.js";
 
 export type { SaidRefusal } from "@ohmail/app-logic/phone/said";
 
@@ -133,7 +134,7 @@ export interface PhoneDoor {
   /** Every way out of Confirm that is not the press (`dismiss`). */
   dismiss(ticket: string): void;
   /** The one connect form, as a slot: its wire sends the door's `open`. */
-  readonly connect: ConnectSlot;
+  readonly connect: (ask: ConnectAsk, page: NonNullable<ConnectFormProps["page"]>) => ReactNode;
   /** The door's route, in memory. */
   go(to: PhoneDoorAt): void;
   /** The hardware back: newest handler first; true is "taken". Not taken, native takes the door's way out. */

@@ -77,13 +77,17 @@ export function MiniMonth({
   compactDays,
 }: MiniMonthProps) {
   const { grid, before, after, stopId, hold, keys } = useDayKeys(days, size, takesKeys, onDayPress);
-  const weeks = Array.from({ length: Math.ceil(days.length / 7) }, (_, r) => days.slice(r * 7, r * 7 + 7));
+  const columns = size === "strip" && weekdays.length === 5 ? 5 : 7;
+  const weeks = Array.from({ length: Math.ceil(days.length / columns) }, (_, r) =>
+    days.slice(r * columns, (r + 1) * columns),
+  );
 
   return (
     <div
       className="oh-mini"
       data-size={size === "rail" ? undefined : size}
       data-compact-days={compactDays ? "" : undefined}
+      data-weekdays={columns === 5 ? "" : undefined}
     >
       {head ? miniMonthHead(head, before, after) : null}
       <div className="oh-mini-grid">

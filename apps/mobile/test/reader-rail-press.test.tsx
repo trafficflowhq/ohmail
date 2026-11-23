@@ -54,6 +54,7 @@ vi.mock("react-native", async () => {
   };
 });
 
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, left: 0, right: 0, bottom: 0 }) }));
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
   const keep = (props: any) => (el: any) => { if (el) el.__props = props; };
@@ -99,6 +100,7 @@ vi.mock("../src/ui/base", async () => {
 
 vi.mock("../src/theme", () => ({
   useTheme: () => ({
+    mail: world.paper,
     c: new Proxy({}, { get: () => "#000" }),
     type: { readerBody: { lineHeight: 29 }, streamBody: { lineHeight: 25 } },
     radius: new Proxy({}, { get: () => 10 }),
@@ -109,12 +111,14 @@ vi.mock("../src/theme", () => ({
 }));
 
 const world = vi.hoisted(() => ({
+  paper: false,
   mail: null as any,
   otherMail: new Map<string, { id: string }>(),
   glanced: [] as string[][],
   files: [] as string[],
 }));
 vi.mock("../src/state/world", () => ({
+  useLiveSession: () => null,
   useBodyStamp: () => 0,
   useFilesStamp: () => 0,
   useWorldToast: () => ({ say: () => undefined }),
@@ -123,6 +127,7 @@ vi.mock("../src/state/world", () => ({
     message: (id: string) => (world.mail?.id === id ? world.mail : world.otherMail.get(id)),
     actions: {
       openMessage: () => undefined,
+      keptReply: () => ({ kind: "none" }),
       releaseAttachments: () => undefined,
       leaveMessage: () => undefined,
       hydrateMessage: () => undefined,
@@ -163,6 +168,7 @@ vi.mock("../src/ui/MessageActions", () => ({
     verbs.targets = { forward: m.id, reply: replyTo === undefined ? m.id : replyTo?.id ?? null };
     return null;
   },
+  ComposeSheet: ({ inlineHeading }: { inlineHeading?: ReactNode }) => h("div", { "data-compose": "" }, inlineHeading),
   useReaderVerbMode: () => verbs.mode,
 }));
 vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}) }));
@@ -237,6 +243,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date"] });
   native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = []; native.stuck = false;
   verbs.mode = "compact";
+  world.paper = false;
   verbs.targets = null;
   world.otherMail.clear();
   world.glanced = [];
@@ -252,11 +259,11 @@ afterEach(() => {
   root = null;
   vi.useRealTimers();
 });
-const mountReader = (id: string, selectMember = false) => {
+const mountReader = (id: string, selectMember = false, runReply?: React.ComponentProps<typeof MessageReader>["runReply"]) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = client.createRoot(host);
-  act(() => root!.render(h(MessageReader, { id, selectMember })));
+  act(() => root!.render(h(MessageReader, { id, selectMember, runReply })));
   return host;
 };
 
@@ -291,6 +298,16 @@ describe("the reader's reply and forward targets", () => {
     mountReader("opened");
     expect(verbs.targets).toEqual({ forward: "opened", reply: "opened" });
   });
+});
+
+it("names the reply audience and subject at the inline reply in the reader", () => {
+  world.paper = true;
+  world.mail = mailOf("opened", []);
+  const el = mountReader("opened", false, { at: "opened", step: 1, total: 1, skip: () => undefined, exit: () => undefined });
+  const editor = el.querySelector("[data-compose]");
+  expect(editor).not.toBeNull();
+  expect(editor!.textContent).toContain(Copy.replyTo("Ben"));
+  expect(editor!.textContent).toContain("Q3 plan");
 });
 
 type Slop = { top: number; bottom: number; left: number; right: number };

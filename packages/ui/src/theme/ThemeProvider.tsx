@@ -248,6 +248,8 @@ export function themeInitScript(
 
 export interface ThemeProviderProps {
   children: ReactNode;
+  /** Keep the paper attribute on hosts whose product accent uses it. */
+  stampPaper?: boolean;
   /** Initial preference; defaults to following the system. */
   defaultPreference?: ThemePreference;
   /**
@@ -309,6 +311,7 @@ export function ThemeProvider({
   accountFaceStorageKey = "ohmail.face.account",
   layoutStorageKey = "ohmail.layout",
   faces = false,
+  stampPaper = false,
   deferLinuxFace = false,
   preferAccountFace = false,
   accountFaceScope,
@@ -467,9 +470,9 @@ export function ThemeProvider({
   useFaceStamp(() => {
     if (!faces || devicePin === undefined) return;
     const root = document.documentElement;
-    if (face === "ohmarchy") root.dataset.face = "ohmarchy";
+    if (face === "ohmarchy" || stampPaper) root.dataset.face = face;
     else delete root.dataset.face;
-  }, [faces, devicePin, face]);
+  }, [faces, devicePin, face, stampPaper]);
 
   // Stamp <html data-layout> — absent = classic, the same skip-until-adoption contract.
   useEffect(() => {

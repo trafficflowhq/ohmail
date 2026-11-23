@@ -1403,14 +1403,18 @@ describe("the three doors — the claims, held to the code", () => {
   const welcome = read("../app/welcome.tsx");
   const servers = read("../app/servers.tsx");
 
-  it("first run asks the chooser's question and offers all three doors", () => {
-    expect(Copy.welcomeTitle).toBe("Which mailbox is this?");
+  it("first run introduces the app and keeps every connection route in reach", () => {
+    expect(Copy.welcomeTitle).toBe("Mail from people you said yes to.");
+    expect(Copy.welcomeScan).toBe("Scan a code");
+    expect(Copy.welcomeConnect).toBe("Connect a mailbox");
     // No door is filed under "other": the deck no longer has a key for it.
     expect(Object.keys(Copy)).not.toContain("welcomeOther");
     for (const name of [Copy.doorCloud, Copy.doorOwnServer, Copy.doorDesktop]) {
       expect(name.length).toBeGreaterThan(0);
     }
-    expect(welcome).toContain("<Doors");
+    expect(welcome).toContain('router.push("/servers")');
+    expect(welcome).toContain('router.push("/scan")');
+    expect(welcome).toContain('router.push("/standalone")');
     expect(servers).toContain("<Doors");
   });
 
@@ -1683,7 +1687,7 @@ describe("the three doors — the claims, held to the code", () => {
     // The address step's own probe (`probeUnder("self", …)`), so another door's late check cannot lock it.
     expect(doors).toContain('locked={selfProbe.k === "asking" || selfProbe.k === "probed"}');
     expect(doors).toContain('const selfProbe = probeUnder("self", open, probe);');
-    expect(doors).toContain("editable={!locked}");
+    expect(read("../src/ui/Field.tsx")).toContain("editable={locked ? false : undefined}");
   });
 
   /**
@@ -1695,8 +1699,12 @@ describe("the three doors — the claims, held to the code", () => {
    * after the camera. The tile stays unconditional; one line renders only where the condition holds.
    */
   it("where this build cannot pin, the desktop door says so before the scan", () => {
-    expect(doors).toContain("canPin() ? null : (");
-    expect(doors).toContain("Copy.doorDesktopNoPin");
+    expect(doors).toContain("const supported = canPin()");
+    expect(doors).toContain("supported ? null :");
+    expect(doors).toContain("supported ? Copy.phoneComputerAndroid : Copy.phoneComputerIos");
+    expect(doors).toContain("Copy.phoneComputerNoPin");
+    expect(Copy.phoneComputerIos).toContain("Tailscale");
+    expect(Copy.phoneComputerNoPin).toContain("cannot verify");
     // It names the remedy that works, not the mechanism that does not.
     expect(Copy.doorDesktopNoPin).toContain("Tailscale");
     expect(Copy.doorDesktopNoPin).toContain("cannot yet verify");

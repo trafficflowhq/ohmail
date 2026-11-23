@@ -132,7 +132,12 @@ export function SearchView({ input, acts, query, onQuery, held }: SearchViewProp
                 n++;
                 return (
                   <div key={h.key} className="cal-sr-hit">
-                    <EventHit hit={h} cursor={n === at} reveal={acts.reveal} />
+                    <EventHit
+                      hit={h}
+                      cursor={n === at}
+                      reveal={acts.reveal}
+                      phone={input.device === "phone"}
+                    />
                   </div>
                 );
               })}
@@ -144,7 +149,7 @@ export function SearchView({ input, acts, query, onQuery, held }: SearchViewProp
         ) : null}
         {found.unplaced > 0 ? <RefusalLine>{t("unplaced", { count: found.unplaced })}</RefusalLine> : null}
         {found.any && held ? (
-          <p className="oh-text cal-sr-held">
+          <p className={input.device === "phone" ? "oh-vh" : "oh-text cal-sr-held"}>
             {t("held", {
               from: dayDate(held.from, locale, thisYear),
               to: dayDate(held.to, locale, thisYear),
@@ -181,10 +186,12 @@ function EventHit({
   hit,
   cursor,
   reveal,
+  phone,
 }: {
   hit: SearchHit<ViewEvent>;
   cursor: boolean;
   reveal: RangeActs["reveal"];
+  phone: boolean;
 }) {
   const t = useText("calsearch");
   const locale = useLocale();
@@ -201,8 +208,8 @@ function EventHit({
       cursor={cursor}
       mark={{ kind: "calendar", tone: item.tone }}
       title={item.title}
-      time={time}
-      second={[item.second, ...item.people].filter(Boolean).join(" · ") || undefined}
+      time={phone ? "" : time}
+      second={[phone ? time : "", item.second, ...item.people].filter(Boolean).join(" · ") || undefined}
       off={item.state === "off"}
       quiet={item.state === "maybe"}
       waits={item.waits}

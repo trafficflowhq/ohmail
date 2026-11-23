@@ -1,3 +1,5 @@
+import { useNoticesVersion } from "@ohmail/app-logic/notices/browser-channels";
+import { CalendarDeviceContext } from "@ohmail/app/calsettings";
 /**
  * THE PAGE AS DRAWN: the frame over `phoneHost`, under the page's sentences, with the account's one engine and its
  * sync loop above it, as every shell mounts it. Never today's shell and nothing of the web app: the places the phone
@@ -5,19 +7,54 @@
  * Native holds its one waiting sentence over the page until the page says it has drawn.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ConsentContext, useConsentRow } from "@ohmail/app-logic/consent";
 import { EngineContext, useDerivedVersion, useEngine, useSyncStatus, type EngineBinding } from "@ohmail/app-logic/engine";
 import { SYNC_BOOTSTRAPPING, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 import { useSessionDead } from "@ohmail/app-logic/session/session-truth";
+import { localStorageDoor } from "@ohmail/app-logic/storage/durable";
+import { applyTextSize, readTextSize } from "@ohmail/app-logic/text/text-size";
 import { Frame } from "@ohmail/app/frame";
-import type { HostContract } from "@ohmail/app/host";
-import { fillOver, TextProvider, type Locale, type Messages } from "@ohmail/app/text";
+import { useThemeLook } from "@ohmail/app/mail";
+import { NONE, type HostContract } from "@ohmail/app/host";
+import type { Messages } from "@ohmail/app/text";
+import { ThemeProvider } from "@ohmail/ui/theme";
 import type { NoticeChoices } from "./engine-package";
 import { calendarPublisher, snapshotFromMirror, type calendarRecordClearer, type calendarRecordSender } from "./calendar-record";
 import { PhoneNotices, storedWidgetChoices } from "./notices";
+import { usePhoneCalendarDevice } from "./calendar-device";
+import { PhoneLanguage, type PhoneLanguageDoor } from "./phone-language";
+
+const themeStorage = localStorageDoor("theme");
+const noAppearanceEvents = () => () => {};
+
+function PhoneFrame({ host }: { readonly host: HostContract }) {
+  const { face, scheme } = useThemeLook();
+  const themedHost = useMemo(() => {
+    const look = { face, scheme };
+    return {
+      ...host,
+      device: {
+        ...host.device,
+        appearance: { read: () => look, subscribe: noAppearanceEvents },
+      },
+    };
+  }, [face, host, scheme]);
+  return host.capabilities.products === "calendar" ? (
+    <PhoneCalendarFrame host={themedHost} />
+  ) : <Frame host={themedHost} />;
+}
+
+function PhoneCalendarFrame({ host }: { readonly host: HostContract }) {
+  const derived = useDerivedVersion();
+  const consent = useConsentRow({
+    engine: host.engine, derived, facts: null, scope: host.session.scope, active: false, transport: NONE,
+  });
+  return <ConsentContext.Provider value={consent}><Frame host={host} /></ConsentContext.Provider>;
+}
 
 export interface PhonePageProps {
   readonly host: HostContract;
-  readonly locale: Locale;
+  readonly language: PhoneLanguageDoor;
   /** The page's catalogue in both languages; German is drawn filled over English. */
   readonly catalogue: { readonly en: Messages; readonly de: Messages };
   readonly timeZone: string;
@@ -30,29 +67,48 @@ export interface PhonePageProps {
   readonly widgets?: WidgetPublisher;
 }
 
-export function PhonePage({ host, locale, catalogue, timeZone, sync, drawn, noticeChoices, widgets }: PhonePageProps) {
+export function PhonePage({ host, language, catalogue, timeZone, sync, drawn, noticeChoices, widgets }: PhonePageProps) {
+  const calendarOnly = host.capabilities.products === "calendar";
+  const calendarDevice = usePhoneCalendarDevice(calendarOnly ? host.session.scope : null);
+  const zone = calendarDevice.settings.zone ?? timeZone;
   const [status, setStatus] = useState<SyncStatus>(SYNC_BOOTSTRAPPING);
   const [pageReady, setPageReady] = useState(false);
   useEffect(() => sync(setStatus), [sync]);
+  useEffect(() => applyTextSize(readTextSize(), document.documentElement), []);
+  useEffect(() => {
+    const port = host.wires.calendar;
+    if (port === NONE) return;
+    const stop = port.activate?.();
+    let ready = host.engine.calendarQueueReady();
+    const off = host.engine.subscribe(() => {
+      if (ready || !host.engine.calendarQueueReady()) return;
+      ready = true;
+      void port.flush();
+    });
+    return () => { off(); stop?.(); };
+  }, [host]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => { void Promise.resolve(drawn()).then(() => setPageReady(true)); });
     return () => cancelAnimationFrame(frame);
     // Once per page: a page is one web view instance.
   }, []);
-  const messages = useMemo(() => (locale === "de" ? fillOver(catalogue.en, catalogue.de) : catalogue.en), [locale, catalogue]);
   const binding: EngineBinding = useMemo(
     () => ({ engine: host.engine, demo: false, serverDemo: false, sync: status }),
     [host.engine, status],
   );
   return (
-    <TextProvider locale={locale} messages={messages} timeZone={timeZone}>
+    <PhoneLanguage door={language} catalogue={catalogue} timeZone={zone}>
+      <CalendarDeviceContext.Provider value={calendarOnly ? calendarDevice : null}>
       <EngineContext.Provider value={binding}>
         <PhoneNotices host={host} choices={noticeChoices} />
         {widgets && pageReady && host.session.scope !== null &&
-          <PhoneCalendarWidgets scope={host.session.scope} zone={timeZone} widgets={widgets} />}
-        <Frame host={host} />
+          <PhoneCalendarWidgets scope={host.session.scope} zone={zone} widgets={widgets} />}
+        <ThemeProvider storage={themeStorage} faces stampPaper={host.capabilities.products === "calendar"} deferLinuxFace accountFaceScope={host.session.scope}>
+          <PhoneFrame host={host} />
+        </ThemeProvider>
       </EngineContext.Provider>
-    </TextProvider>
+      </CalendarDeviceContext.Provider>
+    </PhoneLanguage>
   );
 }
 
@@ -66,7 +122,7 @@ interface WidgetPublisher {
 
 function PhoneCalendarWidgets({ scope, zone, widgets }: { scope: string; zone: string; widgets: WidgetPublisher }) {
   const engine = useEngine();
-  const version = useDerivedVersion();
+  const version = useNoticesVersion(useDerivedVersion());
   const sync = useSyncStatus();
   const dead = useSessionDead();
   const refused = dead || sync.terminal || sync.refused || sync.ownerLost || !!sync.standingDown;

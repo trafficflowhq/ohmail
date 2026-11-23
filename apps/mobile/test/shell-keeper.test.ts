@@ -17,6 +17,7 @@ import { DEVICE_UNDER_KEPT, KEPT_FAMILIES, isKept } from "../src/shell/kept-fami
 
 /** The registry's other `localStorage` names, each classed a device's: the look, the layout, the session's own state. */
 const DEVICE_KEYS = [
+  "ohmail.calendar.display.",
   "ohmail.theme", "ohmail.face", "ohmail.face.scope", "ohmail.face.account", "ohmail.face.account.owner",
   "ohmail.faceOffer", "ohmail.layout",
   "ohmail.textSize", "ohmail.locale", "ohmail.ui.columns", "ohmail.ui.rail.tagsOpen", "ohmail.ui.rail.foldersOpen",

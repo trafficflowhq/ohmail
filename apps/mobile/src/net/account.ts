@@ -511,6 +511,7 @@ export const SELF_HOST_GUIDE =
  * path to a plan, so a store build may offer it (App Review 5.1.1(v), Play's deletion rule).
  */
 export const PRIVACY_URL = "https://ohmail.app/privacy";
+export const SUBPROCESSORS_URL = "https://ohmail.app/subprocessors";
 
 /**
  * THE HOSTED SERVICE'S WEB APP, where a person with a Cloud account reads their mail in a browser. The

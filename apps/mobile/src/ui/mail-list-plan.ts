@@ -32,6 +32,7 @@ export interface ListGroup<T> {
   key: string;
   /** Rendered as a `Section` label above the rows; absent, no header is drawn. */
   title?: string;
+  count?: number;
   rows: readonly T[];
   /** A caption under the title — a heading that needs a sentence to be honest (Search's SIMILAR
    *  tier says what "similar" means there). Drawn only where there is a title. */
@@ -45,6 +46,7 @@ const SECTION: unique symbol = Symbol("mail-list-section");
 export interface PlannedSection<T> {
   key: string;
   title: string | null;
+  count: number | null;
   note: string | null;
   data: readonly T[];
   padTop: number;
@@ -63,7 +65,7 @@ export function planSections<T>(groups: readonly ListGroup<T>[]): PlannedSection
     const first = title !== null && !titled;
     if (title !== null) titled = true;
     out.push({
-      key: g.key, title, note: title === null ? null : g.note ?? null,
+      key: g.key, title, count: g.count ?? null, note: title === null ? null : g.note ?? null,
       data: g.rows, padTop: g.padTop ?? 0, first, [SECTION]: true,
     });
   }

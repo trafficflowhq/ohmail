@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import {
   type AddressDirection, type AddressResult, indexingAddressResult, indexingResult, type LocalSearchResult,
   SearchIndex,
@@ -16,7 +17,7 @@ export abstract class EngineLocalSearch extends EngineBodies {
    * `LocalSearchResult.coverage` says how much of the corpus that was, and the surface is
    * required to say so rather than let the count of hits imply completeness.
    */
-  search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
+  search(query: string, opts: { limit?: number; accept?: (message: EngineMessage) => boolean; compare?: (a: EngineMessage, b: EngineMessage) => number } = {}): LocalSearchResult {
     const index = this.searchIndex();
     if (index === null) return indexingResult();
     return { ...index.search(query, opts), indexing: this.searchBuild !== null };

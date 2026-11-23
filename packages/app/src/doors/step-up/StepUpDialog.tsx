@@ -102,12 +102,16 @@ function Asked(p: {
   typed: string;
   type: (typed: string) => void;
   field: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
-  submit: (e: FormEvent) => void;
+  submit: () => void;
 }): ReactNode {
   const { t, factor, said } = p;
   if (factor === "passkey") return said === null ? null : <RefusalLine alert>{said}</RefusalLine>;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    p.submit();
+  };
   return (
-    <form className="way-step-up-form" onSubmit={p.submit}>
+    <form className="way-step-up-form" onSubmit={submit}>
       <Field
         ref={p.field}
         label={t(factor === "code" ? "codeLabel" : "recoveryLabel")}
@@ -151,8 +155,14 @@ function waysOf(t: Text, instead: readonly StepUpFactor[], use: (way: StepUpFact
       ));
 }
 
-export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: string }): ReactNode {
-  const { door, line } = props;
+function hasNoFactors(factors: StepUpFactors | null): boolean {
+  return factors !== null && !factors.passkey && !factors.code && !factors.recovery;
+}
+
+export function StepUpDialog(
+  props: StepUpProps & { door: StepUpDoor; line?: string; noFactor?: ReactNode },
+): ReactNode {
+  const { door, line, noFactor } = props;
   const t = useText("stepUp");
   /**
    * THE CEREMONY'S GENERATION: Cancel, Esc, the scrim and leaving end it before the place hears anything, so a factor
@@ -184,7 +194,8 @@ export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: str
     end();
     hands.current.onCancel();
   }, [end]);
-  const ready = factor === "passkey" || typed.trim().length > 0;
+  const alternative = hasNoFactors(factors) ? noFactor : undefined;
+  const ready = !alternative && (factor === "passkey" || typed.trim().length > 0);
   /* One check at a time, whatever the draw has caught up with: a second press while one is on its way sends nothing. */
   const checking = useRef(false);
   const press = (): void => {
@@ -222,11 +233,6 @@ export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: str
     setTyped("");
     setRefusal(null);
   };
-  const submit = (e: FormEvent): void => {
-    e.preventDefault();
-    press();
-  };
-
   /* Its sentences are not in the first cut: wordless until they have arrived; the factors are read meanwhile. */
   if (!t.has(TITLE.code)) return <div className="way-live" aria-busy="true" />;
   const said = refusal === null ? null : sentenceOf(refusal, t);
@@ -251,18 +257,19 @@ export function StepUpDialog(props: StepUpProps & { door: StepUpDoor; line?: str
       cancel={{ label: t("cancel"), keyHint: "Esc" }}
       under={waysOf(t, instead, use)}
     >
-      {factor === "passkey" && said === null ? undefined : (
-        <Asked
-          t={t}
-          factor={factor}
-          said={said}
-          describedBy={factor === "code" ? `${detail} ${detail}-hint` : detail}
-          typed={typed}
-          type={setTyped}
-          field={field}
-          submit={submit}
-        />
-      )}
+      {alternative ??
+        (factor === "passkey" && said === null ? undefined : (
+          <Asked
+            t={t}
+            factor={factor}
+            said={said}
+            describedBy={factor === "code" ? `${detail} ${detail}-hint` : detail}
+            typed={typed}
+            type={setTyped}
+            field={field}
+            submit={press}
+          />
+        ))}
       <FactorDetail
         id={detail}
         line={line ?? t("door")}

@@ -41,6 +41,7 @@ import { askDoorAt } from "./door-at";
 import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./bridge-kinds";
 import { HttpDoor } from "./http-door";
 import { onOrganizerState } from "../engine/organizer-session";
+import { useLocaleControls } from "../i18n/LocaleProvider";
 import { phoneDiagnosticsOf } from "./phone-diagnostics-native";
 import { phoneOrganizerOf } from "./phone-organize";
 import { answerPhoneMailbox, readPhoneRoster } from "./phone-mailbox";
@@ -52,7 +53,7 @@ import { shellNative, shellView } from "./shell-native";
 import type { ShellRefusal, ShellViewHandle } from "./shell-port";
 import { handoffMinter, type ShellSession } from "../net/pairing";
 import { webViewVerdict } from "./webview-check";
-import { downloadPageOf } from "../net/account";
+import { IMPRINT_URL, PRIVACY_URL, SUBPROCESSORS_URL, WEB_APP_URL, downloadPageOf } from "../net/account";
 import { pairingDigest } from "../switch/digest";
 import { switchPlaces } from "../switch/receive";
 import { switchSender } from "../switch/sender";
@@ -84,6 +85,9 @@ export function ShellScreen({ session }: { session: ShellSession }) {
   const wake = useWake();
   const wakeNow = useRef(wake);
   wakeNow.current = wake;
+  const locale = useLocaleControls();
+  const localeNow = useRef(locale);
+  localeNow.current = locale;
   const os = Platform.OS === "ios" ? "ios" : "android";
   const widget = useRef<string | null>(null);
   const drawnRef = useRef(false);
@@ -147,7 +151,8 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       serverName: session.standalone ? "" : hostOf(session.profile.origin),
       build: { version: appRelease() ?? null, commit: buildCommit(process.env.EXPO_PUBLIC_COMMIT) },
       os,
-      language: activeLocale() === "de" ? "de" : "en",
+      language: activeLocale(),
+      languageChoice: localeNow.current?.chosen ?? null,
       place: lastPlace.current,
       oldCopy: oldCopy.current,
       notifications: permission.current,
@@ -207,6 +212,18 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         }),
       },
       http,
+      account: async (request, signal) => {
+        if (request.do !== "deletePage" && request.do !== "settingsPage") return http.account(request, signal);
+        if (!live() || signal.aborted || request.scope !== scope || session.standalone ||
+          session.boundAccount() !== session.profile.accountId) return { refused: "foreignScope" };
+        const { flavor, origin } = session.profile;
+        if (flavor !== "managed" && flavor !== "selfhost") return { refused: "notReady" };
+        const base = flavor === "managed" ? WEB_APP_URL : origin;
+        const page = request.do === "deletePage"
+          ? new URL("/account/delete", base)
+          : new URL(`/mailbox#/settings/${request.pane}`, base);
+        return Linking.openURL(page.href).then(() => ({}), () => ({ refused: "notReady" as const }));
+      },
       act: async (a) => {
         switch (a.act) {
           // The sign-out's ceremony, with its confirmations and its outcomes, stands on the door's list of servers.
@@ -215,10 +232,22 @@ export function ShellScreen({ session }: { session: ShellSession }) {
             askDoorAt("servers");
             router.push("/door");
             return {};
+          case "language.set": {
+            const controls = localeNow.current;
+            if (!controls || standing.current !== session) return { refused: "notReady" };
+            await controls.setLocale(a.choice);
+            return { language: activeLocale() };
+          }
           case "notifications.permission":
             return { permission: (permission.current = await noticePermission(nativeNotificationPermission(), calendar)) };
           case "notifications.request":
             return { permission: (permission.current = await askNoticePermission(nativeNotificationPermission(), calendar)) };
+          case "about.page": {
+            if (!live()) return { refused: "notReady" };
+            const page = a.page === "imprint" ? IMPRINT_URL
+              : a.page === "subprocessors" ? SUBPROCESSORS_URL : PRIVACY_URL;
+            return Linking.openURL(page).then(() => ({}), () => ({ refused: "notReady" as const }));
+          }
           case "backup.read":
             return { backup: backupExclusion() };
           // The status bar follows the system's scheme, as the page's look does.
@@ -226,6 +255,12 @@ export function ShellScreen({ session }: { session: ShellSession }) {
             return {};
           case "notices.post":
             return door.post(a.notice, a.details);
+          case "calendar.guests": {
+            if (!live() || session.boundAccount() !== session.profile.accountId) return { refused: "notReady" };
+            const recipients = a.to.map((address) => encodeURIComponent(address)).join(",");
+            return Linking.openURL(`mailto:${recipients}?subject=${encodeURIComponent(a.subject)}`)
+              .then(() => ({}), () => ({ refused: "notReady" as const }));
+          }
           case "calendar.snapshot":
             return days.keep(a.snapshot, a.publication);
           case "calendar.clear":

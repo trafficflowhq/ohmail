@@ -197,7 +197,7 @@ export function nextStep(hello: HelloAnswer): PickerStep {
  * Re-exported here rather than imported at every call site so that the screens keep one import,
  * and so this module's own header keeps documenting the token discipline it enforces.
  */
-export { parsePairLink, shortPin, type PairLink } from "@ohmail/client-engine";
+export { pairLink, parsePairLink, shortPin, type PairLink } from "@ohmail/client-engine";
 
 /* ── the picker's origin handoff ────────────────────────────────────────────────────────────── */
 

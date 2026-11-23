@@ -8,17 +8,18 @@ import "./subject-picture.css";
 
 export interface GeneralPaneProps {
   readonly model: GeneralModel;
+  readonly showMessages?: boolean;
 }
 
 /** General: the language, the appearance, how messages are drawn and sent, and the host's own line. */
-export function GeneralPane({ model }: GeneralPaneProps) {
+export function GeneralPane({ model, showMessages = true }: GeneralPaneProps) {
   const t = useText("settings");
   const g = useText(GENERAL_NAMESPACE);
   return (
     <>
       {model.language ? <LanguageSheet language={model.language} t={t} /> : null}
       <AppearanceSheet model={model} t={t} g={g} />
-      <MessagesSheet model={model} t={t} g={g} />
+      {showMessages ? <MessagesSheet model={model} t={t} g={g} /> : null}
       {model.defaultMail ? <SettingsSheet>{model.defaultMail()}</SettingsSheet> : null}
     </>
   );

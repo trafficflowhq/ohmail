@@ -8,13 +8,15 @@
  * with the screen, so no visit renders yesterday's Trash. Unavailable is its own sentence and
  * never an empty list; a failed page renders the failure and a retry, never "empty".
  */
+import { useTheme } from "../../src/theme";
+import { MailAppearance } from "../../src/theme/mail";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import { type WorldTrashRow } from "../../src/state/live";
 import { holdTrashRows, subscribeTrashLanded, subscribeTrashRestored, trashLanded, trashRestored } from "../../src/state/trash-hold";
 import { useWorld } from "../../src/state/world";
-import { Empty, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
+import { Empty, Screen, Scroller, TapRow, Tail, Txt, ViewHead } from "../../src/ui/base";
 import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -32,15 +34,18 @@ export default function TrashScreen({ inPane = false }: { inPane?: boolean }) {
   useLocale();
   return (
     <SurfaceBoundary surface="trash">
-      <Gated>
-        <TrashBody inPane={inPane} />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <TrashBody inPane={inPane} />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
 
 function TrashBody({ inPane }: { inPane: boolean }) {
   const w = useWorld();
+  const theme = useTheme();
   /* In More's pane a row opens the Trash pair. */
   const { open, openRow, close } = useListDetail((mid) => `/trash/${mid}`, inPane ? (mid) => `/trash?open=${encodeURIComponent(mid)}` : undefined);
   const [items, setItems] = useState<WorldTrashRow[]>([]);
@@ -150,17 +155,17 @@ function TrashBody({ inPane }: { inPane: boolean }) {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      {inPane ? <PaneTop /> : <DetailBar />}
+      {inPane ? <PaneTop /> : <DetailBar backCapsule={theme.mail} />}
       <MailList
         groups={failed ? [] : [{ key: "trash", rows: items }]}
         rowKey={(r) => r.mail.id}
         renderRow={(r) => <MailRow m={r.mail} onPress={() => openRow(r.mail.id)} />}
         surface={!settledEmpty}
-        head={
+        head={theme.mail ? <ViewHead title={Copy.trashTitle} /> : (
           <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
             <Txt variant="h1">{Copy.trashTitle}</Txt>
           </View>
-        }
+        )}
         empty={
           failed ? (
             <View style={{ paddingHorizontal: 6, paddingVertical: 8 }}>

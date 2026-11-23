@@ -9,15 +9,27 @@
  * platform draws. Nothing here calls `console`.
  */
 import { type ReactNode } from "react";
-import { TextInput, View, type TextInputProps } from "react-native";
+import { StyleSheet, TextInput, View, type TextInputProps } from "react-native";
 import { useTheme } from "../theme";
 import { Tap, Txt } from "./base";
+import { onboardingLook } from "../theme/onboarding";
+import { onboardingDisplay } from "../theme/type";
 
 export interface FieldProps {
   value: string;
   onChange: (v: string) => void;
-  /** The visible label, and the accessible name — one string, so they cannot disagree. */
+  /** The accessible name, also shown above the ordinary field. */
   label: string;
+  /** The accessible name stays the label even when a sentence surrounds the native input. */
+  sentence?: {
+    before: string;
+    placeholder: string;
+    compact?: boolean;
+    end?: "ink" | "hot";
+    after?: string;
+  };
+  boxed?: boolean;
+  locked?: boolean;
   /** A quiet line under the field. Absent renders nothing at all, not an empty line. */
   hint?: string;
   /**
@@ -75,60 +87,110 @@ export function Field({
   onReveal,
   input,
   inputRef,
+  sentence,
+  boxed,
+  locked,
 }: FieldProps) {
   const t = useTheme();
   const masked = secret === true && revealed !== true;
-  return (
-    <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-      <Txt variant="sectionLabel" tone="ink3" style={{ paddingBottom: 4 }}>
-        {label}
+  const look = sentence || boxed ? onboardingLook(t) : null;
+  const display = sentence && look ? onboardingDisplay(look.type, sentence.compact) : null;
+  const ink = look?.palette.ink ?? t.c.ink;
+  const quiet = look?.palette.ink2 ?? t.c.ink2;
+  const blank = (
+    <TextInput
+      ref={inputRef}
+      value={value}
+      onChangeText={onChange}
+      autoCorrect={false}
+      autoCapitalize="none"
+      {...input}
+      maxFontSizeMultiplier={t.textCap}
+      disableFullscreenUI
+      keyboardAppearance={t.scheme}
+      secureTextEntry={masked}
+      accessibilityLabel={label}
+      editable={locked ? false : undefined}
+      placeholder={sentence?.placeholder}
+      placeholderTextColor={sentence ? quiet : undefined}
+      /* A prose field grows: it starts at about five lines, aligns to the top rather than
+         centring one line in a tall box, and the row above it stops centring with it. */
+      multiline={input?.multiline === true}
+      textAlignVertical={input?.multiline === true ? "top" : "center"}
+      style={[
+        display
+          ? [StyleSheet.absoluteFill, { ...display, color: ink, paddingVertical: 3 }]
+          : [t.type.msgBody, { color: ink, paddingVertical: 10, flex: 1 }],
+        input?.multiline === true ? { minHeight: 112 } : null,
+      ]}
+    />
+  );
+  const reveal = secret === true && revealLabels !== undefined && onReveal !== undefined ? (
+    <Tap
+      onPress={() => onReveal(revealed !== true)}
+      accessibilityRole="button"
+      /* The label says what the press WILL do, which is what a screen reader has to
+         announce; `accessibilityState.expanded` is not this control's vocabulary. */
+      accessibilityLabel={masked ? revealLabels.show : revealLabels.hide}
+      style={{ paddingVertical: 8, paddingHorizontal: 4 }}
+    >
+      <Txt variant="caption" tone="accent">
+        {masked ? revealLabels.show : revealLabels.hide}
       </Txt>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: input?.multiline === true ? "flex-start" : "center",
-          gap: 8,
-          borderBottomWidth: 1,
-          borderBottomColor: t.c.hair,
-        }}
-      >
-        <TextInput
-          ref={inputRef}
-          value={value}
-          onChangeText={onChange}
-          autoCorrect={false}
-          autoCapitalize="none"
-          {...input}
-          maxFontSizeMultiplier={t.textCap}
-          disableFullscreenUI
-          keyboardAppearance={t.scheme}
-          secureTextEntry={masked}
-          accessibilityLabel={label}
-          /* A prose field grows: it starts at about five lines, aligns to the top rather than
-             centring one line in a tall box, and the row above it stops centring with it. */
-          multiline={input?.multiline === true}
-          textAlignVertical={input?.multiline === true ? "top" : "center"}
-          style={[
-            t.type.msgBody,
-            { color: t.c.ink, paddingVertical: 10, flex: 1 },
-            input?.multiline === true ? { minHeight: 112 } : null,
-          ]}
-        />
-        {secret === true && revealLabels !== undefined && onReveal !== undefined ? (
-          <Tap
-            onPress={() => onReveal(revealed !== true)}
-            accessibilityRole="button"
-            /* The label says what the press WILL do, which is what a screen reader has to
-               announce; `accessibilityState.expanded` is not this control's vocabulary. */
-            accessibilityLabel={masked ? revealLabels.show : revealLabels.hide}
-            style={{ paddingVertical: 8, paddingHorizontal: 4 }}
-          >
-            <Txt variant="caption" tone="accent">
-              {masked ? revealLabels.show : revealLabels.hide}
-            </Txt>
-          </Tap>
-        ) : null}
-      </View>
+    </Tap>
+    ) : null;
+  return (
+    <View style={sentence || boxed ? undefined : { paddingHorizontal: 16, paddingTop: 12 }}>
+      {sentence && display ? (
+        <>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", columnGap: 4 }}>
+            {sentence.before ? <Txt style={{ ...display, color: ink }}>{sentence.before}</Txt> : null}
+            <View style={{ flexDirection: "row", alignItems: "center", maxWidth: "100%" }}>
+              <View style={{
+                minHeight: t.hit, minWidth: t.hit, flexShrink: 1, justifyContent: "center",
+                borderBottomWidth: 2, borderStyle: "dotted", borderColor: ink,
+              }}>
+                {/* The public placeholder sizes the blank. Typed credentials never enter the measuring text. */}
+                <Txt accessible={false} importantForAccessibility="no" style={{ ...display, opacity: 0 }}>
+                  {sentence.placeholder}
+                </Txt>
+                {blank}
+              </View>
+              {sentence.after ? <Txt style={{ ...display, color: ink }}>{sentence.after}</Txt> : null}
+              {sentence.end ? (
+                <View style={{ backgroundColor: sentence.end === "ink" ? ink : look?.palette.hot,
+                  width: display.fontSize * 0.33, height: display.fontSize * 0.33,
+                  borderRadius: display.fontSize, marginLeft: display.fontSize * 0.08 }} />
+              ) : null}
+            </View>
+          </View>
+          {value === "" ? null : reveal}
+        </>
+      ) : (
+        <>
+          <Txt variant="sectionLabel" tone="ink3" style={[{ paddingBottom: 4 }, boxed ? { color: quiet } : undefined]}>
+            {label}
+          </Txt>
+          <View style={{
+            flexDirection: "row",
+            alignItems: input?.multiline === true ? "flex-start" : "center",
+            gap: 8,
+            borderBottomWidth: 1,
+            borderBottomColor: t.c.hair,
+            ...(boxed && look ? {
+              paddingHorizontal: 12,
+              borderWidth: 1,
+              borderColor: look.palette["ctl-ring"],
+              borderBottomColor: look.palette["ctl-ring"],
+              backgroundColor: look.palette.sheet,
+              borderRadius: 12,
+            } : {}),
+          }}>
+            {blank}
+            {reveal}
+          </View>
+        </>
+      )}
       {error !== undefined ? (
         <Txt variant="caption" tone="ink2" style={{ marginTop: 6 }} accessibilityRole="alert">
           {error}

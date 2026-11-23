@@ -25,6 +25,7 @@ export type AccountPaneProps =
       readonly factor: FactorSlot;
       /** The page of states only, never handed by a shell: the password form stands open as the pane is drawn. */
       readonly formOpen?: boolean;
+      readonly onPhone?: boolean;
       readonly service?: HostCapabilities["service"];
       readonly sheet?: PaneSheet;
     }
@@ -61,6 +62,7 @@ function Whole({
   password,
   factor,
   formOpen,
+  onPhone,
   service,
   sheet,
 }: Extract<AccountPaneProps, { body: "pane" }>) {
@@ -111,13 +113,15 @@ function Whole({
           }}
         />
       ) : null}
-      {who.at === "signedIn" ? <p className="oh-vh">{t("signOutBody")}</p> : null}
+      {who.at === "signedIn" ? (
+        <p className="oh-vh">{onPhone ? own("signOutOnPhone") : t("signOutBody")}</p>
+      ) : null}
     </>
   );
   const foot =
     who.at === "signedIn" ? (
       <ActionPanel
-        label={own("thisBrowser")}
+        label={own(onPhone ? "thisPhone" : "thisBrowser")}
         items={[
           {
             id: "sign-out",

@@ -1,7 +1,4 @@
-/**
- * THE CALENDAR'S BODY: the one mounted body of all six views. It reads the port the host hands in and the records the
- * engine holds and derives the occurrences for the span on screen.
- */
+/** The six calendar views derive visible occurrences from the host's calendar port. */
 import { useRef, useState } from "react";
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { RefusalLine } from "@ohmail/ui/base";
@@ -24,6 +21,7 @@ import { useEventBrowse } from "./use-event-browse.js";
 import { useGridKeys } from "./use-grid-keys.js";
 import { CurrentView } from "./CalendarCurrentView.js";
 import { CalendarFrameHead } from "./CalendarFrameHead.js";
+import { useCompactInvitation } from "./compact-invitation.js";
 import { CalendarPanels } from "./CalendarPanels.js";
 import { useCalendarInvitation, useFrame } from "../frame/commands.js";
 import type { CalendarPlaceId, FrameCommands, PaneProps, Route } from "../frame/contract.js";
@@ -94,7 +92,6 @@ function CalendarOn({
   const panelOn = route.words.panel === "agenda" && plan.device !== "phone";
   const monthRun = useMonthViewport();
   const found = useFaces(port, sources, monthRun ?? where?.span ?? null, where?.today ?? null, zone, zones);
-  /* The Agenda beside a view lists its own days, never only the view's. */
   const beside = useFaces(
     port,
     sources,
@@ -193,15 +190,22 @@ function CalendarSurface(props: CalendarSurfaceProps) {
   const reply = useInvitationAnswer(port);
   const body = useRef<HTMLElement>(null);
   const view = useRef<HTMLDivElement>(null);
-  useTodayPulse(
-    body,
-    view,
-    anchor === today && todayVisit?.place === place ? todayVisit : null,
-    monthRun?.scrollRef,
-  );
-  const opened = openFace(route, found.events, beside?.events, useCalendarInvitation().current);
+  const pulse = anchor === today && todayVisit?.place === place ? todayVisit : null;
+  useTodayPulse(body, view, pulse, monthRun?.scrollRef);
+  const invitation = useCalendarInvitation().current;
+  const selected = openFace(route, found.events, beside?.events, invitation);
+  const insideSheet =
+    plan.device === "phone" && route.words.panel === "invitations" && selected !== invitation;
+  const opened = insideSheet ? undefined : selected;
   const { actions, canvasClick, setPreview, rangePreview, go, closePanel, edge, input, acts, timeProps } =
-    useCalendarCanvas(props, commands, opened);
+    useCalendarCanvas(props, commands, selected);
+  const compact = useCompactInvitation(
+    insideSheet ? selected : undefined,
+    found.events,
+    zones,
+    port,
+    actions,
+  );
   return (
     <section ref={body} className="cal-body" aria-label={t("landmark")}>
       {opened && !actions.proposal.draft && plan.device === "phone" && (
@@ -255,47 +259,37 @@ function CalendarSurface(props: CalendarSurfaceProps) {
           {opened && !actions.proposal.draft && (
             <OpenEvent
               key={opened.id}
-              event={opened}
-              events={found.events}
-              {...{ zones, today, actions, editNext, reply }}
+              {...{ event: opened, events: found.events, zones, today, actions, editNext, reply }}
             />
           )}
           <EventActionQuestion actions={actions} />
           <ProposalQuestion proposal={actions.proposal} today={today} zones={zones} />
         </div>
-        <CalendarPanels
-          where={where}
-          route={route}
-          plan={plan}
-          keysHere={keysHere}
-          input={beside ? { ...input, events: beside.events } : input}
-          acts={acts}
-          edge={beside ? { ...beside.edge, load: port.load, provider: edge.provider } : edge}
-          onClose={closePanel}
-          onAgendaRow={openAgendaRow}
-        />
+        {insideSheet && actions.proposal.draft ? null : (
+          <CalendarPanels
+            where={where}
+            route={route}
+            plan={plan}
+            keysHere={keysHere}
+            input={beside ? { ...input, events: beside.events } : input}
+            acts={acts}
+            edge={beside ? { ...beside.edge, load: port.load, provider: edge.provider } : edge}
+            onClose={closePanel}
+            onAgendaRow={openAgendaRow}
+            compact={compact}
+          />
+        )}
       </div>
     </section>
   );
 }
 function useCalendarCanvas(
-  {
-    route,
-    port,
-    zones,
-    where,
-    found,
-    zone,
-    settings,
-    plan,
-    panelOn,
-    cursor,
-    create,
-    sources,
-  }: CalendarSurfaceProps,
+  props: CalendarSurfaceProps,
   commands: FrameCommands,
   opened: CalendarEventFace | undefined,
 ) {
+  const { route, port, zones, where, found, zone } = props;
+  const { settings, plan, panelOn, cursor, create, sources } = props;
   const { current: invitation } = useCalendarInvitation();
   const actions = useEventActions(port, zones);
   const { startSlot, preview: slot } = useSlotDraft(
@@ -378,7 +372,10 @@ function useCalendarCanvas(
     capped: found.capped,
     edge,
     openId: route.open,
-    revealOpen: route.open !== null && route.open === route.words.invitation,
+    revealOpen:
+      route.open !== null &&
+      (route.open === route.words.invitation ||
+        (plan.device === "phone" && route.words.panel === "invitations")),
     clock: { zone, zones, nowMs },
     settings,
     plan,

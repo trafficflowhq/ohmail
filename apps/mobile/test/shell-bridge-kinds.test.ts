@@ -45,6 +45,15 @@ describe("the bridge's guard", () => {
     expect(readRequest({ ...head, kind: "keep", key: "k", value: null })).toMatchObject({ kind: "keep" });
   });
 
+  it("admits an invitation's write only from the Calendar page with plain recipients", () => {
+    const write = { ...head, kind: "act", act: "calendar.guests",
+      to: [["person", "example.invalid"].join("@")], subject: "Invitation" };
+    expect(readRequest(write, "ohcal")).toEqual(write);
+    expect(readRequest(write, "ohmail")).toEqual({ refused: "malformed" });
+    expect(readRequest({ ...write, url: "https://example.invalid" }, "ohcal")).toEqual({ refused: "malformed" });
+    expect(readRequest({ ...write, to: ["line\nbreak"] }, "ohcal")).toEqual({ refused: "malformed" });
+  });
+
   it("never sees a piece: the native module joins them before the guard reads the whole", () => {
     expect(readRequest({ ...head, kind: "piece", seq: 0, chunk: "x".repeat(PIECE_BYTES) })).toEqual({ refused: "unknownKind" });
     expect(readRequest({ ...head, kind: "joined", count: 2 })).toEqual({ refused: "unknownKind" });

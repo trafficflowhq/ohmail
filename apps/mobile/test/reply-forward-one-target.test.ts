@@ -64,7 +64,8 @@ describe("Reply and Forward keep their composer target", () => {
     expect(reader, "one mount for reply, reply all and forward").toHaveLength(1);
     expect(reader[0]!.m).toBe('{open.compose === "forward" ? m : replyTarget.current}');
     expect(forwardOpensFor(SRC)).toBe("m.id");
-    expect(SRC).toMatch(/const openReply = \(all: boolean\) => \{\s+const replyTo = availableReply\.current;\s+replyTarget\.current = replyTo;\s+setOpen\(replyOpen\(a\.keptReply\(replyTo\.id\), all \? "replyAll" : "reply"\)\);/);
+    expect(SRC).toMatch(/if \(onInlineReply\) \{\s+close\(\);\s+onInlineReply\(replyTo, next\);\s+\} else \{\s+setOpen\(next\);/);
+    expect(SRC).toMatch(/const openReply = \(all: boolean\) => \{\s+const replyTo = availableReply\.current;\s+replyTarget\.current = replyTo;\s+const next = replyOpen\(a\.keptReply\(replyTo\.id\), all \? "replyAll" : "reply"\);/);
   });
 
   const incoming = (id: string) => ({ id, subject: "Conversation", time: "09:00", body: "Hello", seen: true });

@@ -1,5 +1,6 @@
 {
   "accountSecurity": {
+    "setupQr": "QR-Code zum Einrichten der Authenticator-App",
     "notRead": "Nicht gelesen",
     "notDone": "Nicht ausgeführt",
     "cancelled": "Abgebrochen",

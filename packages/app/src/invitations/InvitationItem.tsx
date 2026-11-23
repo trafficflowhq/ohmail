@@ -3,7 +3,7 @@
  * calendar that can only be looked at shows the answer given as a tag and draws no answers; a cancelled one is struck
  * and offers nothing. Where the answer waits, and why a write was not saved, are said from the row itself.
  */
-import { Button, Tag } from "@ohmail/ui/base";
+import { Button, RefusalLine, Tag } from "@ohmail/ui/base";
 import { AgendaRow, EventCard, type CalendarTone } from "@ohmail/ui/calendar";
 import { FAULT_KEYS, REFUSAL_KEYS } from "@ohmail/app-logic/calendar";
 import type { InvitationAnswer, InvitationRow } from "@ohmail/app-logic/calendar/invitations";
@@ -109,5 +109,17 @@ function Ways({ row, onRetry, onLetGo }: Pick<InvitationItemProps, "row" | "onRe
         {t("letGo")}
       </Button>
     </>
+  );
+}
+
+export function InvitationRefusal(p: Pick<InvitationItemProps, "row" | "onRetry" | "onLetGo">) {
+  const t = useText("event");
+  const fault = p.row.refusal;
+  if (!fault) return null;
+  return (
+    <div>
+      <RefusalLine>{t(faultKey(fault))}</RefusalLine>
+      <Ways {...p} />
+    </div>
   );
 }

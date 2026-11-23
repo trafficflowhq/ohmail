@@ -185,7 +185,7 @@ function Figures({ t, figures }: { readonly t: Text; readonly figures: StorageFi
   );
 }
 
-function StorageExplanation({ plan, t }: { plan: StorageFigures["plan"]; t: Text }) {
+export function StorageExplanation({ plan, t }: { plan: StorageFigures["plan"]; t: Text }) {
   const name = plan.kind === "keeps" && plan.plan ? t("storagePlanName", { plan: plan.plan }) : null;
   return (
     <SettingsSheet>

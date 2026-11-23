@@ -6,7 +6,7 @@
  * step goes to the copy opening and reads nothing of the answer; native shows the mailbox by itself.
  */
 import { useMemo, type ReactNode } from "react";
-import { Button, Page } from "@ohmail/ui/base";
+import { Button, Dot, Page, Sentence } from "@ohmail/ui/base";
 import type { ConnectAsk, ConnectResult } from "../mailboxes/connect/contract.js";
 import { useDoorWords } from "./namespace.js";
 import type { StepProps } from "./states.js";
@@ -24,14 +24,29 @@ export function MailboxStep({ door, to, back }: StepProps): ReactNode {
     }),
     [to],
   );
-  return (
+  return door.connect(ask, (material, backToProviders, providerBlank) => (
     <Page
       stack
-      back={<Button kind="quiet" icon="back" label={t("back")} onPress={back} />}
+      back={<Button kind="quiet" icon="back" label={t("back")} onPress={backToProviders ?? back} />}
+      material={material}
       line={upgrade.length > 0 ? upgrade : undefined}
-      acts={null}
+      acts={
+        providerBlank === undefined ? null : (
+          <Button kind="quiet" size="l" onPress={() => door.go("servers")}>
+            {t("form.later")}
+          </Button>
+        )
+      }
     >
-      {door.connect(ask)}
+      {providerBlank === undefined ? null : (
+        <Sentence size="xl" level={1}>
+          {t("form.provider")}{" "}
+          <span className="oh-nowrap">
+            {providerBlank}
+            <Dot kind="hot" />
+          </span>
+        </Sentence>
+      )}
     </Page>
-  );
+  ));
 }

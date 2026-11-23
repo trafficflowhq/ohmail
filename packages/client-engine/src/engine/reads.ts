@@ -158,8 +158,16 @@ export abstract class EngineReads extends EngineState {
    * that read it as "deleted" would say "gone" about ordinary mail on every small mirror.
    */
   messageIsGone(id: string): boolean {
-    const rec = this.store.record("message", id);
-    return rec !== undefined && rec.entity === null;
+    return this.isTombstone("message", id);
+  }
+
+  /** A confirmed deletion in the mirror, independent of the clock and of optimistic overlays. */
+  draftIsGone(id: string): boolean {
+    return this.isTombstone("draft", id);
+  }
+
+  private isTombstone(type: "message" | "draft", id: string): boolean {
+    return this.store.record(type, id)?.entity === null;
   }
 
   protected notify(): void {

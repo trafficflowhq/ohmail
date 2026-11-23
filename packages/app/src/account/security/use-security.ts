@@ -55,7 +55,7 @@ export function useSecurity(door: SecurityDoor): SecurityModel {
           case "startAuthenticator": {
             const started = await door.startAuthenticator();
             if (!started.ok) return started;
-            step({ kind: "started", key: started.value.key });
+            step({ kind: "started", ...started.value });
             return TAKEN;
           }
           case "activate": {

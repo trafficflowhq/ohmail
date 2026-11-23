@@ -151,7 +151,7 @@ export function DayView(props: CalendarViewProps) {
 
 export const dayView: CalendarView = { View: DayView, span: (anchor) => daySpan(anchor) };
 
-function freeHours(t: ReturnType<typeof useText>, minutes: number): string {
+export function freeHours(t: ReturnType<typeof useText>, minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = Math.round(minutes % 60);
   return m === 0 ? t("freeHours", { hours: h }) : t("freeHoursMinutes", { hours: h, minutes: m });

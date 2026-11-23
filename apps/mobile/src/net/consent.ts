@@ -1,3 +1,4 @@
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { faceOf, type FaceName } from "../theme/face.js";
 import type { ConnectedSession } from "./pairing.js";
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
@@ -37,6 +38,7 @@ export interface ScreeningAnswer {
 
 /** The fields this app reads off `GET /consent` today. */
 export interface FoldersConsent {
+  draftReplies?: boolean;
   on: boolean;
   /**
    * CAN THE PAIRED DOOR STORE THE FLAG AT ALL — whether the answer CARRIES the folders axis, not
@@ -209,6 +211,7 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
       // `screeningOf` uses it: `foldersEnabledAt: null` is a real answer on every door that has
       // the axis and reads identically to an absent field otherwise.
       storable: "foldersEnabledAt" in body,
+      ...(typeof body.draftReplies === "boolean" ? { draftReplies: body.draftReplies } : {}),
       screening: screeningOf(body),
       ...signatureFactsOf(body),
       // A value this build does not know (a future face, a malformed field) reads as "no
@@ -444,5 +447,46 @@ export async function confirmSeed(
   return {
     rulesCreated: typeof body.rulesCreated === "number" ? body.rulesCreated : 0,
     contactsCreated: typeof body.contactsCreated === "number" ? body.contactsCreated : 0,
+  };
+}
+
+/** The existing paired draft purchase, gated by the account consent read above. */
+type DraftSession = Pick<ConnectedSession, "fetch" | "standalone"> & { profile: Pick<ConnectedSession["profile"], "origin" | "apiBase"> };
+
+export function phoneDraftWire(session: DraftSession | null, allowed = true): DraftReplyWire | "none" {
+  if (session === null || session.standalone || !allowed) return "none";
+  const base = requestBase(session);
+  const read = async (path: string, init?: RequestInit): Promise<Record<string, unknown>> => {
+    const response = await session.fetch(base + path, init);
+    const wire: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const error = (wire as { error?: { code?: unknown; message?: unknown } } | null)?.error;
+      throw Object.assign(new Error(typeof error?.message === "string" ? error.message : ""), {
+        status: response.status, code: typeof error?.code === "string" ? error.code : "internal",
+      });
+    }
+    if (typeof wire !== "object" || wire === null || Array.isArray(wire)) throw new Error();
+    return wire as Record<string, unknown>;
+  };
+  const buy = async (path: string, key: string, body?: object) => {
+    const answer = await read(path, {
+      method: "POST",
+      headers: { ...(body ? { "Content-Type": "application/json" } : {}), "Idempotency-Key": key },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (typeof answer.draftId !== "string" || answer.draftId === "") throw new Error();
+    return { draftId: answer.draftId };
+  };
+  return {
+    configured: () => true,
+    create: (id, key) => buy("/messages/" + encodeURIComponent(id) + "/draft", key),
+    fromText: (words, key) => buy("/drafts/from-text", key, words),
+    read: async (id) => {
+      const reply = await read("/drafts/" + encodeURIComponent(id));
+      return {
+        ...(typeof reply.body === "string" ? { body: reply.body } : {}),
+        ...(typeof reply.html === "string" ? { html: reply.html } : {}),
+      };
+    },
   };
 }

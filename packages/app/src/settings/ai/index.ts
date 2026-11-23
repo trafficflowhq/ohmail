@@ -4,3 +4,4 @@ export { AI_START, aiStep, type AiDoor, type AiEvent, type AiModel, type AiState
 export { aiStates, type AiPaneState, type AiStateWords } from "./states.js";
 export { useAiSummary } from "./summary.js";
 export { AI_NAMESPACE } from "./namespace.js";
+export { useAiDoor } from "./use-ai-door.js";

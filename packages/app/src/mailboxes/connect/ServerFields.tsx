@@ -15,7 +15,12 @@ export function ServerFields({
   form: ConnectForm;
   labels: { readonly imap: string; readonly smtp: string };
   /** An edit's port fields, with what a blank keeps. `null`: a new connection. */
-  ports: { readonly imap: string; readonly smtp: string; readonly keep: string | undefined } | null;
+  ports: {
+    readonly imap: string;
+    readonly smtp: string;
+    readonly keep: string | undefined;
+    readonly defaults?: Readonly<{ imap: string; smtp: string }>;
+  } | null;
 }): ReactNode {
   const { typed } = form.state;
   const imap = (
@@ -48,7 +53,7 @@ export function ServerFields({
         <Field
           label={ports.imap}
           value={typed.imapPort}
-          placeholder={ports.keep}
+          placeholder={ports.defaults?.imap ?? ports.keep}
           inputMode="numeric"
           onChange={(v) => form.type("imapPort", v)}
         />
@@ -58,7 +63,7 @@ export function ServerFields({
         <Field
           label={ports.smtp}
           value={typed.smtpPort}
-          placeholder={ports.keep}
+          placeholder={ports.defaults?.smtp ?? ports.keep}
           inputMode="numeric"
           onChange={(v) => form.type("smtpPort", v)}
         />

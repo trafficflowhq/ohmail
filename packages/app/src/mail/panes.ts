@@ -58,6 +58,7 @@ export interface MailPaneParts {
   readonly help: SettingsPane["Body"] | None;
   readonly general: SettingsPane["Body"] | None;
   readonly notifications: SettingsPane["Body"] | None;
+  readonly useNotificationsSummary?: SettingsPane["useSummary"];
   readonly rules: SettingsPane["Body"] | None;
   readonly tags: SettingsPane["Body"] | None;
   readonly about: SettingsPane["Body"] | None;
@@ -65,8 +66,8 @@ export interface MailPaneParts {
   readonly desktop: SettingsPane["Body"] | None;
   readonly useDesktopSummary?: NonNullable<SettingsPane["useSummary"]>;
   readonly devices: DevicesPaneParts | SettingsPane["Body"] | None;
-  readonly invites: InvitesPaneParts | None;
-  readonly security: SecurityPaneParts | None;
+  readonly invites: InvitesPaneParts | SettingsPane["Body"] | None;
+  readonly security: SecurityPaneParts | SettingsPane["Body"] | None;
   readonly billing: SettingsPane["Body"] | None;
   readonly billingHasFoot?: boolean;
   readonly useAiSummary?: NonNullable<SettingsPane["useSummary"]>;
@@ -75,7 +76,7 @@ export interface MailPaneParts {
   readonly away: SettingsPane["Body"] | None;
   readonly folders: SettingsPane["Body"] | None;
   readonly signatures: SettingsPane["Body"] | None;
-  readonly account: AccountPaneParts | None;
+  readonly account: AccountPaneParts | SettingsPane["Body"] | None;
 }
 
 /** A host starts with no sections and supplies the doors it can actually open. */
@@ -110,7 +111,9 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
   return {
     general: parts.general === NONE ? NONE : paneOf("general", { Body: parts.general }),
     notifications:
-      parts.notifications === NONE ? NONE : paneOf("notifications", { Body: parts.notifications }),
+      parts.notifications === NONE
+        ? NONE
+        : paneOf("notifications", { Body: parts.notifications, useSummary: parts.useNotificationsSummary }),
     mailboxes:
       parts.mailboxes === NONE
         ? NONE
@@ -157,9 +160,24 @@ export function mailPanes(parts: MailPaneParts): SettingsPanes {
         : typeof parts.storage === "function"
           ? paneOf("storage", { Body: parts.storage })
           : storagePane(parts.storage),
-    invites: parts.invites === NONE ? NONE : invitesPane(parts.invites),
-    security: parts.security === NONE ? NONE : securityPane(parts.security),
-    account: parts.account === NONE ? NONE : accountPane(parts.account),
+    invites:
+      parts.invites === NONE
+        ? NONE
+        : typeof parts.invites === "function"
+          ? paneOf("invites", { Body: parts.invites })
+          : invitesPane(parts.invites),
+    security:
+      parts.security === NONE
+        ? NONE
+        : typeof parts.security === "function"
+          ? paneOf("security", { Body: parts.security })
+          : securityPane(parts.security),
+    account:
+      parts.account === NONE
+        ? NONE
+        : typeof parts.account === "function"
+          ? { ...paneOf("account", { Body: parts.account }), hasFoot: true }
+          : accountPane(parts.account),
     about: parts.about === NONE ? NONE : paneOf("about", { Body: parts.about, useSummary: useAboutSummary }),
     help:
       parts.help === NONE

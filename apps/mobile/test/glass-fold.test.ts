@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   RAIL,
   admitVerbs,
+  dockFold,
   railColumnHeight,
   railFold,
   railGroupHeight,
@@ -85,5 +86,16 @@ describe("the bar's greedy admission", () => {
 
   it("no room beyond the fixed parts = the floor: zero verbs", () => {
     expect(admitVerbs(boxes, 100, 100, 4)).toBe(0);
+  });
+});
+
+
+describe("the Paper phone dock", () => {
+  it("shows Receipts at 412dp and puts it in More at 390dp", () => {
+    const destinations = ["index", "screener", "reads", "receipts", "more"];
+    expect(dockFold(destinations, 412, true)).toEqual({ kept: destinations, folded: [] });
+    expect(dockFold(destinations, 390, true)).toEqual({
+      kept: ["index", "screener", "reads", "more"], folded: ["receipts"],
+    });
   });
 });

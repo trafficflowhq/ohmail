@@ -19,6 +19,7 @@
     "languageAria": "Sprache",
     "languageFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
     "languageName": {
+      "system": "Telefon",
       "en": "English",
       "de": "Deutsch"
     },
@@ -569,6 +570,7 @@
     "untilPast": "Das Enddatum war am {date}. Es wird nichts gesendet.",
     "untilExpired": "Wähle ein Datum in der Zukunft, oder schalte die Abwesenheitsantwort aus.",
     "localNote": "Antworten werden gesendet, solange ohmail auf diesem Computer offen ist.",
+    "phoneNote": "Antworten werden gesendet, solange ohmail auf diesem Telefon geöffnet ist.",
     "hostNote": "Antworten werden gesendet, solange ohmail auf {host} geöffnet ist.",
     "save": "Speichern",
     "saving": "Wird gespeichert …",

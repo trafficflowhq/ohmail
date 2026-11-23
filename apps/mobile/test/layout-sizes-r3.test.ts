@@ -57,7 +57,8 @@ describe("R5-06: the list heads wrap Mark all read instead of running it off the
   /* The head's row is `ViewHead`'s (wrapping on a tall window, rendered in list-head-one-line-at-compact-height). */
   for (const route of ["app/(tabs)/index.tsx", "app/(tabs)/reads.tsx", "app/(tabs)/receipts.tsx"]) {
     it(`${route}: the head is ViewHead, Mark all read its trailing control`, () => {
-      expect(code(route)).toMatch(/<ViewHead\s[\s\S]*?right=\{\s*<MarkAllRead/);
+      expect(code(route)).toMatch(/<ViewHead\s[\s\S]*?right=\{(?:t|theme)\.mail \? \([\s\S]*?<MailListMenu[\s\S]*?:\s*\(?\s*<MarkAllRead/);
+      expect(code("src/ui/MailListMenu.tsx")).toMatch(/unread > 0 \|\| fresh > 0[\s\S]*?<SheetRow label=\{Copy\.markAll\}[^\n]*onMarkAll\(\)/);
     });
   }
 });

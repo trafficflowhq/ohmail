@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { deleteAudienceOf, moveTime, type CalendarPort, type ZoneSource } from "@ohmail/app-logic/calendar";
 import type { CalendarRemoveScope } from "@ohmail/wire";
 import { useFrame, useReport } from "../frame/commands.js";
-import { useKnownOwnAddresses } from "../frame/room.js";
+import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { fragmentOf } from "../frame/route.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import {
@@ -236,7 +236,7 @@ function chooseActionScope(
 
 export function useEventActions(port: CalendarPort, zones: ZoneSource) {
   const { host, commands, route } = useFrame();
-  const own = useKnownOwnAddresses();
+  const own = useCalendarOwnAddresses();
   const zone = useTimeZone();
   const e = useText("event");
   const t = useText("calendar");
