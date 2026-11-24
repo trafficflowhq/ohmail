@@ -34,6 +34,20 @@ export async function readMicrosoftDoor(): Promise<MicrosoftDoor> {
   }
 }
 
+/** Read the public approval link from the deployment that ran the Microsoft ceremony. */
+export async function readMicrosoftApproval(expectedOwner?: string): Promise<string | null> {
+  try {
+    const { adminApprovalUrl } = await mailboxApi.microsoftAdminApproval(expectedOwner);
+    if (!adminApprovalUrl) return null;
+    const url = new URL(adminApprovalUrl);
+    return url.origin === "https://login.microsoftonline.com" && url.pathname === "/organizations/adminconsent" &&
+      !url.username && !url.password && !url.hash && url.searchParams.size === 1 && url.searchParams.get("client_id")
+      ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The door as a screen holds it: shut until read, read once per mount. A deployment fact, which flips only
  * when an operator saves the admin form, so it is never polled.

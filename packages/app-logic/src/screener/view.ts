@@ -28,8 +28,6 @@ import { firstOf, refused, useBulkAsk, useDecide, useShown, walk } from "./view-
 export type ViewRow = ScreenerSenderDTO | SpamRow;
 
 export interface ScreenerViewInput {
-  /** The host account, when the frame is scoped to one of its mailboxes. */
-  readonly disclosureOwner?: string | null;
   readonly state: ScreenerState;
   readonly segment: KeySegment;
   /** The sender open in this section, kept above the list for the frame's life. */
@@ -60,7 +58,6 @@ export type ScreenerAsk =
       readonly scope: DecisionScope;
       readonly claim: Exclude<UnsubscribeClaim, "none">;
       readonly unsubscribeIds: readonly string[];
-      readonly explain: boolean;
       readonly senders: number;
     }
   | null;
@@ -276,7 +273,6 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
   const ask = useBulkAsk(state, segment, scopeOf, simulated);
   const { decide, decideRow, answerUnsub, unsub, dropUnsub, decisionMotion } = useDecide({
     state,
-    disclosureOwner: input.disclosureOwner,
     segment,
     openId,
     openWaiting,

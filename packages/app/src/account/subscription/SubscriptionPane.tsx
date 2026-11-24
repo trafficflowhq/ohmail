@@ -94,6 +94,7 @@ export function SubscriptionPane({
 /** The word a standing is said by, beside the plan's name. */
 const WORD: Readonly<Record<Exclude<Standing["state"], "closed">, string>> = {
   trial: "trial",
+  trialEnded: "trialEnded",
   grace: "trialEnded",
   overdue: "overdue",
   active: "active",
@@ -168,6 +169,7 @@ function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPanePro
       {standing?.state === "trial" && standing.ends ? (
         <SettingLine label={own("trialEnds")} value={standing.ends} />
       ) : null}
+      {status?.trialEndedOn ? <SettingLine label={own("trialEnded")} value={status.trialEndedOn} /> : null}
       {price ? (
         <SettingLine
           label={own(standing?.state === "trial" ? "then" : "price")}

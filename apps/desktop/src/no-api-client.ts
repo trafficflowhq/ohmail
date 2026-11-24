@@ -10,6 +10,7 @@
  */
 
 import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading } from "@ohmail/wire";
+import type { ScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
 import type {
     ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportPendingWire, ProfileImportStatusWire,
@@ -471,6 +472,7 @@ export const mailboxes: {
     oauthAvailability: () => Promise<{
         available: boolean;
     }>;
+    microsoftAdminApproval: (expectedOwner?: string) => Promise<{ adminApprovalUrl?: string }>;
     oauthComplete: (b: {
         state: string;
         code: string;
@@ -619,6 +621,7 @@ export interface ScreeningWindowWire {
 }
 
 export interface ConsentStateWire {
+    screenerAcknowledgements?: number;
     seedConfirmedAt: string | null;
     screeningResetAt: string | null;
     dormancyDays: number;
@@ -734,6 +737,9 @@ export const push: {
 
 export const consent: {
     state: () => Promise<ConsentStateWire>;
+    acknowledgeScreener: (acknowledgement: ScreenerAcknowledgement, expectedOwner?: string) => Promise<{
+        screenerAcknowledgements: number;
+    }>;
     setDraftReplies: (draftReplies: boolean, expectedOwner?: string) => Promise<{ draftReplies: boolean }>;
     setAutoSuggest: (enabled: boolean) => Promise<{
         autoSuggestAt: string | null;
@@ -851,6 +857,7 @@ export interface ScreenerWireItem {
         decision: "yes" | "no" | "hold";
         confidence: number;
         rationale: string;
+        failed?: true;
         /** Which fact ohmail checked decided this; the brand and the count it interpolates. */
         reasonCode?: string;
         reasonBrand?: string;
@@ -879,6 +886,7 @@ export interface ScreenerSuggestWire {
     quoteGrant?: import("@ohmail/wire").ScreenerQuoteGrant;
     charged: number;
     stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
+    deferred?: true;
     remainingCredits?: number;
     suggestions: Array<{
         sender: string;

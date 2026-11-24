@@ -992,6 +992,7 @@ export default defineConfig({
       { find: "@trafficflow/core/url-escapes", replacement: r("../../packages/core/src/url-escapes.ts") },
       { find: "@trafficflow/core/image-dimensions", replacement: r("../../packages/core/src/image-dimensions.ts") },
       { find: "@trafficflow/core/away-scope", replacement: r("../../packages/core/src/away-scope.ts") },
+      { find: "@trafficflow/core/screener-acknowledgements", replacement: r("../../packages/core/src/screener-acknowledgements.ts") },
       /* The organized six and the retro-move question — `@ohmail/client-engine` re-exports
          `retroPassWouldMove` from this leaf, so the shell's screening sheet pulls it into the
          renderer bundle. Aliased in BOTH files or the mirror's build fails where nothing here

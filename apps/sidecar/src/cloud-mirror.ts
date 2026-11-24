@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILITY_REQUESTS,
-  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
+  SCREENER_SUGGESTION_FAILED, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
   // The erasure fence's own reads — the replay writes rows the ACCOUNT owns and rows one
   // MAILBOX owns, and SKIPS rather than throws on either stamp; see the folder arm for why a
   // throw is the wrong verb here.
@@ -2191,7 +2191,7 @@ async function applyUpsert(
         confidence: s.confidence ?? null,
         rationale: null,
         spam: !!s.spam,
-        status: SCREENER_SUGGESTION_STATUS,
+        status: s.failed ? SCREENER_SUGGESTION_FAILED : SCREENER_SUGGESTION_STATUS,
         createdAt: asDate(s.boughtAt) ?? now,
         updatedAt: asDate(s.updatedAt) ?? now,
       };

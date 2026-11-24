@@ -3,6 +3,7 @@ import { RefusalLine } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import type { PaneModel } from "@ohmail/app-logic/mailboxes/pane/use-pane";
 import { lineOf } from "@ohmail/app-logic/mailboxes/pane/lines";
+import { MicrosoftApproval } from "../connect/MicrosoftApproval.js";
 import { useLine, useSay } from "./say.js";
 
 /**
@@ -11,11 +12,19 @@ import { useLine, useSay } from "./say.js";
  * A failed read is never "none yet", and "reading" is said only while a read is out. A refusal is an alert; an
  * outcome is a status.
  */
-export function PaneLines({ model }: { readonly model: PaneModel }): ReactNode {
+export function PaneLines({
+  model,
+  microsoftApproval,
+}: {
+  readonly model: PaneModel;
+  readonly microsoftApproval?: () => Promise<string | null>;
+}): ReactNode {
   const say = useSay();
   const line = useLine();
   const { list, lines, gated } = model;
   const rows = list.rows;
+  const needsApproval =
+    lines.error !== null && "said" in lines.error && lines.error.said.key === "oauth_admin_consent_required";
   // A removal's refusal is said at its confirmation while that stands; every other one here.
   const atConfirmation =
     model.refused !== null && model.refused.act.verb !== "organize" && model.removal.removing !== null;
@@ -49,6 +58,7 @@ export function PaneLines({ model }: { readonly model: PaneModel }): ReactNode {
       ) : null}
       {list.refused !== null ? <RefusalLine alert>{line(lineOf(list.refused))}</RefusalLine> : null}
       {lines.error !== null ? <RefusalLine alert>{line(lines.error)}</RefusalLine> : null}
+      {needsApproval && microsoftApproval ? <MicrosoftApproval read={microsoftApproval} /> : null}
       {gatedLine !== null ? <RefusalLine alert>{gatedLine}</RefusalLine> : null}
       {/* A note that warns is a status by itself. */}
       {lines.nothingRan ? <SettingNote warn>{say({ key: "cancelledNothingChanged" })}</SettingNote> : null}

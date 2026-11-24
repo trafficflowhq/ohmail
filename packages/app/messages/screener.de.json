@@ -158,7 +158,7 @@
     "suggest": {
       "open": "Vorschlagen …",
       "label": "Vorschläge",
-      "sizeAll": "Alle {count}",
+      "sizeAll": "{count, plural, =0 {Alle} other {Alle #}}",
       "price": "{senders, plural, one {1 Absender} other {# Absender}} · {credits, plural, one {1 Credit} other {# Credits}}",
       "credits": "{credits, plural, one {1 Credit} other {# Credits}}",
       "priceUnmetered": "{senders, plural, one {1 Absender} other {# Absender}}",
@@ -169,6 +169,8 @@
       "confirm": "{count, select, all {Für alle {n} Absender vorschlagen} first {Für die ersten {n} Absender vorschlagen} other {{n, plural, one {Für 1 Absender vorschlagen} other {Für # Absender vorschlagen}}}}",
       "cancel": "Abbrechen",
       "again": "Neu vorschlagen …",
+      "couldNot": "Kein Vorschlag möglich",
+      "retry": "Vorschläge erneut versuchen …",
       "labelAgain": "Neu vorschlagen",
       "confirmAgain": "{count, select, all {Für alle {n} Absender neu vorschlagen} first {Für die ersten {n} Absender neu vorschlagen} other {Für {n, plural, one {1 Absender} other {# Absender}} neu vorschlagen}}",
       "ariaAgain": "Wie viele Absender mit Vorschlag noch einmal geprüft werden",
@@ -432,12 +434,9 @@
       "sure": "{sure, number, percent}",
       "toWaiting": "Screener",
       "unsub": {
-        "continue": "Weiter",
         "final": "Einmal gesendet, lässt sich das nicht rückgängig machen.",
         "screened": "Aussortieren und abmelden",
         "spam": "Spam und abmelden",
-        "spamDomain": "{domain} als Spam markieren und abmelden",
-        "screenedDomain": "{domain} aussortieren und abmelden",
         "service": "Die Anfrage geht von den Servern von ohmail aus, nie von deinem Browser, so bleiben deine Adresse und deine Lesezeiten aus ihren Protokollen.",
         "computer": "Die Anfrage geht von deinem Computer aus, so sieht der Absender seine Netzwerkadresse."
       },

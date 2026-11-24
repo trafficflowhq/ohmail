@@ -1,5 +1,5 @@
 import { asc, isNull, sql } from "drizzle-orm";
-import { bindingOf, type Tx } from "@trafficflow/db";
+import { bindingOf, isCredentialKey, type Tx } from "@trafficflow/db";
 import { waitlist } from "@trafficflow/db/cloud";
 import { bridgeTx, keyedCredentialDb, type Db } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -144,7 +144,7 @@ export class WaitlistService {
     ctx: MailContext & { ip?: string }, input: WaitlistJoinInput,
   ): Promise<WaitlistJoinResult> {
     const email = normalizeRecipient(input.email ?? "");
-    if (!email) {
+    if (!email || !isCredentialKey(email)) {
       throw new ServiceError("validation_failed", 400, "a valid email address is required");
     }
     const tier = normalizeTier(input.tier);

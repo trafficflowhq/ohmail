@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "ohmail",
-    "description": "The ohmail client — consent-first email on the mailboxes you already own.",
+    "description": "Consent-first, automated mail. and calendar.",
     "ogAlt": "The ohmail app icon — a lowercase \"oh.\" on the canvas tile"
   },
   "ribbon": {
@@ -325,6 +325,14 @@
       "search": "Search",
       "write": "Write"
     },
+    "microsoftApproval": {
+      "fallback": "Ask your administrator to approve ohmail in Microsoft Entra.",
+      "title": "Admin approval",
+      "forward": "Your administrator opens this link once and approves ohmail for the organisation.",
+      "link": "Approval link",
+      "copy": "Copy",
+      "copied": "Copied"
+    },
     "notice": {
       "hide": "Hide",
       "collapse": "Collapse",
@@ -332,6 +340,7 @@
       "sendFailed": "Message not sent",
       "more": "{count} more",
       "moreName": "{count, plural, one {# more notice} other {# more notices}}",
+      "showFewer": "Show fewer",
       "moreClose": "Close"
     },
     "systemNotice": {

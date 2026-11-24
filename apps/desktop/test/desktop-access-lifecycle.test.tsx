@@ -62,6 +62,7 @@ async function paint(
   distribution: "direct" | "mas",
   facts: unknown,
   locale: "en" | "de" = "en",
+  timeZone?: string,
 ): Promise<void> {
   // The literal the bundler would have folded in, set BEFORE the module graph is built: the
   // constant is read once at import, which is exactly the property under test.
@@ -71,6 +72,7 @@ async function paint(
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale,
+      timeZone,
       messages: locale === "en" ? en : de,
       children: h(ThemeProvider, {
         children: h(DesktopAccessLock, { facts: facts as never, scope: null, onSignedOut: () => {} }),
@@ -131,6 +133,13 @@ describe("the distribution decides the button, and nothing else", () => {
     // An unknown word is the ordinary app too: a typo must not silently withhold a surface.
     expect(linksOutToBilling("nonsense" as never)).toBe(true);
     expect(linksOutToBilling("mas")).toBe(false);
+  });
+
+  it("carries the formatter’s time zone on the minted billing link", async () => {
+    fakeBridge(() => ({ status: 200, body: JSON.stringify({ url: MANAGE_URL }) }));
+    await paint("direct", CLOSED, "en", "Europe/Zurich");
+    await act(async () => { primary()!.click(); });
+    expect(links().map((link) => link.href)).toEqual([`${MANAGE_URL}&timeZone=Europe%2FZurich`]);
   });
 
   it("DIRECT: one button; its press mints the page and draws THAT as a focused link, which only a click opens", async () => {

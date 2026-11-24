@@ -63,9 +63,6 @@
 .sc-suggest-size {
   padding: var(--s1) var(--s2) var(--s2);
 }
-.sc-suggest-content > .sc-progress {
-  padding: var(--s1) var(--s3) var(--s2);
-}
 .sc-suggest-copy {
   padding: 0 var(--s3) var(--s3);
   font-weight: var(--w-mid);
@@ -86,10 +83,21 @@
   font-size: var(--t-meta);
   font-variant-numeric: tabular-nums;
 }
-.sc-tools > .sc-progress:not([data-inline]) {
+.sc-progress[data-suggest] {
+  padding: var(--s1) var(--s3) var(--s2);
+  font-size: var(--t-ui);
+  font-variant-numeric: normal;
+}
+.sc-progress[data-suggest] .sc-progress-track {
+  appearance: auto;
+  inline-size: 40%;
+  block-size: var(--s1);
+  accent-color: var(--hot);
+}
+.sc-progress:not([data-suggest]) {
   flex-basis: 100%;
 }
-.sc-progress-track {
+.sc-progress:not([data-suggest]) .sc-progress-track {
   appearance: none;
   inline-size: 120px;
   max-inline-size: 40%;
@@ -99,14 +107,14 @@
   background: var(--line);
   overflow: hidden;
 }
-.sc-progress-track::-webkit-progress-bar {
+.sc-progress:not([data-suggest]) .sc-progress-track::-webkit-progress-bar {
   background: var(--line);
 }
-.sc-progress-track::-webkit-progress-value {
+.sc-progress:not([data-suggest]) .sc-progress-track::-webkit-progress-value {
   border-radius: var(--r-pill);
   background: var(--hot);
 }
-.sc-progress-track::-moz-progress-bar {
+.sc-progress:not([data-suggest]) .sc-progress-track::-moz-progress-bar {
   border-radius: var(--r-pill);
   background: var(--hot);
 }

@@ -12,6 +12,7 @@
  * that replace no input. The `none:` sentences below say what a 2.0 view does with that answer.
  */
 import type { OlderBodyWire } from "@ohmail/client-engine";
+import type { ScreenerAcknowledgement } from "@ohmail/app-logic/consent";
 import type { CalendarPort } from "@ohmail/app-logic/calendar/port";
 import type { DraftFromTextBody } from "@ohmail/wire";
 import type {
@@ -85,6 +86,7 @@ export interface ConsentWire {
     signatureChanges?: Record<string, TravelledChange>;
   }>;
   setThemeFace?: (themeFace: string | null) => Promise<{ themeFace: string | null }>;
+  acknowledgeScreener?: (kind: ScreenerAcknowledgement) => Promise<{ screenerAcknowledgements: number }>;
   setResurfaceTime?: (resurfaceTime: string | null) => Promise<{ resurfaceTime: string | null }>;
   readFailed?(report: ConsentReadFailure): void | Promise<void>;
 }
@@ -224,6 +226,7 @@ export interface ProviderSignInWire {
   }): Promise<Answered<"leaving" | "retired">>;
   /** What a sign-in started earlier came back with; `null` where none did. */
   readonly returned: Signal<SignInReturn | null>;
+  readonly microsoftApproval?: () => Promise<string | null>;
   /**
    * The sign-in by a code typed at the provider. `begin` starts one; `live` is what to draw, polled at the server's
    * pace and only while something subscribes; `stop` forgets it. `none`: this shell runs no such ceremony here.

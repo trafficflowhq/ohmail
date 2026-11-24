@@ -11,14 +11,14 @@
  */
 
 import { useCallback, useState } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useLocale, useTimeZone, useTranslations } from "next-intl";
 import { ActivityLine, Button, Mark, Page, RefusalLine, Sentence } from "@ohmail/ui/base";
 
 import {
   ACCOUNT_ACCESS_PATH, bridgeFetch, engineLogout,
   type AccessRefusedFacts, type AccountLifecycle, type EngineStatus, type SignedOut, type SignOutPress,
 } from "./bridge-fetch.js";
-import { useWallLift } from "@ohmail/app-logic/doors/wall-lift";
+import { manageUrlWithTimeZone, useWallLift } from "@ohmail/app-logic/doors/wall-lift";
 import { linksOutToBilling } from "./distribution.js";
 import { AccountPageLink, MANAGE_LINK_PATH, useMintedPage } from "./DesktopSubscription.js";
 import { dayStamp } from "../../webapp/app/shell/format.js";
@@ -66,6 +66,7 @@ export function DesktopAccessLock(
   },
 ) {
   const t = useTranslations("accessLock");
+  const timeZone = useTimeZone();
   const { check, armPoll, checkAgain } = useWallLift({ lifts: accountOpens, onLifted, scope, owner: null });
   const [signingOut, setSigningOut] = useState(false);
   /** The shell's reason when the last sign-out was refused, said under the button. */
@@ -90,7 +91,7 @@ export function DesktopAccessLock(
         { url?: unknown; error?: { code?: unknown } } | null;
       if (res.ok && typeof body?.url === "string" && body.url.length > 0) {
         // Drawn, not opened: the person's own click on the drawn page is the open.
-        if (showPage(body.url)) armPoll();
+        if (showPage(manageUrlWithTimeZone(body.url, timeZone))) armPoll();
         else setMintRefusal("failed");
         return;
       }
@@ -100,7 +101,7 @@ export function DesktopAccessLock(
     } finally {
       setMinting(false);
     }
-  }, [armPoll, lang, minting, showPage]);
+  }, [armPoll, lang, minting, showPage, timeZone]);
 
   const doSignOut = useCallback(async () => {
     if (signingOut) return;

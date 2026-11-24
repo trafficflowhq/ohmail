@@ -1,6 +1,7 @@
 import { cloneElement, type ReactElement } from "react";
 import type { EngineMessage, UnsubscribeHeaderState } from "@ohmail/wire";
 import type { SyncChange } from "@ohmail/client-engine";
+import { isScreenerAcknowledgement, SCREENER_ACKNOWLEDGEMENTS } from "@trafficflow/core/screener-acknowledgements";
 import {
   ISO, LIVE_ACCOUNT, answerConsentWith, answerSyncWith, goTo, mailbox, mountShell, tick,
 } from "./live-walk-shell";
@@ -14,15 +15,21 @@ interface HeldLetter {
 
 export async function openScreenerSender({
   address, letters, autoUnsubscribe = true, providerConfirms = true, refused = false,
+  consentRow = { screenerAcknowledgements: 0 },
 }: {
   address: string;
   letters: readonly [HeldLetter, ...HeldLetter[]];
   autoUnsubscribe?: boolean;
   providerConfirms?: boolean;
   refused?: boolean;
+  consentRow?: { screenerAcknowledgements: number };
 }): Promise<{ shell: HTMLElement; decisions: Array<{ id: string; body: unknown }> }> {
   const decisions: Array<{ id: string; body: unknown }> = [];
-  if (!autoUnsubscribe) answerConsentWith({ blockAutoUnsubscribeAt: ISO });
+  const answerConsent = () => answerConsentWith({
+    ...consentRow,
+    ...(autoUnsubscribe ? {} : { blockAutoUnsubscribeAt: ISO }),
+  });
+  answerConsent();
   const creates: SyncChange[] = letters.flatMap(({ id, posture, verdict }, index): SyncChange[] => {
     const entity: EngineMessage = {
       id, accountId: "acct_live_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
@@ -58,6 +65,14 @@ export async function openScreenerSender({
   }));
   const fetchShell = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "PATCH" && String(input).endsWith("/consent/settings")) {
+      const { acknowledgeScreener } = JSON.parse(String(init.body)) as { acknowledgeScreener?: unknown };
+      if (isScreenerAcknowledgement(acknowledgeScreener)) {
+        consentRow.screenerAcknowledgements |= SCREENER_ACKNOWLEDGEMENTS[acknowledgeScreener];
+        answerConsent();
+        return json({ screenerAcknowledgements: consentRow.screenerAcknowledgements });
+      }
+    }
     const press = /\/screener\/([^/?]+)$/.exec(String(input));
     if (init?.method === "POST" && press) {
       const body = JSON.parse(String(init.body)) as { dest: string };

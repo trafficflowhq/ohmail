@@ -13,11 +13,13 @@ import {
   BENCH_CALDAV_PLACE, PROVEN_REPEATS, makeCalendarProviders, proofPlaceOf, Secret, type CalendarProvider, type CalendarWriter, type ProvenRepeats,
 } from "@ohmail/cal-providers";
 import type { HostResolver } from "@trafficflow/core/net";
-import { calCalendars, calConnections, calEvents, calWrites } from "@trafficflow/db";
+import { calCalendars, calConnections, calEvents, calWrites, changeLog } from "@trafficflow/db";
 import { CONTINUED_FIELDS, type CalendarWritePayload } from "@trafficflow/db/calendar";
+import { dbFor } from "@trafficflow/services";
+import { CALENDAR_BUILDERS } from "@trafficflow/services/calendar";
 import { calendarSyncPass } from "@ohmail/organizer/calendar-sync-pass";
 import { calendarWriteDrain } from "@ohmail/organizer/calendar/write-drain";
-import { startCalDavStandIn, type Seen, type StandIn } from "../../../packages/cal-providers/test/caldav-stand-in.js";
+import { startCalDavStandIn, type Seen, type StandIn, type StandInCalendar } from "../../../packages/cal-providers/test/caldav-stand-in.js";
 import { AVAILABLE, capturedLog, depsFor, openWorld, providersOf, recordWrite, seedConnection, type World } from "../../../packages/organizer/test/_calendar-world.js";
 
 const never = new AbortController().signal;
@@ -106,11 +108,17 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
    */
   async function bench(
     members: Record<string, string>, wrap: (real: CalendarWriter) => CalendarWriter = (real) => real,
-    o: { readonly autoSchedule?: boolean; readonly mailbox?: string; readonly proven?: ProvenRepeats } = {},
+    o: {
+      readonly autoSchedule?: boolean;
+      readonly mailbox?: string;
+      readonly proven?: ProvenRepeats;
+      readonly calendar?: Partial<Omit<StandInCalendar, "slug">>;
+      readonly clock?: { now(): number };
+    } = {},
   ) {
     const dav = await startCalDavStandIn({ autoSchedule: o.autoSchedule ?? false });
     servers.push(dav);
-    dav.addCalendar("studio", { name: "Studio" });
+    const calendar = dav.addCalendar("studio", { name: "Studio", ...o.calendar });
     for (const [name, text] of Object.entries(members)) dav.put("studio", name, text, `"${name}-1"`);
     const serverUrl = `http://127.0.0.1:${dav.port}${dav.paths.start}`;
     const t = await seedConnection(w, {
@@ -123,7 +131,9 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
     const provider: CalendarProvider = { ...real, writer: wrap(real.writer!) };
     const proven = o.proven ?? { [proofPlaceOf("caldav", serverUrl)!]: PROVEN_REPEATS[BENCH_CALDAV_PLACE]! };
     const drain = calendarWriteDrain({ clock: { now: () => Date.now() }, zones: ZONES, log: capturedLog().log, proven });
-    const withDrain = depsFor(w, providersOf({ caldav: provider }), { drainWrites: drain });
+    const withDrain = depsFor(w, providersOf({ caldav: provider }), {
+      drainWrites: drain, ...(o.clock && { clock: o.clock }),
+    });
     const readingOnly = depsFor(w, providersOf({ caldav: provider }));
     const due = async () => {
       await w.db.update(calCalendars).set({ nextPollAt: null }).where(eq(calCalendars.accountId, t.accountId));
@@ -158,7 +168,7 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
       });
       return { first, second, newEventId };
     };
-    return { dav, t, turn, read, rows, writes, written, press, split };
+    return { dav, calendar, t, turn, read, rows, writes, written, press, split };
   }
 
   const on = (row: { id: string; updatedAt: Date }) => ({ eventId: row.id, base: row.updatedAt.toISOString() });
@@ -168,6 +178,189 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
     days: [{ was: "20261130T090000", start: "20261130T140000", end: "20261130T150000", summary: "Weekly kiln, moved" }],
   });
   const PLAIN = seriesText({ uid: "plain@studio.example.test", rule: "FREQ=WEEKLY;BYDAY=MO;COUNT=10", summary: "Glaze class" });
+
+  it("refreshes a shared calendar's access before sending queued time changes", async () => {
+    const organizer = ["sharer", "example.test"].join("@");
+    const source = PLAIN.replace(/RRULE:[^\r]+\r\n/, `ORGANIZER:mailto:${organizer}\r\n`);
+    let now = Date.now();
+    const b = await bench({ "shared.ics": source }, undefined, {
+      calendar: { owner: "/dav/principals/sharer/", homePrivileges: ["read"], privileges: ["read"] },
+      clock: { now: () => now },
+    });
+    const stored = async () => (await w.db.select({ id: calCalendars.id, access: calCalendars.access })
+      .from(calCalendars).where(eq(calCalendars.accountId, b.t.accountId)))[0]!;
+    const original = await stored();
+    expect(original.access).toBe("reader");
+    expect((await b.turn()).kind).toBe("synced");
+
+    now += 3_600_001;
+    b.calendar.privileges = ["read", "write-content", "bind", "unbind"];
+    expect((await b.turn()).kind).toBe("synced");
+    expect(await stored()).toEqual({ id: original.id, access: "writer" });
+    const [event] = await b.rows("shared.ics");
+    const schedule = (hour: string) => ({ start: zoned(`20261123T${hour}0000`), end: zoned(`20261123T${Number(hour) + 1}0000`) });
+    const move = (row: NonNullable<typeof event>, hour: string) => ({
+      kind: "calendar_event_update", ...on(row), scope: { kind: "record" }, change: schedule(hour),
+    });
+    const from = b.dav.seen.length;
+    await b.press("move", move(event!, "11"));
+    expect((await b.turn()).kind).toBe("synced");
+    expect(await b.writes()).toEqual([["move", "applied", null]]);
+    expect(b.written(from).map((request) => request.method)).toEqual(["PUT"]);
+    expect(b.written(from)[0]!.body).toContain(`DTSTART;TZID=${ZURICH}:20261123T110000`);
+
+    const [current] = await b.rows("shared.ics");
+    await b.press("stopped-move", move(current!, "13"));
+    const after = b.dav.seen.length;
+    now += 3_600_001;
+    b.calendar.privileges = ["read"];
+    expect((await b.turn()).kind).toBe("synced");
+    expect(await stored()).toEqual({ id: original.id, access: "reader" });
+    expect(b.written(after)).toHaveLength(0);
+    expect(await b.writes()).toContainEqual(["stopped-move", "refused", "read_only"]);
+  });
+
+  it("keeps listing and sends an owned calendar edit when a share's privilege probe fails", async () => {
+    let now = Date.now();
+    const b = await bench({ "own.ics": PLAIN }, undefined, {
+      clock: { now: () => now },
+    });
+    b.calendar.owner = b.dav.paths.principal;
+    b.dav.addCalendar("share", { owner: "/dav/principals/another/", privileges: ["read"], accessProbeStatus: 500 });
+    const [event] = await b.rows("own.ics");
+    await b.press("edit", { kind: "calendar_event_update", ...on(event!), scope: { kind: "record" }, change: { title: "New title" } });
+    const from = b.dav.seen.length;
+    now += 3_600_001;
+    expect((await b.turn()).kind).toBe("synced");
+    expect(await b.writes()).toEqual([["edit", "applied", null]]);
+    expect(b.written(from).map((request) => request.method)).toEqual(["PUT"]);
+    const calendars = await w.db.select({ access: calCalendars.access }).from(calCalendars)
+      .where(eq(calCalendars.accountId, b.t.accountId));
+    expect(calendars.map(({ access }) => access)).toEqual(expect.arrayContaining(["owner", "reader"]));
+  });
+
+  it("rejects an owned calendar invitation with an unknown attendee before sending it", async () => {
+    const organizer = ["sharer", "example.test"].join("@");
+    const unknown = ["unrecognized", "example.test"].join("@");
+    const source = PLAIN.replace(/RRULE:[^\r]+\r\n/, `ORGANIZER:mailto:${organizer}\r\nATTENDEE:mailto:${unknown}\r\n`);
+    const b = await bench({ "invitation.ics": source }, undefined, { autoSchedule: true });
+    b.calendar.owner = b.dav.paths.principal;
+    const [event] = await b.rows("invitation.ics");
+    await b.press("edit", {
+      kind: "calendar_event_update", ...on(event!), scope: { kind: "record" }, change: { title: "New title" },
+      audience: { organizer, guests: [unknown] },
+    });
+    const from = b.dav.seen.length;
+    await b.turn();
+    expect(await b.writes()).toEqual([["edit", "refused", "read_only"]]);
+    expect(b.written(from)).toHaveLength(0);
+  });
+
+  it("sends a queued edit to a meeting the account organized and attends", async () => {
+    const organizer = ["organizer", "example.test"].join("@");
+    const guest = ["guest", "example.test"].join("@");
+    const source = PLAIN.replace(/RRULE:[^\r]+\r\n/, [
+      `ORGANIZER:mailto:${organizer}`,
+      `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${organizer}`,
+      `ATTENDEE:mailto:${guest}`, "",
+    ].join("\r\n"));
+    const b = await bench({ "meeting.ics": source }, undefined, { autoSchedule: true, mailbox: organizer });
+    const [event] = await b.rows("meeting.ics");
+    const [stored] = await w.db.select({ myAnswer: calEvents.myAnswer }).from(calEvents)
+      .where(eq(calEvents.id, event!.id));
+    expect(stored?.myAnswer).toBe("accepted");
+    await b.press("edit", {
+      kind: "calendar_event_update", ...on(event!), scope: { kind: "record" }, change: { title: "New title" },
+      audience: { organizer, guests: [guest] },
+    });
+    const from = b.dav.seen.length;
+    expect((await b.turn()).kind).toBe("synced");
+    expect(await b.writes()).toEqual([["edit", "applied", null]]);
+    const requests = b.written(from);
+    expect(requests.map((request) => request.method)).toEqual(["PUT"]);
+    expect(requests[0]!.body).toContain("SUMMARY:New title");
+  });
+
+  it("serves a cached series again when its shared calendar gains or loses write access", async () => {
+    let now = Date.now();
+    const b = await bench({ "shared.ics": PLAIN }, undefined, {
+      calendar: { owner: "/dav/principals/another/", homePrivileges: ["read"], privileges: ["read"] },
+      clock: { now: () => now },
+    });
+    const { accountId } = b.t;
+    const db = dbFor(w.db, accountId);
+    const [connection] = await w.db.select({ serverUrl: calConnections.serverUrl }).from(calConnections)
+      .where(eq(calConnections.accountId, accountId));
+    const [series] = await b.rows("shared.ics");
+    const newest = async () => (await w.db.select({ seq: changeLog.seq }).from(changeLog)
+      .where(eq(changeLog.accountId, accountId)).orderBy(sql`${changeLog.seq} desc`).limit(1))[0]!.seq;
+    const built = async (ids: string[]) => {
+      // Scope proofs are keyed by provider origin. Use the proven CalDAV fixture's origin for feed materialization.
+      const saved = (serverUrl: string | null) => w.db.update(calConnections).set({ serverUrl })
+        .where(eq(calConnections.accountId, accountId));
+      await saved(BENCH_CALDAV_PLACE.replace("caldav:", "http://"));
+      try {
+        return (await CALENDAR_BUILDERS.calendar_event(db, accountId, ids)).get(series!.id);
+      } finally {
+        await saved(connection!.serverUrl);
+      }
+    };
+    const cached = await built([series!.id]);
+    expect(cached).not.toHaveProperty("deleteMembers");
+    expect(cached).not.toHaveProperty("deleteScopes");
+    for (const writable of [true, false]) {
+      const since = await newest();
+      now += 3_600_001;
+      b.calendar.privileges = writable ? ["read", "write-content"] : ["read"];
+      expect((await b.turn()).kind).toBe("synced");
+      const changes = await w.db.select({ id: changeLog.entityId, op: changeLog.op }).from(changeLog)
+        .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityType, "calendar_event"), sql`${changeLog.seq} > ${since}`));
+      expect(changes).toContainEqual({ id: series!.id, op: "update" });
+      const record = await built(changes.map(({ id }) => id));
+      expect(record).toBeDefined();
+      if (writable) {
+        expect(record?.deleteMembers).toMatchObject([{ at: null }]);
+        expect(record?.deleteScopes).toContain("record");
+      } else {
+        expect(record).not.toHaveProperty("deleteMembers");
+        expect(record).not.toHaveProperty("deleteScopes");
+      }
+    }
+  });
+
+  it("tries an edit on a share without access data and records the provider's refusal", async () => {
+    const b = await bench({ "shared.ics": PLAIN }, undefined, {
+      calendar: { owner: "/dav/principals/another/", privileges: null },
+    });
+    const [event] = await b.rows("shared.ics");
+    await b.press("edit", { kind: "calendar_event_update", ...on(event!), scope: { kind: "record" }, change: { title: "New title" } });
+    b.dav.refuseNextWriteOf("shared.ics", 403);
+    const from = b.dav.seen.length;
+    await b.turn();
+    expect(b.written(from).map((request) => request.method)).toEqual(["PUT"]);
+    expect(await b.writes()).toEqual([["edit", "refused", "read_only"]]);
+    expect((await b.rows("shared.ics"))[0]?.title).toBe(event!.title);
+  });
+
+  it("remembers a successful listing when a queued edit has to wait", async () => {
+    let wait = true;
+    const b = await bench({ "own.ics": PLAIN }, (writer) => ({
+      ...writer,
+      async change(...args) {
+        if (wait) return { ok: false, reason: "throttled", retryAfterMs: 30_000 };
+        return writer.change(...args);
+      },
+    }));
+    const [event] = await b.rows("own.ics");
+    await b.press("edit", { kind: "calendar_event_update", ...on(event!), scope: { kind: "record" }, change: { title: "New title" } });
+    expect(await b.turn()).toMatchObject({ kind: "backed_off", word: "throttled" });
+    const from = b.dav.seen.length;
+    wait = false;
+    expect((await b.turn()).kind).toBe("synced");
+    expect(b.dav.seen.slice(from).some((request) =>
+      request.method === "PROPFIND" && request.path === b.dav.paths.home,
+    )).toBe(false);
+  });
 
   describe("the whole series (scope record on the series' own row)", () => {
     it("changes the series' own record and nothing beside it, under the version the write was recorded on, once", async () => {

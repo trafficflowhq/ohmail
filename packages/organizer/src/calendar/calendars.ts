@@ -5,7 +5,7 @@
  * a short list once costs nobody their calendar. Sync never sets which calendar is shown or the
  * default: those are the person's.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import type { CalendarInfo } from "@ohmail/cal-providers";
 import {
   CALENDAR_CHANGES_PER_TRANSACTION, calAlarms, calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges,
@@ -67,25 +67,16 @@ export interface ListingContext {
   readonly halted: () => boolean;
 }
 
-/**
- * A listing applied: new calendars kept, due at once; changed ones written with their change; and
- * those two listings in a row did not name removed, events first, each with its change. Returns
- * the changes made, or why the turn must stop.
- */
+/** Keep new and changed calendars. Defer removals until queued writes have had their turn. */
 export async function applyListing(
   ctx: ListingContext, listed: readonly CalendarInfo[], stored: readonly StoredCalendar[],
-): Promise<{ readonly ok: true; readonly changed: number } | { readonly ok: false; readonly why: "gone" | "halted" }> {
+): Promise<{ readonly ok: true; readonly changed: number; readonly missing: readonly string[] } | { readonly ok: false; readonly why: "gone" | "halted" }> {
   // A calendar is found again by its provider's id: one the store cannot hold, for its length or for what is in it, is not kept.
   const usable = listed.filter((c) => fitsCalendarBytes(c.id, CALENDAR_PROVIDER_ID_MAX_BYTES) && storableKey(c.id));
   const named = new Set(usable.map((c) => c.id));
   const byProvider = new Map(stored.map((s) => [s.providerId, s]));
   // A listing that names no calendar at all decides nothing: an empty answer is likelier a provider's fault than a person's wish.
   const missing = usable.length === 0 ? [] : stored.filter((s) => !named.has(s.providerId)).map((s) => s.id);
-  const missedBefore = ctx.memory.unlisted.get(ctx.key.id) ?? new Set<string>();
-  const goes = missing.filter((id) => missedBefore.has(id));
-  /** Missed by this listing for the first time, and those whose removal did not end here: the next listing goes on with them. */
-  const missedNow = new Set(missing.filter((id) => !missedBefore.has(id)));
-  remember(ctx.memory.unlisted, ctx.key.id, missedNow);
   let changed = 0;
 
   for (let at = 0; at < usable.length; at += CALENDAR_CHANGES_PER_TRANSACTION) {
@@ -106,15 +97,38 @@ export async function applyListing(
           await tx.update(calCalendars).set({ ...now, updatedAt: sql`now()` })
             .where(and(eq(calCalendars.id, was.id), eq(calCalendars.accountId, ctx.key.accountId)));
           changes.push({ kind: "calendar", id: was.id, op: "update" });
+          if (was.access !== now.access) {
+            // The feed derives series deletion details from current access. Leaving busy access also restores event details.
+            const events = await tx.select({ id: calEvents.id }).from(calEvents).where(and(
+              eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, was.id),
+              was.access === "busy" ? undefined : and(eq(calEvents.recurrenceId, ""), isNotNull(calEvents.repeatRule)),
+            ));
+            for (const event of events) changes.push({ kind: "calendar_event", id: event.id, op: "update" });
+          }
         }
       }
-      if (changes.length > 0) await recordCalendarChanges(tx as unknown as LedgerTx, ctx.key.accountId, changes);
+      // Publish access and its event changes together so readers cannot materialize the old scopes.
+      for (let i = 0; i < changes.length; i += CALENDAR_CHANGES_PER_TRANSACTION) {
+        await recordCalendarChanges(tx as unknown as LedgerTx, ctx.key.accountId, changes.slice(i, i + CALENDAR_CHANGES_PER_TRANSACTION));
+      }
       return changes.length;
     });
     if (kept === "gone") return { ok: false, why: "gone" };
     changed += kept;
   }
 
+  return { ok: true, changed, missing };
+}
+
+/** A calendar goes only after two listings miss it. */
+export async function pruneUnlistedCalendars(
+  ctx: ListingContext, missing: readonly string[],
+): Promise<{ readonly ok: true; readonly changed: number } | { readonly ok: false; readonly why: "gone" | "halted" }> {
+  const missedBefore = ctx.memory.unlisted.get(ctx.key.id) ?? new Set<string>();
+  const goes = missing.filter((id) => missedBefore.has(id));
+  const missedNow = new Set(missing.filter((id) => !missedBefore.has(id)));
+  remember(ctx.memory.unlisted, ctx.key.id, missedNow);
+  let changed = 0;
   for (const calendarId of goes) {
     const removed = await removeCalendar(ctx, calendarId);
     if (!removed.ok) return removed;

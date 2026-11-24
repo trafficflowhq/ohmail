@@ -284,7 +284,7 @@ describe("a run that ends without an answer hands its claims back through one do
     expect((await w.keyRow("k11"))?.responseJson, "the answer was written into an erased row").toBe("erased");
   });
 
-  it("a model fault keeps the charge and gives that claim back once", async () => {
+  it("a model fault refunds the charge and gives that claim back once", async () => {
     const w = await world();
     const failing: ClassifierPort = {
       async classify(i) { if (i.from.address === "alice@ex.example") throw new Error("model 529"); return YES; },
@@ -293,7 +293,8 @@ describe("a run that ends without an answer hands its claims back through one do
     const res = await svc.suggest(w.ctx, { senders: ["alice@ex.example", "bob@ex.example"] });
     expect(res.skipped).toEqual([{ sender: "alice@ex.example", reason: "model_unavailable" }]);
     const alice = screenerAttemptKey(await aliceId(w));
-    expect(w.credits.releases.filter((r) => r.attemptKey === alice).map((r) => r.refund)).toEqual([false]);
+    expect(res.charged).toBe(1);
+    expect(w.credits.releases.filter((r) => r.attemptKey === alice).map((r) => r.refund)).toEqual([true]);
     expect(w.credits.releases, "one release per claim").toHaveLength(2);
   });
 

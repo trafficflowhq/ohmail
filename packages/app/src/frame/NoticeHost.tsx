@@ -80,7 +80,11 @@ export function NoticeHost({
         })}
         front={standing ? front : undefined}
         onFront={setFront}
-        more={{ label: t("notice.more", { count }), name: t("notice.moreName", { count }) }}
+        more={{
+          label: t("notice.more", { count }),
+          name: t("notice.moreName", { count }),
+          collapse: t("notice.showFewer"),
+        }}
         open={open}
         onOpen={setOpen}
       />

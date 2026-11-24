@@ -54,6 +54,8 @@ const AT_REST = {
   loadTrackingPixelsAt: null,
   autoUnsubscribe: true,
   blockAutoUnsubscribeAt: null,
+  acknowledgeScreener: null,
+  screenerAcknowledgements: 0,
   foldersEnabled: false,
   foldersEnabledAt: null,
   folderMailboxesOff: {},
