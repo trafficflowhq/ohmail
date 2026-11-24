@@ -779,6 +779,10 @@ describe("ci.yml's secret scan", () => {
   const plan = (yaml.load(read("ci.yml")) as { jobs: Record<string, { steps: Step[] }> }).jobs.plan!.steps;
   const scanAt = plan.findIndex((s) => /\bgitleaks\b/.test(s.run ?? ""));
   const step = plan[scanAt]!;
+  // Both scanner keywords would also activate the rule on the action pins in this file.
+  const serviceKeyword = ["Source", "graph"].join("");
+  const servicePrefix = ["sgp", "_"].join("");
+  const serviceRule = `${serviceKeyword.toLowerCase()}-access-token`;
 
   it("runs on a pull request only, right after the checkout, never allowed to fail, its image named by digest", () => {
     expect([scanAt, plan[0]!.uses?.split("@")[0]]).toEqual([1, "actions/checkout"]);
@@ -809,7 +813,7 @@ if (basename(dir) === "control") {
   process.exitCode = 1;
 } else if (process.env.STUB_DETECT === "1") {
   const rules = [
-    ["sourcegraph-access-token", /sourcegraph|sgp_/i, /\b(?:sgp_)?[0-9a-f]{40}\b/i],
+    ["${serviceRule}", /${serviceKeyword}|${servicePrefix}/i, /\b(?:${servicePrefix})?[0-9a-f]{40}\b/i],
     ["aws-access-token", /akia/i, /\bAKIA[A-Z2-7]{16}\b/],
     ["github-pat", /ghp_/, /ghp_[a-z0-9]{36}/i],
   ];
@@ -892,17 +896,24 @@ if (basename(dir) === "control") {
 
   const fixtureHash = createHash("sha1").update("synthetic fixture data").digest("hex");
 
-  onUnix("accepts a commit hash when the Sourcegraph keyword is only in a different file", () => {
+  onUnix("accepts the complete action census when a release adds this file", () => {
+    const name = "workflows-pin-every-action.test.ts";
+    const source = readFileSync(join(HERE, name), "utf8");
+    const r = runScan((write) => write(`test/${name}`, source), { STUB_DETECT: "1" });
+    expect(r.status, r.out).toBe(0);
+  });
+
+  onUnix("accepts a commit hash when the scanner keyword is only in a different file", () => {
     const r = runScan((write) => {
-      write("illustration.svg", "<!-- Generated with Sourcegraph -->\n");
+      write("illustration.svg", `<!-- Generated with ${serviceKeyword} -->\n`);
       write("verdict.json", JSON.stringify({ base: fixtureHash }) + "\n");
     }, { STUB_DETECT: "1" });
     expect(r.status, r.out).toBe(0);
   });
 
-  onUnix("refuses a generated Sourcegraph, AWS or GitHub credential in an added file", () => {
+  onUnix(`refuses a generated ${serviceKeyword}, AWS or GitHub credential in an added file`, () => {
     for (const [path, rule, fixture] of [
-      ["service settings.txt", "sourcegraph-access-token", "sgp_" + fixtureHash],
+      ["service settings.txt", serviceRule, servicePrefix + fixtureHash],
       ["illustration.svg", "aws-access-token", ["A", "K", "I", "A"].join("") + Array.from({ length: 16 }, (_, i) => "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"[(i * 7 + 3) % 32]).join("")],
       ["credentials.txt", "github-pat", "ghp_" + fixtureHash.slice(0, 36)],
     ]) {

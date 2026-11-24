@@ -361,7 +361,48 @@ describe("the check's reader of the base, on a repository of its own", () => {
     expect(run.status).toBe(0);
   });
 
-  it.each(["present", "unavailable"])(
+  it("leaves a full clone and its origin/next ref intact when next advances", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-retirement-full-"));
+    made.push(root);
+    const origin = path.join(root, "origin");
+    const checkout = path.join(root, "checkout");
+    mkdirSync(path.join(origin, "tools"), { recursive: true });
+    writeFileSync(path.join(origin, "tools/retirement.tsv"), `${RETIREMENT_HEADER}\n`);
+    git(origin, "init", "-q", "-b", "next");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "initial tree");
+    git(root, "clone", "-q", "--no-local", "--branch", "next", origin, checkout);
+    const cloneState = () =>
+      execFileSync("git", ["rev-parse", "--is-shallow-repository", "refs/remotes/origin/next"], {
+        cwd: checkout,
+        encoding: "utf8",
+      }).trim();
+    const before = cloneState();
+    expect(before).toMatch(/^false\n/);
+
+    // Advance beyond the depth limit so a depth-limited fetch would leave a shallow boundary.
+    const commits = Array.from({ length: 301 }, (_, i) =>
+      [
+        "commit refs/heads/next",
+        "committer tools <> 1 +0000",
+        "data 7",
+        "advance",
+        ...(i === 0 ? ["from refs/heads/next^0"] : []),
+        "",
+      ].join("\n"),
+    );
+    execFileSync("git", ["fast-import", "--quiet"], {
+      cwd: origin,
+      input: commits.join("\n"),
+    });
+
+    const result = check(checkout, "origin/next");
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(cloneState()).toBe(before);
+  });
+
+  it.each(["present", "advanced", "unavailable"])(
     "refuses an unproved deletion on a shallow checkout of next with the remote ref %s",
     (remoteRef) => {
       const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-dispatch-"));
@@ -378,6 +419,7 @@ describe("the check's reader of the base, on a repository of its own", () => {
       git(origin, "rm", "-q", "test/old.test.ts");
       git(origin, "commit", "-qm", "delete the test without a row");
       git(root, "clone", "-q", "--no-local", "--depth=2", "--branch", "next", origin, checkout);
+      if (remoteRef === "advanced") git(origin, "commit", "-qm", "repeat the tree", "--allow-empty");
       if (remoteRef === "unavailable") {
         git(checkout, "update-ref", "-d", "refs/remotes/origin/next");
         git(checkout, "remote", "set-url", "origin", path.join(root, "missing"));
@@ -389,7 +431,30 @@ describe("the check's reader of the base, on a repository of its own", () => {
     },
   );
 
-  it("fetches next in a shallow promotion checkout and uses it only for the matching tree", () => {
+  it("refuses an unproved deletion in a pull request that reverts to an earlier next tree", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-retirement-revert-"));
+    made.push(root);
+    const origin = path.join(root, "origin");
+    const checkout = path.join(root, "checkout");
+    mkdirSync(path.join(origin, "tools"), { recursive: true });
+    mkdirSync(path.join(origin, "test"));
+    writeFileSync(path.join(origin, "tools/retirement.tsv"), `${RETIREMENT_HEADER}\n`);
+    git(origin, "init", "-q", "-b", "next");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "initial tree");
+    writeFileSync(path.join(origin, "test/new.test.ts"), "it('draws the rail', () => {});\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "add the test");
+    git(root, "clone", "-q", "--no-local", "--depth=2", "--branch", "next", origin, checkout);
+    git(checkout, "switch", "-qc", "change");
+    git(checkout, "revert", "--no-edit", "HEAD");
+
+    const result = check(checkout, "HEAD^1");
+    expect(result.stderr).toContain("test/new.test.ts is deleted without a row that carries a proof");
+    expect(result.status).toBe(1);
+  });
+
+  it.each([0, 1, 5])("finds the promotion tree when next has advanced by %i commits", (ahead) => {
     const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-promotion-"));
     made.push(root);
     const origin = path.join(root, "origin");
@@ -421,6 +486,12 @@ describe("the check's reader of the base, on a repository of its own", () => {
     git(origin, "switch", "-q", "promotion");
     git(origin, "read-tree", "--reset", "-u", "next");
     git(origin, "commit", "-qm", "promote next");
+    git(origin, "switch", "-q", "next");
+    for (let i = 0; i < ahead; i += 1) {
+      writeFileSync(path.join(origin, "new-view.ts"), `export const revision = ${i};\n`);
+      git(origin, "add", "-A");
+      git(origin, "commit", "-qm", "update the new view");
+    }
     git(root, "clone", "-q", "--no-local", "--depth=2", "--branch", "promotion", origin, checkout);
 
     const promotion = check(checkout, "HEAD^1");
@@ -434,6 +505,12 @@ describe("the check's reader of the base, on a repository of its own", () => {
     const normal = check(checkout, "HEAD^1");
     expect(normal.stderr).toContain("test/old.test.ts is deleted without a row that carries a proof");
     expect(normal.status).toBe(1);
+
+    git(checkout, "switch", "-q", "promotion");
+    git(checkout, "remote", "set-url", "origin", path.join(root, "missing"));
+    const unavailable = check(checkout, "HEAD^1");
+    expect(unavailable.stderr).toContain("gone:old-view.ts is not in the base");
+    expect(unavailable.status).toBe(1);
   });
 });
 
