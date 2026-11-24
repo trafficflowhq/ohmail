@@ -16,6 +16,7 @@ import {
   type StoredCredential,
 } from "@ohmail/cal-providers/connect";
 import type { KeyProvider } from "@trafficflow/core";
+import { canonicalHost } from "@trafficflow/core/net";
 import { recordCalendarChanges, type Tx } from "@trafficflow/db";
 import { isWriteUuid } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
@@ -51,7 +52,7 @@ export async function requireCalendarConnectionRoom(ctx: ServiceContext): Promis
 
 /** A user's name at a CalDAV server: a mail address at its longest, and room. */
 export const CALDAV_USER_MAX_CHARS = 320;
-/** A password as typed. An app password has 16 to 19 characters; a person's own may be a sentence. */
+/** Bound the raw password before applying any formatting. A person's own password may be a sentence. */
 export const CALDAV_PASSWORD_MAX_CHARS = 1024;
 
 /** What the composed door holds: the port (or none) and the keys a sign-in is sealed with. */
@@ -184,6 +185,20 @@ export function parseSignInAsk(body: unknown): CalendarSignInAsk {
     return { kind: "address", address: new Secret(addressOf(b.address, "address")) };
   }
   return { kind: "basic", user: userOf(b.user), password: passwordOf(b.password) };
+}
+
+/** Finish parsing a typed CalDAV sign-in once its validated server is known. */
+export function typedCalDavCredential(
+  server: string, { user, password }: { readonly user: string; readonly password: Secret },
+): Extract<StoredCredential, { kind: "basic" }> {
+  const host = canonicalHost(new URL(server).hostname);
+  if (/^(?:p[0-9]{1,3}-)?caldav\.icloud\.com$/.test(host)) {
+    const letters = password.reveal().replace(/[ -]/g, "");
+    if (/^[A-Za-z]{16}$/.test(letters)) {
+      password = new Secret(letters.toLowerCase().replace(/(.{4})(?=.)/g, "$1-"));
+    }
+  }
+  return { kind: "basic", server, user, password };
 }
 
 // ── the ways ─────────────────────────────────────────────────────────────────────
@@ -373,7 +388,7 @@ export async function connectCalendar(
   const signIn = "fromMailbox" in ask ? { fromMailbox: ask.fromMailbox } : {
     credential: (ask.way === "ics"
       ? { kind: "address", url: ask.address }
-      : { kind: "basic", server: place.serverUrl ?? "", user: ask.user, password: ask.password }) satisfies StoredCredential,
+      : typedCalDavCredential(place.serverUrl!, ask)) satisfies StoredCredential,
   };
   return keepCalendarConnection(ctx, door.keys, {
     id: ask.connectionId, provider: ask.way === "ics" ? "ics" : "caldav", ...place,

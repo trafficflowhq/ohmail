@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { intlZones } from "@ohmail/cal-core";
+import { makeReader } from "@ohmail/cal-providers/caldav";
+import { parseCredential } from "@ohmail/cal-providers/connect";
+import { ANSWER_TIMEOUT_MS, CONNECT_TIMEOUT_MS, FETCH_BODY_MAX_BYTES, MAX_REDIRECTS } from "@ohmail/cal-providers/limits";
+import { CALENDAR_WAYS, HttpAdapter, MutationRejectedError, calendarWaysOf, type CalendarConnectTransport, type FetchLike } from "@ohmail/client-engine";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
+import { pinnedHttpRequest } from "@trafficflow/core/net";
 import { calCalendars, calCredentials, calSettings } from "@trafficflow/db/mail";
 import { calendarFeed } from "@trafficflow/services/calendar";
-import { CALENDAR_WAYS, HttpAdapter, MutationRejectedError, calendarWaysOf, type CalendarConnectTransport, type FetchLike } from "@ohmail/client-engine";
 import { FIXED_NOW, makeDeps, seedSession } from "../packages/api/test/helpers.js";
+import { guardedRequest } from "../packages/cal-providers/src/request/guarded.js";
+import { startCalDavStandIn } from "../packages/cal-providers/test/caldav-stand-in.js";
 
 /**
  * THE CONNECT DOOR FROM A DEVICE'S SIDE: the client's six calls through the real routes, and what
@@ -89,6 +96,83 @@ describe("the client's calls reach the connect door", () => {
     expect(refused).toBeInstanceOf(MutationRejectedError);
     expect(refused).toMatchObject({ status: 400, code: "validation_failed", retryable: false, details: { fault: "address_not_allowed" } });
     await expect(w.adapter.removeCalendarConnection(randomUUID())).rejects.toMatchObject({ status: 404, code: "not_found" });
+  });
+});
+
+describe("typed calendar passwords", () => {
+  const groups = ["blue", "hand", "clay", "kiln"];
+  const appPassword = groups.join("-");
+  const ordinaryPassword = [groups[0], "2", ...groups.slice(1)].join(" - ");
+  const apple = "caldav.icloud.com";
+  const numbered = "p42-caldav.icloud.com";
+  const nonAsciiPassword = `é${groups.join("").slice(1)}`;
+  const cases = [
+    ["iCloud without dashes", null, groups.join(""), appPassword],
+    ["iCloud with spaces", null, groups.join(" "), appPassword],
+    ["iCloud in uppercase", null, appPassword.toUpperCase(), appPassword],
+    ["CalDAV at iCloud", apple, groups.join(""), appPassword],
+    ["CalDAV at a numbered iCloud host", numbered, groups.join(" ").toUpperCase(), appPassword],
+    ["iCloud with a password containing a digit", null, ordinaryPassword, ordinaryPassword],
+    ["iCloud with a password containing a non-ASCII letter", null, nonAsciiPassword, nonAsciiPassword],
+    ["CalDAV at a lookalike host", `${apple}.example.test`, groups.join(" "), groups.join(" ")],
+  ] as const;
+  const user = ["mila", "studio.example.test"].join("@");
+
+  async function expectAccepted(w: Awaited<ReturnType<typeof world>>, connectionId: string, expected: string) {
+    const [row] = await w.db.select().from(calCredentials);
+    const text = await w.deps.keyProvider.decrypt(row.secretEnc, row.keyVersion);
+    const stored = parseCredential(text, { accountId: w.s.accountId, connectionId });
+    if (stored?.kind !== "basic") throw new Error("expected a sealed CalDAV sign-in");
+    const redirectsToNumbered = new URL(stored.server).hostname === apple;
+    const redirects: Record<string, string> = {};
+    const dav = await startCalDavStandIn({ user, password: expected, sendsOn: redirects });
+    try {
+      if (redirectsToNumbered) {
+        redirects["/.well-known/caldav"] = `https://${numbered}${dav.paths.start}`;
+      }
+      dav.addCalendar("work");
+      const reader = makeReader({
+        zones: intlZones(),
+        clock: { now: () => FIXED_NOW.getTime() },
+        http: guardedRequest({
+          writes: false, policy: { kind: "own-network" }, hosts: null,
+          resolver: { resolve: async () => ["127.0.0.1"] },
+          limits: { connectMs: CONNECT_TIMEOUT_MS, totalMs: ANSWER_TIMEOUT_MS, maxRedirects: MAX_REDIRECTS, maxBodyBytes: FETCH_BODY_MAX_BYTES },
+          request: (url, opts) => {
+            const named = new URL(url);
+            return pinnedHttpRequest(`http://127.0.0.1:${dav.port}${named.pathname}`, {
+              ...opts, headers: { ...opts.headers, host: named.host },
+            });
+          },
+        }),
+      });
+      const listed = await reader.listCalendars({
+        provider: "caldav", start: stored.server,
+        credential: { kind: "basic", user: stored.user, password: () => stored.password.reveal() },
+      }, new AbortController().signal);
+      expect(listed.ok && listed.value.length === 1).toBe(true);
+      expect(dav.seen.length > 0 && dav.seen.every(({ signedIn }) => signedIn)).toBe(true);
+      if (redirectsToNumbered) expect(dav.seen.some(({ host }) => host === numbered)).toBe(true);
+    } finally {
+      await dav.close();
+    }
+  }
+
+  it.each(cases)("sends the expected password on create for %s", async (_name, host, typed, expected) => {
+    const w = await world();
+    const connectionId = randomUUID();
+    const body = { connectionId, user, password: typed };
+    await w.adapter.connectCalendar(host === null ? { ...body, way: "icloud" } : { ...body, way: "caldav", server: host }, randomUUID());
+    await expectAccepted(w, connectionId, expected);
+  });
+
+  it.each(cases)("sends the expected password on sign-in again for %s", async (_name, host, typed, expected) => {
+    const w = await world();
+    const connectionId = randomUUID();
+    const body = { connectionId, user, password: made("pw") };
+    await w.adapter.connectCalendar(host === null ? { ...body, way: "icloud" } : { ...body, way: "caldav", server: host }, randomUUID());
+    await w.adapter.signInCalendarAgain(connectionId, { user, password: typed });
+    await expectAccepted(w, connectionId, expected);
   });
 });
 
