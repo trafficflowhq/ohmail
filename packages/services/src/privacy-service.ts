@@ -1,7 +1,7 @@
 import type { Page, TrackerEventDTO } from "@ohmail/wire";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { accountSettings, folderState, messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
-import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
+import { hostOf, isBeaconUrl, isTrackingImageUrl } from "@trafficflow/core/mail";
 import { isHeldFolder } from "@trafficflow/core/destinations";
 import { imageDimensions } from "@trafficflow/core/image-dimensions";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -251,14 +251,14 @@ export class PrivacyService {
      * THE PIXEL PREFERENCE IS ENFORCED BEFORE THE FETCH, for the trackers the server knows. The
      * client's own refusal cannot know this list; an ESP's click host serving `r/abc.jpg` arrives
      * here as "a picture", and classifying AFTER the fetch has already told the sender about the
-     * open. So a tracking-only host (`TRACKER_HOSTS`, none of which serves a real picture) or a
+     * open. So a tracking host outside its shared image namespace or a
      * beacon-shaped url is refused the FETCH while the pixel switch stands (mail 0072), whatever
      * the images grant says; the reader gets the transparent stub a fetched 1×1 gets, and the
      * event is recorded so the feed can say who tried. The post-fetch dimension check stays: the
      * half that needs the bytes — any other host's undeclared 1×1.
      */
     const host = hostOf(url);
-    const trackerByUrl = isKnownTracker(host) || isBeaconUrl(url);
+    const trackerByUrl = isTrackingImageUrl(url);
     if (trackerByUrl && !grants.pixels) {
       await asTx(ctx).insert(trackerEvents).values({
         accountId: ctx.accountId,
@@ -417,7 +417,7 @@ export class PrivacyService {
       currentUrl = next;
       currentHost = hostOf(next);
       // The pixel switch applies to where the chain LANDS, not only to where it started.
-      if (isKnownTracker(currentHost) || isBeaconUrl(next)) {
+      if (isTrackingImageUrl(next)) {
         sawTracker = true;
         trackerHost ??= currentHost;
         trackerUrl ??= next;

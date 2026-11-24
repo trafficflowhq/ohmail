@@ -25,8 +25,8 @@ export interface TrackerHit {
 }
 
 /**
- * HOSTS THAT SERVE NOTHING BUT OPEN AND CLICK TRACKING — the image proxy refuses their FETCH while
- * the pixel switch stands, so a host here must never serve a sender's real picture. An ESP's
+ * HOSTS THAT SERVE OPEN AND CLICK TRACKING — the image proxy refuses their FETCH while
+ * the pixel switch stands. A shared image namespace can be excluded by `isTrackingImageUrl`. An ESP's
  * umbrella domain that also hosts pictures does not belong: Mailchimp's pictures live on
  * `gallery.mailchimp.com`, Constant Contact's on `files.constantcontact.com`, SendGrid's on
  * `cdn.mcauto-images-production.sendgrid.net` (so only `ct.sendgrid.net`, its tracking host).
@@ -94,6 +94,24 @@ export function isBeaconUrl(url: string): boolean {
   return BEACON_PATH.test(decodeUnreservedEscapes(url));
 }
 
+/** Classify a remote image before asking its host for bytes. */
+export function isTrackingImageUrl(url: string): boolean {
+  if (isBeaconUrl(url)) return true;
+  const host = hostOf(url);
+  if (!isKnownTracker(host)) return false;
+  if (host !== "cdn.klaviyomail.com") return true;
+
+  // Shared company artwork lives under this CDN path. Keep the host rule for other endpoints,
+  // and the beacon rule above for recipient-specific URLs.
+  try {
+    const image = new URL(url);
+    return image.protocol !== "https:" || image.search !== "" ||
+      !/^\/company\/[a-z\d]+\/images\/[a-z\d_-][a-z\d._-]*\.(?:png|jpe?g|gif|webp|avif)$/i.test(image.pathname);
+  } catch {
+    return true;
+  }
+}
+
 /** Read `name="…"` / `name='…'` / `name=bare` from a single HTML tag. */
 function attrValue(tag: string, name: string): string | null {
   const re = new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
@@ -151,14 +169,14 @@ export function detectTrackers(html: string): TrackerHit[] {
     const src = attrValue(tag, "src");
     if (!src || !REMOTE.test(src)) continue;             // data:/cid:/relative → not a remote tracker
     const pixel = isPixelTag(tag) || isBeaconUrl(src);
-    if (!pixel && !isKnownTracker(hostOf(src))) continue;  // ordinary remote image
+    if (!pixel && !isTrackingImageUrl(src)) continue;  // ordinary remote image
     pushHit(hits, seen, src, pixel);
   }
 
   for (const m of html.matchAll(/background-image\s*:\s*url\(\s*(['"]?)([^'")]+)\1\s*\)/gi)) {
     const url = m[2]!.trim();
     if (!REMOTE.test(url)) continue;
-    if (!isKnownTracker(hostOf(url)) && !isBeaconUrl(url)) continue;
+    if (!isTrackingImageUrl(url)) continue;
     pushHit(hits, seen, url, isBeaconUrl(url));
   }
 
