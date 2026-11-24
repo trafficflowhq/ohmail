@@ -93,9 +93,8 @@ jobs:
           persist-credentials: false
 
       # NO SECRET IN WHAT A PULL REQUEST ADDS. A path the base's ignore rules match is refused (the base's,
-      # so a change cannot exempt itself). Then the added lines, under their files' headers, go through gitleaks
-      # by digest, offline, with .github/secret-scan.toml. It exits 1 on a fatal error too, so a control made
-      # here is scanned first and the report must name both of its rules.
+      # so a change cannot exempt itself). Then gitleaks scans each file's added lines independently, by digest
+      # and offline, with .github/secret-scan.toml. A control goes first and must report both of its rules.
       - name: No secret in the change
         if: github.event_name == 'pull_request'
         env:
@@ -113,17 +112,36 @@ jobs:
             exit 1
           fi
           [ "$rc" = 1 ] || { echo "::error::git check-ignore failed (exit $rc)"; exit 1; }
+          mkdir "$scan/control" "$scan/change"
           # A token of a default rule's shape and a key-ring key, made here; the key's name is built as the tests build it.
           ring="$(printf '%s_%s' TF KEK)_V1"
           printf '+++ b/secret-scan-control\n+GITHUB_TOKEN=ghp_%s\n+%s=%s%s\n' "$(echo control-1 | git hash-object --stdin | cut -c1-36)" "$ring" \
-            "$(echo control-2 | git hash-object --stdin | cut -c1-40)" "$(echo control-3 | git hash-object --stdin | cut -c1-24)" > "$scan/control"
-          git diff -U0 --no-color --no-ext-diff HEAD^1 HEAD | { grep '^+' || true; } > "$scan/change"
+            "$(echo control-2 | git hash-object --stdin | cut -c1-40)" "$(echo control-3 | git hash-object --stdin | cut -c1-24)" > "$scan/control/1"
+          # Give gitleaks numbered files so its default path exclusions cannot skip added lines based on the source path.
+          # Keep Git's printable path separately for diagnostics and retain each header in its own fragment.
+          git -c core.quotePath=true diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD^1 HEAD |
+            SCAN_FRAGMENTS="$scan/change" awk '
+              /^diff --git / { if (fragment) close(fragment); fragment = ""; hunk = 0 }
+              /^@@ / { hunk = 1 }
+              !hunk && /^\+\+\+ / && $0 != "+++ /dev/null" {
+                fragment = ENVIRON["SCAN_FRAGMENTS"] "/" ++file
+                print > fragment
+                path = substr($0, 5)
+                sub(/\t$/, "", path)
+                sub(/^b\//, "", path)
+                sub(/^"b\//, "\"", path)
+                print file, path
+                next
+              }
+              fragment && hunk && /^\+/ { print > fragment }
+            ' > "$scan/paths"
           for input in control change; do
             rc=0
-            docker run --rm -i --network none -v "$PWD/.github/secret-scan.toml:/secret-scan.toml:ro" "$GITLEAKS" \
-              stdin --config /secret-scan.toml --redact --no-banner --report-format json --report-path - \
-              < "$scan/$input" > "$scan/$input.json" || rc=$?
-            jq -e '. == null or type == "array"' "$scan/$input.json" > /dev/null \
+            docker run --rm --network none -v "$PWD/.github/secret-scan.toml:/secret-scan.toml:ro" \
+              -v "$scan/$input:/fragments:ro" "$GITLEAKS" \
+              dir --config /secret-scan.toml --redact --no-banner --report-format json --report-path - /fragments \
+              > "$scan/$input.json" || rc=$?
+            jq -es 'length == 1 and (.[0] == null or (.[0] | type == "array"))' "$scan/$input.json" > /dev/null \
               || { echo "::error::gitleaks wrote no report on the $input (exit $rc)"; exit 1; }
             if [ "$input" = control ]; then
               for rule in github-pat ohmail-key-ring; do
@@ -132,10 +150,11 @@ jobs:
               done
               continue
             fi
-            jq -r '(. // [])[] | "\(.StartLine) \(.RuleID)"' "$scan/change.json" > "$scan/found"
+            jq -r '.[]? | "\(.File | split("/") | last) \(.RuleID)"' "$scan/change.json" > "$scan/found"
             if [ -s "$scan/found" ]; then
               echo "::error::a secret in the added lines, by file and rule (the value is never printed):"
-              awk 'NR == FNR { rule[$1] = rule[$1] " " $2; next } /^\+\+\+ / { file = substr($0, 7) } FNR in rule { print file ":" rule[FNR] }' "$scan/found" "$scan/change"
+              awk 'FILENAME == ARGV[1] { path[$1] = substr($0, length($1) + 2); next }
+                   { print (($1 in path) ? path[$1] : "(unknown file)") ": " $2 }' "$scan/paths" "$scan/found"
               exit 1
             fi
             [ "$rc" = 0 ] || { echo "::error::gitleaks exited $rc with no finding"; exit 1; }
