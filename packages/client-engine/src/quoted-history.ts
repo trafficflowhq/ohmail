@@ -83,6 +83,8 @@ const STRONG_ATTRIBUTION: RegExp[] = [
   /^il\b.{4,300}\bha scritto\s?:$/i,
   /^el\b.{4,300}\bescribi[óo]\s?:$/i,
   /^op\b.{4,300}\b(?:schreef|het volgende geschreven)\b.{0,200}:$/i,
+  // Tuta: "Nov 12, 2026, 09:05 by name@example.com:", "12.11.2026, 09:05 von name@example.com:".
+  /^(?=[^,]{0,30}\d)[\p{L}\d. /-]{1,30}(?:, \d{4})?, \d{1,2}:\d\d,? (?:by|von|de|da|par|door|por) [^\s@]{1,64}@[^\s@:]{1,255}:$/iu,
 ];
 /** The reader's older, looser list: it folds only together with a `>` run right below it. */
 const WEAK_ATTRIBUTION: RegExp[] = [
@@ -461,22 +463,38 @@ function prose(l: Line): boolean {
   return l.quiet * 10 < l.chars * 6 && SENTENCE_END.test(l.text) && !DISCLAIMER.test(l.text) && l.text.split(" ").length >= 4;
 }
 
+/** A line in a table cell on a declared mail canvas: a laid-out mail's own design. */
+function designedCell(l: Line): boolean {
+  return l.cell && l.canvas;
+}
+
 /**
  * Answers written inside a history: a foreign line with body lines of the hop's own ink before it
  * and the hop's prose after it (not its closing block: a coloured company name is no answer), in one
- * hop (a header block or a separator starts the next), up to `end`.
+ * hop (a header block or a separator starts the next), up to `end`. In a hop that is a laid-out mail
+ * as a whole (every body line in a table cell on a declared canvas: a quoted booking confirmation),
+ * the cells never set the hop's ink, a heading, or the hop's own lines around an answer: brand inks
+ * and the sentences between them are the mail's design. A letter that only holds such a table (a Word
+ * table carries a canvas-like width too) is read as usual, so answers typed into its cells count.
  */
 function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.length): boolean {
   const n = end;
   for (let a = s; a < n;) {
     let b = a + 1;
     while (b < n && !f.hop[b] && !separatorLine(L[b]!.text)) b++;
+    let laidOut = false;
+    for (let i = a; i < b; i++) {
+      if (!bodyLine(L, f, i, html)) continue;
+      if (!designedCell(L[i]!)) { laidOut = false; break; }
+      laidOut = true;
+    }
+    const design = (l: Line): boolean => laidOut && designedCell(l);
     // The hop's own ink: the one most of its body is written in.
     const weight = new Map<string, number>();
     if (html) {
       for (let i = a; i < b; i++) {
         const l = L[i]!;
-        if (bodyLine(L, f, i, html) && l.mark * 10 < l.chars * 6) weight.set(l.ink, (weight.get(l.ink) ?? 0) + l.chars);
+        if (bodyLine(L, f, i, html) && !design(l) && l.mark * 10 < l.chars * 6) weight.set(l.ink, (weight.get(l.ink) ?? 0) + l.chars);
       }
     }
     let hopInk = "";
@@ -490,7 +508,7 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
       let shaped = 0;
       let above = "";
       for (let i = a; i < b; i++) {
-        if (!bodyLine(L, f, i, html)) continue;
+        if (!bodyLine(L, f, i, html) || design(L[i]!)) continue;
         const t = L[i]!.text;
         if ((t.endsWith(":") || !/\p{Ll}/u.test(t)) && foreign(L[i]!, hopInk, html, marks)) {
           shaped++;
@@ -511,7 +529,7 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
         if (before) pending = true;
         continue;
       }
-      if (html && l.ink !== hopInk) continue;
+      if (design(l) || (html && l.ink !== hopInk)) continue;
       if (pending && (!html || prose(l))) return true;
       before = true;
     }

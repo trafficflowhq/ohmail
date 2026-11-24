@@ -248,6 +248,49 @@ describe("answers typed into the history keep it open", () => {
   }
 });
 
+describe("an Outlook mobile reply over a forwarded booking mail folds its history", () => {
+  // The booking mail is laid out on a 600 px canvas with cells in a brand colour; its design is no typed answer.
+  const booking = `<div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p><b>Von:</b> Example Venue &lt;venue@example.com&gt;<br>`
+    + `<b>Gesendet:</b> Dienstag, 6. Oktober 2026 19:05<br><b>An:</b> Clara Example &lt;clara@example.com&gt;<br><b>Betreff:</b> Booking #01234</p></div>`
+    + `<table width="600" cellpadding="0" cellspacing="0" style="width:600px"><tr><td>We have received your request for the following slot:</td></tr>`
+    + `<tr><td style="color:#1b4f72">(Booking #01234) (</td><td style="color:#1b4f72">4. Mai 2026</td><td style="color:#1b4f72">)</td></tr>`
+    + `<tr><td>Room</td><td>Garden</td></tr><tr><td>Guests</td><td>12</td></tr>`
+    + `<tr><td style="color:#1b4f72">Contact person</td><td>Ana Sample</td></tr><tr><td style="color:#1b4f72">#00412</td><td>Main hall</td></tr>`
+    + `<tr><td>Please bring your confirmation. We look forward to your visit.</td></tr>`
+    + `<tr><td style="font-size:9px;color:#999999">Example Venue Ltd, Lake Road 1, 1000 Town</td></tr></table>`;
+  const html = `<div dir="ltr"><div>Thanks, Monday works for us. I will send the guest list tomorrow.</div><div>Best</div><div>Ben</div></div>`
+    + `<div id="ms-outlook-mobile-signature"><div>Outlook for iOS</div></div>`
+    + `<div id="mail-editor-reference-message-container"><hr style="border-width:1pt medium medium;border-style:solid none none;padding:3pt 0in 0in;width:98%">`
+    + `<b>Von: </b>Clara Example &lt;clara@example.com&gt;<br><b>Datum: </b>Freitag, 13. November 2026 um 15:28<br><b>An: </b>Ben Sample &lt;ben@example.com&gt;<br><b>Betreff: </b>Re: Booking #01234<br>`
+    + `<div id="mail-editor-reference-message-body"><div>Dear Ben,</div><div>here is the plan for the workshop on Monday. We start at nine.</div><div>Clara</div>`
+    + `<div class="gmail_quote">On Thu, Nov 12, 2026 at 09:05:12, Dora Test &lt;dora@example.com&gt; wrote:</div>`
+    + `<blockquote style="margin: 0px 0px 0px 0.8ex; padding-left: 1ex; border-left: 1px solid rgb(204, 204, 204);"><div>Hello Clara, the garden room is free.</div><div>Dora</div>${booking}</blockquote></div></div>`;
+  const text = "Thanks, Monday works for us. I will send the guest list tomorrow.\nBest\nBen\n\nOutlook for iOS\n________________________________\n"
+    + "Von: Clara Example <clara@example.com>\nDatum: Freitag, 13. November 2026 um 15:28\nAn: Ben Sample <ben@example.com>\nBetreff: Re: Booking #01234\n\n"
+    + "Dear Ben,\nhere is the plan for the workshop on Monday. We start at nine.\nClara\n";
+  const first = "Von: Clara Example";
+  const history = "Datum: Freitag, 13. November 2026 um 15:28";
+  for (const cls of ["pm-body", "msg-body"]) {
+    for (const [name, props] of [["framed (no text part)", { text: "", html }], ["with its text part", { text, html }]] as const) {
+      it(`.${cls}: ${name}`, async () => {
+        const el = await renderBody(cls, { ...props, subject: "AW: AW: WG: Booking #01234" });
+        const drawn = () => textOf(el) + " " + srcdocText(el);
+        const toggle = toggleIn(el);
+        expect(toggle, "no toggle").not.toBeNull();
+        expect(drawn()).toContain("Thanks, Monday works for us.");
+        expect(drawn()).toContain("Outlook for iOS");
+        expect(drawn(), "the history's first line is in the document while folded").not.toContain(first);
+        expect(drawn(), "the history is in the document while folded").not.toContain(history);
+        expect(drawn()).not.toContain("We look forward to your visit.");
+        await press(toggle!);
+        expect(toggleIn(el)!.getAttribute("aria-expanded")).toBe("true");
+        expect(drawn()).toContain(first);
+        expect(drawn()).toContain(history);
+      });
+    }
+  }
+});
+
 describe("an html part the reader does not render keeps its reading", () => {
   const card = '<div class="wrap"><p>Example Weekly</p><p>The Example team</p><p>From: Support Desk &lt;desk@example.com&gt;<br>'
     + "Sent: Monday, October 19, 2026 9:00 AM<br>To: A Customer &lt;c@example.org&gt;<br>Subject: Your ticket is solved</p>"

@@ -36,7 +36,9 @@ export function measureLanding(
   const { letter, top } = landing;
   const clearance = firstTop ?? line;
   const wanted = firstTop === null && newestFirst && keepLanding ? 0 : Math.max(0, top - clearance);
-  if (firstTop !== null) max = keepLandingRoom(scroller, wanted, max);
+  // The room is kept while the opening still aims too: the letters above stand at their floor
+  // until their frames load, and a range cut that short would draw the letter low, then snap.
+  if (keepLanding) max = keepLandingRoom(scroller, wanted, max);
   const next = Math.min(max, wanted);
   // A body shrink can already have clamped scrollTop before we read it. Stamp that scroll too.
   if (bodyChanged || Math.abs(next - scroller.scrollTop) > 0.5) scrollProgrammatically(scroller, next);

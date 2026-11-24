@@ -354,10 +354,15 @@ export function readerLayoutCases() {
               await page.getByRole("button", { name: "Q3 plan" }).click();
               const opened = page.locator('[data-conv-id="w5"][aria-current="true"]');
               const gap = () => opened.evaluate(readingGap);
-              await expect.poll(gap).toBeGreaterThan(50);
+              // The opening holds the reading line while the body is still on its way: it no longer
+              // draws the short letter low and snaps once the body lands.
+              await expect.poll(async () => Math.abs((await gap()) - 14)).toBeLessThanOrEqual(2);
+              expect(await opened.getAttribute("data-body-ready"), "the body has not arrived yet").toBeNull();
               await page.evaluate(() => {
                 (window as Window & { deliverLatestBody(): void }).deliverLatestBody();
               });
+              // Read the line only once the body has landed: before it, the gap above already holds.
+              await page.locator('[data-conv-id="w5"][aria-current="true"][data-body-ready]').waitFor();
               await opened.locator(".msg-p").first().waitFor();
               await expect
                 .poll(async () => Math.abs((await gap()) - 14), {
@@ -390,10 +395,20 @@ export function readerLayoutCases() {
               const opened = page.locator('[data-conv-id="w5"]');
               const gap = () => opened.evaluate(readingGap);
               if (late) {
-                await expect.poll(gap).toBeGreaterThan(50);
+                await expect.poll(async () => Math.abs((await gap()) - 14)).toBeLessThanOrEqual(2);
+                expect(
+                  await opened.getAttribute("data-body-ready"),
+                  "the body has not arrived yet",
+                ).toBeNull();
                 await page.evaluate(() =>
                   (window as Window & { deliverLatestBody(): void }).deliverLatestBody(),
                 );
+                await page.locator('[data-conv-id="w5"][data-body-ready]').waitFor();
+                await expect
+                  .poll(async () => Math.abs((await gap()) - 14), {
+                    message: "the opened letter stays on the reading line once its body has landed",
+                  })
+                  .toBeLessThanOrEqual(2);
               }
               const photo = opened.frameLocator("iframe").getByRole("img", { name: "Project photo" });
               await expect.poll(() => photo.evaluate((el: HTMLImageElement) => !el.complete)).toBe(true);
