@@ -151,6 +151,7 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "ohmail-backup-exclusions": "a build plugin's name in the phone app",
   "ohmail-host-pinning-install": "a build plugin's name in the phone app",
   "ohmail-live-text-size": "a build plugin's name in the phone app",
+  "ohmail-optional-screen-orientation": "a build plugin's name in the phone app",
   "ohmail-release-minification": "a build plugin's name in the phone app",
   "ohmail-wake-push-renderer": "a build plugin's name in the phone app",
   "ohmail-ios-scene-lifecycle": "a build plugin's name in the phone app",

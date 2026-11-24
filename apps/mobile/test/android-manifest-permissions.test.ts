@@ -72,3 +72,21 @@ describe("the Android manifest's lines for the shell's web view", () => {
     expect(app.$["android:requestLegacyExternalStorage"]).not.toBe("true");
   }, 60_000);
 });
+
+describe("the Android manifest's screen features", () => {
+  /*
+   * An activity locked to portrait makes Google Play treat `android.hardware.screen.portrait` as
+   * required, which hides the app from devices without a portrait screen (some tablets,
+   * desktops, Android XR). The barcode scanner's library ships such an activity, an invisible
+   * delegate, so the app states that neither orientation is required; the Gradle merge keeps the
+   * app's own declaration over the implied one.
+   */
+  it("requires neither a portrait nor a landscape screen", async () => {
+    const features = ((await introspectedManifest())["uses-feature"] ?? []) as Perm[];
+    for (const name of ["android.hardware.screen.portrait", "android.hardware.screen.landscape"]) {
+      const declared = features.filter((f) => f.$["android:name"] === name);
+      expect(declared, `${name} is not declared optional`).toHaveLength(1);
+      expect(declared[0]!.$["android:required"]).toBe("false");
+    }
+  }, 60_000);
+});
