@@ -328,7 +328,7 @@ describe("the signature block — the webapp composer's strings and rules", () =
     // `&& later === null` is the Send-later picker's panel-height yield (mail 0077) — what is
     // SHOWN steps aside while a time is chosen; what SHIPS is untouched (`send-later.test.ts`).
     expect(actions).toMatch(/\{sigText !== null && later === null \? \(/);
-    expect(actions).toMatch(/accessibilityLabel=\{Copy\.sigRemove\}/);
+    expect(actions).toMatch(/disabled=\{phase !== "idle"\}\s*accessibilityState=\{\{ disabled: phase !== "idle" \}\}\s*accessibilityRole="button"\s*accessibilityLabel=\{Copy\.sigRemove\}/);
     expect(actions).toMatch(/setSig\(\{ kind: "removed" \}\)/);
     expect(actions).toMatch(/setSig\(\{ kind: "edited", text \}\)/);
   });

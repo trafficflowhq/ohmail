@@ -23,6 +23,7 @@
       "consent_declined": "Der Kalenderzugriff wurde abgelehnt.",
       "admin_consent_required": "Deine Organisation muss den Kalenderzugriff genehmigen.",
       "consent_failed": "Der Anbieter konnte den Kalenderzugriff nicht genehmigen.",
+      "session_expired": "Deine ohmail-Sitzung ist abgelaufen. Melde dich erneut an und verbinde dann deinen Kalender.",
       "state_expired": "Diese Kalenderanmeldung ist abgelaufen. Beginne erneut.",
       "state_invalid": "Diese Kalenderanmeldung ist nicht mehr gültig. Beginne erneut.",
       "account_mismatch": "Diese Kalenderanmeldung wurde mit einem anderen ohmail-Account gestartet.",

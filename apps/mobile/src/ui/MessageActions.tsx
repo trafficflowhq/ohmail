@@ -2504,7 +2504,9 @@ export function ComposeSheet({
                 {paperEditor ? null : <Txt variant="caption" tone="ink3">{Copy.sigLabel}</Txt>}
                 <View style={{ flex: 1 }} />
                 <Tap
-                  onPress={phase === "idle" ? () => setSig({ kind: "removed" }) : undefined}
+                  onPress={() => { if (phase === "idle") setSig({ kind: "removed" }); }}
+                  disabled={phase !== "idle"}
+                  accessibilityState={{ disabled: phase !== "idle" }}
                   accessibilityRole="button"
                   accessibilityLabel={Copy.sigRemove}
                   style={{ padding: 8, marginRight: -8 }}
