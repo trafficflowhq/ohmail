@@ -78,6 +78,37 @@ describe("where the reader starts", () => {
     ]);
   });
 
+  it("keeps a non-Apple Apple Account email and app password when discovery redirects to a numbered host", async () => {
+    const redirects: Record<string, string> = {};
+    const s = await server({
+      user: ["mila", "mail.example.test"].join("@"),
+      password: ["blue", "hand", "clay", "kiln"].join("-"),
+      sendsOn: redirects,
+    });
+    const start = `http://caldav.example.test:${s.port}`;
+    const numbered = `http://p01-caldav.example.test:${s.port}`;
+    redirects["/.well-known/caldav"] = numbered + s.paths.start;
+    s.addCalendar("work");
+
+    const reader = ownNetworkByName();
+    const listed = await reader.listCalendars(signIn(s, start), signal());
+    expect(listed.ok && listed.value.map((calendar) => calendar.id)).toEqual([numbered + s.paths.collection("work")]);
+    expect(s.seen.map(({ host, signedIn }) => [host, signedIn])).toEqual([
+      [new URL(start).host, true],
+      [new URL(numbered).host, true],
+      [new URL(numbered).host, true],
+      [new URL(numbered).host, true],
+    ]);
+
+    s.seen.length = 0;
+    const rejected = await reader.listCalendars(signIn(s, start, "incorrect"), signal());
+    expect(rejected).toEqual({ ok: false, reason: "sign_in_refused", retryAfterMs: null });
+    expect(s.seen.map(({ host, withCredential, signedIn }) => [host, withCredential, signedIn])).toEqual([
+      [new URL(start).host, true, false],
+      [new URL(numbered).host, true, false],
+    ]);
+  });
+
   it("asks the typed address first when it names a path", async () => {
     const s = await server({ wellKnown: "missing" });
     expect((await ownNetwork().checkSignIn(signIn(s, here(s, "/dav/")), signal())).ok).toBe(true);

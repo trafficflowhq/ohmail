@@ -46,7 +46,7 @@ describe("a refused sign-in", () => {
     fireEvent.keyDown(screen.getByLabelText("App-specific password"), { key: "Enter" });
     expect(connect).toHaveBeenCalledTimes(1);
     await act(async () => answer({ kind: "refused", fault: "sign_in_refused" }));
-    expect(screen.getByText(/iCloud takes an app-specific password/)).toBeTruthy();
+    expect(screen.getByText(/iCloud did not accept this sign-in/)).toBeTruthy();
     expect(connect).toHaveBeenCalledTimes(1);
   });
 
@@ -57,7 +57,7 @@ describe("a refused sign-in", () => {
         ["Apple Account email address", "person"],
         ["App-specific password", "secret"],
       ],
-      /iCloud takes an app-specific password/,
+      /iCloud did not accept this sign-in/,
     ],
     [
       "caldav",
@@ -91,17 +91,21 @@ describe("a refused sign-in", () => {
     );
     const port = setupPort(async () => ["icloud"]);
     const { address } = mountFrame(
-      "#/cal/cal-setup?step=calendars&way=icloud&connection=conn-1",
+      "#/cal/cal-setup?step=calendars&way=icloud&connection=conn-1&from=settings",
       world,
       port,
     );
     await act(async () => undefined);
-    expect(screen.getByText(/iCloud takes an app-specific password/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Apple Account email address at appleid\.apple\.com.*app-specific password created there/,
+      ),
+    ).toBeTruthy();
     expect(doors(port).every((door) => door.mock.calls.length === 0)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await act(async () => undefined);
-    expect(address.writes.at(-1)?.next).toMatch(/step=signin&way=icloud&again=conn-1/);
+    expect(address.writes.at(-1)?.next).toMatch(/step=signin&way=icloud&again=conn-1&from=settings/);
     expect(doors(port).every((door) => door.mock.calls.length === 0)).toBe(true);
   });
 

@@ -103,7 +103,7 @@
       "open": "Open the calendar"
     },
     "fault": {
-      "signInRefused": "That sign-in was not accepted. iCloud takes an app-specific password, made at Apple, not the account’s own.",
+      "signInRefused": "iCloud did not accept this sign-in. Check your Apple Account email address at appleid.apple.com and use an app-specific password created there for that account.",
       "signInRefusedCaldav": "The server did not accept the username and password. Check them and the server address.",
       "signInRefusedIcs": "The feed asked for a sign-in.",
       "signInAgain": "The sign-in is no longer accepted. Sign in again.",
