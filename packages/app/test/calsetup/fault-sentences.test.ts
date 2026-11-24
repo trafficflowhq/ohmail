@@ -1,5 +1,5 @@
 /**
- * EACH FAULT'S SENTENCE IS IN BOTH CATALOGUES, and a refused sign-in names the app-specific password.
+ * EACH FAULT'S SENTENCE IS IN BOTH CATALOGUES, and an iCloud refusal names both sign-in details.
  */
 import { describe, expect, it } from "vitest";
 import { CONNECT_FAULT_KEYS } from "@ohmail/app-logic/calendar/setup";
@@ -27,12 +27,12 @@ describe("the setup's fault sentences in the catalogues", () => {
     expect(setupFaultKeyOf("host_changed", "icloud")).toBe("fault.addressRefused");
   });
 
-  it("names the app-specific password when a sign-in was refused", () => {
+  it("names the Apple Account email and where to create its app-specific password", () => {
     expect(said(calsetupEn.calsetup as Tree, CONNECT_FAULT_KEYS.sign_in_refused)).toMatch(
-      /app-specific password/,
+      /Apple Account email address at appleid\.apple\.com.*app-specific password created there/,
     );
     expect(said(calsetupDe.calsetup as Tree, CONNECT_FAULT_KEYS.sign_in_refused)).toMatch(
-      /App-spezifisches Passwort/,
+      /E-Mail-Adresse deines Apple Accounts auf appleid\.apple\.com.*app-spezifisches Passwort, das du dort/,
     );
   });
   it.each([

@@ -103,7 +103,7 @@
       "open": "Kalender öffnen"
     },
     "fault": {
-      "signInRefused": "Diese Anmeldung wurde nicht angenommen. iCloud braucht ein App-spezifisches Passwort, erstellt bei Apple, nicht das Passwort des Accounts.",
+      "signInRefused": "iCloud hat diese Anmeldung nicht angenommen. Prüfe die E-Mail-Adresse deines Apple Accounts auf appleid.apple.com und verwende ein app-spezifisches Passwort, das du dort für diesen Account erstellt hast.",
       "signInRefusedCaldav": "Der Server hat den Benutzernamen und das Passwort nicht angenommen. Prüfe beides und die Serveradresse.",
       "signInRefusedIcs": "Der Feed verlangt eine Anmeldung.",
       "signInAgain": "Die Anmeldung gilt nicht mehr. Melde dich neu an.",
