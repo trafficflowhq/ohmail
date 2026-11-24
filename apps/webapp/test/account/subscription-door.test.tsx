@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -246,6 +246,100 @@ describe("the press over the real filling", () => {
     await settle();
     expect(screen.getByText(price)).toBeTruthy();
     expect(screen.getByRole("button", { name: en.settings.storageAddStorage })).toBeTruthy();
+  });
+
+  const MAILBOX_UNIT = { amount: 300, maxUnits: 10 };
+  it.each([
+    { canChange: true, held: 0, offered: true },
+    { canChange: true, held: MAILBOX_UNIT.maxUnits - 1, offered: true },
+    { canChange: false, held: 0, offered: false },
+  ])("offers one more mailbox at any count while changes are allowed ($canChange, $held held)", async ({ canChange, held, offered }) => {
+    access = open({
+      ...NEAR,
+      offer: { ...OFFER, canChange, mailboxAddon: MAILBOX_UNIT, current: { ...OFFER.current, addonMailboxes: held } },
+    });
+    await mounted(() => {}, "account-subscription");
+    await settle();
+    expect(screen.queryByRole("button", { name: ownEn.accountSubscription.addMailbox }) !== null).toBe(offered);
+    if (offered) expect(screen.getByText("+1 mailbox · $3/month")).toBeTruthy();
+    expect(server.sent).toEqual([]);
+  });
+
+  it("Add an extra mailbox with storage at its cap: one change asked, the factor on refusal, and Cancel sends nothing more", async () => {
+    const CHANGE = "POST /api/account/manage-link/change";
+    access = open({
+      ...NEAR,
+      offer: {
+        ...OFFER,
+        mailboxAddon: MAILBOX_UNIT,
+        current: { ...OFFER.current, addonUnits: OFFER.addon.maxUnits, addonMailboxes: 0 },
+      },
+    });
+    const { bindApiOwner } = await import("../../app/api-client");
+    const owner = "account-subscription";
+    server.answer(CHANGE, refusal(403, "step_up_required"));
+    server.answer("GET /api/auth/session", json({
+      scope: "full",
+      user: {
+        userId: "user-under-test",
+        accountId: owner,
+        displayName: "Mila",
+        emailVerified: true,
+        twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: false },
+      },
+    }));
+    /* The client speaks for the account the pane draws, as a signed-in tab's does. */
+    bindApiOwner(owner);
+    try {
+      await mounted(() => {}, owner);
+      await settle();
+      expect(screen.queryByRole("button", { name: en.settings.storageAddStorage })).toBeNull();
+      server.forget();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: ownEn.accountSubscription.addMailbox }));
+      });
+      await settle();
+      expect(server.on(CHANGE).map((s) => s.body)).toEqual([{ lang: "en" }]);
+      const factor = await screen.findByRole("dialog", { name: en.stepUp.titleCode.replace(/\.$/, "") });
+      await act(async () => {
+        fireEvent.click(within(factor).getByRole("button", { name: en.stepUp.cancel }));
+      });
+      await settle();
+      expect(screen.queryByRole("dialog", { name: en.stepUp.titleCode.replace(/\.$/, "") })).toBeNull();
+      expect(server.sent.filter((s) => !s.line.startsWith("GET ")).map((s) => s.line)).toEqual([CHANGE]);
+      expect(server.left).toEqual([]);
+    } finally {
+      bindApiOwner(null);
+    }
+  });
+
+  it("says when every extra mailbox is added, and offers none", async () => {
+    access = open({
+      ...NEAR,
+      offer: { ...OFFER, mailboxAddon: MAILBOX_UNIT, current: { ...OFFER.current, addonMailboxes: MAILBOX_UNIT.maxUnits } },
+    });
+    await mounted(() => {}, "account-subscription");
+    await settle();
+    expect(screen.queryByRole("button", { name: ownEn.accountSubscription.addMailbox })).toBeNull();
+    expect(screen.getByText("All 10 extra mailboxes added")).toBeTruthy();
+  });
+
+  it("says the month's AI credits against the allowance, and the screening credits apart with their last day", async () => {
+    const { dayStamp } = await import("../../app/shell/format");
+    const until = "2027-02-01T12:00:00.000Z";
+    access = {
+      ...open(NEAR),
+      lifecycle: { state: "active", closedReason: null },
+      aiCredits: { remaining: 2_885, total: 4_000, setup: { remaining: 16_000, expiresAt: until } },
+    };
+    await mounted();
+    await settle();
+    expect(screen.getByText("2,885 of 4,000 this month")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Screening credits" }).textContent).toContain("16,000 left");
+    expect(
+      screen.getByText(`Spent on Screener suggestions before your plan’s budget. Usable until ${dayStamp(until)}.`),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toContain("18,885");
   });
 
   it("makes no address by being drawn, and asks nothing to draw the pane", async () => {

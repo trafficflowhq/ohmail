@@ -1,5 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { createPortal } from "react-dom";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Answer, FactorSlot, GatedAsk } from "../../../src/account/contract.js";
 import type { Enrolled, SecurityDoor, SecurityModel } from "../../../src/account/security/model.js";
@@ -138,6 +140,19 @@ describe("new codes are asked for before they replace the set", () => {
     expect(confirmNewCodes).not.toHaveBeenCalled();
     fireEvent.click(question.getByRole("button", { name: sec("codesConfirm") }));
     expect(confirmNewCodes).toHaveBeenCalledTimes(1);
+  });
+
+  it("the question stands over the whole window, outside the pane that holds it, so the pane can neither clip nor move it", () => {
+    const { container } = render(
+      <portalRenderer.Provider value={createPortal}>
+        <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
+          <SecurityPane model={STATES.asked.model} factor={noFactor} />
+        </TextProvider>
+      </portalRenderer.Provider>,
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(container.contains(dialog)).toBe(false);
+    expect(dialog.closest(".oh-over")?.parentElement).toBe(document.body);
   });
 
   it("shows the new set once with what to do, and Done; the verb that replaces it is away meanwhile", () => {

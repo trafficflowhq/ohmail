@@ -7,6 +7,22 @@
  * excluded. Names: self-declared (From) beats observed (To/Cc/draft) as a
  * hard tier — a wrong drafted name cannot re-elect itself; within a tier
  * most recent, then longer; empty never. Recomputed per render.
+ *
+ * Where a name may come from, strongest first: a From the sender's own
+ * provider passed (`authVerdict: "pass"`); the To/Cc of a letter the account
+ * started itself (a sent draft that answers nothing), unless a letter nobody
+ * vouched for paired that same name with the address; a From that carries no
+ * verdict to read, which is every letter of a mailbox whose provider gives
+ * none (Microsoft, iCloud, Fastmail, self-hosted); and last the To/Cc of a
+ * Sent copy or a sent reply. A reply copies the names of the letter it
+ * answers, and a Sent copy cannot show whether it was one, so those labels
+ * name an address only where nothing else does, also once the letter they
+ * answered has left the mirror.
+ * A From marked "fail" and a received letter's To/Cc still put the address in
+ * the book, with no name: a spoofed letter pairing "PayPal Service" with a
+ * person's address named that person on the next letter written to them.
+ * Being derived per render, the rule also covers every name an earlier rule
+ * took from such a letter.
  */
 import type { EmailAddress, EngineDraft, EngineMessage } from "@ohmail/wire";
 import { counterpartyEvidence, type CounterpartyEvidence } from "@trafficflow/core/sender-headers";
@@ -20,10 +36,12 @@ export interface AddressBookEntry {
    * The display name this address wears, or `""` when none was ever claimed for it.
    *
    * The name the ADDRESS OWNER last signed with — the most recent non-empty display name on a
-   * message whose `from` is this address. Only when they have never written does a label
-   * somebody else addressed them by stand in, and then the most recent of those. See the
-   * header: a third party's name for a person is not evidence about that person's name, and
-   * the previous longest-wins rule made one such label permanent.
+   * message whose `from` is this address and whose sender check passed. Only when there is none
+   * does a label stand in that the account gave them on a letter it started itself, the most
+   * recent of those; then the most recent From name that carried no verdict to read; last a
+   * Sent copy's or a sent reply's label.
+   * A From marked "fail" names nobody. See the header: a third party's name for a person is not evidence about that
+   * person's name, and the previous longest-wins rule made one such label permanent.
    */
   name: string;
   /** How many messages and drafts this address appears on. */
@@ -41,6 +59,11 @@ export interface AddressBookEntry {
    * caller building an entry has to say which it is.
    */
   evidence: CounterpartyEvidence;
+  /**
+   * `true` where {@link name} is one nobody checked: a From with no verdict to read, or a Sent copy's
+   * or a reply's label. Shown in suggestions; never written for the person unless they pick it.
+   */
+  nameUnchecked?: true;
 }
 
 /** Local parts that no reply can reach. Compared after stripping non-letters. */
@@ -72,10 +95,14 @@ export function isRobotAddress(address: string): boolean {
  * address owner's own. See the header.
  */
 
-/** A To/Cc header, or a sent draft's recipient — somebody ELSE's label for this person. */
-const OBSERVED = 0;
-/** A From header — the address owner saying what they are called. */
-const SELF = 1;
+/** A To/Cc of a Sent copy or a sent reply: it may repeat the name the answered letter gave. Used only where nothing else names the address. */
+const COPIED = 0;
+/** A From with no verdict to read — the provider gives none. */
+const WEAK = 1;
+/** A recipient of a letter the account started itself — the account's label for this person. */
+const OBSERVED = 2;
+/** A From the sender's provider passed — the address owner saying what they are called. */
+const SELF = 3;
 /** No name held. Below every real tier, so the first non-empty claim from ANY source takes it. */
 const NONE = -1;
 
@@ -179,6 +206,10 @@ function addTo(
   prev.nameAt = nameAt;
 }
 
+/** The address alone: it counts as an appearance and claims no name. */
+const unnamed = (who: EmailAddress | null | undefined): EmailAddress | null =>
+  who ? { ...who, name: null } : null;
+
 /**
  * The parsed `Date:`, or `null` where there was none or it would not parse.
  *
@@ -233,12 +264,25 @@ export function addressBook(
     })),
   ]);
 
+  /* Every name a letter nobody vouched for paired with an address. A reply copies its letter's From
+     and Cc with their names, so the account's own sent copy repeats such a name without choosing it. */
+  const pair = (who: EmailAddress) => `${who.address.trim().toLowerCase()}\n${(who.name ?? "").trim().toLowerCase()}`;
+  const unvouched = new Set<string>();
+  for (const m of rows) {
+    if (isOwnSent(m)) continue;
+    const heard = [...(m.to ?? []), ...(m.cc ?? []), ...(m.from && m.authVerdict !== "pass" ? [m.from] : [])];
+    for (const who of heard) if (who?.address && who.name?.trim()) unvouched.add(pair(who));
+  }
+  const ours = (who: EmailAddress | null | undefined) => (who && unvouched.has(pair(who)) ? unnamed(who) : who);
+
   for (const m of rows) {
     const at = stamp(m.date);
-    // The From is the only SELF-declared name in the whole walk — see the header.
-    addTo(into, m.from, at, SELF, now);
-    for (const who of m.to ?? []) addTo(into, who, at, OBSERVED, now);
-    for (const who of m.cc ?? []) addTo(into, who, at, OBSERVED, now);
+    // The From is the only self-declared name in the whole walk — see the header. A pass is the
+    // strongest name; no verdict to read is a weak one; a "fail" names nobody.
+    const verdict = m.authVerdict ?? null;
+    addTo(into, verdict === "fail" ? unnamed(m.from) : m.from, at, verdict === "pass" ? SELF : WEAK, now);
+    const own = isOwnSent(m);
+    for (const who of [...(m.to ?? []), ...(m.cc ?? [])]) addTo(into, own ? ours(who) : unnamed(who), at, COPIED, now);
   }
 
   for (const d of reader.list<EngineDraft>("draft")) {
@@ -248,18 +292,19 @@ export function addressBook(
     const at = stamp(d.updatedAt ?? d.createdAt);
     // OBSERVED, and this is the tier that closes the loop: accepting a suggestion writes
     // `Name <address>` into the draft, so a name chosen here comes back through this very
-    // list. At `SELF` it would re-elect itself for ever.
-    for (const who of d.to ?? []) addTo(into, who, at, OBSERVED, now);
-    for (const who of d.cc ?? []) addTo(into, who, at, OBSERVED, now);
+    // list. At `SELF` it would re-elect itself for ever. A reply's names are its letter's.
+    const tier = d.inReplyToMessageId ? COPIED : OBSERVED;
+    for (const who of [...(d.to ?? []), ...(d.cc ?? [])]) addTo(into, ours(who), at, tier, now);
   }
 
   const blocked = new Set((opts.exclude ?? []).map((a) => a.trim().toLowerCase()));
   return [...into.values()]
     .filter((e) => !blocked.has(e.address))
     // The working fields go no further than this function — see {@link Acc}.
-    .map(({ nameTier: _t, nameAt: _a, ...entry }) => ({
+    .map(({ nameTier, nameAt: _a, ...entry }) => ({
       ...entry,
       evidence: evidence.get(entry.address) ?? "sender_named",
+      ...(nameTier !== NONE && nameTier <= WEAK ? { nameUnchecked: true as const } : {}),
     }))
     .sort(byRank);
 }

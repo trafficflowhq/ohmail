@@ -50,6 +50,18 @@ describe("storageFactsOf", () => {
     expect(storageFactsOf(block({ card: "soon", limitReason: "gift" }))).toMatchObject({ card: null, limitReason: "plan" });
   });
 
+  it("carries the extra-mailbox unit and the extra mailboxes held; an unreadable unit is no offer", () => {
+    const offer = storageOfferOf({
+      ...OFFER,
+      mailboxAddon: { amount: 300, maxUnits: 10 },
+      current: { ...OFFER.current, addonMailboxes: 3 },
+    });
+    expect(offer?.mailboxAddon).toEqual({ amount: 300, maxUnits: 10 });
+    expect(offer?.current?.addonMailboxes).toBe(3);
+    expect(storageOfferOf(OFFER)).not.toHaveProperty("mailboxAddon");
+    expect(storageOfferOf({ ...OFFER, mailboxAddon: { amount: 2.5, maxUnits: 10 } })).toBeNull();
+  });
+
   it("an offer missing a field, or with a price that is not a whole count, is no offer", () => {
     expect(storageOfferOf(OFFER)?.canChange).toBe(true);
     expect(storageOfferOf({ ...OFFER, currency: "dollars" })).toBeNull();

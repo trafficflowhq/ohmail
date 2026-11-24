@@ -42,6 +42,11 @@ describe("the setup's fault sentences", () => {
     expect(Object.keys(CONNECT_FAULT_KEYS).sort()).toEqual(Object.keys(WIRE_WORDS).sort());
   });
 
+  it("says a host the server no longer names as a move, never as a server that could not be found", () => {
+    expect(connectFaultKeyOf("host_changed")).toBe("fault.hostMoved");
+    expect(connectFaultKeyOf("host_unresolved")).toBe("fault.hostUnknown");
+  });
+
   it("says a word it does not know, and a word of the object's own, as unknown", () => {
     expect(connectFaultKeyOf("sign_in_refused")).toBe("fault.signInRefused");
     expect(connectFaultKeyOf("the provider said: wrong password for mila")).toBe("fault.unknown");

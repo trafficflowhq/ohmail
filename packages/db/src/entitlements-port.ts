@@ -147,7 +147,12 @@ export interface StorageOffer {
   plans: StorageOfferPlan[];
   /** One unit's room and price, with the unit cap. The price is quoted in `interval` when stated, else the plan interval. */
   addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
-  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" } | null;
+  /** One extra mailbox's price, monthly on either plan interval, with the unit cap; absent where none is offered. */
+  mailboxAddon?: { amount: number; maxUnits: number; interval: "month" };
+  /** `addonMailboxes`: the extra mailboxes paid or scheduled, where the program states them. */
+  current: {
+    plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment"; addonMailboxes?: number;
+  } | null;
   fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean } | null;
   canChange: boolean;
   reason: string | null;
@@ -160,6 +165,16 @@ export interface StorageTold {
   at: string;
 }
 
+/**
+ * The AI credits as the program states them: the main balance against the monthly allowance (the trial's pot during a
+ * trial), and the separate one-time setup pool with its expiry while it holds credits. The pools are never added.
+ */
+export interface AiCreditsRead {
+  remaining: number;
+  total?: number;
+  setup?: { remaining: number; expiresAt: string | null };
+}
+
 /** May this account use the service, and within what limits. `prices` absent = unpriced. */
 export type AccessVerdict =
   | {
@@ -167,7 +182,7 @@ export type AccessVerdict =
     trialStorage?: TrialStorageCarry; storageOffer?: StorageOffer | null; storageTold?: StorageTold;
     /** Current permission to use already admitted AI work, independent of remaining balance. */
     dispatchAiEnabled?: boolean;
-    aiCredits?: { remaining: number; total?: number };
+    aiCredits?: AiCreditsRead;
   }
   | {
       ok: false;

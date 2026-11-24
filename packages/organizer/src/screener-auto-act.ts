@@ -5,7 +5,7 @@ import {
   applyScreenerDecision, rerouteAdvisedLetter, rerouteUnconfirmedHeld, unconfirmedSql, recordChanges, fencedAccountWrite,
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
-  screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, onServerPool, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
+  screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, onServerPool, senderIsActiveSql, heldSenderKeysSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
   notGoneSql, readGoneMailboxIds, readListAddressesLetIn,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
@@ -651,9 +651,7 @@ async function selectWaitingSenders(
       notGoneSql(d, messages.mailboxId, gone),
     ));
   const reps = held.as("reps");
-  const candidates = onServerPool(db) ? sql`
-    select lower(from_address) from (${held}) held
-    where rank = 1 and held_arrival = 0` : undefined;
+  const candidates = onServerPool(db) ? heldSenderKeysSql(d, opts.accountId, gone) : undefined;
 
   /* THE OUTER ROW'S ADDRESS, NAMED WITH ITS TABLE, for the two subqueries below. This select reads
      one table, and there the query builder writes a column inside a selected `sql` field without
@@ -668,54 +666,53 @@ async function selectWaitingSenders(
     fromAddress: reps.fromAddress,
     // ANY held message of the sender, not the representative: advice is bought on one message, and
     // the newest may be the benign one (mail 0148).
-    identityHeld: sql<boolean | number>`exists (
-      select 1 from ${messages} im
+    identityHeld: sql<boolean | number>`(${repSender} in (
+      select lower(im.from_address) from ${messages} im
         join ${folderState} ifs on ifs.message_id = im.id
        where im.account_id = ${opts.accountId}
-         and lower(im.from_address) = ${repSender}
          and ifs.desired_folder = ${SCREENER_FOLDER}
          and im.deleted_at is null
          and (im.sender_check = 'impersonation' or im.unconfirmed_hold is true)
-    )`,
+    )) is true`,
     // The same reach for the provider's word, in every mailbox of the account: the decision's door
     // moves them all.
-    unconfirmedHeld: sql<boolean | number>`exists (
-      select 1 from ${messages} um
+    unconfirmedHeld: sql<boolean | number>`(${repSender} in (
+      select lower(um.from_address) from ${messages} um
         join ${folderState} ufs on ufs.message_id = um.id
        where um.account_id = ${opts.accountId}
-         and lower(um.from_address) = ${repSender}
          and ufs.desired_folder = ${SCREENER_FOLDER}
          and um.deleted_at is null
          and ${unconfirmedSql(sql`um.auth_verdict`)}
-    )`,
+    )) is true`,
     // The deny's reach: only letters an automatic filing may move, so a put-back one neither takes a
     // turn to file nothing nor holds back the rule of advice on a confirmed letter.
-    unconfirmedFileable: sql<boolean | number>`exists (
-      select 1 from ${messages} pm
+    unconfirmedFileable: sql<boolean | number>`(${repSender} in (
+      select lower(pm.from_address) from ${messages} pm
         join ${folderState} pfs on pfs.message_id = pm.id
        where pm.account_id = ${opts.accountId}
-         and lower(pm.from_address) = ${repSender}
          and pfs.desired_folder = ${SCREENER_FOLDER}
          and pm.deleted_at is null
          and pfs.auto_filing_undone_at is null
          and ${unconfirmedSql(sql`pm.auth_verdict`)}
-    )`,
+    )) is true`,
   }).from(reps)
     .where(and(
       eq(reps.rank, 1),
       // The row on screen has a copy on record: outside the window, so a sender whose newest
       // letter's copy is gone waits for the reaper, as the suggest pass does.
-      copyOnRecord(sql`${sql.identifier("reps")}.${sql.identifier(messages.id.name)}`),
+      // Asked per representative by its id (`is true` keeps it from becoming a join the planner
+      // runs as a scan of every copy per representative).
+      sql`${copyOnRecord(sql`${sql.identifier("reps")}.${sql.identifier(messages.id.name)}`)} is true`,
       // No held letter of the sender, with `identityHeld`'s reach, that an automatic path may not read.
-      sql`not exists (
-        select 1 from ${messages}
+      // One set, hashed: a correlated probe per sender became a nested loop.
+      sql`(${repSender} in (
+        select lower(${messages.fromAddress}) from ${messages}
           join ${folderState} on ${folderState.messageId} = ${messages.id}
          where ${messages.accountId} = ${opts.accountId}
-           and lower(${messages.fromAddress}) = ${repSender}
            and ${folderState.desiredFolder} = ${SCREENER_FOLDER}
            and ${messages.deletedAt} is null
            and not ${automaticAiAdmits(messages)}
-      )`,
+      )) is not true`,
       sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone, { candidates })})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))

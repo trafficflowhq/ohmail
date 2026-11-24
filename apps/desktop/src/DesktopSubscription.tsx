@@ -111,7 +111,7 @@ export function useDesktopManageOffer(accountDoor: boolean, scope: string | null
       answeredAt.current = Date.now();
       setState(withdrawn.current ? "not-offered" : next);
       setStorage(body?.metered === true ? storageFactsOf(body.storage) : null);
-      setCredits({ scope, value: body?.metered === true && body.access === "open" ? aiCreditsOf(body.aiCredits) : null });
+      setCredits({ scope, value: body?.metered === true && body.access === "open" ? aiCreditsOf(body.aiCredits, body.lifecycle) : null });
       setLifecycleState(typeof body?.lifecycle?.state === "string" ? body.lifecycle.state : null);
       return true;
     })().finally(() => { if (flight.current === read) flight.current = null; });

@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { CONNECT_FAULT_KEYS } from "@ohmail/app-logic/calendar/setup";
+import { setupFaultKeyOf } from "../../src/calsetup/setup-fault.js";
 import calsetupDe from "../../messages/calsetup.de.json" with { type: "json" };
 import calsetupEn from "../../messages/calsetup.en.json" with { type: "json" };
 
@@ -21,6 +22,11 @@ describe("the setup's fault sentences in the catalogues", () => {
     }
   });
 
+  it("says a host refused while connecting as an address calendars are not read from, and nothing it would try again", () => {
+    expect(setupFaultKeyOf("host_changed", "caldav")).toBe("fault.addressRefused");
+    expect(setupFaultKeyOf("host_changed", "icloud")).toBe("fault.addressRefused");
+  });
+
   it("names the app-specific password when a sign-in was refused", () => {
     expect(said(calsetupEn.calsetup as Tree, CONNECT_FAULT_KEYS.sign_in_refused)).toMatch(
       /app-specific password/,
@@ -36,6 +42,11 @@ describe("the setup's fault sentences in the catalogues", () => {
       /Benutzernamen und das Passwort.*Serveradresse/,
     ],
     ["fault.signInRefusedIcs", /feed asked for a sign-in/, /Feed verlangt eine Anmeldung/],
+    [
+      "fault.hostMoved",
+      /moved its calendars.*tried again by itself/,
+      /Kalender an eine andere Adresse verlegt.*von selbst erneut/,
+    ],
   ])("gives %s its own guidance in both languages", (key, en, de) => {
     expect(said(calsetupEn.calsetup as Tree, key)).toMatch(en);
     expect(said(calsetupDe.calsetup as Tree, key)).toMatch(de);

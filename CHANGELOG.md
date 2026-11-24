@@ -21,6 +21,32 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.2] — 2026-11-24
+
+### CalDAV calendars keep syncing when the provider moves them to another of its servers
+
+iCloud can move an account's calendars from one of its numbered servers to another. ohmail now reads and edits a calendar at the server the provider names today, lists each calendar once, and merges the second copies an earlier listing kept, leaving the calendar that holds your events and your choice for new events. A connection waiting on such a move now says that the server moved its calendars instead of saying that the server could not be found.
+
+### Calendar setup starts with provider buttons
+
+Choose a calendar provider directly from the buttons on web, desktop, and phone.
+
+### Embedded pictures load without signing in again for each one
+
+A letter with several pictures in its text no longer makes the server sign in to your mail server once per picture. The sign-in made for the first picture serves the next ones of the same mailbox for a few seconds, so a letter with eight pictures shows them in less than half the time, on the desktop and wherever the server runs as one long-lived process. A connection is only ever reused for the same mailbox and the same stored sign-in, and closes after ten seconds without use.
+
+### Mail lists on the phone fit their rows
+
+The scroll-to-top button sits above the compose button in every list, and a list set aside behind an open letter no longer shows its button through it. On a phone, a News card keeps the sender's name and address each on one line, with the time below the address. Screener lists stand on the same list surface as the Ohbox, no row is selected in advance on a phone, the mailbox chip shortens or steps aside instead of covering the time, and a long address keeps its domain whole while the name gives way. Every mail row shows the sender's address after the name when there is room, conversations and "Me → name" rows included, and the address ends with an ellipsis or disappears rather than showing a stub.
+
+### The opened letter stays put while a long conversation loads its pictures
+
+In a long conversation the opened letter no longer jumps away, or jerks, while the embedded pictures of the letters above it arrive, and it opens on the reading line from its first frame.
+
+### Cloud's background Screener checks stay fast on large accounts
+
+On Cloud, the background checks that file company impersonations and act on or suggest Screener decisions read each waiting sender's other mail once per run instead of once for every waiting sender. On an account with many large mailboxes they no longer run long enough to hit the database time limit and hold up the rest of the account's background work.
+
 ## [2.0.1] — 2026-11-24
 
 ### Google and Microsoft calendar sign-in finishes on the web
@@ -19104,7 +19130,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.2
 [2.0.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.1
 [2.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.0
 [1.0.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.13

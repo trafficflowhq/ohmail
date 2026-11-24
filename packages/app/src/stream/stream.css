@@ -39,6 +39,6 @@
   position: relative;
 }
 
-.fr-frame[data-rail="dock"]:has(.fr-dockbox) .st-phone-list {
-  --oh-sheet-foot-offset: calc(var(--h-xl) + var(--s3));
+.st-phone-list {
+  --oh-sheet-foot-offset: var(--oh-dock-room, 0px);
 }

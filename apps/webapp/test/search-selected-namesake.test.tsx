@@ -8,9 +8,9 @@ it("disambiguates the selected person when a namesake arrives", async () => {
   const initial = await inboxPage(2).json();
   const [rule, first, second] = initial.changes.creates;
   const address = first.entity.from.address as string;
-  const firstLetter = { ...first, entity: { ...first.entity, from: { name: "Ben Arnold", address } } };
+  const firstLetter = { ...first, entity: { ...first.entity, from: { name: "Ben Arnold", address }, authVerdict: "pass" } };
   const secondLetter = { ...second, entity: { ...second.entity,
-    from: { name: "Ben Arnold", address: ["another-ben", "mail.invalid"].join("@") },
+    from: { name: "Ben Arnold", address: ["another-ben", "mail.invalid"].join("@") }, authVerdict: "pass",
   } };
   let namesake = false;
   let delivered = false;

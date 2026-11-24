@@ -26,8 +26,6 @@ export interface OhboxGroupProps {
   model: OhboxListModel;
   beside: OhboxBeside;
   displayOnly?: boolean;
-  /** On the phone the personal tag leaves room for the sender's address. */
-  showTaggedByline?: boolean;
   /** The group's name, said by its heading and its listbox. */
   name: string;
   /** Every row of the group, for its count and its dot. */
@@ -48,7 +46,6 @@ export function OhboxGroup({
   model,
   beside,
   displayOnly = false,
-  showTaggedByline = false,
   name,
   rows,
   from,
@@ -105,7 +102,6 @@ export function OhboxGroup({
               model={model}
               newestFirst={newestFirst}
               beside={beside}
-              showTaggedByline={showTaggedByline}
               squaresBelow={frame?.plan.device === "fold"}
               row={row}
               index={rowBase === undefined ? undefined : rowBase + from + k}
@@ -153,7 +149,6 @@ interface OhboxRowItemProps {
   squaresBelow: boolean;
   model: OhboxListModel;
   beside: OhboxBeside;
-  showTaggedByline: boolean;
   row: OhboxRow;
   index: number | undefined;
   place: { at: number; of: number };
@@ -184,7 +179,6 @@ function OhboxRowItem({
   newestFirst,
   squaresBelow,
   beside,
-  showTaggedByline,
   row,
   index,
   place,
@@ -211,6 +205,8 @@ function OhboxRowItem({
   const alone = to !== undefined && everybody.count === 1 ? to : undefined;
   const people =
     alone === undefined ? everybody.people : [{ name: alone.name ?? alone.address, address: alone.address }];
+  /* "Me → name" says the one it went to by address too, as a sender's row does; not for several. */
+  const sentAddress = to?.name && face.to.length === 1 ? w.mailbox(to.address) : undefined;
   const subject = model.subjectOf(row);
   const unread = model.rowUnread(row);
   const own = model.marksOf(row);
@@ -228,7 +224,7 @@ function OhboxRowItem({
   return (
     <Row
       who={who.who}
-      address={marks || (tag && !showTaggedByline) ? undefined : who.address}
+      address={sent === null ? who.address : sentAddress}
       senderCheck={senderCheck}
       people={people}
       peopleMore={more > 0 ? `+${more}` : undefined}

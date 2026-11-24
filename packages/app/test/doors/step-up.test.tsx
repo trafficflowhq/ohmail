@@ -4,6 +4,8 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPortal } from "react-dom";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { TextProvider } from "../../src/text/index.js";
 import {
   StepUpDialog,
@@ -299,6 +301,37 @@ describe("the step-up dialog: each refusal in its own words", () => {
     draw(fakeDoor({ word: "owner_absent", said }).door, { withOwner: false });
     await settle();
     expect(dialog().textContent).toContain(said);
+  });
+});
+
+describe("the step-up dialog: where it stands", () => {
+  it("stands over the whole window, outside the pane that opened it, so the pane can neither clip nor move it", async () => {
+    const { door } = fakeDoor(CODE_ONLY);
+    const { container } = render(
+      <portalRenderer.Provider value={createPortal}>
+        <TextProvider locale="en" messages={en as never} timeZone="UTC">
+          <div className="pane" style={{ transform: "translateX(0)", overflow: "hidden" }}>
+            <StepUpDialog door={door} onVerified={() => {}} onCancel={() => {}} onDiscarded={() => {}} />
+          </div>
+        </TextProvider>
+      </portalRenderer.Provider>,
+    );
+    await settle();
+    expect(container.contains(dialog())).toBe(false);
+    expect(dialog().closest(".oh-over")?.parentElement).toBe(document.body);
+  });
+
+  it("a question held in its host layer stays where its host put it", async () => {
+    const { door } = fakeDoor(CODE_ONLY);
+    const { container } = render(
+      <portalRenderer.Provider value={createPortal}>
+        <TextProvider locale="en" messages={en as never} timeZone="UTC">
+          <StepUpDialog door={door} inline onVerified={() => {}} onCancel={() => {}} onDiscarded={() => {}} />
+        </TextProvider>
+      </portalRenderer.Provider>,
+    );
+    await settle();
+    expect(container.contains(dialog())).toBe(true);
   });
 });
 

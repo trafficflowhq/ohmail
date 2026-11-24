@@ -155,7 +155,10 @@ export const attachmentRoutes: Route[] = [
     handler: async (req, deps, params) => {
       try {
         const { contentType, filename, body } = await attachments(deps).fetchBytes(
-          serviceContext(deps, req), params.id!, { openAdapter: makeOpenAdapter(deps) },
+          // `keep`: a letter's embedded pictures are one request each, so the next one of this
+          // mailbox reuses this sign-in instead of logging in again; only on a host that lives on.
+          serviceContext(deps, req), params.id!,
+          { openAdapter: makeOpenAdapter(deps, { keep: deps.services?.keepImap === true }) },
         );
         return answerBuilt<"GET /attachments/:id">(new Response(toBody(body), {
           status: 200,

@@ -82,7 +82,7 @@ function OhboxPresentation({
   const far = useJumpBack(scroller);
   useMovingRows(scroller, rowVersion(model));
   const room = useSquaresRoom(scroller);
-  const rows = <OhboxRows {...{ plan, model, beside, replacing }} />;
+  const rows = <OhboxRows {...{ model, beside, replacing }} />;
   return (
     <div
       className="ob-list"
@@ -139,15 +139,8 @@ function OhboxPresentation({
   );
 }
 
-function OhboxRows({
-  plan,
-  model,
-  beside,
-  replacing,
-}: Pick<PaneProps, "plan"> & ReturnType<typeof useListPresentation>) {
+function OhboxRows({ model, beside, replacing }: ReturnType<typeof useListPresentation>) {
   const t = useText("ohbox");
-  const showTaggedByline = plan.device === "phone";
-
   return (
     <>
       {model.groupedResurfaced.length > 0 ? (
@@ -155,7 +148,6 @@ function OhboxRows({
           model={model}
           displayOnly={replacing}
           beside={beside}
-          showTaggedByline={showTaggedByline}
           name={t("resurfacedGroup")}
           rows={model.groupedResurfaced}
           from={0}
@@ -169,7 +161,6 @@ function OhboxRows({
           model={model}
           displayOnly={replacing}
           beside={beside}
-          showTaggedByline={showTaggedByline}
           name={t("newForYou")}
           rows={model.groupedNew}
           from={model.newFrom}
@@ -184,7 +175,6 @@ function OhboxRows({
           model={model}
           displayOnly={replacing}
           beside={beside}
-          showTaggedByline={showTaggedByline}
           name={t("previouslySeen")}
           rows={model.groupedPrev}
           from={model.prevFrom}

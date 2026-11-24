@@ -8,7 +8,9 @@ import {
   aiStep,
   type AiModel,
   type AiState,
+  useAiBudgetSummary,
 } from "../../../src/settings/ai/index.js";
+import { dayStamp } from "@ohmail/app-logic/text/format";
 import { drawn, said } from "./words.js";
 
 afterEach(cleanup);
@@ -115,5 +117,106 @@ describe("the AI pane", () => {
     expect(states.on.address).toBe("screen=settings&sec=ai");
     expect(states.asking.model.enabled).toBeNull();
     expect(states.unreadable.model).toMatchObject({ enabled: null, problem: "u" });
+  });
+});
+
+describe("the AI pane's budget, read the way Subscription reads it", () => {
+  const until = "2027-02-01T12:00:00.000Z";
+  const lineOf = (name: string) => screen.getByRole("group", { name });
+  const on = model({ ...AI_START, enabled: true });
+
+  it("says the month's credits never above the allowance, the rest as extra credits, and the setup credits apart", () => {
+    drawn(
+      <AiPane
+        model={on}
+        noModelSaid=""
+        credits={{ remaining: 18_885, total: 4_000, setup: { remaining: 12_000, expiresAt: until } }}
+      />,
+    );
+    expect(lineOf(said("en", "settingsAi", "budget")).textContent).toContain("4,000 of 4,000 this month");
+    expect(lineOf(said("en", "settingsAi", "creditsExtra")).textContent).toContain("14,885 left");
+    expect(lineOf("Screening credits").textContent).toContain("12,000 left");
+    expect(
+      seen(
+        `Spent on Screener suggestions before your plan’s budget. Usable until ${dayStamp(until, "en", "Europe/Zurich")}.`,
+      ),
+    ).toBe(true);
+    expect(seen("18,885")).toBe(false);
+  });
+
+  it("draws the meter right under the month's line: it measures the month, never the extra or the screening credits", () => {
+    const { container } = drawn(
+      <AiPane
+        model={on}
+        noModelSaid=""
+        credits={{ remaining: 18_885, total: 4_000, setup: { remaining: 12_000, expiresAt: until } }}
+      />,
+    );
+    const meter = container.querySelector("progress")!;
+    expect(meter.value).toBe(4_000);
+    expect(meter.max).toBe(4_000);
+    const month = lineOf(said("en", "settingsAi", "budget"));
+    const after = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(after(month, meter)).toBe(true);
+    expect(after(meter, lineOf(said("en", "settingsAi", "creditsExtra")))).toBe(true);
+    expect(after(meter, lineOf("Screening credits"))).toBe(true);
+  });
+
+  it("a new account reads its whole allowance with no extra line, on the phone too", () => {
+    drawn(<AiPane phone model={on} noModelSaid="" credits={{ remaining: 4_000, total: 4_000 }} />);
+    expect(lineOf(said("en", "settingsAi", "budget")).textContent).toContain("4,000 of 4,000 this month");
+    expect(screen.queryByRole("group", { name: said("en", "settingsAi", "creditsExtra") })).toBeNull();
+    expect(screen.queryByRole("group", { name: said("en", "settingsAi", "setupCredits") })).toBeNull();
+  });
+
+  it("a trial's pot is not a month's", () => {
+    drawn(<AiPane model={on} noModelSaid="" credits={{ remaining: 400, total: 500, trial: true }} />);
+    expect(lineOf(said("en", "settingsAi", "budget")).textContent).toContain("400 of 500 left");
+    expect(seen("this month")).toBe(false);
+  });
+
+  it("says it in German", () => {
+    drawn(
+      <AiPane
+        model={on}
+        noModelSaid=""
+        credits={{ remaining: 18_885, total: 4_000, setup: { remaining: 12_000, expiresAt: until } }}
+      />,
+      "de",
+    );
+    expect(seen("Noch 4.000 von 4.000 diesen Monat")).toBe(true);
+    expect(lineOf(said("de", "settingsAi", "creditsExtra")).textContent).toContain("Noch 14.885");
+    expect(lineOf("Screening-Credits").textContent).toContain("Noch 12.000");
+    expect(
+      seen(
+        `Werden für Screener-Vorschläge vor dem Budget deines Tarifs verbraucht. Nutzbar bis ${dayStamp(until, "de", "Europe/Zurich")}.`,
+      ),
+    ).toBe(true);
+    expect(seen("18.885")).toBe(false);
+  });
+});
+
+describe("the AI entry in the Settings list", () => {
+  function Row({ credits }: { credits: Parameters<typeof useAiBudgetSummary>[0] }) {
+    const row = useAiBudgetSummary(credits);
+    return <p>{row ? `${row.detail}${row.hot ? " (hot)" : ""}` : "none"}</p>;
+  }
+
+  it("says the month's credits capped at the allowance, as the panes do", () => {
+    drawn(<Row credits={{ remaining: 18_885, total: 4_000 }} />);
+    expect(seen("4,000 of 4,000 this month")).toBe(true);
+    expect(seen("18,885")).toBe(false);
+    cleanup();
+    drawn(<Row credits={{ remaining: 0, total: 4_000 }} />);
+    expect(seen("0 of 4,000 this month (hot)")).toBe(true);
+    cleanup();
+    drawn(<Row credits={null} />);
+    expect(seen("none")).toBe(true);
+  });
+
+  it("says it in German", () => {
+    drawn(<Row credits={{ remaining: 18_885, total: 4_000 }} />, "de");
+    expect(seen("Noch 4.000 von 4.000 diesen Monat")).toBe(true);
   });
 });

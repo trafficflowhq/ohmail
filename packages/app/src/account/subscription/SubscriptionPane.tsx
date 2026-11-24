@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Button, Tag } from "@ohmail/ui/base";
 import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
+import { CreditLines } from "../../settings/ai/credit-words.js";
 import type { PaneSheet } from "../../settings/contract.js";
 import type { StorageModel } from "../storage/model.js";
 import { useStorageChangeFeedback } from "../storage/StoragePlans.js";
@@ -19,6 +20,20 @@ export interface SubscriptionPaneProps {
     busy: boolean;
     unit?: string;
     price?: string | null;
+  };
+  /**
+   * One more mailbox, offered at any count: the press goes the add-on's way (the account page that may change it).
+   * `atLimit`: every extra mailbox the plan allows is added, and `most` says how many that is.
+   */
+  readonly addMailbox?: {
+    press: () => void;
+    busy: boolean;
+    price: string | null;
+    most: number;
+    atLimit: boolean;
+  };
+  /** What the add-ons' change came to, and its second factor's dialog while it is asked. */
+  readonly change?: {
     feedback?: Pick<StorageModel, "refusal" | "nothingRan">;
     factor?: ReactNode;
   };
@@ -38,14 +53,23 @@ export function SubscriptionPane({
   connectedCount,
   sheet,
   addStorage,
+  addMailbox,
+  change,
 }: SubscriptionPaneProps) {
   const t = useText("settings");
   const own = useText("accountSubscription");
-  const storage = useStorageChangeFeedback(addStorage?.feedback);
+  const storage = useStorageChangeFeedback(change?.feedback);
   const [selection, select] = useState<PlanName>();
+  /* What the change came to is said where its press stands: by Add storage, else on the Mailboxes line's sheet. */
   const body = (
     <>
-      <StandingSheet model={model} toStorage={toStorage} connectedCount={connectedCount} />
+      <StandingSheet
+        model={model}
+        toStorage={toStorage}
+        connectedCount={connectedCount}
+        addMailbox={addMailbox}
+        said={addStorage ? undefined : storage}
+      />
       <SubscriptionPlans model={model} selection={selection} select={select} />
       {addStorage ? (
         <SettingsSheet wants={storage.wants}>
@@ -68,7 +92,7 @@ export function SubscriptionPane({
           </SettingLine>
         </SettingsSheet>
       ) : null}
-      {addStorage?.factor}
+      {change?.factor}
       <SettingsSheet
         wants={model.failed ? { word: own("notOpened"), line: t("subscriptionManageFailed") } : undefined}
       >
@@ -117,10 +141,17 @@ const wordOf = (standing: Standing): string =>
  * payment that failed as what the sheet wants, the mailboxes it may connect, and what is stored with the way to
  * Storage. No figure of money: only the plans' read says one.
  */
-function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPaneProps) {
+function StandingSheet({
+  model,
+  toStorage,
+  connectedCount,
+  addMailbox,
+  said,
+}: Pick<SubscriptionPaneProps, "model" | "toStorage" | "connectedCount" | "addMailbox"> & {
+  readonly said?: ReturnType<typeof useStorageChangeFeedback>;
+}) {
   const t = useText("settings");
   const own = useText("accountSubscription");
-  const ai = useText("settingsAi");
   const read = readPlansOf(model);
   const { status } = model;
   const current = read === null ? null : read.answer.current;
@@ -146,25 +177,28 @@ function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPanePro
       title={title}
       aside={standing === null ? undefined : <Tag>{own(wordOf(standing))}</Tag>}
       wants={
-        runOn
-          ? {
-              word: own(paymentFailed ? "paymentFailed" : "trialEnded"),
-              line:
-                runOn.until === null
-                  ? paymentFailed
-                    ? own("paymentFailedUndated")
-                    : undefined
-                  : own("organizingUntil", { date: runOn.until }),
-              acts:
-                paymentFailed || read === null ? (
-                  <Button kind="two" size="s" disabled={model.opening} onPress={() => model.manage()}>
-                    {own(paymentFailed ? "fixPayment" : "subscribe")}
-                  </Button>
-                ) : undefined,
-            }
-          : undefined
+        !runOn && said?.wants
+          ? said.wants
+          : runOn
+            ? {
+                word: own(paymentFailed ? "paymentFailed" : "trialEnded"),
+                line:
+                  runOn.until === null
+                    ? paymentFailed
+                      ? own("paymentFailedUndated")
+                      : undefined
+                    : own("organizingUntil", { date: runOn.until }),
+                acts:
+                  paymentFailed || read === null ? (
+                    <Button kind="two" size="s" disabled={model.opening} onPress={() => model.manage()}>
+                      {own(paymentFailed ? "fixPayment" : "subscribe")}
+                    </Button>
+                  ) : undefined,
+              }
+            : undefined
       }
     >
+      {runOn ? null : said?.note}
       {progress ? <TrialProgress progress={progress} /> : null}
       {standing?.state === "trial" && standing.ends ? (
         <SettingLine label={own("trialEnds")} value={standing.ends} />
@@ -184,17 +218,30 @@ function StandingSheet({ model, toStorage, connectedCount }: SubscriptionPanePro
               ? own("mailboxesUpTo", { count: mailboxes })
               : own("mailboxesConnected", { used: connectedCount, count: mailboxes })
           }
-        />
+          description={
+            addMailbox === undefined
+              ? undefined
+              : addMailbox.atLimit
+                ? own("mailboxAddonMost", { count: addMailbox.most })
+                : addMailbox.price === null
+                  ? undefined
+                  : own("mailboxAddonOffer", { price: addMailbox.price })
+          }
+        >
+          {addMailbox && !addMailbox.atLimit ? (
+            <Button
+              kind="quiet"
+              size="s"
+              icon="plus"
+              disabled={addMailbox.busy || model.opening}
+              onPress={addMailbox.press}
+            >
+              {own("addMailbox")}
+            </Button>
+          ) : null}
+        </SettingLine>
       )}
-      {status?.aiCredits ? (
-        <SettingLine
-          label={ai("budget")}
-          value={ai(
-            status.aiCredits.total === undefined ? "creditsBalance" : "creditsLeft",
-            status.aiCredits,
-          )}
-        />
-      ) : null}
+      {status?.aiCredits ? <CreditLines credits={status.aiCredits} /> : null}
       {stored === null ? null : (
         <SettingLine label={t("storage")} value={stored} info={<StorageInfo />}>
           {toStorage === null ? null : (

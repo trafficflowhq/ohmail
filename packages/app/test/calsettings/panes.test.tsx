@@ -276,6 +276,34 @@ describe("View", () => {
     expect(screen.getByText("On")).toBeTruthy();
   });
 
+  it("keeps one pending settings read while imported mail changes the mirror", async () => {
+    const w = mirror(SAID);
+    let finish!: (value: CalendarSettingsWire) => void;
+    const pending = new Promise<CalendarSettingsWire>((resolve) => {
+      finish = resolve;
+    });
+    const settings = vi.fn(() => pending);
+    const port = { ...w.port, settings, settingsVersion: () => w.engine.store.stampOf("settings") };
+    function Reading() {
+      const { said } = useSharedCalendarSettings()!;
+      return <output>{said?.weekNumbers ? "On" : "Off"}</output>;
+    }
+    render(
+      <CalendarSettingsScope port={port} setup="none">
+        <Reading />
+      </CalendarSettingsScope>,
+    );
+    for (let index = 0; index < 3; index++) {
+      await act(async () => {
+        w.put("message_body", `letter-${index}`, { state: "ready" });
+      });
+    }
+    expect(settings).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ...SAID, weekNumbers: true }));
+    expect(screen.getByText("On")).toBeTruthy();
+    expect(settings).toHaveBeenCalledTimes(1);
+  });
+
   it("recovers after a first calendar settings read fails with 503 db_busy", async () => {
     const w = mirror(SAID);
     const settings = vi

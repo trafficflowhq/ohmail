@@ -4939,10 +4939,11 @@ export function MessageBody({
     } else {
       root.style.removeProperty("--ohmail-scale");
     }
-    frame.style.height = h > 0 ? `${h}px` : restore;
-    // Remembered for the NEXT element — see `heightRef`. Written here and nowhere else, so the
-    // height the swap reinstates is always the last one this function actually decided.
-    heightRef.current = frame.style.height;
+    // Remembered for the NEXT element — see `heightRef` — in the same statement as the element's
+    // own height: the frame's `style` prop is read from it, so a render never hands React a height
+    // the element no longer has. Written here and nowhere else, so the height the swap reinstates
+    // is always the last one this function actually decided.
+    frame.style.height = heightRef.current = h > 0 ? `${h}px` : restore;
     /**
      * THE FRAME'S HEIGHT AND ITS DOCUMENT'S SCROLLABILITY ARE ONE DECISION: A scaled document's layout height is its
      * UNSCALED one — a transform is a paint operation — so sizing the frame to the painted extent leaves the document
@@ -5472,6 +5473,11 @@ export function MessageBody({
              */
             key={shownKey ?? mail.frameKey}
             ref={attachFrame}
+            /* A NEW DOCUMENT'S ELEMENT IS INSERTED AT THE CARRIED HEIGHT, as `attachFrame` picks it.
+               The ref is set only after the insertion, and a layout between the two saw the new frame
+               at the stylesheet's floor: a letter above the reading line shrank by thousands of px
+               for that layout and the column's scroll was clamped. */
+            style={{ height: heightRef.current || seedHeight.current || undefined }}
             className="mb-frame"
             title={COPY.frameTitle}
             sandbox={FRAME_SANDBOX}
@@ -5493,10 +5499,12 @@ export function MessageBody({
           />
         </div>
       )}
-      {/* The framed body's end is the sheet's foot (its quote included), drawn only once this
+      {/* The framed body's end is the sheet's foot (its quote included), marked only once this
           document loaded and measured: before that the frame stands at its default height and its
-          foot is no end at all. The prose path marks its own. */}
-      {proseView || frameKey === null || loadedKey !== frameKey ? null : <OwnEnd />}
+          foot is no end at all. Until then a plain node holds its place in the body's flex column,
+          so the column's gap above the end never comes and goes while a new document loads. The
+          prose path marks its own. */}
+      {proseView || frameKey === null ? null : loadedKey === frameKey ? <OwnEnd /> : <span aria-hidden="true" className="own-end" />}
       {frameFold !== null && frameFold.at === "trailing" && !hostTakesControls ? historyToggle : null}
 
       {/* THE FRAMELESS DEFAULT IS REVERSIBLE, PER MESSAGE — a quiet text control AFTER the body,

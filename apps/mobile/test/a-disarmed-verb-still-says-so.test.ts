@@ -37,7 +37,14 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 function omitsHandler(expression: ts.Expression): boolean {
-  if (ts.isParenthesizedExpression(expression)) return omitsHandler(expression.expression);
+  if (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression)
+    || ts.isNonNullExpression(expression) || ts.isSatisfiesExpression(expression)) {
+    return omitsHandler(expression.expression);
+  }
+  if (ts.isVoidExpression(expression)) return true;
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+    return omitsHandler(expression.right);
+  }
   if (ts.isConditionalExpression(expression)) {
     return omitsHandler(expression.whenTrue) || omitsHandler(expression.whenFalse);
   }
@@ -99,6 +106,16 @@ describe("a disarmed verb is disabled, not handler-less", () => {
     expect(droppedIn("<Button onPress={ready ? go : undefined} />")).toHaveLength(1);
     expect(droppedIn("<Button onPress={busy ? undefined : () => apply(start ?? undefined)} />")).toHaveLength(1);
     expect(droppedIn("<Button disabled={busy} onPress={go} />")).toHaveLength(0);
+  });
+
+  it.each([
+    "undefined as Handler",
+    "undefined!",
+    "undefined satisfies Handler",
+    "go ?? undefined",
+    "void 0",
+  ])("counts a missing handler written as %s", (expression) => {
+    expect(droppedIn(`<Button onPress={${expression}} />`)).toHaveLength(1);
   });
 
   it("keeps a handler that passes an optional argument", () => {

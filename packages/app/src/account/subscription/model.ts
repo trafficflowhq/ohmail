@@ -10,6 +10,7 @@
  */
 import type { Answer, ManageOutcome, SubscriptionWord } from "../contract.js";
 import type { None, Signal } from "../../host/index.js";
+import type { AiCredits } from "../../settings/ai/budget.js";
 
 export type PlanName = "solo" | "plus" | "pro";
 export type PlanInterval = "month" | "year";
@@ -30,7 +31,8 @@ export interface SubscriptionStatus {
   readonly trialProgress?: { readonly day: number; readonly total: number };
   /** How many mailboxes the account may connect; `null` where the answer does not say. */
   readonly mailboxes: number | null;
-  readonly aiCredits?: { remaining: number; total?: number } | null;
+  /** The AI credits as the access answer reads them; said by the one reading every place shares (`CreditLines`). */
+  readonly aiCredits?: AiCredits | null;
   /** What is stored of the limit, as the reader says it; `null` where the answer carries no storage block. */
   readonly storage: string | null;
 }

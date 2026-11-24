@@ -24,9 +24,10 @@ import { createHash } from "node:crypto";
 import { DEFAULT_LIMITS, readCalendar } from "@ohmail/cal-core";
 import { CURSOR_MAX_CHARS, MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT, TOKEN_MAX_CHARS } from "../limits.js";
 import type { Answer, CalendarInfo, CalendarReader, ChangeItem, ChangePage, ChangeToken, Connection, LeftReason } from "../port.js";
+import type { ProviderRefusal } from "../refusals.js";
 import type { AdapterDeps } from "../request/index.js";
 import { hopOf } from "../request/shape.js";
-import { addressOf, finding, refuse, tlsAlone, type Refused, type Session } from "./ask.js";
+import { addressOf, finding, refuse, samePlaceAt, tlsAlone, type Refused, type Session } from "./ask.js";
 import { findHomes, findPrincipal, typedAddress, type Typed } from "./discover.js";
 import { turnHostsOf } from "./hosts.js";
 import { askHome, calendarsOf, fetchMembers, listBySync, listByTags, tagOf, type FoundMembers, type Listed, type Listing } from "./report.js";
@@ -151,6 +152,8 @@ function take(member: Listed, found: FoundMembers, items: ChangeItem[], left: Le
 type Found = { readonly ok: true; readonly tlsOnly: boolean; readonly principal: string; readonly homes: readonly string[]; readonly addresses: readonly string[] } | Refused;
 
 const LOCATED = new WeakMap<Connection, Promise<Found>>();
+/** The calendar homes as they answered when a turn followed them: the origins the server keeps the calendars at in that turn. */
+const HOMES = new WeakMap<Connection, readonly string[]>();
 
 /**
  * The discovery, whole (`discover.ts`, steps 1 to 3): asked of the sealed record's own starts with
@@ -186,18 +189,32 @@ export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSig
         LOCATED.set(c, lookup);
       }
       const found = await lookup;
-      if (!found.ok) return found.reason;
+      if (!found.ok) return found;
       const to = hopOf(new URL(refused), null);
-      if (hosts.admits(to)) return null;
-      return hosts.once(async () => {
+      if (hosts.admits(to)) return { ok: true, url: refused };
+      const failed = await hosts.once(async () => {
         // An alias can redirect to the calendar's host. Follow the principal's homes at most once per turn.
         const discover = found.tlsOnly ? tlsAlone(session) : session;
+        const answered: string[] = [];
+        HOMES.set(c, answered);
+        let word: ProviderRefusal | null = null;
         for (const home of found.homes) {
+          const admitted = hosts.admits(to);
           const answer = await askHome(discover, home);
-          if (hosts.admits(to)) return answer.ok ? null : answer.reason;
+          if (answer.ok) answered.push(answer.url);
+          // The home that named the refused host failed: its word is the answer.
+          else if (!admitted && hosts.admits(to)) word = answer.reason;
         }
-        return null;
+        return word;
       });
+      if (failed !== null) return refuse(failed);
+      if (hosts.admits(to)) return { ok: true, url: refused };
+      // The server no longer names the stored host: the same place inside a home that answered this turn.
+      for (const home of HOMES.get(c) ?? []) {
+        const moved = samePlaceAt(refused, home);
+        if (moved !== null && hosts.admits(hopOf(new URL(moved), null))) return { ok: true, url: moved };
+      }
+      return refuse("host_changed");
     },
   };
   return { ok: true, typed, session };
@@ -312,7 +329,7 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
         let found: FoundMembers = () => undefined;
         if (changed.length > 0) {
           fetches++;
-          const fetched = await fetchMembers(s, listing.url, changed);
+          const fetched = await fetchMembers(s, listing.url, changed, collection);
           if (fetched.ok) found = fetched.found;
           else if (fetched.reason !== "too_large") return refuse(fetched.reason, fetched.retryAfterMs);
           else if (batch.length > 1) {

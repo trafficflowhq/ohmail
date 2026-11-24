@@ -127,4 +127,20 @@ describe("what fails closed", () => {
     letterPictures(LETTERS.letIn, false, seam(), embedded, true, true).onCidImages!(["logo"]);
     expect(needs).toEqual([[LETTERS.letIn.id, ["logo"]]]);
   });
+
+  it("the letter on screen asks for its embedded pictures first; the others do not", () => {
+    const needs: Array<[string, string[], { first?: boolean } | undefined]> = [];
+    const embedded: EmbeddedPictureSeam = {
+      cidImagesOf: () => new Map(),
+      needCidImages: (id, cids, opts) => {
+        needs.push([id, cids, opts]);
+      },
+    };
+    letterPictures(LETTERS.letIn, false, seam(), embedded, true, true, true).onCidImages!(["logo"]);
+    letterPictures(LETTERS.unconfirmed, false, seam(), embedded, true, true).onCidImages!(["logo"]);
+    expect(needs).toEqual([
+      [LETTERS.letIn.id, ["logo"], { first: true }],
+      [LETTERS.unconfirmed.id, ["logo"], undefined],
+    ]);
+  });
 });

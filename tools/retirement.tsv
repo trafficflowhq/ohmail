@@ -229,6 +229,7 @@ apps/mobile/test/press-reader-census.test.ts	source-text	reads source as text (t
 apps/mobile/test/privacy.test.ts	source-text	an import census: reads source as text (js, ts, tsx)	bundle contents	tools	
 apps/mobile/test/process-standin-covers-the-bundle.test.ts	source-text	reads source as text (mjs)	layer 2	phone-screens	
 apps/mobile/test/profile-import-card.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/pull-spinner-ends.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/push.test.ts	source-text	reads source as text (ts)	layer 2	phone-shell	
 apps/mobile/test/queued-discard-is-listed.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/quoted-history-fold.test.tsx	data	reads data files (json): the message catalogue	none	phone-shell	
@@ -835,6 +836,7 @@ apps/webapp/test/screener-decision-durable.test.tsx	data	through apps/sidecar/te
 apps/webapp/test/screener-dim-wiring.test.ts	source-text	reads source as text (css, tsx)	layer 2	screener	
 apps/webapp/test/screener-held-body-door.test.tsx	source-text	reads source as text (tsx)	layer 2	screener	
 apps/webapp/test/screener-held-keyboard.test.ts	source-text	reads the mounted Screener browser fixture through the state-page builder	layer 2	screener	
+apps/webapp/test/screener-mailbox-chip-phone.test.tsx	artifact	builds the browser fixture and measures the mailbox chip on a phone row	layer 2	screener	
 apps/webapp/test/screener-mailbox-label.test.tsx	source-text	reads the phone badge width and clipping styles (css)	layer 2	removals	docs/tool-verdicts/stylelint-declaration-property-value-allowed-list.json
 apps/webapp/test/screener-row-actions-overlay.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screening-count-is-what-you-gain.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	

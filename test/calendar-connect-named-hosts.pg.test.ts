@@ -37,10 +37,11 @@ import { startCalDavStandIn, type StandIn, type StandInOptions } from "../packag
 
 const app = createApp([...apiRoutes, ...calendarRoutes]);
 const NO_WAY = { on: false, configured: false };
-/** The host a person types, and a host beside it under the same parent. */
+/** The host a person types, a host beside it under the same parent, and another such host the server may move the calendars to. */
 const TYPED = "dav.home.example.test";
 const BESIDE = "pool.home.example.test";
-const resolver: HostResolver = { resolve: async (name) => (name === TYPED || name === BESIDE ? ["127.0.0.1"] : []) };
+const MOVED = "pool2.home.example.test";
+const resolver: HostResolver = { resolve: async (name) => ([TYPED, BESIDE, MOVED].includes(name) ? ["127.0.0.1"] : []) };
 const at = (name: string, server: StandIn, path: string): string => `http://${name}:${server.port}${path}`;
 const DAY_MS = 24 * 3_600_000;
 
@@ -312,9 +313,27 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
       expect(heard(store, before)[0]).toBe(`PUT ${BESIDE} /dav/calendars/mila/work/one.ics WITH THE PASSWORD`);
     }, 120_000);
 
+    it("and when the server moves the calendars to another host beside the typed one, the stored calendar is read and written there, and the host it was stored at hears nothing", async () => {
+      const { store, home, c } = await homeBeside();
+      // The same server under another name: the home it names now is on that host, at the same place.
+      home.at = at(MOVED, store, store.paths.home);
+      store.put("work", "two.ics", eventText("two", "Glaze firing"));
+      const atStore = store.seen.length;
+      expect([await c.turn(), await c.titles(), await c.stands()]).toEqual(["synced", ["Glaze firing", "Kiln check"], { status: "active", word: null, waitsAboutADay: false }]);
+      await recordWrite(w, {
+        accountId: c.accountId, key: `retitle-${randomUUID()}`,
+        act: { kind: "calendar_event_update", ...(await c.event("Kiln check")), scope: { kind: "record" }, change: { title: "Kiln check, early" } },
+      });
+      expect([await c.turn(), await c.titles()]).toEqual(["synced", ["Glaze firing", "Kiln check, early"]]);
+      const since = heard(store, atStore);
+      expect(since.filter((line) => line.includes(` ${BESIDE} `))).toEqual([]);
+      expect(since).toContain(`PUT ${MOVED} /dav/calendars/mila/work/one.ics WITH THE PASSWORD`);
+    }, 120_000);
+
     it("and a stored calendar on a host the server no longer names is not asked: the connection says so, waits a day, and reads again once the server names it again", async () => {
       const { store, home, typed, c } = await homeBeside();
-      // The server keeps its calendars at home now. The stored row still names the host beside.
+      // The server keeps its calendars at home now. The stored row still names the host beside, which is another server here (another
+      // port): never taken for the same place inside the home the server names, as the same server under a new name is (the case above).
       home.at = typed.paths.home;
       const [atTyped, atStore] = [typed.seen.length, store.seen.length];
       const ended = await c.turn();

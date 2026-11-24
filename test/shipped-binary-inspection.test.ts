@@ -69,7 +69,7 @@ function run(job: string, contents: string): { code: number; err: string; out: s
   const dir = mkdtempSync(join(tmpdir(), "ohmail-inspect-"));
   writeFileSync(join(dir, "bin"), contents);
   const policy = JSON.stringify(policyOf(OVERLAY[job]!));
-  writeFileSync(join(dir, "check.sh"), `set -euo pipefail\nBIN=bin\nWINDOW_CSP=${policy}\n${BLOCKS.get(job)!.block}\n`);
+  writeFileSync(join(dir, "check.sh"), `set -euo pipefail\nshopt -s extglob\nBIN=bin\nWINDOW_CSP=${policy}\n${BLOCKS.get(job)!.block}\n`);
   try {
     const out = execFileSync("bash", ["check.sh"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     return { code: 0, err: "", out };

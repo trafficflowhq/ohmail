@@ -281,6 +281,94 @@ describe("Recipients", () => {
     expect(onTake).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps a whole address as it was typed: Enter, Tab or leaving the line take no one's name unless one is picked", () => {
+    const [onTake, onCommit] = [vi.fn(), vi.fn()];
+    const OTHER = { id: "tim", name: "PayPal Service", address: "tim@gassenblatt.example" };
+    function Typing() {
+      const [typed, setTyped] = useState("");
+      return (
+        <Recipients
+          lines={[{ id: "to", label: "To", people: [], typed }]}
+          onType={(_line, value) => setTyped(value)}
+          onCommit={(line, value) => {
+            onCommit(line, value);
+            setTyped("");
+          }}
+          suggest={{ label: "Address suggestions", people: (text) => (text ? [OTHER] : []), onTake }}
+        />
+      );
+    }
+    render(<Typing />);
+    const to = screen.getByRole("combobox", { name: "To" });
+    for (const key of ["Enter", "Tab"]) {
+      fireEvent.change(to, { target: { value: "tim@gassenblatt.example" } });
+      expect(screen.getByRole("listbox", { name: "Address suggestions" })).toBeTruthy();
+      expect(to.getAttribute("aria-activedescendant")).toBeNull();
+      fireEvent.keyDown(to, { key });
+      expect(onCommit, key).toHaveBeenLastCalledWith("to", "tim@gassenblatt.example");
+    }
+    fireEvent.change(to, { target: { value: "tim@gassenblatt.example" } });
+    fireEvent.blur(to);
+    expect(onCommit).toHaveBeenCalledTimes(3);
+    expect(onTake).not.toHaveBeenCalled();
+
+    /* Picked by the keys: the person is taken as the list shows them. */
+    fireEvent.change(to, { target: { value: "tim@gassenblatt.example" } });
+    fireEvent.keyDown(to, { key: "ArrowDown" });
+    fireEvent.keyDown(to, { key: "Enter" });
+    expect(onTake).toHaveBeenLastCalledWith("to", OTHER);
+    expect(onCommit).toHaveBeenCalledTimes(3);
+
+    /* Words that only begin an offered address still complete to it: the first person is on. */
+    fireEvent.change(to, { target: { value: "tim@gassenblatt.exam" } });
+    expect(to.getAttribute("aria-activedescendant")).not.toBeNull();
+    fireEvent.keyDown(to, { key: "Enter" });
+    expect(onTake).toHaveBeenCalledTimes(2);
+    expect(onCommit).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps a whole address as typed where an offered row only wears it as a name or runs on past its domain", () => {
+    const [onTake, onCommit] = [vi.fn(), vi.fn()];
+    const NAMED = { id: "lure", name: "boss@company.example", address: "someone@elsewhere.example" };
+    const LONGER = { id: "longer", name: "Anna", address: "anna@example.com.elsewhere.example" };
+    const ANNA = { id: "anna", name: "Anna Brun", address: "anna@example.com" };
+    let offered: RecipientSuggestion[] = [];
+    function Typing() {
+      const [typed, setTyped] = useState("");
+      return (
+        <Recipients
+          lines={[{ id: "to", label: "To", people: [], typed }]}
+          onType={(_line, value) => setTyped(value)}
+          onCommit={(line, value) => {
+            onCommit(line, value);
+            setTyped("");
+          }}
+          suggest={{ label: "Address suggestions", people: (text) => (text ? offered : []), onTake }}
+        />
+      );
+    }
+    render(<Typing />);
+    const to = screen.getByRole("combobox", { name: "To" });
+    for (const [typed, rows] of [
+      ["boss@company.example", [NAMED]],
+      ["anna@example.com", [LONGER]],
+    ] as const) {
+      offered = [...rows];
+      fireEvent.change(to, { target: { value: typed } });
+      expect(screen.getByRole("listbox", { name: "Address suggestions" })).toBeTruthy();
+      expect(to.getAttribute("aria-activedescendant"), typed).toBeNull();
+      fireEvent.keyDown(to, { key: "Enter" });
+      expect(onCommit, typed).toHaveBeenLastCalledWith("to", typed);
+    }
+    expect(onTake).not.toHaveBeenCalled();
+
+    /* Begun words complete to the row whose address they begin, not to a row that only wears them as a name. */
+    offered = [{ ...NAMED, name: "anna@exa" }, ANNA];
+    fireEvent.change(to, { target: { value: "anna@exa" } });
+    fireEvent.keyDown(to, { key: "Enter" });
+    expect(onTake).toHaveBeenLastCalledWith("to", ANNA);
+  });
+
   it("is a plain place to type where no people are offered, and offers none while the letter sends", () => {
     const people = vi.fn(() => [{ id: "ben", name: "Ben Arnold", address: "ben@lichtgrat.example" }]);
     const { rerender } = render(<Recipients lines={LINES} />);

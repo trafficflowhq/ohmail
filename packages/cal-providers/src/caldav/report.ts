@@ -17,7 +17,7 @@
 import { DEFAULT_LIMITS, MAX_ZONE_NAME_CHARS, readCalendar } from "@ohmail/cal-core";
 import { MAX_CALENDAR_NAME_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { CalendarInfo } from "../port.js";
-import { addressOf, allowsMove, ask, bodyOf, finding, isSelf, isUnder, propfindOf, refuse, sameMemberKey, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
+import { addressOf, allowsMove, ask, bodyOf, finding, isSelf, isUnder, knownAt, propfindOf, refuse, sameMemberKey, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
 import { APPLE_ICAL, CALDAV, CALENDARSERVER, DAV, childOf, childrenOf, propOf, type DavResponse, type Multistatus } from "./multistatus.js";
 
 /** What a response that names no usable address is listed under: the start of what it wrote. */
@@ -173,18 +173,22 @@ type ListedAnswer = { readonly ok: true; readonly listing: Listing } | (Refused 
  * An answer's responses told apart: the members, in order, and what the collection says of itself.
  * `skips`: a member that is none to list. The members are held by their addresses for this one
  * answer: no more of them than an answer may hold responses, none longer than an address may be.
+ * `collection` is the address the collection was asked at: its members are known under its
+ * origin, whichever of the server's hosts answered (`url`).
  */
-function membersOf(answer: Multistatus, url: string, skips: (member: DavResponse) => boolean): { readonly members: readonly Listed[]; readonly own: readonly DavResponse[] } {
+function membersOf(answer: Multistatus, url: string, collection: string, skips: (member: DavResponse) => boolean): { readonly members: readonly Listed[]; readonly own: readonly DavResponse[] } {
   const scope = scopeOf(url);
+  const known = knownAt(collection, url);
   const members = new Map<string, Listed>();
   const own: DavResponse[] = [];
   for (const response of answer.responses) {
-    const id = addressOf(response.href, url);
-    if (id === null) {
+    const read = addressOf(response.href, url);
+    const id = read === null ? null : known(read);
+    if (read === null || id === null) {
       const start = response.href.slice(0, UNREADABLE_ADDRESS_CHARS);
       members.set(start, { id: start, written: response.href, kind: "outside", tag: null });
-    } else if (isSelf(scope, id)) own.push(response);
-    else if (!isUnder(scope, id)) members.set(id, { id, written: response.href, kind: "outside", tag: null });
+    } else if (isSelf(scope, read)) own.push(response);
+    else if (!isUnder(scope, read)) members.set(id, { id, written: response.href, kind: "outside", tag: null });
     else if (response.status === 404 || response.status === 410) members.set(id, { id, written: response.href, kind: "removed", tag: null });
     else if (response.status !== null && (response.status < 200 || response.status > 299)) members.set(id, { id, written: response.href, kind: "refused", tag: null });
     else if (!skips(response)) members.set(id, { id, written: response.href, kind: "changed", tag: entityTag(response) });
@@ -197,7 +201,7 @@ export async function listBySync(s: Session, collection: string, token: string):
   const body = bodyOf("D:sync-collection", `<D:sync-token>${xmlText(token)}</D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop>`);
   const asked = await ask(s, "REPORT", collection, "0", body);
   if (!asked.ok) return asked;
-  const { members, own } = membersOf(asked.answer, asked.url, () => false);
+  const { members, own } = membersOf(asked.answer, asked.url, collection, () => false);
   return { ok: true, listing: { members, token: asked.answer.syncToken, cut: own.some((self) => self.status === 507), url: asked.url } };
 }
 
@@ -209,7 +213,7 @@ export async function listByTags(s: Session, collection: string): Promise<Listed
     const type = propOf(member, DAV, "resourcetype");
     return type !== null && childOf(type, DAV, "collection") !== null;
   };
-  const { members, own } = membersOf(asked.answer, asked.url, isCollection);
+  const { members, own } = membersOf(asked.answer, asked.url, collection, isCollection);
   const tag = own.map((self) => textOf(self, CALENDARSERVER, "getctag")).find((text) => text !== "") ?? null;
   return { ok: true, listing: { members, token: tag, cut: false, url: asked.url } };
 }
@@ -232,15 +236,17 @@ export type Fetched = { readonly tag: string | null; readonly text: string } | "
 /** What a multiget answered of a member; `undefined` for one the answer does not hold. */
 export type FoundMembers = (member: Listed) => Fetched | undefined;
 
-/** The text of the members named. */
-export async function fetchMembers(s: Session, collection: string, members: readonly Listed[]): Promise<{ readonly ok: true; readonly found: FoundMembers } | Extract<Asked, { ok: false }>> {
+/** The text of the members named, asked at `collection`; `knownAs` is the calendar's stored address, whose origin the members are known under (as {@link membersOf}). */
+export async function fetchMembers(s: Session, collection: string, members: readonly Listed[], knownAs = collection): Promise<{ readonly ok: true; readonly found: FoundMembers } | Extract<Asked, { ok: false }>> {
   const hrefs = members.map((m) => `<D:href>${xmlText(m.written)}</D:href>`).join("");
   const asked = await ask(s, "REPORT", collection, null, bodyOf("C:calendar-multiget", `<D:prop><D:getetag/><C:calendar-data/></D:prop>${hrefs}`));
   if (!asked.ok) return asked;
+  const known = knownAt(knownAs, asked.url);
   const found = new Map<string, Fetched>();
   for (const response of asked.answer.responses) {
-    const id = addressOf(response.href, asked.url);
-    if (id === null) continue;
+    const read = addressOf(response.href, asked.url);
+    if (read === null) continue;
+    const id = known(read);
     if (response.status === 404 || response.status === 410) {
       found.set(sameMemberKey(id), "gone");
       continue;

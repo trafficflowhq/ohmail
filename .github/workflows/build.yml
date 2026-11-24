@@ -545,6 +545,7 @@ jobs:
       - name: Inspect the URLs and the CSP in the shipped binary
         run: |
           set -euo pipefail
+          shopt -s extglob
           B=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
           BIN="$B/macos/ohmail.app/Contents/MacOS/ohmail"
           test -s "$BIN"
@@ -582,7 +583,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*) : ;;
+              "$CLOUD_URL"*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example
@@ -1450,6 +1451,7 @@ jobs:
       - name: Inspect what was produced
         run: |
           set -euo pipefail
+          shopt -s extglob
           EXE=build/ohmail-windows-setup.exe
 
           # ── The installer MUST be able to fetch the WebView2 runtime ───────
@@ -1539,7 +1541,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*) : ;;
+              "$CLOUD_URL"*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example
@@ -1836,6 +1838,7 @@ jobs:
       - name: Inspect what was produced
         run: |
           set -euo pipefail
+          shopt -s extglob
           DEB=build/ohmail-linux-amd64.deb
           APPIMAGE=build/ohmail-linux-x86_64.AppImage
           RPM=build/ohmail-linux-x86_64.rpm
@@ -2360,7 +2363,7 @@ jobs:
           # The quote-terminated JavaScript literal in src/doors.ts allowed
           # an exact match, which would reject a different host or added path.
           # The Rust constant in config.rs can have adjacent bytes glued to
-          # its end, so the binary audit uses a prefix for the Cloud API.
+          # its end, so the audit accepts the exact origin and lowercase glue.
           #
           # Re-split inside ALL_URLS at each scheme so an unlisted address
           # glued to a listed one is checked on its own. The two substitutions
@@ -2387,7 +2390,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*) : ;;
+              "$CLOUD_URL"*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example
@@ -3093,6 +3096,7 @@ jobs:
       - name: Inspect what was produced
         run: |
           set -euo pipefail
+          shopt -s extglob
           DEB=build/ohmail-linux-arm64.deb
           APPIMAGE=build/ohmail-linux-aarch64.AppImage
           RPM=build/ohmail-linux-aarch64.rpm
@@ -3557,7 +3561,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*) : ;;
+              "$CLOUD_URL"*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example

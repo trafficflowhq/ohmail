@@ -3,8 +3,9 @@
  * `connection.syncNow()`, the same ask a delivered wake makes: the pull is a trigger for the sync the app
  * already knows how to do, never a source of data. The spinner is honest by construction — it renders on the
  * promise `syncNow` answers, which settles when the engine's own round completes (`net/drain.ts`), so it ends
- * with the sync, not on a timer; a refused round settles the same way, keeping its one existing sentence
- * (`connection.syncError`). `refreshing` is local to the pulling screen on purpose: the background poll and
+ * with the sync; a refused round settles the same way, keeping its one existing sentence
+ * (`connection.syncError`). A round that hangs releases the spinner at `PULL_SPIN_CAP_MS` and goes on unseen.
+ * One pull at a time: a pull while one runs asks nothing more. `refreshing` is local to the pulling screen on purpose: the background poll and
  * the wake channel run the very same rounds, and an uninvited spinner on every one would turn a quiet
  * background fact into foreground noise. Only a pull shows a pull spinner.
  */
@@ -12,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../net/connection";
 import { networkNow } from "../net/network-door";
 import { lateWho } from "../ui/late-lines";
-import { pullRound } from "./pull-round";
+import { pullRound, spinUntil } from "./pull-round";
 import { useWorldToast } from "./world";
 
 export interface PullToSync {
@@ -32,12 +33,16 @@ export function usePullToSync(): PullToSync {
     },
     [],
   );
+  const inFlight = useRef(false);
   const onRefresh = useCallback(() => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setRefreshing(true);
     // With no network the pull says so and asks nothing (`pull-round.ts`); the spinner ends at once.
     // A server that is not fetching is said the moment the ring answers; the spinner is the drain's.
     const who = lateWho(conn.state.k === "live" ? conn.state.session : null);
-    void pullRound(networkNow(), (heard) => conn.syncNow(heard), toast.say, who).finally(() => {
+    void spinUntil(pullRound(networkNow(), (heard) => conn.syncNow(heard), toast.say, who)).finally(() => {
+      inFlight.current = false;
       if (alive.current) setRefreshing(false);
     });
   }, [conn, toast]);

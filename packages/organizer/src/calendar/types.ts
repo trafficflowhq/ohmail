@@ -165,4 +165,8 @@ export interface CalendarSyncMemory {
   readonly forcedAt: Map<string, number>;
   /** Calendars whose last whole reading would have dropped most of what is stored; the second one drops. */
   readonly massDrop: Map<string, true>;
+  /** Letters whose Outlook Web App link was looked up, by connection and message id: failed lookups so far, or the most for one settled. */
+  readonly exchangeLookups: Map<string, number>;
+  /** When each connection last looked at its letters for such links, epoch ms. */
+  readonly exchangeScannedAt: Map<string, number>;
 }
