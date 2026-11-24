@@ -18,8 +18,8 @@
   },
   "hero": {
     "mark": "oh.",
-    "headline": "E-Mail auf deinen Postfächern.\nNichts ohne dein Ja.",
-    "headlineAlt1": "E-Mail, die zuerst fragt —\nauf den Postfächern,\ndie du längst hast.",
+    "headline": "Mail, die zuerst fragt und automatisch sortiert.\nund Kalender.",
+    "headlineAlt1": "Mail, die zuerst fragt\nund automatisch sortiert.\nund Kalender.",
     "headlineAlt2": "der letzte Mail-Client,\nden du brauchst.",
     "strapline": "komplett Open Source und selbst hostbar.",
     "door": "ohmail <k>macht für dich die Tür auf</k>: Neue Absender <k>warten im Screener</k>, bis du sie reinlässt. In deiner Ohbox liegen also nur Mails, zu denen du Ja gesagt hast, organisiert direkt dort, wo sie sind: in <k>echten Ordnern</k> in den Postfächern, die du schon hast. <o>Geh, wann du willst</o>; dein Postfach bleibt organisiert.",
@@ -489,9 +489,9 @@
     "decline": "Ablehnen"
   },
   "siteMeta": {
-    "title": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja.",
+    "title": "ohmail — Mail, die zuerst fragt und automatisch sortiert. und Kalender.",
     "description": "Komplett Open Source und selbst hostbar. Der Screener hält neue Absender zurück, bis du entscheidest; alles, wozu du Ja gesagt hast, wird direkt dort organisiert, wo es liegt: in echten Ordnern auf deinem echten Server. Die Desktop-App ist kostenlos für macOS, Windows und Linux und läuft komplett auf deinem eigenen Rechner. Cloud ab 9 $/Monat bringt Web-App und Push dazu, mit 14 Tagen Testphase und ohne Karte.",
-    "ogAlt": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja"
+    "ogAlt": "ohmail — Mail, die zuerst fragt und automatisch sortiert. und Kalender."
   },
   "siteScreener": {
     "title": "Du entscheidest, wer reinkommt.",

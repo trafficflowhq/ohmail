@@ -81,6 +81,9 @@ export function CalSetupStage({ route }: PaneProps) {
         startOAuth={port === NONE ? undefined : port.startOAuth}
         oauthInBrowser={port !== NONE && port.oauthInBrowser === true}
         status={result === null ? undefined : t(`oauth.${result}`)}
+        microsoftApproval={
+          result === "admin_consent_required" && port !== NONE ? port.microsoftApproval : undefined
+        }
         busy={result === "connecting"}
       />
     );

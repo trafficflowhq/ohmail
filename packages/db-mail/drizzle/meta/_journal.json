@@ -1408,6 +1408,13 @@
       "when": 1795399641582,
       "tag": "0219_hosted_invitation_details",
       "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1795473995099,
+      "tag": "0220_screener_acknowledgements",
+      "breakpoints": true
     }
   ]
 }

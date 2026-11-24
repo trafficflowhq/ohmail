@@ -25,8 +25,12 @@ const UNREADABLE_ADDRESS_CHARS = 256;
 
 /* ── the home ────────────────────────────────────────────────────────────────────────────────────── */
 
+const ACCESS = "<D:current-user-privilege-set/><D:share-access/>";
+const COLLECTION_ACCESS = propfindOf(ACCESS);
+/** Optional probes share a budget so a slow collection leaves time for reads and writes. */
+const ACCESS_PROBE_BUDGET_MS = 5_000;
 const HOME = propfindOf(
-  "<D:resourcetype/><D:displayname/><C:supported-calendar-component-set/><CS:getctag/><D:sync-token/><A:calendar-color/><D:current-user-privilege-set/><D:owner/><C:calendar-timezone-id/><C:calendar-timezone/>",
+  "<D:resourcetype/><D:displayname/><C:supported-calendar-component-set/><CS:getctag/><D:sync-token/><A:calendar-color/>" + ACCESS + "<D:owner/><C:calendar-timezone-id/><C:calendar-timezone/>",
 );
 /** A colour as servers keep it: six digits, or eight with how opaque it is. */
 const COLOUR = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i;
@@ -41,14 +45,34 @@ function entityTag(response: DavResponse): string | null {
   return tag !== "" && tag.length <= MAX_VALIDATOR_CHARS ? tag : null;
 }
 
-/**
- * May the sign-in write here? A server that says nothing of privileges is one where a write is
- * tried: its refusal then is the "view only" answer, as it is where a privilege was withdrawn since.
- */
-function writable(response: DavResponse): boolean {
+/** A grant to edit an existing calendar member. */
+function writePrivilege(response: DavResponse): boolean | null {
   const set = propOf(response, DAV, "current-user-privilege-set");
-  if (set === null) return true;
-  return childrenOf(set, DAV, "privilege").some((p) => WRITES.some((name) => childOf(p, DAV, name) !== null));
+  if (set === null) return null;
+  const names = childrenOf(set, DAV, "privilege").flatMap((p) =>
+    p.children.filter((grant) => grant.ns === DAV).map((grant) => grant.local));
+  return WRITES.some((name) => names.includes(name));
+}
+
+function shareAccess(response: DavResponse): boolean | null {
+  const share = propOf(response, DAV, "share-access");
+  if (share === null) return null;
+  if (childOf(share, DAV, "read") || childOf(share, DAV, "no-access")) return false;
+  return childOf(share, DAV, "read-write") === null ? null : true;
+}
+
+async function sharedWriteAccess(s: Session, id: string, fallback: boolean): Promise<boolean> {
+  if (s.signal.aborted) return fallback;
+  const asked = await ask(s, "PROPFIND", id, "0", COLLECTION_ACCESS);
+  if (!asked.ok) return fallback;
+  const scope = scopeOf(id);
+  const own = asked.answer.responses.find((response) => {
+    const address = addressOf(response.href, asked.url);
+    return address !== null && isSelf(scope, address);
+  });
+  if (own === undefined) return fallback;
+  const share = shareAccess(own);
+  return share !== false && (writePrivilege(own) ?? share ?? fallback);
 }
 
 /** The zone a calendar is meant to be read in: by its name where the server gives one (RFC 7809), else the name of the definition it keeps. */
@@ -70,6 +94,7 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
   if (!asked.ok) return refuse(asked.reason, asked.retryAfterMs);
   const scope = scopeOf(asked.url);
   const calendars: CalendarInfo[] = [];
+  const needsAccess = new Set<string>();
   for (const response of asked.answer.responses) {
     const id = addressOf(response.href, asked.url);
     if (id === null || !isUnder(scope, id)) continue;
@@ -85,7 +110,12 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
     const owner = ownerHref && childOf(ownerHref, DAV, "href");
     const ownerUrl = owner && addressOf(owner.text.trim(), asked.url);
     const owned = ownerUrl !== null && isSelf(scopeOf(principal), ownerUrl);
-    const canWrite = writable(response);
+    const share = shareAccess(response);
+    const privilege = writePrivilege(response);
+    const shared = share !== null || (ownerUrl !== null && !owned) || childOf(type, CALENDARSERVER, "shared") !== null;
+    if (shared && share !== false && privilege !== true) needsAccess.add(id);
+    // When the server gives no access data, let it decide each write as before.
+    const canWrite = share !== false && (privilege ?? share ?? true);
     calendars.push({
       id,
       name: name !== "" && name.length <= MAX_CALENDAR_NAME_CHARS ? name : null,
@@ -96,9 +126,15 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
       zone: zoneOf(response),
     });
   }
+  const probe = { ...s, signal: AbortSignal.any([s.signal, AbortSignal.timeout(ACCESS_PROBE_BUDGET_MS)]) };
   for (let i = 0; i < calendars.length; i += 4) {
     await Promise.all(calendars.slice(i, i + 4).map(async (cal, index) => {
-      if (cal.owned && cal.writable && await allowsMove(s, cal.id)) calendars[i + index] = { ...cal, nativeMove: true };
+      if (needsAccess.has(cal.id)) {
+        const writable = await sharedWriteAccess(probe, cal.id, cal.writable);
+        calendars[i + index] = { ...cal, writable };
+      } else if (cal.owned && cal.writable && await allowsMove(s, cal.id)) {
+        calendars[i + index] = { ...cal, nativeMove: true };
+      }
     }));
   }
   return { ok: true, calendars };

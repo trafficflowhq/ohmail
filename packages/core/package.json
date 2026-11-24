@@ -28,6 +28,12 @@
       "node": "./dist/suggestion-consent.js",
       "default": "./src/suggestion-consent.ts"
     },
+    "./screener-acknowledgements": {
+      "types": "./src/screener-acknowledgements.ts",
+      "ohmail-source": "./src/screener-acknowledgements.ts",
+      "node": "./dist/screener-acknowledgements.js",
+      "default": "./src/screener-acknowledgements.ts"
+    },
     "./away-scope": {
       "types": "./src/away-scope.ts",
       "ohmail-source": "./src/away-scope.ts",

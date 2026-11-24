@@ -222,7 +222,7 @@ describe("a settle that throws after a settled refund is named, not a failed rel
   });
 });
 
-describe("nothing is owed where nothing was refunded", () => {
+describe("delivered and unanswered attempts", () => {
   it("a delivered suggestion keeps its charge and owes nothing", async () => {
     const w = await world();
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier: model(new Set()), credits: w.gate, pricing: PLANE_PRICING });
@@ -232,14 +232,17 @@ describe("nothing is owed where nothing was refunded", () => {
     expect(w.events).toEqual(["release"]);
   });
 
-  it("a model OUTAGE keeps the charge for the free retry and owes nothing", async () => {
+  it("a model outage owes the failed attempt before releasing its claim", async () => {
     const w = await world();
     const outage: ClassifierPort = { async classify(): Promise<never> { throw new Error("anthropic 529"); } };
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier: outage, credits: w.gate, pricing: PLANE_PRICING });
     const res = await svc.suggest(w.ctx, { senders: ["alice@ex.example"] }, { obligations: w.obligations });
     expect(res.skipped).toEqual([{ sender: "alice@ex.example", reason: "model_unavailable" }]);
-    expect(w.obligations.owed).toEqual([]);
-    expect(w.events).toEqual(["release"]);
+    expect(res.charged).toBe(0);
+    expect(w.obligations.owed).toEqual([
+      expect.objectContaining({ attempt: firstAttempt(w.gate), action: "screener", reason: "drafter_failed" }),
+    ]);
+    expect(w.events).toEqual(["owe", "refund", "settle"]);
   });
 
   it("a decline on a DUPLICATE charged nothing here, so it owes nothing", async () => {

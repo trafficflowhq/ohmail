@@ -19,7 +19,7 @@ import {
 import { NONE, type ConnectWire, type None, type ProviderSignInWire, type Signal } from "@ohmail/app/host";
 import { ApiError, mailboxes as mailboxApi, messageOf, type MailboxDTO } from "../../api-client";
 import { SessionBusyError } from "../../session-refresh";
-import { readMicrosoftDoor } from "./microsoft-door";
+import { readMicrosoftApproval, readMicrosoftDoor } from "./microsoft-door";
 import {
   oauthOutcome, rememberOAuthLanding, rememberOAuthOwner, subscribeOAuthOutcome, takeJoinOAuthOutcome,
   type JoinOAuthOutcome, type OAuthLanding, type OAuthOutcome,
@@ -191,6 +191,7 @@ function signInOf(o: WebConnectWire): ProviderSignInWire {
         return "leaving" as const;
       }),
     returned: returnedOf(o.returned),
+    microsoftApproval: () => readMicrosoftApproval(o.owner() ?? undefined),
     code: o.device ?? NONE,
   };
 }

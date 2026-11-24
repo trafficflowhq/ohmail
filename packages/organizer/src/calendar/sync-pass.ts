@@ -12,7 +12,7 @@
 import type { ProviderWord } from "@ohmail/cal-providers";
 import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
 import { calCalendars } from "@trafficflow/db";
-import { applyListing, storedCalendars, type StoredCalendar } from "./calendars.js";
+import { applyListing, pruneUnlistedCalendars, storedCalendars, type StoredCalendar } from "./calendars.js";
 import { inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./connection.js";
 import { releaseReadings, remember } from "./memory.js";
 import { holdCalendar, ownAddressesOf, readCalendar, type ReadingContext, type TurnBudget } from "./reading.js";
@@ -130,6 +130,27 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   if (!opened.ok) return settleConnection(deps, db, key, null, opened.word, null);
   const signIn = opened.signIn;
 
+  let changed = 0;
+  let calendars = gate.calendars;
+  let missing: readonly string[] | null = null;
+  const listingContext = { db, key, memory: deps.memory, halted: deps.halted };
+  const listedAt = deps.memory.listedAt.get(key.id) ?? Number.NEGATIVE_INFINITY;
+  // A subscription is one calendar whose id never changes, and listing it fetches its whole file: it is
+  // listed once, while it has no row, and from then on asked only as often as the file itself wishes.
+  const listsAgain = w !== "ics" && deps.clock.now() - listedAt >= LIST_EVERY_MS;
+  if (calendars.length === 0 || listsAgain) {
+    const listed = await p.reader.listCalendars(signIn.connection, signal);
+    if (stopping()) return { kind: "halted" };
+    if (signIn.superseded()) return { kind: "superseded" };
+    if (!listed.ok) return settleConnection(deps, db, key, signIn, listed.reason, listed.retryAfterMs);
+    const applied = await applyListing(listingContext, listed.value, calendars);
+    if (!applied.ok) return { kind: applied.why };
+    remember(deps.memory.listedAt, key.id, deps.clock.now());
+    changed += applied.changed;
+    missing = applied.missing;
+  }
+
+  // A due listing refreshes access before the drain checks each queued write.
   let drainNext: Date | null = null;
   if (deps.drainWrites !== undefined) {
     const drained = await deps.drainWrites({ db, key, provider: p, connection: signIn.connection, signal, moveDestination: (calendarId) => openMoveDestination(deps, db, calendarId, key, signIn) });
@@ -142,21 +163,10 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     if (drained.wait !== undefined) return settleConnection(deps, db, key, signIn, drained.wait.word, drained.wait.retryAfterMs);
   }
 
-  let changed = 0;
-  let calendars = gate.calendars;
-  const listedAt = deps.memory.listedAt.get(key.id) ?? Number.NEGATIVE_INFINITY;
-  // A subscription is one calendar whose id never changes, and listing it fetches its whole file: it is
-  // listed once, while it has no row, and from then on asked only as often as the file itself wishes.
-  const listsAgain = w !== "ics" && deps.clock.now() - listedAt >= LIST_EVERY_MS;
-  if (calendars.length === 0 || listsAgain) {
-    const listed = await p.reader.listCalendars(signIn.connection, signal);
-    if (stopping()) return { kind: "halted" };
-    if (signIn.superseded()) return { kind: "superseded" };
-    if (!listed.ok) return settleConnection(deps, db, key, signIn, listed.reason, listed.retryAfterMs);
-    const applied = await applyListing({ db, key, memory: deps.memory, halted: deps.halted }, listed.value, calendars);
-    if (!applied.ok) return { kind: applied.why };
-    changed += applied.changed;
-    remember(deps.memory.listedAt, key.id, deps.clock.now());
+  if (missing !== null) {
+    const pruned = await pruneUnlistedCalendars(listingContext, missing);
+    if (!pruned.ok) return { kind: pruned.why };
+    changed += pruned.changed;
     const again = await inConnection(db, key, ({ tx }) => storedCalendars(tx, key));
     if (again === "gone") return { kind: "gone" };
     calendars = again;
@@ -223,7 +233,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     else if (crowded) at = Math.max(at, nowMs + READING_PLACE_WAIT_MS);
     at = Math.max(at, nowMs);
     // The listing is asked again within the hour whatever the calendars say; a subscription has no listing to ask for.
-    if (w !== "ics") at = Math.min(at, nowMs + LIST_EVERY_MS);
+    if (w !== "ics") at = Math.min(at, (deps.memory.listedAt.get(key.id) ?? nowMs) + LIST_EVERY_MS);
     await holdConnectionUntil(tx, key, new Date(at));
     await setConnectionState(tx, key, held, { status: "active", errorCode: null, synced: changed + dropped > 0 });
   }, { lock: "no key update" });

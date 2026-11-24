@@ -7,7 +7,7 @@
     "note": "Deine eigenen Postfächer findest du auf ohmail.app.",
     "openDemo": "Demo öffnen",
     "signIn": "Anmelden",
-    "footer": "ohmail · E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja",
+    "footer": "ohmail · Mail, die zuerst fragt und automatisch sortiert. und Kalender.",
     "missingTitle": "Diese Seite gibt es nicht.",
     "missingNote": "Die Adresse ist vielleicht falsch geschrieben, oder die Seite ist umgezogen.",
     "missingHome": "Zurück zu ohmail."
@@ -405,6 +405,10 @@
     "tryAgain": "Erneut versuchen",
     "signIn": "Anmelden",
     "openDemo": "Demo öffnen"
+  },
+  "microsoftApprovalResult": {
+    "approved": "ohmail ist für deine Organisation genehmigt. Die Person kann ihr Postfach jetzt verbinden.",
+    "declined": "Die Genehmigung wurde abgebrochen. Du kannst den Genehmigungslink erneut öffnen."
   },
   "accessLock": {
     "title": "Dieser Account ist nicht aktiv.",

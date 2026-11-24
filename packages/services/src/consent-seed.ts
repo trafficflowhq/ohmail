@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { SCREENER_ACKNOWLEDGEMENTS, type ScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { isSubjectHeading, subjectHeadingOf, type SubjectHeading } from "@trafficflow/core/adapters/organizer-profile";
 import {
-  accountSettings, carryBinding, clearRuleRemovals, contacts, mailboxes, mailboxProfileMirror, messageBodies,
+  accountSettings, carryBinding, clearRuleRemovals, clearScreenerSuggestionRetries, contacts, mailboxes, mailboxProfileMirror, messageBodies,
   messages, lockAccountRuleKeys, readAccountSettings, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, statePreference,
   PROFILE_SIGNATURE_MAX,
   TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx, upgradeContactsToPerson,
@@ -682,6 +683,7 @@ export async function consentSettings(
    */
   resurfaceTime: string | null;
   draftReplies: boolean;
+  screenerAcknowledgements: number;
   /**
    * mail 0083 — WHEN the first-run flow was last left, by finishing it or by cancelling it.
    *
@@ -768,6 +770,7 @@ export async function consentSettings(
     // {@link DEFAULT_RESURFACE_TIME} — and unlike a language nobody can load, that fallback is
     // drawn in the chooser's own control before any press, so a wrong stored value is visible.
     draftReplies: row?.draftReplies ?? true,
+    screenerAcknowledgements: row?.screenerAcknowledgements ?? 0,
     resurfaceTime: RESURFACE_TIME_RE.test(row?.resurfaceTime ?? "") ? row!.resurfaceTime : null,
     // NULL and an absent row both mean "this account has never left the first-run flow", which is
     // the state that OPENS it. That is the safe direction here in the sense that matters: the
@@ -852,6 +855,7 @@ export async function setAutoSuggest(
         target: accountSettings.accountId,
         set: { autoSuggestAt: at, ...act, updatedAt: ctx.now() },
       });
+    if (!enabled) await clearScreenerSuggestionRetries(tx, ctx.accountId);
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return enabled
@@ -1718,6 +1722,26 @@ export async function setResurfaceTime(
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
   });
   return { resurfaceTime };
+}
+
+/** Each press adds one bit, so devices acknowledging different actions cannot overwrite each other. */
+export async function acknowledgeScreener(
+  ctx: ServiceContext, kind: ScreenerAcknowledgement,
+): Promise<number> {
+  return bridgeTx(ctx.db).transaction(async (tx) => {
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
+    const bit = SCREENER_ACKNOWLEDGEMENTS[kind];
+    const updatedAt = ctx.now();
+    const [row] = await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, screenerAcknowledgements: bit, updatedAt })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { screenerAcknowledgements: sql`${accountSettings.screenerAcknowledgements} | ${bit}`, updatedAt },
+      })
+      .returning({ screenerAcknowledgements: accountSettings.screenerAcknowledgements });
+    await recordSettingsChange(tx, ctx.accountId);
+    return row!.screenerAcknowledgements;
+  });
 }
 
 /** Store this account’s draft-offer choice and ring the shared settings record. */

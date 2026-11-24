@@ -127,6 +127,7 @@ export default defineConfig({
       { find: "@trafficflow/core/reader-refusal", replacement: r("./packages/core/src/reader-refusal.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("./packages/core/src/outbound-text.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("./packages/core/src/model-name.ts") },
+      { find: "@trafficflow/core/screener-acknowledgements", replacement: r("./packages/core/src/screener-acknowledgements.ts") },
       { find: "@trafficflow/core/suggestion-consent", replacement: r("./packages/core/src/suggestion-consent.ts") },
       { find: "@trafficflow/core/ai-transports", replacement: r("./packages/core/src/ai/transports/index.ts") },
       { find: "@trafficflow/core/ai-provider-env", replacement: r("./packages/core/src/ai/transports/host.ts") },

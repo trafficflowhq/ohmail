@@ -111,6 +111,30 @@ function quoteChanged(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === "suggest_quote_changed";
 }
 
+/** A changed representative can remove work from a confirmed chunk, but can never add to it. */
+async function repriceApprovedChunk(
+  chunk: string[], grant: ScreenerQuoteGrant, ceiling: number,
+  price: (senders: string[]) => Promise<ScreenerSuggestWire>, maySend: () => boolean,
+): Promise<{ senders: string[]; ceiling: number; grant: ScreenerQuoteGrant } | null> {
+  const approved = new Set(grant.pairs.map(pairKey));
+  let senders = chunk;
+  let quote = await price(senders);
+  const moved = new Set(quote.quoteGrant?.pairs.filter((pair) => !approved.has(pairKey(pair)))
+    .map((pair) => senderKey(pair.sender)));
+  if (moved.size > 0) {
+    senders = senders.filter((sender) => !moved.has(senderKey(sender)));
+    if (senders.length === 0) return null;
+    if (!maySend()) throw new Error("the suggestion run is no longer active");
+    quote = await price(senders);
+  }
+  if (!maySend() || typeof quote.quotedCredits !== "number" || quote.quotedCredits > ceiling ||
+      !quote.quoteGrant?.proof || quote.quoteGrant.pairs.length !== quote.quoted ||
+      quote.quoteGrant.pairs.some((pair) => !approved.has(pairKey(pair)))) {
+    throw new Error("the approved suggestions could not be quoted again");
+  }
+  return { senders, ceiling: quote.quotedCredits, grant: quote.quoteGrant };
+}
+
 export type SuggestPhase = "closed" | "pricing" | "ready" | "running";
 
 /**
@@ -141,6 +165,7 @@ export interface SuggestBatchControl {
    * are eligible to be asked about.
    */
   resuggestable: number;
+  retryable: number;
   /**
    * Waiting senders with NO REAL SUGGESTION — the filter chips' "none" group, holds included,
    * counted by the view's own selector (`hasRealSuggestion`) and handed in. The resting sentence
@@ -161,8 +186,8 @@ export interface SuggestBatchControl {
    */
   pool: number;
   /**
-   * Batch sizes offered, clamped to {@link available} and to {@link MAX_SUGGEST_BATCH} — the most
-   * one authorised purchase may buy. This is NOT one request's size: a chosen size larger than a
+   * Batch sizes offered for the snapshot. A first purchase may cover the whole queue and a re-ask
+   * is capped at {@link MAX_SUGGEST_BATCH}. This is NOT one request's size: a chosen size larger than a
    * single request is priced and bought as several request-sized chunks, so the ladder can offer
    * more than one request's worth.
    */
@@ -202,6 +227,7 @@ export interface SuggestBatchControl {
    * is the one flow: quote, confirm, progress, summary.
    */
   openAgain: () => void;
+  openRetry: () => void;
   choose: (size: number) => void;
   confirm: () => void;
   cancel: () => void;
@@ -298,6 +324,7 @@ export interface ScreenerSuggestions {
    */
   forSenders: (
     addresses: string[], resuggestable?: string[], unanswered?: number, queueSettled?: boolean,
+    options?: { readQueue?: boolean; retry?: readonly string[] },
   ) => SuggestBatchControl;
   /**
    * Bind the OPT-IN's quote to the same sender list.
@@ -331,7 +358,7 @@ export interface SuggestWire {
    */
   configured: () => boolean;
   /** What has ALREADY been bought, one page of it. Spends nothing. */
-  list: (opts: { limit?: number }) => Promise<ScreenerWirePage>;
+  list: (opts: { limit?: number; cursor?: string }) => Promise<ScreenerWirePage>;
   /**
    * Price a sender set (`dryRun`) or buy it.
    *
@@ -405,8 +432,8 @@ export const SUGGEST_CHUNK_SIZE = 15;
  * The sizes offered, before clamping. The small end is watchable, the large end drains a
  * backlog: 10/25/50 to try a handful and see, 100/200/400 to clear a real first-contact pile
  * in one authorised purchase. Every one of these is still priced by a server dry run before it
- * can be pressed, and clamped by {@link batchSizes} to {@link MAX_SUGGEST_BATCH} and the queue —
- * a size above the account's queue is never shown. A size above one request is NOT dropped: it is
+ * can be pressed. The last size is the snapshot's full size for a first ask and at most
+ * {@link MAX_SUGGEST_BATCH} for a re-ask. A size above one request is NOT dropped: it is
  * bought as several request-sized chunks (see {@link SuggestBatchControl.confirm}).
  */
 const OFFERED_SIZES = [10, 25, 50, 100, 200, 400];
@@ -568,6 +595,7 @@ export function useScreenerSuggestions(opts: {
    * point of routing the re-ask through here is that it cannot acquire a second.
    */
   const [mode, setMode] = useState<SuggestMode>("new");
+  const [snapshot, setSnapshot] = useState<string[] | null>(null);
   const [size, setSize] = useState(0);
   const [quote, setQuote] = useState<{ senders: number; credits: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -715,6 +743,7 @@ export function useScreenerSuggestions(opts: {
     io.current.quotedChunks = [];
     setPhase("closed");
     setMode("new");
+    setSnapshot(null);
     setQuote(null);
     setNotice(null);
     setRefused(false);
@@ -1055,6 +1084,7 @@ export function useScreenerSuggestions(opts: {
      * eagerly — the tests' harnesses — keeps the eager contract unchanged.
      */
     queueSettled = true,
+    { readQueue = false, retry = [] }: { readQueue?: boolean; retry?: readonly string[] } = {},
   ): SuggestBatchControl => {
     // The automatic batch's only view of the queue: the UNSUGGESTED list
     // alone, deliberately not widened to `resuggestable`. The automatic
@@ -1064,7 +1094,8 @@ export function useScreenerSuggestions(opts: {
     // on a batch nobody priced; the re-ask stays manual. A ref write during
     // render is safe here (schedules nothing, changes no output); the
     // alternative — a hook argument — is the cycle `forSenders` exists to avoid.
-    io.current.queue = addresses;
+    const failures = new Set(retry);
+    io.current.queue = addresses.filter((sender) => !failures.has(sender));
     // One state write per RENDER that brings senders this session has not seen, and only while
     // the Screener is on screen — see `queueReady`. Each key bumps at most once ever, so the
     // write cannot recur for the same queue and the effects it feeds cannot loop.
@@ -1087,19 +1118,8 @@ export function useScreenerSuggestions(opts: {
       }
       if (queueSettled) io.current.queueEverSettled = true;
     }
-    // The ladder is bounded by the PURCHASE ceiling, not the per-request cap — a size larger than
-    // one request is delivered as several requests, below.
-    //
-    // BOTH ladders are computed every render, because the entry points need them before the mode
-    // has changed. `openAgain` is pressed while `mode` is still `new`, so a single ladder read off
-    // the current mode would open the re-ask at a size taken from the buy list — the "Suggest
-    // again for 25" that quotes 3 because 25 was never in this set.
-    const newSizes = batchSizes(addresses.length, MAX_SUGGEST_BATCH);
-    const againSizes = batchSizes(resuggestable.length, MAX_SUGGEST_BATCH);
-    // The set the OPEN ladder acts on. Every slice below — price, confirm, the size labels — comes
-    // from here, so the set that is quoted and the set that is bought are one list.
-    const target = mode === "again" ? resuggestable : addresses;
-    const sizes = mode === "again" ? againSizes : newSizes;
+    const target = snapshot ?? (mode === "again" ? resuggestable : addresses);
+    const sizes = batchSizes(target.length, mode === "again" ? MAX_SUGGEST_BATCH : target.length);
     const chosen = sizes.includes(size) ? size : (sizes[sizes.length - 1] ?? 0);
 
     /**
@@ -1207,30 +1227,65 @@ export function useScreenerSuggestions(opts: {
       })();
     };
 
-    /**
-     * Open one of the two ladders: pick a size on it, and price that.
-     *
-     * A size chosen earlier survives a cancel and a re-open — but only onto the ladder it was
-     * chosen on. Carried across a MODE SWITCH it would be a number that means something else:
-     * "25" picked off a buy list of 400 lands on a re-ask ladder of [10, 12] as either a
-     * pressed-looking button that is not there, or a slice of a different set than the one the
-     * label named. Switching sets therefore always opens at that set's largest size, which is
-     * the "all N" a person pressing "Suggest again…" is asking for anyway.
-     */
-    const openOn = (kind: SuggestMode, from: string[], ladder: number[]) => {
-      const keep = kind === mode && ladder.includes(size);
-      const start = keep ? size : (ladder[ladder.length - 1] ?? 0);
+    const openOn = (kind: SuggestMode, from: string[]) => {
+      if (!canRequest(permissionVersion)) return;
+      const limit = kind === "again" ? MAX_SUGGEST_BATCH : from.length;
+      const start = Math.min(from.length, limit);
+      setSnapshot([...from]);
       setMode(kind);
       setSize(start);
       price(start, from, kind);
+    };
+
+    const openAll = () => {
+      if (!readQueue) {
+        openOn("new", addresses);
+        return;
+      }
+      if (!canRequest(permissionVersion)) return;
+      const run = ++io.current.run;
+      const current = () => io.current.run === run && canRequest(permissionVersion);
+      io.current.quotedPermission = permissionVersion;
+      io.current.quotedChunks = [];
+      setSnapshot([]);
+      setMode("new");
+      setPhase("pricing");
+      setQuote(null);
+      setNotice(null);
+      setRefused(false);
+      void (async () => {
+        // Keep the local queue's order and add older server-only senders. Each page names its own
+        // unadvised held senders. Freeze the set before pricing so later arrivals cannot enlarge it.
+        const senders = new Set(addresses);
+        const advised = new Set(resuggestable);
+        const visited = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const page = await wire.list({ limit: HYDRATE_LIMIT, cursor });
+          if (!current()) return;
+          for (const entry of page.suggestable.senders) {
+            const sender = senderKey(entry);
+            if (!advised.has(sender)) senders.add(sender);
+          }
+          cursor = page.nextCursor ?? undefined;
+          if (cursor && visited.has(cursor)) throw new Error("the Screener queue repeated a page");
+          if (cursor) visited.add(cursor);
+        } while (cursor);
+        openOn("new", [...senders]);
+      })().catch((err) => {
+        if (!current()) return;
+        setPhase("ready");
+        setNotice(whyFor(err, t("suggest.failed")));
+      });
     };
 
     const quotedRun = io.current.run;
     const quoteCurrent = io.current.quotedPermission === permissionVersion;
     return {
       disabled: !permissionKnown,
-      available: addresses.length,
+      available: addresses.length || (readQueue ? Math.max(0, unanswered) : 0),
       resuggestable: resuggestable.length,
+      retryable: retry.length,
       unanswered,
       mode,
       pool: target.length,
@@ -1241,8 +1296,9 @@ export function useScreenerSuggestions(opts: {
       notice,
       progress,
       standing,
-      open: () => openOn("new", addresses, newSizes),
-      openAgain: () => openOn("again", resuggestable, againSizes),
+      open: openAll,
+      openAgain: () => openOn("again", resuggestable),
+      openRetry: () => openOn("new", [...retry]),
       choose: (n: number) => {
         setSize(n);
         // `target`/`mode` and not arguments here: `choose` is only reachable from an open ladder,
@@ -1254,6 +1310,7 @@ export function useScreenerSuggestions(opts: {
         if (phase === "running") return;
         io.current.run++;
         setPhase("closed");
+        setSnapshot(null);
         setQuote(null);
         setNotice(null);
         setRefused(false);
@@ -1309,11 +1366,25 @@ export function useScreenerSuggestions(opts: {
               // An older server without a grant for an empty chunk offers nothing to dispatch.
               if (grant === undefined) continue;
               flying(setInFlight, chunk, true);
-              const idempotencyKey = newKey();
               const maySend = () => io.current.run === run && canRequest(permissionVersion);
-              res = await suggestWithBackoff(() => wire.suggest(chunk, {
-                idempotencyKey, relayGrant, maySend, maxCredits: ceiling, quoteGrant: grant.proof,
-              }), maySend).finally(() => flying(setInFlight, chunk, false));
+              const buy = (senders: string[], maxCredits: number, proof: string) => {
+                const idempotencyKey = newKey();
+                return suggestWithBackoff(() => wire.suggest(senders, {
+                  idempotencyKey, relayGrant, maySend, maxCredits, quoteGrant: proof,
+                }), maySend);
+              };
+              try {
+                res = await buy(chunk, ceiling, grant.proof);
+              } catch (err) {
+                if (!quoteChanged(err) || !maySend()) throw err;
+                const repriced = await repriceApprovedChunk(chunk, grant, ceiling,
+                  (senders) => wire.suggest(senders, { dryRun: true, relayGrant, maySend }), maySend)
+                  .catch(() => { throw err; });
+                if (!repriced) continue;
+                res = await buy(repriced.senders, repriced.ceiling, repriced.grant.proof);
+              } finally {
+                flying(setInFlight, chunk, false);
+              }
             } catch (err) {
               // Stale — a newer press owns the state; paint nothing.
               if (io.current.run !== run) return;
@@ -1374,13 +1445,13 @@ export function useScreenerSuggestions(opts: {
             gotSuggestions.push(...res.suggestions);
             gotSkipped.push(...res.skipped);
             charged += res.charged;
-            stopped ??= res.stopped;
+            if (!res.deferred) stopped ??= res.stopped;
             if (typeof res.remainingCredits === "number") remainingCredits = res.remainingCredits;
             setNotice(t("suggest.progress", { done: completed.size, total }));
             setProgress({ done: completed.size, total });
             // HALT on the first chunk the gate stopped part-way: the balance is exhausted, so
             // every later chunk would stop too. What this chunk bought stays; the summary says so.
-            if (res.stopped) break;
+            if (res.stopped && !res.deferred) break;
           }
           if (io.current.run !== run) return;
           // The run reached its end: either it stopped on the gate (and every row it never asked
@@ -1388,6 +1459,7 @@ export function useScreenerSuggestions(opts: {
           // evidence that an earlier refusal has lifted.
           writeStanding(standingOfStop(stopped));
           setPhase("closed");
+          setSnapshot(null);
           setNotice(null);
           setRefused(false);
           // CLEARED, not left at `{done: total}`. A full track that never goes away is a claim
@@ -1539,8 +1611,9 @@ const VIEW_DEST: Record<string, SenderSuggestion["dest"]> = {
  */
 export function toSuggestion(a: {
   decision: "yes" | "no" | "hold"; destination?: string; confidence: number; rationale: string;
-  reasonCode?: string; reasonBrand?: string; reasonCount?: number;
+  reasonCode?: string; reasonBrand?: string; reasonCount?: number; failed?: true;
 }): SenderSuggestion {
+  if (a.failed) return { dest: "screener", confidence: 0, rationale: "", noAnswer: "model_unavailable" };
   // The reason travels with the answer and is never invented here: an unknown code is dropped
   // rather than rendered, so a server ahead of this client shows the suggestion without a
   // sentence instead of a raw token.

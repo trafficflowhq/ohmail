@@ -245,6 +245,49 @@ describe("the calendars of a home", () => {
     expect(s.seen.map((r) => [r.path, r.depth])).toEqual([["/.well-known/caldav", "0"], ["/dav/", "0"], ["/dav/principals/mila/", "0"], ["/dav/calendars/mila/", "1"]]);
   });
 
+  it("reads the effective write grant of each shared calendar", async () => {
+    const s = await startCalDavStandIn();
+    servers.push(s);
+    const owner = "/dav/principals/another/";
+    s.addCalendar("editable", { owner, privileges: ["read", "write"] });
+    s.addCalendar("collection-grant", { owner, homePrivileges: ["read"], privileges: ["read", "write-content", "bind", "unbind"] });
+    s.addCalendar("share-grant", { owner, privileges: null, shareAccess: "read-write" });
+    s.addCalendar("membership-grant", { owner, privileges: ["read", "bind", "unbind"] });
+    s.addCalendar("add-only", { owner, privileges: ["read", "bind"] });
+    s.addCalendar("share-reader", { owner, privileges: null, shareAccess: "read" });
+    s.addCalendar("acl-reader", { owner, privileges: ["read", "write-properties"] });
+    s.addCalendar("unknown-share", { owner, privileges: null });
+    const answer = await reader.listCalendars(signIn(s), signal());
+    expect(answer.ok && answer.value.map((c) => [c.name, c.writable, c.owned])).toEqual([
+      ["editable", true, undefined],
+      ["collection-grant", true, undefined],
+      ["share-grant", true, undefined],
+      ["membership-grant", false, undefined],
+      ["add-only", false, undefined],
+      ["share-reader", false, undefined],
+      ["acl-reader", false, undefined],
+      ["unknown-share", true, undefined],
+    ]);
+  });
+
+  it.each([500, 401, 429])("keeps listing calendars when a share's access probe returns %i", async (accessProbeStatus) => {
+    const s = await startCalDavStandIn();
+    servers.push(s);
+    s.addCalendar("personal", { privileges: ["read", "write"] });
+    s.addCalendar("share", { owner: "/dav/principals/another/", privileges: ["read"], accessProbeStatus });
+    const answer = await reader.listCalendars(signIn(s), signal());
+    expect(answer.ok && answer.value.map((c) => [c.name, c.writable])).toEqual([["personal", true], ["share", false]]);
+  });
+
+  it("keeps the home grant when a share's access probe omits the access properties", async () => {
+    const s = await startCalDavStandIn();
+    servers.push(s);
+    s.addCalendar("shared", { owner: "/dav/principals/another/", homeShareAccess: "read-write", privileges: null });
+    expect(await reader.listCalendars(signIn(s), signal())).toMatchObject({
+      ok: true, value: [{ name: "shared", writable: true }],
+    });
+  });
+
   it("lists a calendar without a name or a zone that is longer than one may be", async () => {
     const s = await startCalDavStandIn();
     servers.push(s);

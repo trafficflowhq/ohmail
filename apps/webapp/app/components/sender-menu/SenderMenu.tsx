@@ -55,6 +55,7 @@ import { usePileNames } from "../../shell/decision-copy";
 import { avatarHue, initialsOf, placeLabel } from "../../shell/format";
 import { displayAddress, displayAddressee, displayDomain } from "@ohmail/app-logic/text/idn";
 import { useOverlayFit } from "../../screening/overlay-clamp";
+import type { useScreenerAcknowledgements } from "@ohmail/app-logic/consent/consent-row";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { addressHash as addressHref } from "../../shell/routing";
 import { useSenderCheckWords } from "../../screening/sender-check";
@@ -132,6 +133,7 @@ export function SenderMenu({
   mailboxNameOf,
   onMoveToo,
   autoUnsubscribe = true,
+  unsubscribeAcknowledgements,
   fromComputer = false,
   lettersFor,
   unsubscribeRecipientsFor,
@@ -164,6 +166,7 @@ export function SenderMenu({
    * (`press-forecast.ts`). Absent or `null` (the demo): no step is asked and the press commits.
    */
   forecastFor?: (dest: ScreeningDest, scope: ScreeningScope, makeRule: boolean, applyRetro: boolean) => PressForecast | null;
+  unsubscribeAcknowledgements?: ReturnType<typeof useScreenerAcknowledgements>;
   unsubscribeRecipientsFor?: (scope: ScreeningScope) => { ids: readonly string[]; senders: number };
   /** "Their rules": every rule deciding the subject's mail today, as the list places it. */
   rulesFor?: (scope: ScreeningScope) => RulesInPlay | null;
@@ -367,6 +370,8 @@ export function SenderMenu({
     letters: lettersFor?.(choice) ?? [],
   });
 
+  const unsubscribeKind = (dest: ScreeningDest) => dest === "spam" ? "spamUnsubscribe" : "screenOutUnsubscribe";
+
   const commit = (dest: ScreeningDest, refreshOnly = false) => {
     // The disclosure is owed exactly when the wire will arm auto-unsubscribe AND the mechanism is
     // armed at all. `ScreeningPlan.unsubscribes` decides the first — the one place that condition
@@ -396,12 +401,16 @@ export function SenderMenu({
       setStep({ kind: "resolve", dest, forecast, cls, choice: defaultChoice(cls, forecast), unsub, recipients, wider });
       return;
     }
-    if (unsub !== "none") {
+    if (unsub !== "none" && !unsubscribeAcknowledgements?.has(unsubscribeKind(dest))) {
       openedFrom.current = dest;
       setStep({ kind: "unsubscribe", dest, unsub, recipients });
       return;
     }
     if (refreshOnly) { setStep({ kind: "list" }); return; }
+    if (unsub !== "none") {
+      onChoose(dest, scope, makeRule, applyRetro, undefined, recipients?.ids);
+      return;
+    }
     if (addressOnly && forecast) {
       onChoose(dest, scope, makeRule, applyRetro, {
         resolution: "keep", shown: forecast.groups.map((g) => g.rule), forecast,
@@ -765,6 +774,7 @@ export function SenderMenu({
           unsubscribeCommit={shownUnsub === "sends" ? t("unsubCommit") : t("unsubCommitMaybe")}
           onChoice={(choice) => setStep({ ...step, choice })}
           onCommit={() => {
+            if (shownUnsub !== "none") unsubscribeAcknowledgements?.remember?.(unsubscribeKind(step.dest));
             const tile = tilesOf(step.cls, step.forecast, step.choice);
             const chosen = widerChoice?.forecast ?? step.forecast;
             const result = onChoose(step.dest, tile.scope ?? scope, makeRule, applyRetro, {
@@ -796,7 +806,11 @@ export function SenderMenu({
             {t(fromComputer ? "unsubFineMoreComputer" : "unsubFineMore")}
           </InfoNote>
           <span className="sm-confirm-row">
-            <button type="button" className="go" onClick={() => { setStep({ kind: "list" }); onChoose(confirm, scope, makeRule, applyRetro, undefined, step.recipients?.ids); }}>
+            <button type="button" className="go" onClick={() => {
+              setStep({ kind: "list" });
+              unsubscribeAcknowledgements?.remember?.(unsubscribeKind(confirm));
+              onChoose(confirm, scope, makeRule, applyRetro, undefined, step.recipients?.ids);
+            }}>
               {step.unsub === "sends" ? t("unsubCommit") : t("unsubCommitMaybe")}
             </button>
             <button type="button" onClick={() => { stepBack(); }}>{t("cancel")} <Kbd>esc</Kbd></button>

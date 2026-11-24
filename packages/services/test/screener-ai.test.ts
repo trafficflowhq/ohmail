@@ -1,12 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import * as suggestionStore from "@trafficflow/db";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { screenerLedgerSource } from "@trafficflow/db";
 import { PLANE_PRICES, PLANE_PRICING } from "./helpers/plane-pricing.js";
 import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
-import { accounts, mailboxes, messages, routingDecisions, type LedgerTx, type Tx } from "@trafficflow/db";
+import { accountSettings, accounts, mailboxes, messageInstances, messages, routingDecisions, type LedgerTx, type Tx } from "@trafficflow/db";
 import { makeHaikuClassifier, type AnthropicLike, type ClassifierPort, type ClassifierInput, type ClassifierResult } from "@trafficflow/core";
-import { ScreenerService } from "../src/index.js";
+import { ScreenerService, setAutoSuggest, suggestLaneGate } from "../src/index.js";
 import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 
 /**
@@ -641,7 +642,26 @@ describe("AI-OPEN: every held sender is suggestable, and the code is what does n
     expect(w.credits.spends.length).toBeGreaterThan(0);
   });
 
-  it("a model OUTAGE is charged, stores nothing, and names itself", async () => {
+  it("a failed purchase and its replacement cost one credit in total", async () => {
+    const w = await billable({ credits: 10 });
+    const from = `returning@${"example.test"}`;
+    const first = await seedMessage(w.db, w.accountId, w.mailboxId, { from });
+    const failed = new ScreenerService({
+      classifier: new SpyClassifier(new Error("model unavailable")), credits: w.credits, pricing: PLANE_PRICING,
+    });
+    expect((await failed.suggest(w.ctx, { senders: [from] })).skipped[0]?.reason).toBe("model_unavailable");
+    const newer = await seedMessage(w.db, w.accountId, w.mailboxId, { from, date: w.ctx.now() });
+    const recovered = new ScreenerService({
+      classifier: new SpyClassifier(), credits: w.credits, pricing: PLANE_PRICING,
+    });
+    expect((await recovered.suggest(w.ctx, { senders: [from] })).suggestions[0]?.messageId).toBe(newer);
+    expect(w.credits.releases.filter((release) => release.refund)).toEqual([
+      expect.objectContaining({ refund: true, meta: { messageId: first } }),
+    ]);
+    expect(w.credits.spends.filter(({ outcome }) => outcome.verdict === "ok")).toHaveLength(2);
+  });
+
+  it("a model outage refunds its debit and names the failed sender", async () => {
     const w = await billable({ credits: 10 });
     await seedMessage(w.db, w.accountId, w.mailboxId, { from: "alice@ex.example" });
     const svc = new ScreenerService({
@@ -651,11 +671,33 @@ describe("AI-OPEN: every held sender is suggestable, and the code is what does n
 
     const res = await svc.suggest(w.ctx, { senders: ["alice@ex.example"] });
     expect(res.skipped).toEqual([{ sender: "alice@ex.example", reason: "model_unavailable" }]);
-    expect(res.charged).toBe(1);
+    expect(res.charged).toBe(0);
+    expect(res.suggestions).toEqual([]);
     expect(await w.stored()).toEqual([]);
-    // Not refunded: the source is stable, so the retry below is free and THAT honours the charge.
-    expect((await w.ledger()).filter((r) => r.reason === "refund")).toEqual([]);
     expect(w.credits.spends).toHaveLength(1);
+    expect(w.credits.releases).toEqual([
+      expect.objectContaining({ refund: true, attempt: "1" }),
+    ]);
+    const second = await billable({ credits: 10 });
+    await seedMessage(second.db, second.accountId, second.mailboxId, { from: "retry@ex.example" });
+    const healthy = new SpyClassifier();
+    let calls = 0;
+    const transient: ClassifierPort = {
+      async classify(input) {
+        if (++calls === 1) throw new Error("temporary model timeout");
+        return healthy.classify(input);
+      },
+    };
+    const recovered = new ScreenerService({
+      adapter: new FakeAdapter(), classifier: transient, credits: second.credits, pricing: PLANE_PRICING,
+    });
+    const result = await recovered.suggest(second.ctx, { senders: ["retry@ex.example"] });
+    expect(result.skipped).toEqual([]);
+    expect(result.suggestions).toHaveLength(1);
+    expect(calls).toBe(2);
+    expect(second.credits.spends).toHaveLength(1);
+    expect(result.charged).toBe(1);
+
   });
 
   /**
@@ -754,6 +796,127 @@ describe("AUTOMATIC: the opt-in's batch is not a press", () => {
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier, credits: w.credits, pricing: PLANE_PRICING });
     return { w, classifier, svc };
   }
+
+  async function addCopy(w: Awaited<ReturnType<typeof billable>>, from: string) {
+    const [message] = await w.db.select({ id: messages.id }).from(messages).where(eq(messages.fromAddress, from));
+    await w.db.insert(messageInstances).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, messageId: message!.id,
+      folder: "ohmail/Screener", uidvalidity: 1n, uid: 1, isPrimary: true,
+    });
+    return message!.id;
+  }
+
+  it.each([
+    { name: "an account without auto-suggest", enabled: false, waiting: ORDINARY },
+    { name: "a sensitive-category letter", enabled: true, waiting: CATEGORISED },
+    { name: "a letter marked no AI", enabled: true, waiting: INDETERMINATE },
+  ])("a press on $name with a no_slot item must not come back deferred", async ({ enabled, waiting }) => {
+    const { w, classifier, svc } = await flaggedQueue();
+    await w.db.update(accountSettings).set({ autoSuggestAt: enabled ? w.ctx.now() : null })
+      .where(eq(accountSettings.accountId, w.accountId));
+    await addCopy(w, waiting);
+    const delivered = `delivered@${"example.test"}`;
+    await seedMessage(w.db, w.accountId, w.mailboxId, { from: delivered });
+    const acquire = vi.spyOn(suggestLaneGate, "acquire").mockResolvedValueOnce(false);
+    try {
+      const result = await svc.suggest(w.ctx, { senders: [waiting, delivered] });
+      expect(result.stopped).toBe("spend_unavailable");
+      expect.soft(result.deferred).toBeUndefined();
+      expect.soft(await w.stored()).toHaveLength(1);
+      expect(classifier.calls).toBe(1);
+      expect(w.credits.spends).toHaveLength(1);
+    } finally {
+      acquire.mockRestore();
+    }
+  });
+
+  it.each([false, true])("only hands a no-slot sender to the worker inside the cutline (%s)", async (outside) => {
+    const { w, classifier, svc } = await flaggedQueue();
+    const messageId = await addCopy(w, ORDINARY);
+    if (outside) {
+      await w.db.update(accountSettings).set({ screeningBaselineAt: w.ctx.now() }).where(eq(accountSettings.accountId, w.accountId));
+      const old = new Date("2020-01-01");
+      await w.db.update(messages).set({ date: old, arrivedAt: old, createdAt: old }).where(eq(messages.id, messageId));
+    }
+    const delivered = `delivered@${"example.test"}`;
+    await seedMessage(w.db, w.accountId, w.mailboxId, { from: delivered });
+    const acquire = vi.spyOn(suggestLaneGate, "acquire").mockResolvedValueOnce(false);
+    try {
+      const result = await svc.suggest(w.ctx, { senders: [ORDINARY, delivered] });
+      expect(result.stopped).toBe("spend_unavailable");
+      expect(result.deferred).toBe(outside ? undefined : true);
+      expect((await w.stored()).filter((r) => r.status === "retry_due")).toHaveLength(outside ? 0 : 1);
+      expect(classifier.calls).toBe(1);
+    } finally {
+      acquire.mockRestore();
+    }
+  });
+
+  it("reports a stop when the worker would see a different representative", async () => {
+    const { w, svc } = await flaggedQueue();
+    await addCopy(w, ORDINARY);
+    const delivered = `delivered@${"example.test"}`;
+    await seedMessage(w.db, w.accountId, w.mailboxId, { from: delivered });
+    const acquire = vi.spyOn(suggestLaneGate, "acquire").mockImplementationOnce(async () => {
+      await seedMessage(w.db, w.accountId, w.mailboxId, { from: ORDINARY, date: w.ctx.now() });
+      return false;
+    });
+    try {
+      const result = await svc.suggest(w.ctx, { senders: [ORDINARY, delivered] });
+      expect(result).toMatchObject({ charged: 1, stopped: "spend_unavailable", suggestions: [{ sender: delivered }] });
+      expect(result.deferred).toBeUndefined();
+      expect(await w.stored()).toHaveLength(1);
+    } finally {
+      acquire.mockRestore();
+    }
+  });
+
+  it("can hand the whole chunk to the worker without charging for an unclaimed slot", async () => {
+    const { w, classifier, svc } = await flaggedQueue();
+    await addCopy(w, ORDINARY);
+    const acquire = vi.spyOn(suggestLaneGate, "acquire").mockResolvedValueOnce(false);
+    try {
+      expect(await svc.suggest(w.ctx, { senders: [ORDINARY] })).toMatchObject({
+        charged: 0, suggestions: [], stopped: "spend_unavailable", deferred: true,
+      });
+      expect(classifier.calls).toBe(0);
+      expect(w.credits.spends).toEqual([]);
+      expect(await w.stored()).toMatchObject([{ status: "retry_due" }]);
+    } finally {
+      acquire.mockRestore();
+    }
+  });
+
+  it("clears deferred work when automatic suggestions are switched off", async () => {
+    const { w } = await flaggedQueue();
+    const messageId = await addCopy(w, ORDINARY);
+    await w.db.insert(routingDecisions).values({
+      accountId: w.accountId, messageId, destination: "ohmail/Screener",
+      inputProvenance: "screener_suggestion_retry", status: "retry_due",
+    });
+    await setAutoSuggest(w.ctx, false);
+    await setAutoSuggest(w.ctx, true);
+    expect(await w.stored()).toEqual([]);
+  });
+
+  it("a failed retry record leaves the completed suggestions and a stoppage in the reply", async () => {
+    const { w, svc } = await flaggedQueue();
+    await addCopy(w, ORDINARY);
+    const delivered = `delivered@${"example.test"}`;
+    await seedMessage(w.db, w.accountId, w.mailboxId, { from: delivered });
+    const acquire = vi.spyOn(suggestLaneGate, "acquire").mockResolvedValueOnce(false);
+    const record = vi.spyOn(suggestionStore, "recordScreenerSuggestionRetry")
+      .mockRejectedValueOnce(new Error("retry store unavailable"));
+    try {
+      const result = await svc.suggest(w.ctx, { senders: [ORDINARY, delivered] });
+      expect(result).toMatchObject({ charged: 1, stopped: "spend_unavailable", suggestions: [{ sender: delivered }] });
+      expect(result.deferred).toBeUndefined();
+      expect(record).toHaveBeenCalledTimes(1);
+    } finally {
+      acquire.mockRestore();
+      record.mockRestore();
+    }
+  });
 
   it("an automatic batch hands NEITHER flagged sender to the port; the press asks about both, as today", async () => {
     const { w, classifier, svc } = await flaggedQueue();

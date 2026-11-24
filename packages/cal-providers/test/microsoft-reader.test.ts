@@ -115,6 +115,26 @@ describe("Microsoft against the double: the calendars and the sign-in", () => {
     expect(sent).toEqual([{ method: "GET", path: "/v1.0/me/calendars", tokenGoesTo: { "127.0.0.1": true, "graph.microsoft.com": false, "login.microsoftonline.com": false } }]);
   });
 
+  it("uses canEdit on shared calendars independently of ownership", async () => {
+    const mine = ["primary", "example.test"].join("@");
+    const other = ["other", "example.test"].join("@");
+    const http: HttpPort = {
+      async request(url) {
+        const body = new TextEncoder().encode(JSON.stringify({ value: [
+          { id: "primary", isDefaultCalendar: true, owner: { address: mine }, canEdit: true },
+          { id: "shared", owner: { address: other }, canEdit: true },
+          { id: "reader", owner: { address: other }, canEdit: false },
+        ] }));
+        return { arrived: true, status: 200, body, header: () => null, location: null, url, hops: 0 };
+      },
+    };
+    const shared = makeReader({ http, clock: { now: () => NOW }, zones, graphBase: double.base });
+    const answer = await shared.listCalendars(signedIn(), never);
+    expect(answer.ok && answer.value.map((cal) => [cal.id, cal.writable, cal.owned])).toEqual([
+      ["primary", true, true], ["shared", true, undefined], ["reader", false, undefined],
+    ]);
+  });
+
   it("checks a sign-in on the calendars and names the account by who owns its default calendar", async () => {
     expect(await reader.checkSignIn(signedIn(), never)).toEqual({ ok: true, value: { principal: "mila@lichtgrat.example", addresses: ["mila@lichtgrat.example"] } });
     expect(await reader.checkSignIn(signedIn("not-the-double-s-own"), never)).toEqual({ ok: false, reason: "sign_in_refused", retryAfterMs: null });

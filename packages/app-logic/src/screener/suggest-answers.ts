@@ -16,6 +16,7 @@ export interface ScreenerWireItem {
     decision: "yes" | "no" | "hold";
     confidence: number;
     rationale: string;
+    failed?: true;
     reasonCode?: string;
     reasonBrand?: string;
     reasonCount?: number;
@@ -53,6 +54,8 @@ export interface ScreenerSuggestWire {
   quoteGrant?: ScreenerQuoteGrant;
   charged: number;
   stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
+  /** The only stopped items were left for the worker. The next approved chunk can proceed. */
+  deferred?: true;
   remainingCredits?: number;
   suggestions: Array<{
     sender: string;

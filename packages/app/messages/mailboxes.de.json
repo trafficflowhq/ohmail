@@ -81,7 +81,7 @@
     "oauthFinishing": "Die Microsoft-Verbindung wird abgeschlossen …",
     "oauthConnected": "{address} ist verbunden. Die erste Synchronisierung beginnt beim nächsten Durchgang.",
     "oauthReconnected": "{address} ist wieder verbunden. Die Synchronisierung läuft beim nächsten Durchgang weiter.",
-    "oauth_admin_consent_required": "Deine Organisation muss ohmail freigeben, bevor dieses Postfach verbunden werden kann. Eine Administratorin kann das tun — entweder weil ohmail für deinen Tenant noch nicht freigegeben ist oder weil dein Tenant es Einzelpersonen nicht erlaubt, Apps selbst freizugeben.",
+    "oauth_admin_consent_required": "Der Admin deiner Organisation muss ohmail einmal freigeben.",
     "oauth_consent_declined": "Die Microsoft-Anmeldung wurde abgebrochen, es wurde also nichts verbunden.",
     "oauth_consent_failed": "Microsoft konnte die Anmeldung nicht abschließen. Versuch es nochmal.",
     "oauth_state_invalid": "Dieser Outlook-Verbindungslink gilt nicht mehr. Fang von hier neu an.",

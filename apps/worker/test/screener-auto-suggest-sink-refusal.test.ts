@@ -89,7 +89,7 @@ describe("a refusal at the sink is one sender's answer", () => {
     expect(inner.asked.slice(2)).toEqual(["a@example.test"]);
   });
 
-  it("CONTROL: a plain model fault still stops the pass, and its charge is kept for the free retry", async () => {
+  it("a plain model fault refunds its debit and still stops the pass", async () => {
     const w = await world();
     await held(w, "a@example.test", 1);
     await held(w, "b@example.test", 2);
@@ -104,6 +104,7 @@ describe("a refusal at the sink is one sender's answer", () => {
 
     expect(r.stopped).toBe("model_unavailable");
     expect(inner.asked, "the sender behind the outage was asked").toEqual(["a@example.test"]);
-    expect(gate.releases.filter((x) => x.refund)).toEqual([]);
+    expect(gate.releases.map((x) => x.refund)).toEqual([true]);
+    expect(r.chargedAttempts).toBe(0);
   });
 });

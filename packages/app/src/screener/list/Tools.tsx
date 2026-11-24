@@ -24,15 +24,15 @@ function ScreeningProgress({
   label,
   done,
   total,
-  inline,
+  suggest,
 }: {
   label: string;
   done: number;
   total: number;
-  inline?: boolean;
+  suggest?: boolean;
 }) {
   return (
-    <div className="sc-progress" data-inline={inline || undefined}>
+    <div className="sc-progress" data-suggest={suggest || undefined}>
       <span role="status">{label}</span>
       {total > 0 ? (
         <progress className="sc-progress-track" aria-hidden="true" value={done} max={total} />
@@ -121,10 +121,15 @@ function Suggest({
   const t = useText("screener");
   const button = useRef<HTMLButtonElement | null>(null);
   const reaskContent = useRef<HTMLDivElement | null>(null);
+  const wasOpen = useRef(false);
   const { standing, subscriptionPane } = useNoAdvice();
   const c = suggest.control;
   const runningFirst = c.phase === "running" && c.progress !== null && !again;
-  const open = c.phase !== "closed" && !runningFirst;
+  const open = !c.disabled && c.phase !== "closed" && !runningFirst;
+  useLayoutEffect(() => {
+    if (runningFirst && wasOpen.current) listAnchor.current?.focus({ preventScroll: true });
+    wasOpen.current = open;
+  }, [listAnchor, open, runningFirst]);
   const first = c.available > 0;
   if (!open && !first && c.resuggestable === 0) return null;
   const inline = !touch && first && !runningFirst;
@@ -144,14 +149,14 @@ function Suggest({
         </Button>
       ) : null}
       <Menu
-        open={!c.disabled && open}
+        open={open}
         onClose={c.cancel}
         anchor={inline && !fromList ? button : listAnchor}
-        returnFocus={runningFirst ? listAnchor : undefined}
         right
         label={again ? t("suggest.ariaAgain") : t("suggest.aria")}
         kind="ask"
         fitContent
+        fit="whole"
         initialFocus={again ? reaskContent : undefined}
         title={again ? t("suggest.labelAgain") : t("suggest.label")}
       >
@@ -198,16 +203,15 @@ function SuggestMenuContent({
     }
   }, [again, open, c.phase, emptyAgain, contentRef]);
   const n = c.quote?.senders ?? c.size;
-  const count = n > 1 && n === c.size ? (n === c.pool ? "all" : "first") : "count";
+  const all = c.size === c.pool;
+  const count = n > 1 && all ? "all" : n > 1 && n === c.size ? "first" : "count";
   const showSizes = c.sizes.length > 1 && (!emptyAgain || c.size < c.pool);
   const price =
     c.phase === "ready" && c.quote && !emptyAgain
-      ? again
-        ? suggest.priced
-          ? t("suggest.credits", { credits: c.quote.credits })
-          : null
-        : suggest.priced
-          ? t("suggest.price", { senders: c.quote.senders, credits: c.quote.credits })
+      ? suggest.priced
+        ? t("suggest.credits", { credits: c.quote.credits })
+        : again
+          ? null
           : t("suggest.priceUnmetered", { senders: c.quote.senders })
       : null;
   const noControls = c.phase === "running" || (emptyAgain && !showSizes);
@@ -227,7 +231,7 @@ function SuggestMenuContent({
             {t("suggest.running")}
           </p>
         ) : (
-          <ScreeningProgress label={t("suggest.progress", c.progress)} {...c.progress} />
+          <ScreeningProgress label={t("suggest.progress", c.progress)} {...c.progress} suggest />
         )
       ) : (
         <>
@@ -238,7 +242,7 @@ function SuggestMenuContent({
                 value={String(c.size)}
                 options={c.sizes.map((size) => ({
                   value: String(size),
-                  label: size === c.pool ? t("suggest.sizeAll", { count: size }) : String(size),
+                  label: size === c.pool ? t("suggest.sizeAll", { count: c.pool }) : String(size),
                 }))}
                 onChange={(size) => c.choose(Number(size))}
               />
@@ -307,6 +311,8 @@ export function Tools({
     if (again) control?.openAgain();
     else control?.open();
   };
+  const retry = control?.openRetry;
+  const canRetry = (control?.retryable ?? 0) > 0 && retry !== undefined;
   const first = control !== null && control.available > 0;
   const reask = control !== null && control.resuggestable > 0;
   const items: ListMenuItem[] = extra ? [extra] : [];
@@ -316,9 +322,21 @@ export function Tools({
       label,
       spoken: label,
       note: String(first ? control.available : control.resuggestable),
-      disabled: control.disabled,
+      disabled: control.disabled || control.phase === "running",
       onPress: () => start(!first, true),
       apart: true,
+    });
+  }
+  if (canRetry) {
+    const label = t("suggest.retry");
+    items.push({
+      label,
+      spoken: label,
+      disabled: control?.disabled || control?.phase === "running",
+      onPress: () => {
+        setSuggestionMenu({ again: false, fromList: true });
+        retry();
+      },
     });
   }
   if (waiting && count > 0 && may)
@@ -359,7 +377,7 @@ export function Tools({
             />
           ) : null))}
       {suggesting ? (
-        <ScreeningProgress label={t("suggest.progress", suggesting)} {...suggesting} inline />
+        <ScreeningProgress label={t("suggest.progress", suggesting)} {...suggesting} suggest />
       ) : null}
       {apply ? (
         <Button kind="two" size="s" keyHint="a" onPress={view.askApplySuggestions}>

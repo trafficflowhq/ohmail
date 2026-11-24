@@ -441,13 +441,15 @@ describe("the trigger — nothing is spent before the price is on screen", () =>
     await press("Suggest…");
     // 12 waiting under the purchase ceiling ⇒ the largest offered batch is all 12, priced in one
     // request because 12 fits inside one request's size.
-    expect(text()).toContain("12 senders · 12 credits");
+    const ask = within(document.body).getByRole("dialog", { name: messages.screener.suggest.aria });
+    expect(within(ask).getByText("12 credits")).toBeTruthy();
+    expect(within(ask).getByRole("button", { name: "Suggest for all 12 senders" })).toBeTruthy();
   });
 
   it("the price is the server's ANSWER, not a local multiplication of the count", async () => {
     // The server prices 4 of the 12 (the rest are already bought, or held back from the
     // model) and charges 2 credits each. A client that multiplied its own count by its own
-    // idea of the cost would print "12 senders · 12 credits" here.
+    // idea of the cost would offer 12 senders at 12 credits.
     suggestReply = (body) =>
       json({
         dryRun: true, requested: body.senders.length, quoted: 4, quotedCredits: 8,
@@ -455,8 +457,10 @@ describe("the trigger — nothing is spent before the price is on screen", () =>
       });
     await mountView(await engineWith(MANY));
     await press("Suggest…");
-    expect(text()).toContain("4 senders · 8 credits");
-    expect(text()).not.toContain("12 senders");
+    const ask = within(document.body).getByRole("dialog", { name: messages.screener.suggest.aria });
+    expect(within(ask).getByText("8 credits")).toBeTruthy();
+    expect(within(ask).getByRole("button", { name: "Suggest for all 4 senders" })).toBeTruthy();
+    expect(ask.textContent).not.toContain("12 senders");
   });
 
   it("a server that states NO price sells nothing — the sentence is said, the confirm stays dead", async () => {
@@ -546,7 +550,7 @@ describe("the trigger — nothing is spent before the price is on screen", () =>
     await act(async () => { await engine.syncOnce(); });
     await flush();
     expect(screenerRowIds(host!)).toContain(replacement.id);
-    await press("Suggest again for 2 senders");
+    await press("Suggest again for all 2 senders");
     expect.soft(purchases()[0]?.body?.senders).toEqual(dryRuns()[0]?.body?.senders);
     expect.soft(purchases()[0]?.body?.quoteGrant).toBe("fixture-first-quote");
     expect.soft(text()).toContain("0 of 2 suggested…");
@@ -640,6 +644,16 @@ describe("the batch is bounded, and it is a PREFIX of the queue rather than a sa
     await press("Suggest…");
     const sizes = suggestionSizes();
     expect(sizes).toEqual(["10", "All 12"]);
+
+    await act(async () => { root!.unmount(); });
+    await teardownShellEnv();
+    host = null;
+    calls = [];
+    const backlog = Array.from({ length: 401 }, (_, i) => msg(`backlog-${i}`, `held-${i}@example.invalid`, 2));
+    await mountView(await engineWith(backlog));
+    await press("Suggest…");
+    expect(suggestionSizes()).toContain("All 401");
+    expect(dryRuns().flatMap((call) => call.body?.senders ?? [])).toHaveLength(401);
   });
 
   it("splits a purchase larger than the per-request cap into cap-sized requests — none posted over", async () => {

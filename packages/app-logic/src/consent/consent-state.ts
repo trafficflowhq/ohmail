@@ -12,6 +12,9 @@
  * because its host may reconnect without this window receiving an online event.
  */
 
+import {
+  SCREENER_ACKNOWLEDGEMENTS, screenerAcknowledgementsOf, type ScreenerAcknowledgement,
+} from "@trafficflow/core/screener-acknowledgements";
 import { browserOnlineNow, subscribeBrowserNetwork } from "../session/browser-online.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -107,6 +110,7 @@ export interface ConsentTransport {
    * collapsed to null; see the api-client note.
    */
   setThemeFace?: (themeFace: string | null) => Promise<{ themeFace: string | null }>;
+  acknowledgeScreener?: (kind: ScreenerAcknowledgement) => Promise<{ screenerAcknowledgements: number }>;
   setDraftReplies?: (draftReplies: boolean) => Promise<{ draftReplies: boolean }>;
   /**
    * The account's resurface time (mail 0110) — OPTIONAL for `setThemeFace`'s reason: a door
@@ -351,6 +355,7 @@ export interface ConsentState {
    */
   resurfaceTime: string | null;
   draftReplies: boolean | null;
+  screenerAcknowledgements: number;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
@@ -469,6 +474,7 @@ const RESTING: ConsentState = {
   // the absence of one: every reader resolves it to the product's 09:00.
   resurfaceTime: null,
   draftReplies: null,
+  screenerAcknowledgements: 0,
   known: false,
   standalone: false,
   foldersStorable: false,
@@ -609,6 +615,7 @@ export function useConsentState(
    * control that cannot control. Rethrows on refusal, like every sibling.
    */
   setThemeFace: ((themeFace: "paper" | "ohmarchy" | null) => Promise<"paper" | "ohmarchy" | null>) | null;
+  acknowledgeScreener: ((kind: ScreenerAcknowledgement) => void) | null;
   setDraftReplies: ((next: boolean) => Promise<void>) | null;
   /**
    * REMEMBER THIS TIME FOR NEXT TIME — the account's resurface default (mail 0110). NULL when
@@ -809,7 +816,7 @@ export function useConsentState(
         if (!windowKnown) throw NO_WINDOW;
         const suggestionConsentKnown = suggestionRead.current.known;
         const autoSuggest = suggestionConsentKnown && suggestionRead.current.automatic;
-        setState({
+        setState((prev) => ({
           // Normalised: absent and null both mean "nobody has answered the review yet".
           seedConfirmedAt: wire.seedConfirmedAt ?? null,
           dormancyDays: wire.dormancyDays,
@@ -891,6 +898,7 @@ export function useConsentState(
           // route closes the shape and `consentSettings` filters the column, so a value that is
           // not `'HH:MM'` cannot come from a current server; anything else collapses to "never
           // chosen", which is the 09:00 every reader already draws.
+          screenerAcknowledgements: prev.screenerAcknowledgements | screenerAcknowledgementsOf(wire.screenerAcknowledgements),
           draftReplies: typeof wire.draftReplies === "boolean" ? wire.draftReplies : null,
           resurfaceTime: typeof wire.resurfaceTime === "string"
             && /^([01]\d|2[0-3]):[0-5]\d$/.test(wire.resurfaceTime)
@@ -917,7 +925,7 @@ export function useConsentState(
           // every door built from `localRoutes` — a self-hosted server included. Live reads only:
           // the boot cache never sets it, so the pane waits for the server's own answer.
           foldersStorable: "foldersEnabledAt" in wire,
-        });
+        }));
         appliedSeq.current = mine;
         liveWindow.current = true;
         failures.current = 0;
@@ -1143,6 +1151,27 @@ export function useConsentState(
   // at all, and a chooser there keeps working on the product's 09:00 with nothing to persist.
   const setResurfaceTime =
     transport !== "none" && typeof transport.setResurfaceTime === "function" ? writeResurfaceTime : null;
+
+  const [pendingScreener, setPendingScreener] = useState<{ era: number; bits: number } | null>(null);
+  const saveAcknowledgement = useCallback((kind: ScreenerAcknowledgement) => {
+    const write = wireOf(link).acknowledgeScreener;
+    if (!write) return;
+    const at = era.current;
+    const bit = SCREENER_ACKNOWLEDGEMENTS[kind];
+    setPendingScreener((prev) => ({ era: at, bits: (prev?.era === at ? prev.bits : 0) | bit }));
+    void write(kind).then((answer) => {
+      applyEcho(at, (prev) => ({
+        ...prev,
+        screenerAcknowledgements: prev.screenerAcknowledgements | screenerAcknowledgementsOf(answer.screenerAcknowledgements),
+      }));
+    }, () => {
+      // The mail decision already left through its usual path. The next press can retry the acknowledgement.
+    }).finally(() => {
+      setPendingScreener((prev) => prev?.era === at ? { era: at, bits: prev.bits & ~bit } : prev);
+    });
+  }, [applyEcho]);
+  const acknowledgeScreener =
+    active && transport !== "none" && transport.acknowledgeScreener ? saveAcknowledgement : null;
 
   const writeDraftReplies = useCallback(async (next: boolean): Promise<void> => {
     const write = wireOf(link).setDraftReplies;
@@ -1379,6 +1408,9 @@ export function useConsentState(
   const presented = active && !reachable ? RESTING : state;
   return {
     ...presented,
+    screenerAcknowledgements: presented.screenerAcknowledgements |
+      (pendingScreener?.era === era.current ? pendingScreener.bits : 0),
+    acknowledgeScreener,
     standalone: active && !reachable,
     /* The transport's declaration AND the server's own read: the browser's wire declares true
        for every server it may reach, and only the read can say a self-hosted one drops the flag.

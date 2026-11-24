@@ -26,7 +26,8 @@ function payingVerb(model: SubscriptionModel, read: ReadPlans): "fix" | "subscri
   if (standing !== null) {
     if (standing.state === "overdue" || (standing.state === "closed" && standing.why === "unpaid"))
       return "fix";
-    if (standing.state === "trial" || standing.state === "grace") return "subscribe";
+    if (standing.state === "trial" || standing.state === "trialEnded" || standing.state === "grace")
+      return "subscribe";
     if (standing.state === "closed" && standing.why === "trialEnded") return "subscribe";
   }
   return read.current === null ? "subscribe" : null;

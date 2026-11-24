@@ -24,6 +24,7 @@ import { NONE } from "@ohmail/app/host";
 import { ScreenerAbove, screenerPlace, type ScreenerBeside } from "@ohmail/app/screener";
 import { ThemeProvider } from "@ohmail/ui";
 import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
+import { TestConsent } from "../../../packages/app/test/screener/screener-world.js";
 import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 import en from "../messages/en.json";
@@ -170,7 +171,10 @@ async function mountWaitingRows(engine: OhmailEngine, suggestions?: SuggestionOv
     const presented = presentationReader(raw, consentPartition(raw, { now: NOW }));
     const state = useScreenerState(engine, "acct", version, () => {}, useScreenerWords(), suggestions, presented);
     latest = state;
-    return h(ScreenerAbove, { model: state, beside, children: h(Frame, { host: frame }) });
+    return h(TestConsent, {
+      scope: "acct", transport: "none",
+      children: h(ScreenerAbove, { model: state, beside, children: h(Frame, { host: frame }) }),
+    });
   }
 
   host = document.createElement("div");

@@ -1568,8 +1568,9 @@ const segmentsCache = new WeakMap<EntityReader, { v: number; key: string; out: S
  * carries no model text by design, so `rationale` is empty: the badge renders the verdict, and
  * the page read (`GET /screener`) stays the richer reader.
  */
-function suggestionAi(s: ScreenerSuggestionEntity | undefined): ScreenerSenderDTO["ai"] {
-  if (!s) return null;
+function suggestionAi(s: ScreenerSuggestionEntity | undefined, representative?: string): ScreenerSenderDTO["ai"] {
+  if (!s || (s.failed && representative !== undefined && s.messageId !== representative)) return null;
+  if (s.failed) return { id: s.id, dest: "screener", confidence: 0, rationale: "", noAnswer: "model_unavailable" };
   const named = (VIEW_OF_FOLDER as Record<string, OhmailView | undefined>)[s.destination];
   const dest = s.decision === "hold"
     ? ("screener" as const)
@@ -1646,7 +1647,9 @@ function newestAdviceBySender(reader: EntityReader): Map<string, ScreenerSuggest
   const advice = new Map<string, ScreenerSuggestionEntity>();
   for (const s of reader.list<ScreenerSuggestionEntity>("screener_suggestion")) {
     const prev = advice.get(s.senderKey);
-    if (!prev || s.boughtAt > prev.boughtAt) advice.set(s.senderKey, s);
+    if (!prev || (prev.failed && !s.failed) || (prev.failed === s.failed && s.boughtAt > prev.boughtAt)) {
+      advice.set(s.senderKey, s);
+    }
   }
   return advice;
 }
@@ -1806,7 +1809,7 @@ function joinStore(
       if ((m.physicalFolder ?? m.folder) !== FOLDER_OF_VIEW.screener) leftTheGate += 1;
       continue;
     }
-    out.push(storeRow(s, now, locale, zone, suggestionAi(advice.get(key))));
+    out.push(storeRow(s, now, locale, zone, suggestionAi(advice.get(key), s.messageId)));
   }
   return { rows: out, leftTheGate };
 }
@@ -2021,7 +2024,7 @@ export function screenerSegments(
         // the narrow verdict since the 2026-09-18 reversal of "no model output in /sync".
         // No classifier runs client-side: this is the server's own purchase, delivered. `GET
         // /screener` still returns the richer `aiSuggestion` (rationale included) on the page.
-        ai: suggestionAi(sug),
+        ai: suggestionAi(sug, rep.id),
         /* WHY THERE WILL NEVER BE ONE, when that is the answer. `no_ai` mail is kept away from
            every model, so this sender’s row is not waiting for a run to reach it. Read off the
            representative, which is the message a suggestion would have been about. */
