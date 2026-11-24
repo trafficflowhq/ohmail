@@ -38,24 +38,30 @@ vi.mock("expo", () => ({
     : null),
 }));
 vi.mock("expo-crypto", () => ({}));
+vi.mock("react-native-svg", () => ({ default: () => null, Circle: () => null, Path: () => null, Rect: () => null }));
+vi.mock("../src/ui/posture", () => ({ usePosture: () => null }));
+vi.mock("../src/ui/UnsavedChanges", () => ({ UnsavedChanges: () => null }));
 vi.mock("../src/state/servers-native", () => ({ nativeServerProfiles: () => null, nativeFamilyDigest: async () => "", secureKV: () => null }));
 vi.mock("../src/engine/native", () => ({ nativeEngineDeps: () => null }));
 vi.mock("../src/net/connection", async (original) => ({
   ...((await original()) as object),
   useConnection: () => scene.conn,
 }));
-vi.mock("../src/theme", () => ({ useTheme: () => ({ c: { accent: "#000", ink2: "#000", ink3: "#000" }, radius: { dot: 1 } }) }));
+vi.mock("../src/theme", () => ({ useTheme: () => ({ face: "paper", scheme: "light", c: { accent: "#000", ink2: "#000", ink3: "#000" }, radius: { dot: 1 } }) }));
 vi.mock("../src/ui/base", () => {
   const div = (p: { children?: ReactNode }) => h("div", null, p.children);
   return {
-    Button: (p: { label: string; onPress?: () => void }) => h("button", { "data-button": p.label, onClick: p.onPress }, p.label),
+    Button: (p: { label: string; onPress?: () => void }) => h("button", { onClick: p.onPress }, p.label),
+    Tap: (p: { accessibilityLabel: string; onPress?: () => void; children?: ReactNode }) =>
+      h("button", { "aria-label": p.accessibilityLabel, onClick: p.onPress }, p.children),
+    useTopPad: () => 0,
     Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
     Panel: div, Screen: div, Scroller: div, Section: div, TapRow: div,
   };
 });
 /* The bar's one way back, as the pane hands it. */
 vi.mock("../src/ui/chrome", () => ({
-  DetailBar: (p: { back?: () => void }) => (p.back ? h("button", { "data-button": "back", onClick: p.back }, "back") : null),
+  DetailBar: (p: { back?: () => void }) => (p.back ? h("button", { onClick: p.back }, EN.back) : null),
   PaneTop: () => null,
 }));
 vi.mock("../src/ui/Doors", () => ({ Doors: () => null }));
@@ -82,8 +88,8 @@ function connection(state: ConnectionState, profiles: object[]) {
 }
 
 async function press(el: HTMLElement, label: string): Promise<void> {
-  const button = el.querySelector(`[data-button="${label}"]`) as HTMLButtonElement | null;
-  expect(button, `no ${label}`).not.toBeNull();
+  const button = Array.from(el.querySelectorAll("button")).find((el) => (el.getAttribute("aria-label") ?? el.textContent) === label);
+  expect(button, `no ${label}`).toBeDefined();
   act(() => button!.click());
   await settle();
 }
@@ -103,7 +109,7 @@ describe("today's Servers pane under the shell", () => {
     connection({ k: "refused", reason: refuse("pairEnded") }, [ENDED]);
     scene.stack.push("/", "/servers");
     let view = mount(h(ServersScreen));
-    await press(view.el, "back");
+    await press(view.el, EN.back);
     reached.push(scene.stack.at(-1)!);
     view.unmount();
 
@@ -111,7 +117,7 @@ describe("today's Servers pane under the shell", () => {
     connection({ k: "idle" }, []);
     scene.stack.splice(0, scene.stack.length, "/servers");
     view = mount(h(ServersScreen));
-    await press(view.el, "back");
+    await press(view.el, EN.back);
     reached.push(scene.stack.at(-1)!);
     view.unmount();
 

@@ -31,7 +31,11 @@ vi.mock("../src/net/connection", () => ({
   MAIL_SURFACE: "screens" satisfies typeof import("../src/net/connection").MAIL_SURFACE,
   useConnection: () => scene.conn,
 }));
-vi.mock("../src/theme", () => ({ useTheme: () => ({ c: { accent: "#000", ink2: "#000" }, radius: { dot: 1 } }) }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+vi.mock("react-native-svg", () => ({ default: () => null, Circle: () => null }));
+vi.mock("../src/ui/posture", () => ({ usePosture: () => null }));
+vi.mock("../src/ui/UnsavedChanges", () => ({ UnsavedChanges: () => null }));
+vi.mock("../src/theme", () => ({ useTheme: () => ({ face: "paper", scheme: "light", c: { accent: "#000", ink2: "#000" }, radius: { dot: 1 } }) }));
 vi.mock("../src/ui/base", () => {
   const div = (p: { children?: ReactNode }) => h("div", null, p.children);
   return {

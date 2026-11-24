@@ -7,7 +7,7 @@
 import { Fragment, memo, useContext, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText } from "../mail/quoted-tree";
-import { useTheme } from "../theme";
+import { useTheme, type Theme } from "../theme";
 import { Copy } from "../copy";
 import { Txt, type TxtProps } from "./base";
 import { bodyPages, pageBlocks, pagesAskedFor } from "./body-pages";
@@ -15,11 +15,17 @@ import { FoldContext, HistoryRow, type FoldScope } from "./HistoryFold";
 
 type BodyPagesProps = Omit<TxtProps, "children"> & { text: string; highlight?: string };
 
-function marked(text: string, phrase: string | undefined, color: string) {
+function marked(text: string, phrase: string | undefined, t: Theme) {
   const start = phrase ? text.indexOf(phrase) : -1;
   if (!phrase || start < 0) return text;
   const end = start + phrase.length;
-  return <>{text.slice(0, start)}<Text style={{ backgroundColor: color }}>{text.slice(start, end)}</Text>{text.slice(end)}</>;
+  return (
+    <>{text.slice(0, start)}
+      <Text maxFontSizeMultiplier={t.textCap} minimumFontScale={t.textKey} style={{ backgroundColor: t.c.accentSoft }}>
+        {text.slice(start, end)}
+      </Text>{text.slice(end)}
+    </>
+  );
 }
 
 /** One page, kept across a further press: only the new page is laid out, in its blocks. */
@@ -28,7 +34,7 @@ const Page = memo(
     const theme = useTheme();
     return (
       <View style={style}>
-        {pageBlocks(text).map((block, i) => <Txt key={i} {...rest}>{marked(block, highlight, theme.c.accentSoft)}</Txt>)}
+        {pageBlocks(text).map((block, i) => <Txt key={i} {...rest}>{marked(block, highlight, theme)}</Txt>)}
       </View>
     );
   },
@@ -88,7 +94,7 @@ function Pages({ text, highlight, ...rest }: BodyPagesProps) {
   const [kept, setKept] = useState<{ text: string; pages: number }>({ text, pages: 1 });
   const asked = pagesAskedFor(kept, text);
   const plan = bodyPages(text, asked, rest.numberOfLines !== undefined);
-  if (plan.pages === null) return <Txt {...rest}>{marked(text, highlight, theme.c.accentSoft)}</Txt>;
+  if (plan.pages === null) return <Txt {...rest}>{marked(text, highlight, theme)}</Txt>;
   const more = plan.more;
   return (
     <>

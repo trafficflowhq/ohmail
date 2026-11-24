@@ -12,7 +12,9 @@
  *   siblings), so it goes at once, counted, and the next read leads.
  * - A PAGE LOAD (`confirming()`, the first-paint gate): a cold lane's lead is kept for the session
  *   confirm, which gates the delta, so nothing else goes before it. The access read is the one read
- *   it does not hold: the gate may ask it before the shell can confirm at all.
+ *   it does not hold on a cold open: the gate may ask it before the shell can confirm at all.
+ *   With a stored open verdict, one public hello may go alongside the confirm to decide whether
+ *   live updates are available. Its answer does not release the confirm's lead.
  * - A RETURN (`resume()`): the lead is reserved for the sync delta, cold or warm, so `/sync` goes
  *   first and the surfaces it names follow.
  * - The lead ends on its first answer, on any API answer (a kept lead: only its own read's), on its
@@ -69,7 +71,7 @@ export interface ResumeLane {
   /** A return is about to drain: reserve the lead for the delta. Returns the release. */
   resume(): () => void;
   /** A page load is about to confirm its session: keep a cold lane's lead for that confirm. Returns the release. */
-  confirming(): () => void;
+  confirming(options?: { alongsideHello?: boolean }): () => void;
   /** Run `cb` once no lead is in the air (at once when none is). */
   afterLead(cb: () => void): void;
   /** An API answer that came through neither door (the session renewal). */
@@ -77,7 +79,12 @@ export interface ResumeLane {
 }
 
 /** `reserved`: kept for a read not sent yet, the one `for` names (the delta on a return, the confirm on a page load). */
-interface Lead { reserved: boolean; since: number; for: ReadonlySet<string> | null }
+interface Lead {
+  reserved: boolean;
+  since: number;
+  for: ReadonlySet<string> | null;
+  alongsideHello: boolean;
+}
 
 interface Waiter {
   path: string;
@@ -169,7 +176,7 @@ export function createResumeLane(opts: ResumeLaneOptions = {}): ResumeLane & { d
     const at = kept === null ? -1 : queue.findIndex((w) => kept.has(w.path));
     if (at >= 0) {
       const [w] = queue.splice(at, 1);
-      lead = { reserved: false, since: now(), for: null };
+      lead = { reserved: false, since: now(), for: null, alongsideHello: lead?.alongsideHello ?? false };
       release(w!, lead);
     }
     // In rank order; a capped waiter stays, one its cap still admits goes past it.
@@ -182,7 +189,7 @@ export function createResumeLane(opts: ResumeLaneOptions = {}): ResumeLane & { d
     arm();
   }
 
-  function ticket(waited: boolean, counted: boolean, mine: Lead | null): LaneTicket {
+  function ticket(waited: boolean, counted: boolean, mine: Lead | null, canEndLead = true): LaneTicket {
     let open = true;
     return {
       waited,
@@ -191,7 +198,7 @@ export function createResumeLane(opts: ResumeLaneOptions = {}): ResumeLane & { d
         open = false;
         if (counted) inFlight -= 1;
         if (answered) lastAnswerAt = now();
-        if (lead !== null && ((mine !== null && lead === mine) || (answered && !lead.reserved))) {
+        if (lead !== null && ((mine !== null && lead === mine) || (canEndLead && answered && !lead.reserved))) {
           leadOver();
           return;
         }
@@ -200,16 +207,16 @@ export function createResumeLane(opts: ResumeLaneOptions = {}): ResumeLane & { d
     };
   }
 
-  const startLead = (): Lead => {
-    lead = { reserved: false, since: now(), for: null };
+  const startLead = (alongsideHello = false): Lead => {
+    lead = { reserved: false, since: now(), for: null, alongsideHello };
     inFlight += 1;
     arm();
     return lead;
   };
 
   /** Keep the lead for `paths` (none in the air): the reads that come first wait for them. */
-  const reserve = (paths: ReadonlySet<string>): (() => void) => {
-    const mine: Lead = { reserved: true, since: now(), for: paths };
+  const reserve = (paths: ReadonlySet<string>, alongsideHello = false): (() => void) => {
+    const mine: Lead = { reserved: true, since: now(), for: paths, alongsideHello };
     lead = mine;
     pump();
     return () => { if (lead === mine) leadOver(); };
@@ -218,7 +225,14 @@ export function createResumeLane(opts: ResumeLaneOptions = {}): ResumeLane & { d
   return {
     enter(req) {
       if (req.free) return ticket(false, false, null);
-      if (lead?.reserved === true && lead.for?.has(req.path) === true) return ticket(false, true, startLead());
+      if (lead?.reserved === true && lead.for?.has(req.path) === true) {
+        return ticket(false, true, startLead(lead.alongsideHello));
+      }
+      if (req.path === "/hello" && lead?.alongsideHello) {
+        lead.alongsideHello = false;
+        inFlight += 1;
+        return ticket(false, true, null, false);
+      }
       const rank = rankOf(req);
       const asked = req.asked === true;
       const access = req.path === ACCESS_PATH;
@@ -260,10 +274,10 @@ export function createResumeLane(opts: ResumeLaneOptions = {}): ResumeLane & { d
       if (lead !== null) return () => {};
       return reserve(DELTA_PATHS);
     },
-    confirming() {
+    confirming({ alongsideHello = false } = {}) {
       // Only a cold lane: a warm one (a navigation inside the tab) has nothing to warm.
       if (lead !== null || !cold()) return () => {};
-      return reserve(CONFIRM_PATHS);
+      return reserve(CONFIRM_PATHS, alongsideHello);
     },
     afterLead(cb) {
       if (lead === null) cb();
@@ -293,7 +307,7 @@ let current = createResumeLane();
 export const webLane: ResumeLane = {
   enter: (req) => current.enter(req),
   resume: () => current.resume(),
-  confirming: () => current.confirming(),
+  confirming: (options) => current.confirming(options),
   afterLead: (cb) => current.afterLead(cb),
   noteAnswer: () => current.noteAnswer(),
 };

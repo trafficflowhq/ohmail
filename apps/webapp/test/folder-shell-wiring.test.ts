@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import type { EngineMessage } from "@ohmail/wire";
+import { letter } from "../../../packages/app/test/reader/support/fake-mail.js";
 
 const source = (path: string): string =>
   readFileSync(new URL(`../../../${path}`, import.meta.url), "utf8")
@@ -53,10 +55,20 @@ describe("search hits route to the folder view only when it can show them", () =
     expect(held).toEqual({ kind: "folder", folderId: "fd1", id: "m1" });
   });
 
-  it("the shell's callback asks the PRESENTED mirror — pinned at the source", () => {
-    const live = source("packages/app-logic/src/search/live-open.ts");
-    expect(live).toMatch(/const \{ presented, foldersEnabled \} = ground;/);
-    expect(live).toMatch(/return presented\.get<EngineMessage>\("message", m\.id\)\?\.folder === folder \? f\.id : null;/);
-    expect(live).toMatch(/folderTargetFor: folderOf\(ground\)/);
+  it("the shell's callback asks the PRESENTED mirror — pinned at the source", async () => {
+    // Opening a folder hit now previews it in Search. The presented row still wins
+    // over the returned hit when both hold it.
+    const live = source("packages/app-logic/src/search/live.ts");
+    const open = source("packages/app-logic/src/search/live-open.ts");
+    expect(live).toMatch(/useSearchOpen\(\s*args,\s*\(id\) => presented\.get<EngineMessage>\("message", id\),/);
+    expect(open).toMatch(/readerMessageFor\(hit\.message\.id, fromMirror, hit\.message, isGone\)/);
+    expect(open).toMatch(/args\.commands\.go\(\s*\{ \.\.\.args\.route, open: message\.id, words \}/);
+
+    const { readerMessageFor } = await import("@ohmail/app-logic/search/open-target");
+    const hit = letter("m1", { folder: "Projects/Acme" as EngineMessage["folder"] });
+    const presented = letter("m1", { folder: "Projects/Current" as EngineMessage["folder"] });
+    expect(readerMessageFor(hit.id, () => presented, hit, () => false)).toBe(presented);
+    expect(readerMessageFor(hit.id, () => undefined, hit, () => false)).toBe(hit);
+    expect(readerMessageFor(hit.id, () => undefined, hit, () => true)).toBe("gone");
   });
 });

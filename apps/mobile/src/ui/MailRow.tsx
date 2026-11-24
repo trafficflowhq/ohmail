@@ -9,7 +9,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Animated, PanResponder, Text, View } from "react-native";
 import { Copy } from "../copy";
-import { useTheme } from "../theme";
+import { useTheme, type Theme } from "../theme";
 import { mailColors, mailSize } from "../theme/mail";
 import { MailAvatar } from "./MailAvatar";
 import type { Mail } from "../state/model";
@@ -200,7 +200,7 @@ export function MailRow({
             <Txt variant="caption" tone="ink2" tabular style={t.mail ? { marginRight: 23 } : undefined}>{m.time}</Txt>
           </View>
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 12 }}>
-            {rowSubjectLine(m.subject, m.amount) ? <Txt variant="h2" style={{ flex: 1 }}>{searchTerm ? highlightSearch(m.subject, searchTerm) : <>{m.subject}</>}</Txt> : null}
+            {rowSubjectLine(m.subject, m.amount) ? <Txt variant="h2" style={{ flex: 1 }}>{searchTerm ? highlightSearch(m.subject, searchTerm, t) : <>{m.subject}</>}</Txt> : null}
             {m.amount ? <Txt variant="h2" tabular>{m.amount}</Txt> : null}
           </View>
           {t.mail ? <StreamContentChips images={m.imagesBlocked} tracker={m.trackerNote} /> : null}
@@ -240,7 +240,7 @@ export function MailRow({
               numberOfLines={1}
               style={{ flexShrink: 1, color: seen ? readInk : t.c.ink }}
             >
-              {searchTerm ? highlightSearch(m.subject, searchTerm) : <>{m.subject}</>}
+              {searchTerm ? highlightSearch(m.subject, searchTerm, t) : <>{m.subject}</>}
             </Txt>
             {m.amount ? (
               <Txt variant="button" tone={seen ? "ink2" : "ink"} tabular style={{ marginLeft: "auto" }}>
@@ -250,7 +250,7 @@ export function MailRow({
           </View>
         ) : null}
 
-        {preview ? <Txt variant="body" tone="ink2" numberOfLines={1}>{highlightSearch(preview, searchTerm)}</Txt> : null}
+        {preview ? <Txt variant="body" tone="ink2" numberOfLines={1}>{highlightSearch(preview, searchTerm, t)}</Txt> : null}
         {!t.mail && marks && !strip ? <RowMarks marks={marks} /> : null}
         </> : null}
 
@@ -345,11 +345,17 @@ export function MailRow({
  * hollow the account's own. Where the row is too narrow the oldest give way, never in part, and a
  * quiet "+N" at the line's start counts them; the newest stay.
  */
-function highlightSearch(text: string, query: string | undefined) {
+function highlightSearch(text: string, query: string | undefined, t: Theme) {
   const at = query ? text.toLowerCase().indexOf(query.toLowerCase()) : -1;
   if (!query || at < 0) return text;
   const end = at + query.length;
-  return <>{text.slice(0, at)}<Text style={{ textDecorationLine: "underline" }}>{text.slice(at, end)}</Text>{text.slice(end)}</>;
+  return (
+    <>{text.slice(0, at)}
+      <Text maxFontSizeMultiplier={t.textCap} minimumFontScale={t.textKey} style={{ textDecorationLine: "underline" }}>
+        {text.slice(at, end)}
+      </Text>{text.slice(end)}
+    </>
+  );
 }
 
 function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] }) {

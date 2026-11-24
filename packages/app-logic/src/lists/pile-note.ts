@@ -50,10 +50,15 @@ export function usePileNoteDismissal(
   return () => keep(`${total}`);
 }
 
+/** The account-scoped dismissal count, keyed separately for each pile. */
+export function pileNoteNotNowKey(pile: UnscreenedPileWire, scope: StorageScope): string {
+  return `ohmail.ui.pileNote.notNow.${pile}.${scopeSuffix(scope)}`;
+}
+
 export function usePileNote(
   door: PileNoteDoor, pile: UnscreenedPileWire, shown: boolean, say: (said: PileNoteSaid) => void, scope: StorageScope,
 ): PileNoteOffer | null {
-  const dismissKey = scope === null ? null : `ohmail.ui.pileNote.notNow.${pile}.${scopeSuffix(scope)}`;
+  const dismissKey = scope === null ? null : pileNoteNotNowKey(pile, scope);
   const [dismissedCount, setDismissedCount] = usePersistedChoice(dismissKey, isPileNoteCount, "0");
   const [answer, setAnswer] = useState<{ total: number; atLeast: boolean } | null>(null);
   const [screening, setScreening] = useState(false);

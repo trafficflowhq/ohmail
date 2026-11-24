@@ -87,14 +87,15 @@ type _UnboundCallsComplete = Assert<Complete<UnboundCall, typeof UNBOUND_CALLS>>
  * Why no client of this tree calls a route.
  *  · `operator`: the operator's console and tools ask it; they are not in this repository.
  *  · `platform`: a clock, the worker or an alert drill asks it, with a shared secret.
- *  · `provider`: a calendar provider calls it for a notice or redirects the browser after sign-in.
+ *  · `provider`: a calendar provider posts a notice on its notification channel.
+ *  · `oauth-callback`: a calendar provider redirects the browser after OAuth sign-in.
  *  · `site`: the public site's form asks it.
  *  · `no-caller-found`: no client's source spells its path. A candidate for removal, once a log
  *    of what running clients ask for agrees.
  *  · `client-pending`: served ahead of its client, whose change binds it in `Routes`; never a
  *    candidate for removal.
  */
-export type ServerOnlyReason = "operator" | "platform" | "provider" | "site" | "no-caller-found" | "client-pending";
+export type ServerOnlyReason = "operator" | "platform" | "provider" | "oauth-callback" | "site" | "no-caller-found" | "client-pending";
 
 /** The routes no client of this tree calls, each with its reason. */
 export const SERVER_ONLY_ROUTES: Readonly<Record<string, ServerOnlyReason>> = Object.freeze({
@@ -104,8 +105,8 @@ export const SERVER_ONLY_ROUTES: Readonly<Record<string, ServerOnlyReason>> = Ob
   "GET /auth/audit": "no-caller-found",
   "POST /calendar/notices/google": "provider",
   "POST /calendar/notices/microsoft": "provider",
-  "GET /calendar/oauth/google/callback": "provider",
-  "GET /calendar/oauth/microsoft/callback": "provider",
+  "GET /calendar/oauth/google/callback": "oauth-callback",
+  "GET /calendar/oauth/microsoft/callback": "oauth-callback",
   "GET /contacts": "no-caller-found",
   "GET /contacts/:id": "no-caller-found",
   "PATCH /contacts/:id": "no-caller-found",

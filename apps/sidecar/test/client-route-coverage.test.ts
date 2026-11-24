@@ -224,9 +224,11 @@ const FORWARDED_IN_CLOUD_MODE = [
      client spelled this path through a constant until it took the wire's name for it, and the
      read of this file could not see a constant. */
   "GET /organizer-requests",
-  /* Calendar settings are account preferences held by the hosted calendar service. The mounted
-     calendar asks for them only when the host offers Calendar for the confirmed account. */
+  /* Calendar settings are account preferences held by the hosted calendar service. The setup
+     UI reads and saves them only when the server offers Calendar for the confirmed account.
+     The save changes the server's settings, which the mirror cannot apply. */
   "GET /calendar/settings",
+  "PATCH /calendar/settings",
   /* THE CALENDAR'S THREE WRITES (record, send again, let go). Each changes the hosted account's
      calendar, and this copy drains nothing of its own: the write is the account's server's,
      relayed with the press's key on every attempt (`relay-allowlist.ts` names all three). */
@@ -454,6 +456,7 @@ function stagingIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boo
  */
 const CALENDAR_HOSTED_DOOR_ONLY = [
   "GET /calendar/settings",
+  "PATCH /calendar/settings",
   "POST /calendar/writes",
   "POST /calendar/writes/x/retry",
   "DELETE /calendar/writes/x",

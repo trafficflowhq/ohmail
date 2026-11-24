@@ -29,6 +29,7 @@ import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
 import { foldersOpenedKey, mailOriginalKey, searchSortKey, subjectDisplayKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { imageQualityKeyFor } from "@ohmail/app-logic/write/image-quality";
 import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
+import { pileNoteNotNowKey } from "@ohmail/app-logic/lists/pile-note";
 
 type Scope = string | null;
 
@@ -60,6 +61,8 @@ const BUILDERS: Record<string, (scope: Scope) => string> = {
   originalLook: (s) => mailOriginalKey(s),
   subjectDisplay: (s) => subjectDisplayKey(s),
   reviewPutOff: (s) => seedNotNowKey(s),
+  newsScreeningPutOff: (s) => pileNoteNotNowKey("news", s),
+  receiptsScreeningPutOff: (s) => pileNoteNotNowKey("receipts", s),
   afterVerb: afterVerbKey,
   pictureQuality: (s) => imageQualityKeyFor(s),
 };

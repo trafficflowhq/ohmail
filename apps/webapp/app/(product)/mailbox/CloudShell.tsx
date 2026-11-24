@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
@@ -26,7 +26,7 @@ import {
 import { readSessionFamily } from "../../signed-out-signal";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
-import { SELF_HOST_BUILD } from "../../hello";
+import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { WallRoute } from "./WallRoute";
 import { ErasedRoute } from "./ErasedRoute";
 import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
@@ -266,7 +266,11 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
    * round trip and grows no pane whose every verb mutates real credentials — the hook's own
    * header carries the measured leak this closed.
    */
-  const server = useServerWords(resolvedDemo);
+  const firstHello = useMemo(() => {
+    let first: ReturnType<typeof serverHello> | undefined;
+    return () => first ??= serverHello();
+  }, [resolvedDemo]);
+  const server = useServerWords(resolvedDemo, firstHello);
   const devicePairing = server.pairing;
 
   /**
@@ -372,6 +376,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
       onConfirmed={onConfirmed}
       drawMail={settingsAccount || wakeSession ? "confirmed" : drawMail}
       edgeOwner={edgeOwner}
+      firstHello={firstHello}
     >
       <AccountCleanupContext.Provider value={showAccountCleanup}>
         <WebFrame words={words} />

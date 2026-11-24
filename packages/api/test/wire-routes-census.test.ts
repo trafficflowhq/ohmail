@@ -79,9 +79,9 @@ describe("every mounted route is bound, called unbound, or the server's alone", 
     ]);
   });
 
-  it("gives every server-only route one of the six reasons", () => {
+  it("gives every server-only route a recognized reason", () => {
     expect(Object.entries(SERVER_ONLY_ROUTES).filter(([, why]) =>
-      !["operator", "platform", "provider", "site", "no-caller-found", "client-pending"].includes(why))).toEqual([]);
+      !["operator", "platform", "provider", "oauth-callback", "site", "no-caller-found", "client-pending"].includes(why))).toEqual([]);
   });
 });
 

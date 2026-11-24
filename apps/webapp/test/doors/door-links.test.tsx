@@ -135,7 +135,7 @@ const SIGN_IN = { file: "../../app/(product)/login/SignInRoute.js", name: "SignI
 const JOIN = { file: "../../app/(product)/join/JoinRoute.js", name: "JoinRoute" };
 
 describe("every address a door's page draws is the web's own", () => {
-  it("the sign-in: the ways to the join, in each posture, and to the demo where no server stands", async () => {
+  it("the sign-in: the ways to the join, password reset and the demo in their respective postures", async () => {
     const drawn: string[] = [];
     const back: string[] = [];
     const collect = () => {
@@ -149,15 +149,17 @@ describe("every address a door's page draws is the web's own", () => {
       [false, "/join"],
       [true, "/account/manage"],
     ] as const) {
-      await mounted(SIGN_IN, "/login", { publicSignup, next });
+      const { host } = await mounted(SIGN_IN, "/login", { publicSignup, next });
+      const reset = [...host.querySelectorAll("a[href]")].filter((link) => link.textContent === en.login.forgotPassword);
+      expect(reset.map((link) => link.getAttribute("href"))).toEqual(["/forgot-password"]);
       collect();
     }
-    await mounted(SIGN_IN, "/login", { publicSignup: false, next: null }, false);
+    const { host } = await mounted(SIGN_IN, "/login", { publicSignup: false, next: null }, false);
+    expect(host.querySelector('a[href="/forgot-password"]')).toBeNull();
     collect();
     expect([...drawn, ...back].filter((href) => !allowed(href, null))).toEqual([]);
     expect([...new Set(back)]).toEqual(["/"]);
-    /* Not a census of nothing: the three links the card drew stand here, as the route wrote them. */
-    expect([...new Set(drawn)].sort()).toEqual(["/?demo=1", "/join"]);
+    expect([...new Set(drawn)].sort()).toEqual(["/?demo=1", "/forgot-password", "/join"]);
   }, 30000);
 
   it("the join: the sign-in, the demo, the way back, the plan's account page and its Do this later, the first run, the list and the expired setup", async () => {

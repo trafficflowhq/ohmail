@@ -115,6 +115,8 @@ const ENGAGEMENT_READERS = [
 const INTENTIONAL = [
   "packages/services/src/away-responder-pass.ts",
 ];
+// The cutline tests candidate sender membership, irrespective of thread or reply activity.
+const CUTLINE = "packages/db/src/screener-cutline.ts";
 /**
  * The shape all five share — alias-agnostic so a new site with a new alias still matches, and
  * CASE-INSENSITIVE because SQL is. The missing `i` was the GUARD finding: `away-responder-pass.ts`
@@ -128,7 +130,11 @@ describe("the engagement census: an auto-reply is not the person's engagement", 
     // A NEW site reds here. That is the whole point of the file: the failure message names the
     // new path, and whoever wrote it has to decide which of the classes it is in. The arm below
     // plants one and drives it through this same matcher, so the pin is evidence.
-    expect(found).toEqual([...CONSULTS, ...INTENTIONAL].sort());
+    expect(found).toEqual([...CONSULTS, ...INTENTIONAL, CUTLINE].sort());
+    const cutline = FILES.find((f) => f.path === CUTLINE)!;
+    const matches = cutline.text.split("\n").filter((line) => OWN_ADDRESS_IN_THREAD.test(line));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatch(/\.from_address\) in \(\$\{candidates\}\)/);
   });
 
   /**
@@ -265,7 +271,7 @@ describe("the engagement census: an auto-reply is not the person's engagement", 
     // THE WALK REACHES THE END. The page budget it shipped with left everything past the first
     // thousand rows permanently stale, so the exhaustion contract is asserted here too: the result
     // carries `exhausted`, and the safety bound is a bound rather than a budget.
-    expect(pass!.text).toMatch(/result\.exhausted = true/);
+    expect(pass!.text).toMatch(/result\.exhausted = rows\.length < limit/);
     expect(pass!.text).toMatch(/AWAY_REPLY_REDELIVER_MAX_PAGES = 5_000/);
 
     /**
@@ -289,6 +295,7 @@ describe("the engagement census: an auto-reply is not the person's engagement", 
     // And the cycle actually runs it, through the sweep that owns the gate — which a pass nobody
     // runs would not. The gate closes after its loop and only on a clean pass; `makeAwayReplySweep`
     // is where that is asserted (`away-reply-warm-mirror.test.ts`), and this is the wiring.
+    // readSource includes the sections that the worker's startup actually calls.
     const cycle = FILES.find((f) => f.path === "apps/worker/src/index.ts")!;
     expect(cycle.text).toMatch(/makeAwayReplySweep\(\)/);
     expect(cycle.text).toMatch(/awayReplySweep\.runOnce\(/);

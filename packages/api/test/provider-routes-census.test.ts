@@ -96,6 +96,11 @@ describe("each notice route's class", () => {
     for (const name of NOTICE_ROUTES) {
       expect((WIRE_ROUTES as readonly string[]).includes(name) || (UNBOUND_CALLS as readonly string[]).includes(name), name).toBe(false);
     }
+    // A browser returning from OAuth takes the regular request guard, even when sent by the same provider.
+    expect(Object.entries(SERVER_ONLY_ROUTES).filter(([, why]) => why === "oauth-callback").map(([name]) => name).sort()).toEqual([
+      "GET /calendar/oauth/google/callback",
+      "GET /calendar/oauth/microsoft/callback",
+    ]);
   });
 
   it("has a body ceiling of its own: none of Google's is read, and of Microsoft's 64 KiB", () => {

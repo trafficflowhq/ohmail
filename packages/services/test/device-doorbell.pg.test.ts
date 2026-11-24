@@ -43,15 +43,11 @@ let db: ReturnType<typeof drizzle<typeof schema>>;
 let owned: OwnedDb;
 let auth: ReturnType<typeof makeAuthService>;
 
-type Handle = ServiceContext["db"];
-/**
- * A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
- * `wrap` puts a double over that bound handle (never binds the double).
- */
+/** A door before sign-in holds a handle bound to nothing; a session's handle is bound to its account. */
 const ctxOn = (
-  who: { accountId: string; userId: string } | null, sessionId: string | null = null, wrap: (h: object) => object = (h) => h,
+  who: { accountId: string; userId: string } | null, sessionId: string | null = null,
 ): ServiceContext => ({
-  db: wrap(who === null ? bindDb(owned.db, { account: null }) : dbFor(owned.db, who.accountId)) as Handle,
+  db: who === null ? bindDb(owned.db, { account: null }) : dbFor(owned.db, who.accountId),
   accountId: who?.accountId ?? "", userId: who?.userId ?? null, sessionId,
   now: () => NOW, requestId: `bell-${randomUUID().slice(0, 8)}`, ip: "10.9.8.7",
 });
@@ -115,24 +111,18 @@ async function writer() {
 }
 
 /**
- * A double over a door's bound handle that runs `between` once, before the second transaction opened
- * through it. The handle's own `transaction` runs with the double as `this`, so the transaction carries
- * the handle's binding.
+ * Observe transactions on the pool so rebinding a credential to its account still uses the spy.
+ * Call the original with the bound receiver so each transaction keeps its real Postgres binding.
  */
-function betweenTheTwo(between: () => Promise<void>): { wrap: (h: object) => object; opened: () => number } {
+function betweenTheTwo(between: () => Promise<void>): () => number {
   let opened = 0;
-  const wrap = (bound: object): object => {
-    const handle = Object.create(bound) as object;
-    Object.defineProperty(handle, "transaction", {
-      value: async function (this: unknown, fn: (tx: unknown) => Promise<unknown>) {
-        opened += 1;
-        if (opened === 2) await between();
-        return (bound as { transaction: (f: typeof fn) => Promise<unknown> }).transaction.call(this, fn);
-      },
-    });
-    return handle;
-  };
-  return { wrap, opened: () => opened };
+  const transaction = owned.db.transaction;
+  vi.spyOn(owned.db, "transaction").mockImplementation(async function (this: typeof owned.db, ...args) {
+    opened += 1;
+    if (opened === 2) await between();
+    return transaction.apply(this, args);
+  });
+  return () => opened;
 }
 
 function printed(): () => string {
@@ -228,26 +218,39 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
     const said = printed();
 
     // The erasure's own first statement, taken after the redeem committed and before its ring opens.
-    let erasure: Awaited<ReturnType<typeof writer>> | null = null;
-    let committed = false;
-    const view = betweenTheTwo(async () => {
+    let stamping: Promise<void> | undefined;
+    let stamped = false;
+    const opened = betweenTheTwo(async () => {
       expect((await deviceNumbers(db as never, p.accountId)).made, "the redeem had committed").toBe(2);
-      erasure = await writer();
-      await erasure.sql`select 1 from accounts where id = ${p.accountId} for update`;
+      const erasure = await writer();
+      try {
+        await erasure.sql`select 1 from accounts where id = ${p.accountId} for update`;
+      } catch (err) {
+        await erasure.end("rollback");
+        throw err;
+      }
       // The stamp lands once the ring is seen waiting behind this lock, so the order is not a race.
-      void (async () => {
-        await visible("the ring waiting on the account row", async () => (await waiting()) >= 1);
-        await erasure!.sql`update accounts set erased_at = ${NOW.toISOString()}::timestamptz where id = ${p.accountId}`;
-        committed = true;
-        await erasure!.end();
+      stamping = (async () => {
+        try {
+          await visible("the ring waiting on the account row", async () => (await waiting()) >= 1);
+          await erasure.sql`update accounts set erased_at = ${NOW.toISOString()}::timestamptz where id = ${p.accountId}`;
+          stamped = true;
+        } catch (err) {
+          await erasure.end("rollback");
+          throw err;
+        }
+        await erasure.end();
       })();
+      void stamping.catch(() => undefined);
     });
 
-    const answer = await redeemDevicePair(ctxOn(null, null, view.wrap), auth, { token: minted.token, kind: "mobile-android" });
+    const answer = await redeemDevicePair(ctxOn(null), auth, { token: minted.token, kind: "mobile-android" });
+    const waitedForStamp = stamped;
+    await stamping;
 
     expect(answer.tokens.accessToken, "the pairing had committed and answers").toBeTruthy();
-    expect(view.opened(), "the redeem's transaction, then the ring's").toBe(2);
-    expect(committed, "the ring waited for the erasure's lock, and returned after its commit").toBe(true);
+    expect(opened(), "the redeem's transaction, then the ring's").toBe(2);
+    expect(waitedForStamp, "the ring waited for the erasure's lock, and returned after its commit").toBe(true);
     expect(await rings(p.accountId), "an erased account gets no change row").toBe(before);
     expect(said()).toBe("");
   }, 60_000);
@@ -257,11 +260,11 @@ describe.skipIf(!PG_UP)("the devices' doorbell on real Postgres", () => {
     const phone = await paired(p);
     const before = await rings(p.accountId);
     const said = printed();
-    const view = betweenTheTwo(async () => {
+    betweenTheTwo(async () => {
       await db.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, p.accountId));
     });
 
-    await auth.revokeDevice(ctxOn(p.who, p.browser, view.wrap), phone.deviceId);
+    await auth.revokeDevice(ctxOn(p.who, p.browser), phone.deviceId);
 
     const [session] = await db.select({ at: sessions.revokedAt }).from(sessions).where(eq(sessions.deviceId, phone.deviceId));
     expect(session!.at, "the take-back itself had committed").not.toBeNull();

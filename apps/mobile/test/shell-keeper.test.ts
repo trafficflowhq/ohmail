@@ -24,6 +24,8 @@ const DEVICE_KEYS = [
   "ohmail.ui.search.sort.", "ohmail.ui.rail.foldersOpened.", "ohmail.ui.mail.original.", "ohmail.ui.rail.foldersOpened",
   "ohmail.ui.mail.original", "ohmail.ui.reader.afterVerb", "ohmail.ui.reader.subject:", "ohmail.ui.readingAlong.", "ohmail.ui.compose",
   "ohmail.screener.impersonationSeen.", "ohmail.screener.unsubscribeSeen.", "ohmail.junkSweepDismissedAt", "ohmail.ui.seed.notNow.", "ohmail.access.",
+  // The dismissed News or Receipts prompt stores a count for this account on this device.
+  "ohmail.ui.pileNote.notNow.",
   "ohmail.lifecycle.", "ohmail.boot.", "ohmail.erased", "ohmail.signed-out", "ohmail.signed-out-reason.shared",
   "ohmail.session-changed", "ohmail.session.pendingSignOut", "ohmail.session.scopeCleanup.",
   "ohmail.revoke.owed.", "ohmail.session.mintedAt", "ohmail.session.refreshAttempt", "ohmail.session.lastAnswer",
