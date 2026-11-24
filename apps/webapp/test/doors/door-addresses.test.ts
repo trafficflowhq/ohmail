@@ -27,6 +27,7 @@ const DOORS: Record<string, string> = {
   "/authorize-desktop": "authorize-desktop/page.tsx",
   "/link-desktop": "link-desktop/page.tsx",
   "/subscribed": "subscribed/page.tsx",
+  "/microsoft-approval": "microsoft-approval/page.tsx",
   "/resume": "resume/page.tsx",
   "/account/delete": "account/delete/page.tsx",
 };

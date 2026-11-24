@@ -10,7 +10,7 @@ import {
   type ProvenRepeats, type ProviderRefusal, type WriteRefusal, type WriteReply, type WriteTarget,
 } from "@ohmail/cal-providers";
 import {
-  CONTINUED_FIELDS, someoneElses, writeActRefusal, writeRowOf, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRowFacts,
+  CONTINUED_FIELDS, isAttendeeCopy, writeActRefusal, writeRowOf, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRowFacts,
   type ContinuedField,
 } from "@trafficflow/db/calendar";
 import { personalSeriesOf, confirmedDeleteAudience } from "@ohmail/cal-providers/series";
@@ -232,6 +232,7 @@ export function writeCallOf(o: {
   readonly organizer: string | null;
   /** Whose an event is, lower case: the account's mailboxes by the one own set, and the connection's principal. */
   readonly owners: ReadonlySet<string>;
+  readonly access: string;
   readonly to: string | null;
   readonly zones: ZoneSource;
   /** Now, in epoch milliseconds: a series' days are held against the clock times its zone skips from today on. */
@@ -266,8 +267,8 @@ export function writeCallOf(o: {
     const { from, source } = o.continuation;
     if (source === null) return { kind: "refuse", reason: "event_gone" };
     if (from.personalSeries && (!o.place?.startsWith("caldav:") || !personalSeriesOf(source.original))) return { kind: "refuse", reason: "version_stale" };
-    // A new series goes out under the series' own organizer, so only a series of the account's own is carried on.
-    if (someoneElses(source, o.owners)) return { kind: "refuse", reason: "read_only" };
+    // A new series goes out under the series' own organizer. An attendee copy cannot be carried on.
+    if (isAttendeeCopy(source, o.owners, o.access)) return { kind: "refuse", reason: "read_only" };
     const cut = timeOfKey(from.at);
     if (draft.rule === null || cut === null) return { kind: "refuse", reason: "content_refused" };
     if (source.versionTag === null || source.versionTag === "") return { kind: "refuse", reason: "version_unknown" };
@@ -287,9 +288,9 @@ export function writeCallOf(o: {
     return { kind: "refuse", reason: "version_stale" };
   const personal = act.kind === "calendar_event_update" && act.personalSeries;
   if (personal && (!o.place?.startsWith("caldav:") || o.event.myAnswer !== null || !personalSeriesOf(o.event.original))) return { kind: "refuse", reason: "version_stale" };
-  // What the door refuses on this row as it stands is not sent either: a row recorded before a check of the door's. Someone else's
-  // event takes the account's answer and nothing else, whatever the row says.
-  const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners, o.exception !== undefined);
+  // What the door refuses on this row as it stands is not sent either: a row recorded before a check of the door's. An attendee copy takes
+  // only the account's answer.
+  const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners, o.access, o.exception !== undefined);
   if (why !== null) return { kind: "refuse", reason: why.word };
   // A series is written only where its own repeat, from its own start, is a shape the provider was proven to keep.
   const stored = writeRowOf(o.event) === "series" ? parseRRule(o.event.repeatRule!) : null;

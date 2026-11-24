@@ -427,8 +427,8 @@ describe("a suggest request buys its senders in bounded lanes", () => {
     expect(res.suggestions).toHaveLength(9);
     expect(res.suggestions.map((s) => s.sender)).not.toContain("flt04@ex.example");
     expect(res.skipped).toEqual([{ sender: "flt04@ex.example", reason: "model_unavailable" }]);
-    // The charge for the failed sender STANDS, deliberately — the source is stable, so the retry
-    // answers `duplicate` and is free. Ten debits for nine verdicts is the documented shape.
     expect(await debitsOf(accountId)).toHaveLength(10);
+    expect(credits.releases.filter((r) => r.accountId === accountId && r.refund)).toHaveLength(1);
+    expect(res.charged).toBe(9);
   }, 60_000);
 });

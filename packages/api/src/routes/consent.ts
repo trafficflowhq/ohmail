@@ -4,12 +4,13 @@ import {
   resetScreeningState, setAutoAct, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
-  setDraftReplies, setOnboardingCompleted, setResurfaceTime, setSubjectHeading, setThemeFace,
+  acknowledgeScreener, setDraftReplies, setOnboardingCompleted, setResurfaceTime, setSubjectHeading, setThemeFace,
   unmovedReport, readProfileChange, readMailboxProfileChanges, type ProfileChangeWire,
   DEFAULT_DORMANCY_DAYS, RESURFACE_TIME_RE, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES,
   SUPPORTED_THEME_FACES,
   ServiceError, fenceErasedAccount, lockAccountSettingsRow, lockMailboxRows,
 } from "@trafficflow/services/mail";
+import { isScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
 import { isSubjectHeading } from "@trafficflow/core/adapters/organizer-profile";
 import { dialect } from "@trafficflow/db/dialect";
 import { carryBinding, lockAccountRuleKeys, type LedgerTx, type Tx } from "@trafficflow/db";
@@ -158,6 +159,7 @@ interface ConsentSettingsBody {
    */
   resurfaceTime?: unknown;
   draftReplies?: unknown;
+  acknowledgeScreener?: unknown;
   /**
    * `true` — the first-run flow has been LEFT, by finishing it or by cancelling it (mail 0083).
    * The only accepted value is `true`: there is no "un-complete onboarding" instruction, and a
@@ -186,6 +188,7 @@ async function applyConsentSettings(
   signaturesHtml?: Record<string, string>;
   signatureSources?: Record<string, "organizer" | "local">;
   locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null; draftReplies?: boolean;
+  screenerAcknowledgements?: number;
   subjectHeading?: "head" | "each";
   onboardingCompletedAt?: string;
   dormancyChange?: ProfileChangeWire; signatureChanges?: Record<string, ProfileChangeWire>;
@@ -203,6 +206,7 @@ async function applyConsentSettings(
   const hasSignaturesHtml = "signaturesHtml" in body;
   const hasLocale = "locale" in body;
   const hasThemeFace = "themeFace" in body;
+  const hasAcknowledgement = "acknowledgeScreener" in body;
   const hasDraftReplies = "draftReplies" in body;
   const hasResurfaceTime = "resurfaceTime" in body;
   const hasSubjectHeading = "subjectHeading" in body;
@@ -210,13 +214,13 @@ async function applyConsentSettings(
   if (!hasAuto && !hasAct && !hasDormancy && !hasScope && !hasImages && !hasPixels && !hasAutoUnsub
       && !hasFolders && !hasFolderMailboxes && !hasSignatures && !hasSignaturesHtml
       && !hasLocale && !hasThemeFace && !hasResurfaceTime && !hasSubjectHeading && !hasDraftReplies
-      && !hasOnboarding) {
+      && !hasOnboarding && !hasAcknowledgement) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, autoAct, dormancyDays, screeningScope, blockRemoteImages, " +
       "blockTrackingPixels, blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, " +
       "signaturesHtml, " +
-      "locale, themeFace, resurfaceTime, subjectHeading, draftReplies or onboardingCompleted is required",
+      "locale, themeFace, resurfaceTime, subjectHeading, draftReplies, acknowledgeScreener or onboardingCompleted is required",
     );
   }
 
@@ -500,6 +504,10 @@ async function applyConsentSettings(
     }
     themeFace = f;
   }
+  const acknowledgement = body.acknowledgeScreener;
+  if (hasAcknowledgement && !isScreenerAcknowledgement(acknowledgement)) {
+    throw new ServiceError("validation_failed", 400, "acknowledgeScreener must name a Screener confirmation");
+  }
   if (hasDraftReplies && typeof body.draftReplies !== "boolean") {
     throw new ServiceError("validation_failed", 400, "draftReplies must be a boolean");
   }
@@ -554,6 +562,7 @@ async function applyConsentSettings(
   signaturesHtml?: Record<string, string>;
   signatureSources?: Record<string, "organizer" | "local">;
     locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null; draftReplies?: boolean;
+    screenerAcknowledgements?: number;
     subjectHeading?: "head" | "each";
     onboardingCompletedAt?: string;
     dormancyChange?: ProfileChangeWire; signatureChanges?: Record<string, ProfileChangeWire>;
@@ -658,6 +667,9 @@ async function applyConsentSettings(
     }
     if (typeof body.draftReplies === "boolean") {
       out.draftReplies = await setDraftReplies(txCtx, body.draftReplies);
+    }
+    if (isScreenerAcknowledgement(acknowledgement)) {
+      out.screenerAcknowledgements = await acknowledgeScreener(txCtx, acknowledgement);
     }
     if (hasResurfaceTime) {
       out.resurfaceTime =
@@ -843,6 +855,7 @@ export const consentRoutes: Route[] = [
         // that answered "09:00" would make "never chosen" unsayable on the wire.
         resurfaceTime: settings.resurfaceTime,
         draftReplies: settings.draftReplies,
+        screenerAcknowledgements: settings.screenerAcknowledgements,
         // WHERE A CONVERSATION'S SUBJECT STANDS — `'head'` or `'each'`, or `null` for "nothing stated"
         // (mail 0210). Sent as `null` rather than omitted for `locale`'s reason; the client shows the
         // subject once at the head for both a null and a server too old to carry the field.

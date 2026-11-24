@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "ohmail",
-    "description": "Der ohmail-Client — E-Mail auf deinen eigenen Postfächern, und nichts passiert ohne dein Ja.",
+    "description": "Mail, die zuerst fragt und automatisch sortiert. und Kalender.",
     "ogAlt": "Das ohmail-App-Icon — ein kleingeschriebenes „oh.“ auf der Leinwandkachel"
   },
   "markAll": {
@@ -23,7 +23,7 @@
     "note": "Deine eigenen Postfächer findest du auf ohmail.app.",
     "openDemo": "Demo öffnen",
     "signIn": "Anmelden",
-    "footer": "ohmail · E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja",
+    "footer": "ohmail · Mail, die zuerst fragt und automatisch sortiert. und Kalender.",
     "missingTitle": "Diese Seite gibt es nicht.",
     "missingNote": "Die Adresse ist vielleicht falsch geschrieben, oder die Seite ist umgezogen.",
     "missingHome": "Zurück zu ohmail."
@@ -1010,7 +1010,7 @@
     "suggest": {
       "open": "Vorschlagen …",
       "label": "Vorschläge",
-      "sizeAll": "Alle {count}",
+      "sizeAll": "{count, plural, =0 {Alle} other {Alle #}}",
       "price": "{senders, plural, one {1 Absender} other {# Absender}} · {credits, plural, one {1 Credit} other {# Credits}}",
       "credits": "{credits, plural, one {1 Credit} other {# Credits}}",
       "priceUnmetered": "{senders, plural, one {1 Absender} other {# Absender}}",
@@ -1021,6 +1021,8 @@
       "confirm": "{count, select, all {Für alle {n} Absender vorschlagen} first {Für die ersten {n} Absender vorschlagen} other {{n, plural, one {Für 1 Absender vorschlagen} other {Für # Absender vorschlagen}}}}",
       "cancel": "Abbrechen",
       "again": "Neu vorschlagen …",
+      "couldNot": "Kein Vorschlag möglich",
+      "retry": "Vorschläge erneut versuchen …",
       "labelAgain": "Neu vorschlagen",
       "confirmAgain": "{count, select, all {Für alle {n} Absender neu vorschlagen} first {Für die ersten {n} Absender neu vorschlagen} other {Für {n, plural, one {1 Absender} other {# Absender}} neu vorschlagen}}",
       "ariaAgain": "Wie viele Absender mit Vorschlag noch einmal geprüft werden",
@@ -1284,12 +1286,9 @@
       "sure": "{sure, number, percent}",
       "toWaiting": "Screener",
       "unsub": {
-        "continue": "Weiter",
         "final": "Einmal gesendet, lässt sich das nicht rückgängig machen.",
         "screened": "Aussortieren und abmelden",
         "spam": "Spam und abmelden",
-        "spamDomain": "{domain} als Spam markieren und abmelden",
-        "screenedDomain": "{domain} aussortieren und abmelden",
         "service": "Die Anfrage geht von den Servern von ohmail aus, nie von deinem Browser, so bleiben deine Adresse und deine Lesezeiten aus ihren Protokollen.",
         "computer": "Die Anfrage geht von deinem Computer aus, so sieht der Absender seine Netzwerkadresse."
       },
@@ -2473,8 +2472,8 @@
   },
   "hero": {
     "mark": "oh.",
-    "headline": "E-Mail auf deinen Postfächern.\nNichts ohne dein Ja.",
-    "headlineAlt1": "E-Mail, die zuerst fragt —\nauf den Postfächern,\ndie du längst hast.",
+    "headline": "Mail, die zuerst fragt und automatisch sortiert.\nund Kalender.",
+    "headlineAlt1": "Mail, die zuerst fragt\nund automatisch sortiert.\nund Kalender.",
     "headlineAlt2": "der letzte Mail-Client,\nden du brauchst.",
     "strapline": "komplett Open Source und selbst hostbar.",
     "door": "ohmail <k>macht für dich die Tür auf</k>: Neue Absender <k>warten im Screener</k>, bis du sie reinlässt. In deiner Ohbox liegen also nur Mails, zu denen du Ja gesagt hast, organisiert direkt dort, wo sie sind: in <k>echten Ordnern</k> in den Postfächern, die du schon hast. <o>Geh, wann du willst</o>; dein Postfach bleibt organisiert.",
@@ -2937,7 +2936,7 @@
     "retry": "Erneut versuchen"
   },
   "footer": {
-    "tagline": "E-Mail auf den Postfächern, die du längst hast, und nichts ohne dein Ja.",
+    "tagline": "Mail, die zuerst fragt und automatisch sortiert. und Kalender.",
     "promise": "Dein Postfach ist die Quelle der Wahrheit. Geh, wann du willst — es bleibt organisiert.",
     "noTrackers": "Keine Analytics auf dieser Seite.",
     "analytics": "Besuchsstatistik auf dieser Website, nur mit deinem Ja. Nie in der App, nie auf deiner Mail.",
@@ -2956,9 +2955,9 @@
     "decline": "Ablehnen"
   },
   "siteMeta": {
-    "title": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja.",
+    "title": "ohmail — Mail, die zuerst fragt und automatisch sortiert. und Kalender.",
     "description": "Komplett Open Source und selbst hostbar. Der Screener hält neue Absender zurück, bis du entscheidest; alles, wozu du Ja gesagt hast, wird direkt dort organisiert, wo es liegt: in echten Ordnern auf deinem echten Server. Die Desktop-App ist kostenlos für macOS, Windows und Linux und läuft komplett auf deinem eigenen Rechner. Cloud ab 9 $/Monat bringt Web-App und Push dazu, mit 14 Tagen Testphase und ohne Karte.",
-    "ogAlt": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja"
+    "ogAlt": "ohmail — Mail, die zuerst fragt und automatisch sortiert. und Kalender."
   },
   "siteScreener": {
     "title": "Du entscheidest, wer reinkommt.",
@@ -3256,7 +3255,7 @@
     "oauthFinishing": "Die Microsoft-Verbindung wird abgeschlossen …",
     "oauthConnected": "{address} ist verbunden. Die erste Synchronisierung beginnt beim nächsten Durchgang.",
     "oauthReconnected": "{address} ist wieder verbunden. Die Synchronisierung läuft beim nächsten Durchgang weiter.",
-    "oauth_admin_consent_required": "Deine Organisation muss ohmail freigeben, bevor dieses Postfach verbunden werden kann. Eine Administratorin kann das tun — entweder weil ohmail für deinen Tenant noch nicht freigegeben ist oder weil dein Tenant es Einzelpersonen nicht erlaubt, Apps selbst freizugeben.",
+    "oauth_admin_consent_required": "Der Admin deiner Organisation muss ohmail einmal freigeben.",
     "oauth_consent_declined": "Die Microsoft-Anmeldung wurde abgebrochen, es wurde also nichts verbunden.",
     "oauth_consent_failed": "Microsoft konnte die Anmeldung nicht abschließen. Versuch es nochmal.",
     "oauth_state_invalid": "Dieser Outlook-Verbindungslink gilt nicht mehr. Fang von hier neu an.",
@@ -6051,6 +6050,10 @@
     "stillHere": "Noch da",
     "notConfirmed": "Nicht bestätigt"
   },
+  "microsoftApprovalResult": {
+    "approved": "ohmail ist für deine Organisation genehmigt. Die Person kann ihr Postfach jetzt verbinden.",
+    "declined": "Die Genehmigung wurde abgebrochen. Du kannst den Genehmigungslink erneut öffnen."
+  },
   "accessLock": {
     "title": "Dieser Account ist nicht aktiv.",
     "suspendedTitle": "Dieser Account ist gesperrt.",
@@ -6172,6 +6175,14 @@
       "search": "Suche",
       "write": "Schreiben"
     },
+    "microsoftApproval": {
+      "fallback": "Bitte deine Administration, ohmail in Microsoft Entra zu genehmigen.",
+      "title": "Admin-Freigabe",
+      "forward": "Dein Admin öffnet diesen Link einmal und gibt ohmail für die Organisation frei.",
+      "link": "Link zur Freigabe",
+      "copy": "Kopieren",
+      "copied": "Kopiert"
+    },
     "notice": {
       "hide": "Ausblenden",
       "collapse": "Einklappen",
@@ -6179,6 +6190,7 @@
       "sendFailed": "Nachricht nicht gesendet",
       "more": "{count} weitere",
       "moreName": "{count, plural, one {# weiterer Hinweis} other {# weitere Hinweise}}",
+      "showFewer": "Weniger anzeigen",
       "moreClose": "Schließen"
     },
     "systemNotice": {
@@ -6666,7 +6678,7 @@
       "connecting": "Dein Kalender wird verbunden…",
       "connected": "Kalender verbunden.",
       "consent_declined": "Der Kalenderzugriff wurde abgelehnt.",
-      "admin_consent_required": "Deine Organisation muss den Kalenderzugriff genehmigen.",
+      "admin_consent_required": "Der Admin deiner Organisation muss ohmail einmal freigeben.",
       "consent_failed": "Der Anbieter konnte den Kalenderzugriff nicht genehmigen.",
       "state_expired": "Diese Kalenderanmeldung ist abgelaufen. Beginne erneut.",
       "state_invalid": "Diese Kalenderanmeldung ist nicht mehr gültig. Beginne erneut.",

@@ -88,6 +88,15 @@ describe("the one overlay", () => {
 });
 
 describe("the selector", () => {
+  it("restores an event and exposes the refusal when the provider rejects a queued edit", () => {
+    const event = record("shared");
+    const write = mark(update(event.id, "Changed title"));
+    expect(eventsWithWrites([{ ...event, writes: [write] }], [])[0])
+      .toMatchObject({ record: { title: "Changed title" }, waiting: "provider" });
+    expect(eventsWithWrites([{ ...event, writes: [{ ...write, state: "refused", reason: "read_only" }] }], [])[0])
+      .toMatchObject({ record: { title: event.title }, waiting: null, refusal: "read_only", refusedWriteId: write.id });
+  });
+
   it("tells a write waiting on this device from one waiting at the provider, and shows a refused one beside the provider's copy", () => {
     const records = [
       record("at-provider", { writes: [mark(update("at-provider", "Mine"))] }),

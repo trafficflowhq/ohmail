@@ -5,7 +5,8 @@ import {
   resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   notGoneSql, readGoneMailboxIds,
   screenerAttemptKey, storeScreenerSuggestion,
-  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits,
+  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits, screenerSuggestionExhausted,
+  screenerSuggestionRetryDue, recordScreenerSuggestionRetry,
   decisionCanBeApplied, readAccountSettings, readRequestEligibility, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn,
   type AccessPort, type AiUsageLine, type RefundObligationPort, type RefundObligationReason, type ReverseChargeFact, type SpendPort,
   type Tx,
@@ -302,48 +303,30 @@ export async function screenerAutoSuggestPass(
     authVerdict: c.authVerdict,
   })));
 
+  const exhaustIfNeeded = async (c: Candidate): Promise<boolean> => {
+    if (await recordScreenerSuggestionRetry(db, accountId, c.messageId, { grant: watermark, advance: true }) !== "exhausted") return false;
+    await storeScreenerSuggestion(db, {
+      accountId, messageId: c.messageId, destination: SCREENER, confidence: 0,
+      rationale: "", spam: false, senderReason: "none", failed: true,
+    });
+    return true;
+  };
+
   for (const [index, c] of candidates.entries()) {
     if (index > 0 && deps.until?.()) { result.capped = true; break; }
     // The set-wide check above, for this candidate. Never undefined — `senderCheckAll` answers one
     // per input, in order — and an empty one would silently disarm the cap, so it is asserted.
     const checked: SenderSignals = signals[index] ?? { senderDomain: "", urgency: false };
-    // THE MONEY QUESTION, BEFORE THE MODEL QUESTION. `spend`, not `tryDebit`: "out of credits", "AI
-    // switched off" and "ledger unwell" decide whether the pass stops or is idle, and a boolean throws
-    // that away. The source is the MESSAGE, which makes this free to retry and impossible to double-charge
-    // against the client's own batch. The whole block is SKIPPED on an unmetered host — skipped rather
-    // than satisfied by a permissive stub gate, which would put a second always-yes "may this account
-    // spend" in the codebase that refuses nothing the day it is wired to the hosted side. `chargedAttempts`
-    // stays 0 there, the truth: a standalone install is charged for nothing. The bare key is the
-    // MESSAGE — what makes this pass and a person's press claim the same work, and the next ask free.
+    // The message key lets a press and the worker share the same spend claim. A failed attempt
+    // returns its debit. An unmetered host skips the gate.
     const attemptKey = screenerAttemptKey(c.messageId);
-    /**
-     * THE ATTEMPT THIS CANDIDATE CHARGED, when it charged one — what the reversal below must name.
-     *
-     * `undefined` covers both "nothing was charged" cases and they are different: an unmetered host
-     * (no gate at all) and a `duplicate` whose earlier attempt is still open. Neither may be
-     * refunded — the first has no ledger and the second's money bought a verdict this pass is about
-     * to serve for free.
-     */
     let chargedAttempt: string | undefined;
-    /**
-     * THE CLAIM THIS CANDIDATE HOLDS, and the latch that makes the release ONE call.
-     *
-     * `claimed` is set only where the gate hands the claim over — `ok` and `duplicate`. An
-     * `inflight` names ANOTHER holder (the person pressing Suggest for this sender) and every
-     * refusal holds nothing, so releasing on those paths would give away a claim this pass never
-     * took and let a second model call be bought for one credit. `released` is set before the
-     * await, so a release that faults is reported rather than retried.
-     */
+    let previousAttempt: string | undefined;
+    let countedCharge = false;
+    // Only a stored answer keeps the charge. Eligibility exits give back any new debit.
+    let refundOnRelease: RefundObligationReason | null = "drafter_failed";
     let claimed = false;
     let released = false;
-    /**
-     * DOES THE ONE RELEASE REVERSE THE CHARGE — the already-advised path and a model decline.
-     *
-     * A sender advised between the candidate query and the claim is refunded, and so is a decline,
-     * which bought nothing a retry could honour; a fault is not, because the charge buys a free
-     * retry next cycle over the same message and that is the claim this pass's caller already makes.
-     */
-    let refundOnRelease: RefundObligationReason | null = null;
     /** This candidate's model call, once made, for the one release to carry. */
     let usageLine: AiUsageLine | undefined;
     /**
@@ -363,9 +346,10 @@ export async function screenerAutoSuggestPass(
         return;
       }
       const attempt = chargedAttempt;
-      await reverseCharge(gate, deps.obligations, {
+      const { receipt } = await reverseCharge(gate, deps.obligations, {
         accountId, action: "screener", attemptKey, attempt, reason, meta, ...usage,
       }, (f) => sayAutoRefund(log, f, accountId, c.messageId, attempt));
+      if (countedCharge && receipt === "settled") result.chargedAttempts--;
     };
     try {
       if (gate) {
@@ -400,6 +384,7 @@ export async function screenerAutoSuggestPass(
         // Recorded, not yet counted: `result.chargedAttempts` moves below, once this candidate is past
         // the entitlement re-check, because a charge that is handed straight back moved nothing.
         if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
+        else previousAttempt = outcome.attempt;
       }
 
       // THE ORGANIZER, RE-ASKED INSIDE THE EXCLUSIVE REGION. The filter above ran once for the
@@ -441,8 +426,8 @@ export async function screenerAutoSuggestPass(
       }
       // A `charged: false` is a free retry of an attempt already on record — counting it would say
       // the account paid twice for one message. Attempts, not credits: the program prices them.
-      if (chargedAttempt !== undefined) result.chargedAttempts++;
-
+      countedCharge = chargedAttempt !== undefined;
+      if (countedCharge) result.chargedAttempts++;
       let verdict;
       try {
         const facts = senderFacts(checked);
@@ -457,11 +442,7 @@ export async function screenerAutoSuggestPass(
           ...(deps.usageHook ? screenerUsageHook(deps.usageHook, accountId, (line) => { usageLine = line; }) : {}),
         });
       } catch (err) {
-        if (err instanceof ModelConsentWithdrawn) {
-          if (chargedAttempt !== undefined) result.chargedAttempts--;
-          refundOnRelease = "drafter_failed";
-          break;
-        }
+        if (err instanceof ModelConsentWithdrawn) break;
         // A DECLINE OR A REFUSAL AT THE SINK SKIPS THIS SENDER AND THE BATCH GOES ON. Each speaks
         // for one sender's mail, not the endpoint: stopping on it stalled every later held sender
         // behind the oldest one, each cycle, and kept a charge that bought nothing. The charge comes
@@ -478,24 +459,16 @@ export async function screenerAutoSuggestPass(
               accountId, messageId: c.messageId, refusal: err.screen.reason ?? "unnamed", cooldownMs: DECLINE_COOLDOWN_MS,
             });
           }
-          if (chargedAttempt !== undefined) result.chargedAttempts--;
-          refundOnRelease = "drafter_failed";
-          declines.remember(accountId, c.messageId, now.getTime() + DECLINE_COOLDOWN_MS);
+          if (err instanceof ModelDeclinedError && err.stopReason === "max_tokens") {
+            if (await exhaustIfNeeded(c)) chargedAttempt ??= previousAttempt;
+          } else {
+            declines.remember(accountId, c.messageId, now.getTime() + DECLINE_COOLDOWN_MS);
+          }
           continue;
         }
-        // STOP, where the user-pressed path CONTINUES — nobody is waiting here, and a model fault is almost
-        // always the whole endpoint, so pressing on would charge the rest of the batch against an outage
-        // every cycle. THE CHARGE IS NOT REFUNDED: the old reason ("the ledger source is the message, so the
-        // next cycle's attempt is `duplicate` and free") was false once the representative moves — a sender
-        // sending again during an outage moved it, a fresh source, a second charge per cycle. What makes the
-        // retry free now is the candidate query (the sender is unadvised, so the next cycle asks about their
-        // CURRENT representative), and the fault charge is bounded to one per cycle by this stop and to a
-        // handful by the classifier's own fault gate (`classifierForCycle` withholds the port after faults).
-        // It is the ONLY stop an unmetered host has, and carries the same bound there.
+        // Stop after a provider fault so an outage cannot consume the rest of the page.
         log.warn("screener_auto_suggest_model_failed", { accountId, messageId: c.messageId, err });
-        // The claim goes back unrefunded at the door below, for the reason the request path gives:
-        // the charge stands and buys a free retry next cycle, and a claim left behind would make
-        // that retry wait out the TTL first.
+        if (await exhaustIfNeeded(c)) chargedAttempt ??= previousAttempt;
         result.stopped = "model_unavailable";
         break;
       }
@@ -521,6 +494,7 @@ export async function screenerAutoSuggestPass(
         // Which fact capped it: the act writes no rule on the address from the crowd's cap.
         senderReason: capped.reasonCode ?? "none",
       });
+      refundOnRelease = null;
       result.bought++;
     } finally {
       // ONE DOOR, AND AFTER THE STORE. Every exit from this candidate leaves through here — the
@@ -653,7 +627,8 @@ async function selectCandidates(
       // Only the representative — see the window above.
       eq(reps.rank, 1),
       // (1) THE WATERMARK — consent began before this message did.
-      sql`${reps.createdAt} > ${d.ts(opts.watermark)}`,
+      sql`(${reps.createdAt} > ${d.ts(opts.watermark)}
+        or ${screenerSuggestionRetryDue(opts.accountId, sql`${reps.messageId}`)})`,
       // (2) THE PROGRESS MARKER AND PER-SENDER ENTITLEMENT, IN ONE PREDICATE: a SENDER this account holds
       // advice about (bought by this pass earlier, the client's on-open batch, or the manual ladder) is
       // not re-bought or re-asked. THIS ARM READ `rd.message_id = reps.messageId` AND THAT WAS THE DRAIN
@@ -667,6 +642,7 @@ async function selectCandidates(
       // the stricter reading of each, through the ONE predicate the suggest route's automatic batch
       // reads too (`automaticAiAdmits`); asked before the LIMIT, so the page reaches the senders behind.
       automaticAiAdmits({ noAi: reps.noAi, sensitivityCategory: reps.sensitivityCategory }),
+      sql`not ${screenerSuggestionExhausted(opts.accountId, sql`${reps.messageId}`)}`,
       // (4) THE CUTLINE — the same expression `GET /consent` counts through and `GET /screener`
       // now lists through. Without it this pass bought advice about senders no surface shows,
       // which is money spent on a question nobody is being asked. Absent ⇒ inert, so a caller

@@ -52,6 +52,19 @@ export function storeVerdict(owner: string | null, verdict: StoredVerdict): void
 /** How long the first paint waits for the verdict before it paints the mirror anyway. */
 export const FIRST_PAINT_VERDICT_MS = 3_000;
 
+/** Keep the window’s display zone on the billing handoff. */
+export function manageUrlWithTimeZone(url: string, timeZone?: string): string {
+  if (!timeZone) return url;
+  try {
+    const target = new URL(url);
+    if (target.protocol !== "https:" || target.pathname !== "/manage") return url;
+    target.searchParams.set("timeZone", timeZone);
+    return target.href;
+  } catch {
+    return url;
+  }
+}
+
 /**
  * A HAND-OFF PRESS IN THIS TAB. The web hand-off leaves in the same tab, so the wall a person comes
  * back to is a new document; this note is how it knows to poll rather than wait for the minute.

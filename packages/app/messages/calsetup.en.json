@@ -21,7 +21,7 @@
       "connecting": "Connecting your calendar…",
       "connected": "Calendar connected.",
       "consent_declined": "Calendar access was declined.",
-      "admin_consent_required": "Your organization needs to approve calendar access.",
+      "admin_consent_required": "Your organisation’s administrator needs to approve ohmail once.",
       "consent_failed": "The provider could not approve calendar access.",
       "state_expired": "This calendar sign-in expired. Start again.",
       "state_invalid": "This calendar sign-in is no longer valid. Start again.",

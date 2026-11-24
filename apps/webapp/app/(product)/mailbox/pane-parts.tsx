@@ -76,7 +76,7 @@ function useWebBillingSummary() {
     return { value: own("trial"), detail: standing.ends ? t("webPlanTrialEnds", { when: standing.ends }) : undefined };
   }
   if (standing?.state === "overdue") return { value: own("overdue"), hot: true };
-  if (standing?.state === "grace") return { value: own("trialEnded"), hot: true };
+  if (standing?.state === "grace" || standing?.state === "trialEnded") return { value: own("trialEnded"), hot: true };
   if (standing?.state === "active") return { value: own("active") };
   return null;
 }

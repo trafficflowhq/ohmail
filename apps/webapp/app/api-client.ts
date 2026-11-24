@@ -9,6 +9,7 @@
  * (`test/onboarding.test.ts` forbids the sentences in source).
  */
 
+import type { ScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
 import { aiCreditsOf, type AiCredits } from "@ohmail/app/settings/ai/budget";
 import { csrfToken as readCsrfToken } from "./csrf";
 import { readSessionFamily, EXPECTED_ACCOUNT_HEADER, EXPECTED_FAMILY_HEADER } from "./signed-out-signal";
@@ -1322,7 +1323,7 @@ export interface AccountLifecycle {
   closedReason: null | "trial_ended" | "canceled" | "unpaid" | "suspended";
   /** While `grace` or `past_due`: when access stops. */
   graceUntil?: string | null;
-  /** While `trialing`: when the trial ends. */
+  /** The trial’s end instant, when the billing program knows it. */
   trialEndsAt?: string | null;
   closedAt?: string | null;
   /** When the kept settings are erased; `null` while an operator holds the account. */
@@ -2469,6 +2470,9 @@ export const mailboxes = {
   oauthAvailability: () =>
     api<{ available: boolean; device?: boolean }>("/mailboxes/oauth/microsoft/availability"),
 
+  microsoftAdminApproval: (expectedOwner?: string) =>
+    api<{ adminApprovalUrl?: string }>("/mailboxes/oauth/microsoft/availability?approval=1", { expectedOwner }),
+
   /**
    * BEGIN THE DEVICE-CODE CEREMONY — the door an install that is not ohmail.app connects Outlook through, and the
    * only one available to a server whose operator has no Entra registration. There is no URL to navigate to and no
@@ -2786,6 +2790,7 @@ export interface ScreeningWindowWire {
 }
 
 export interface ConsentStateWire {
+  screenerAcknowledgements?: number;
   /** ISO timestamp, or null while the seed review has never been confirmed. */
   seedConfirmedAt: string | null;
   screeningResetAt: string | null;
@@ -3202,6 +3207,10 @@ export const consent = {
       method: "PATCH",
       body: { resurfaceTime },
     }).then((r) => r.resurfaceTime),
+  acknowledgeScreener: (acknowledgeScreener: ScreenerAcknowledgement, expectedOwner?: string) =>
+    api<{ screenerAcknowledgements: number }>("/consent/settings", {
+      expectedOwner, method: "PATCH", body: { acknowledgeScreener },
+    }),
   setDraftReplies: (draftReplies: boolean, expectedOwner?: string) =>
     api<{ draftReplies: boolean }>("/consent/settings", { expectedOwner, method: "PATCH", body: { draftReplies } }),
   /** The review list. Reads, and writes nothing — the list is an offer. */
@@ -3589,6 +3598,7 @@ export interface ScreenerWireItem {
   receivedAt: string;
   aiSuggestion: {
     decision: "yes" | "no" | "hold"; confidence: number; rationale: string;
+    failed?: true;
     /** Which fact ohmail checked decided this — see `screener-suggest.ts#REASON_CODES`. */
     reasonCode?: string;
     /** The brand named for `impersonation`, from ohmail's dictionary — never the sender's words. */
@@ -3604,9 +3614,8 @@ export interface ScreenerWirePage {
   /**
    * What suggesting for THIS PAGE may take — not what is on screen, and no price.
    *
-   * Read for `maxPerRequest` alone: the page is a server-side window over the held set while the
-   * rows this app shows come from the mirror, so the two sender lists are not the same list. The
-   * number quoted to the user comes from a dry run over the exact set about to be posted.
+   * The manual All quote can walk these pages to include held senders beyond the local mirror.
+   * The user-facing count still comes from a dry run over the exact set about to be posted.
    */
   suggestable: { senders: string[]; maxPerRequest: number };
   /**
@@ -3661,6 +3670,8 @@ export interface ScreenerSuggestWire {
   charged: number;
   /** Set when the spend gate stopped the run PART-WAY; absent on a run that served everything. */
   stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
+  /** The only stopped items were left for the worker. The next approved chunk can proceed. */
+  deferred?: true;
   /**
    * WHAT IS LEFT ON THE ACCOUNT after this request — the server's ledger read, never ours. The one number a person
    * wants after being told what a run cost, and the one this client is categorically not allowed to compute.

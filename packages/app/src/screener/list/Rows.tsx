@@ -46,7 +46,11 @@ function rowFacts(sender: ScreenerSenderDTO, t: Text, model: ReturnType<typeof u
   const flag = impersonation
     ? { label: t("place.lookalike"), word: t("senderCheck.chip", { brand: checked.brand }) }
     : undefined;
-  if (advice?.dest === "screener" && !advice.noAnswer) labels.push(t("aiHoldChip"));
+  if (advice?.noAnswer === "model_unavailable" || advice?.noAnswer === "model_declined") {
+    labels.push(t("suggest.couldNot"));
+  } else if (advice?.dest === "screener" && !advice.noAnswer) {
+    labels.push(t("aiHoldChip"));
+  }
   let explanation: string | undefined;
   if (impersonation) {
     explanation = t(checked.domainShared ? "senderCheck.impersonationShared" : "senderCheck.impersonation", {

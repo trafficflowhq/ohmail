@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { consentVia, type ConsentTransport } from "@ohmail/app-logic/consent";
 import { NO_RUN } from "@ohmail/app-logic/screener";
 import type { ScreenerBeside, ScreenerSuggestControl } from "../../src/screener/index.js";
 import { BESIDE, modelOf, mountPlace, sender, type Asked } from "./screener-world.js";
@@ -248,7 +249,7 @@ describe("the unsubscribe question", () => {
     expect(asked.decided).toEqual([{ id: "lena", dest: "spam", read: false, scope: "sender" }]);
   });
 
-  it("explains the first confirmed unsubscribe per account, across mounts and senders", () => {
+  it("explains each manual action on its first confirmation", () => {
     const mountAccount = (accountScope: string, waiting = QUEUE) =>
       mountPlace(modelOf(asked, { accountScope, waiting, waitingCount: waiting.length, ...sends }));
     const question = (key: "n" | "x", name: string) => {
@@ -267,9 +268,9 @@ describe("the unsubscribe question", () => {
 
     account = mountAccount("account-one", [MARCO]);
     const repeat = question("n", "Screen out and unsubscribe");
-    expect(repeat.queryByText(/Later mail from them follows this rule/)).toBeNull();
+    expect(repeat.getByText(/Later mail from them follows this rule/)).toBeTruthy();
     expect(repeat.getByText("Once sent, it cannot be undone.")).toBeTruthy();
-    fireEvent.click(repeat.getByRole("button", { name: "Continue" }));
+    fireEvent.click(repeat.getByRole("button", { name: "Screen out and unsubscribe" }));
     expect(asked.decided).toEqual([
       { id: "lena", dest: "spam", read: false, scope: "sender" },
       { id: "marco", dest: "screened", read: false, scope: "sender" },
@@ -282,7 +283,103 @@ describe("the unsubscribe question", () => {
     ).toBeTruthy();
   });
 
-  it("names the domain when a repeated confirmation can unsubscribe multiple senders", () => {
+  it.each([
+    { key: "x", dest: "spam", kind: "spamUnsubscribe", mask: 1, title: "Spam and unsubscribe" },
+    {
+      key: "n",
+      dest: "screened",
+      kind: "screenOutUnsubscribe",
+      mask: 2,
+      title: "Screen out and unsubscribe",
+    },
+  ])("asks once for $title across clients of the same account", async ({ key, dest, kind, mask, title }) => {
+    const accounts = new Map<string, number>();
+    const writes = vi.fn();
+    const mountAccount = async (accountScope: string, waiting = QUEUE) => {
+      const read = vi.fn();
+      const consent: ConsentTransport = {
+        ...consentVia(async (path, init) => {
+          if (path === "/consent/settings") {
+            const body = JSON.parse(String(init?.body));
+            writes(body);
+            expect(body).toEqual({ acknowledgeScreener: kind });
+            accounts.set(accountScope, mask);
+          } else {
+            read();
+          }
+          return Response.json({
+            seedConfirmedAt: null,
+            dormancyDays: 60,
+            screenerAcknowledgements: accounts.get(accountScope) ?? 0,
+          });
+        }),
+        foldersStorable: false,
+      };
+      const world = mountPlace(
+        modelOf(asked, { accountScope, waiting, waitingCount: waiting.length, ...sends }),
+        { consent },
+      );
+      await waitFor(() => expect(read).toHaveBeenCalled());
+      return world;
+    };
+    const question = () => {
+      press(key);
+      return within(screen.getByRole("dialog", { name: title }));
+    };
+    const first = await mountAccount("account-one");
+    fireEvent.click(question().getByRole("button", { name: "Cancel" }));
+    expect(asked.decided).toBeUndefined();
+    expect(writes).not.toHaveBeenCalled();
+    fireEvent.click(question().getByRole("button", { name: title }));
+    press(key);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(asked.decided?.map(({ id, dest }) => [id, dest])).toEqual([
+      ["lena", dest],
+      ["marco", dest],
+    ]);
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
+    first.view.unmount();
+
+    localStorage.clear();
+    const second = await mountAccount("account-one", [MARCO]);
+    press(key);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(asked.decided).toHaveLength(3);
+    second.view.unmount();
+
+    await mountAccount("account-two", [MARCO]);
+    expect(question().getByText("Once sent, it cannot be undone.")).toBeTruthy();
+    expect(asked.decided).toHaveLength(3);
+  });
+
+  it("reports a refusal when the organizer becomes unavailable during confirmation", () => {
+    const ready = modelOf(asked, { waiting: QUEUE, waitingCount: QUEUE.length, ...sends });
+    const remember = vi.fn(async () => ({ screenerAcknowledgements: 1 }));
+    const consent = consentVia(async () => Response.json({ seedConfirmedAt: null, dormancyDays: 60 }));
+    const world = mountPlace(ready, { consent: { ...consent, acknowledgeScreener: remember } });
+    press("x");
+    const title = "Spam and unsubscribe";
+    expect(screen.getByRole("dialog", { name: title })).toBeTruthy();
+
+    const decide = vi.fn();
+    world.again({
+      ...ready,
+      role: { mode: "blocked", name: null, reason: "no_organizer", oauthOnly: false },
+      decide,
+    });
+    fireEvent.click(within(screen.getByRole("dialog", { name: title })).getByRole("button", { name: title }));
+
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide).toHaveBeenCalledWith(LENA, "spam", expect.objectContaining({ scope: "sender" }));
+    expect(screen.queryByRole("dialog", { name: title })).toBeNull();
+    expect(within(reading()).getByRole("heading", { name: /Lena Hart goes to/ })).toBeTruthy();
+    world.again(ready);
+    press("x");
+    expect(screen.getByRole("dialog", { name: title })).toBeTruthy();
+    expect(remember).not.toHaveBeenCalled();
+  });
+
+  it("names the domain when a first confirmation can unsubscribe multiple senders", () => {
     const accountScope = "account-one";
     const first = mountPlace(modelOf(asked, { accountScope, waiting: QUEUE, waitingCount: 2, ...sends }));
     press("n");
@@ -294,8 +391,9 @@ describe("the unsubscribe question", () => {
     const domainSender = sender("marco", "Marco Pine", { scope: "domain" });
     mountPlace(modelOf(asked, { accountScope, waiting: [domainSender], waitingCount: 1, ...sends }));
     press("x");
-    const confirm = within(screen.getByRole("dialog", { name: /Mark .+ as spam and unsubscribe/ }));
-    expect(confirm.getByRole("button", { name: "Continue" })).toBeTruthy();
+    const confirm = within(screen.getByRole("dialog", { name: "Spam and unsubscribe" }));
+    expect(confirm.getByText(/marco\.example/)).toBeTruthy();
+    expect(confirm.getByRole("button", { name: "Spam and unsubscribe" })).toBeTruthy();
     expect(confirm.getByText("Once sent, it cannot be undone.")).toBeTruthy();
   });
 
@@ -351,7 +449,7 @@ describe("the queue's tools", () => {
       beside: beside({ phase: "ready", quote: { senders: 2, credits: 2 } }),
     });
     const ask = screen.getByRole("dialog", { name: "How many waiting senders to suggest for" });
-    expect(ask.textContent).toContain("2 senders · 2 credits");
+    expect(within(ask).getByText("2 credits")).toBeTruthy();
     expect(calls).toEqual(["open"]);
     fireEvent.click(within(ask).getByRole("button", { name: "Suggest for all 2 senders" }));
     expect(calls).toEqual(["open", "confirm"]);

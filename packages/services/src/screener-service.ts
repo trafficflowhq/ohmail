@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ScreenerQuoteGrant } from "@ohmail/wire";
 import {
   messages,
   mailboxes,
+  messageInstances,
   folderState,
   routingDecisions,
   claimIdempotencyKey, settleIdempotencyKey, releasePendingIdempotencyKey,
@@ -12,13 +13,13 @@ import {
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
   automaticAiAdmits,
-  SCREENER_SUGGESTION_PROVENANCE,
+  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_FAILED, screenerSuggestionExhausted, recordScreenerSuggestionRetry,
   UNPRICED,
-  readSuggestionGrant, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn, type ReverseChargeFact,
+  readAccountSettings, readSuggestionGrant, resolveCutline, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn, type ReverseChargeFact,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   senderIsActiveSql, activeSenderKeysSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
-  senderHasHeldClaimSql, heldClaimKeysSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, parseDecisionScope, confirmedScreenerRows, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  senderHasHeldArrivalSql, screenerSuggestedSenderExists, senderHasHeldClaimSql, heldClaimKeysSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, parseDecisionScope, confirmedScreenerRows, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied, readListAddresses, readListAddressesLetIn, mailboxTakesPressSql,
   readListClaimsFiledAlone, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -40,7 +41,7 @@ import type {
 } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
-  DESTINATIONS, effectForDestination, isDecidedDestination, ModelDeclinedError,
+  DESTINATIONS, effectForDestination, isDecidedDestination, ModelDeclinedError, SensitivePayloadRefusal,
   resolveOhboxPolicy, senderCheckAll, senderDomainOf, senderFacts, BRANDS, SCREENING_AUTH_VERDICTS,
   asAuthVerdict, ownedSenderName,
 } from "@trafficflow/core/mail";
@@ -405,8 +406,8 @@ export const SUGGEST_ADMISSION = {
  * wraps the MODEL CALL alone: a waiting lane holds no transaction and no connection, and the wait
  * is bounded by one round trip. One process: on a container that is the whole deployment; on
  * serverless it is one instance, so the fleet-wide ceiling is the platform's invocation
- * concurrency × this number. The honest consequence is stated: a provider 429 arrives as
- * `model_unavailable` with the charge standing, bought back free by the `duplicate` retry.
+ * concurrency × this number. A provider rate limit leaves the sender with `model_unavailable`.
+ * If neither call saves an answer, the release refunds the debit.
  */
 /** Exported for its own unit test — the mechanism, driven directly. Not part of the service API. */
 export class LaneGate {
@@ -555,16 +556,13 @@ export interface ScreenerSuggestion {
   reasonCount?: number;
 }
 
-/**
- * Why a requested sender produced nothing. Every one of these costs zero credits EXCEPT
- * `model_unavailable`, which is charged and then retried for free (the classify path's rule).
- */
+/** Why a requested sender produced no answer. Failed attempts refund any new debit. */
 export type ScreenerSuggestSkip =
   | "not_held"            // no mail from this sender is at the gate
   | "out_of_credits"      // the balance ran out part-way through the set
   | "over_quote"          // the run reached the number the person confirmed — see `maxCredits`
   | "spend_unavailable"   // see below — every "not now, ask again" the gate can produce
-  | "model_unavailable"   // charged, the model faulted; the free retry honours it
+  | "model_unavailable"   // the provider failed before an answer was saved
   | "model_declined"      // the model declined this sender (a refusal, a cut-off); refunded
   | "no_auto_ai";         // an AUTOMATIC request, and this sender's mail is kept out of automatic AI
 /**
@@ -604,14 +602,15 @@ export interface ScreenerSuggestResult {
    */
   quotedCredits?: number;
   quoteGrant?: ScreenerQuoteGrant;
-  /** Credits this request moved. A re-run over the same mail is a `duplicate` and charges 0. */
+  /** New debits from this request, less the refunds confirmed before it replied. */
   charged: number;
   /**
    * Set when the spend gate stopped the run PART-WAY. Absent when everything asked for was
-   * served, and never the whole answer: a run that produced nothing because of the gate is a
-   * 402/409/503 instead, because "you have no credits" is not a successful request.
+   * served. An empty run returns a gate error unless the worker took every stopped sender.
    */
   stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
+  /** The only stopped items were left for the worker. The next approved chunk can proceed. */
+  deferred?: true;
   /**
    * WHAT IS LEFT ON THE ACCOUNT AFTER THIS REQUEST — read from the ledger, never inferred. The
    * summary states what the run cost; "how much is left?" had no answer on this path, and a
@@ -931,7 +930,7 @@ export class ScreenerReadService {
     // mail older than the row on screen; a person who wants the newer mail read has the re-ask
     // ladder, priced per message.
     const stored = await this.senderSuggestions(
-      ctx, pageRows.map((r) => r.fromAddress.toLowerCase()), posture,
+      ctx, pageRows, posture,
     );
 
     // WHO THESE SENDERS REALLY ARE, over the page the person is reading — see
@@ -958,7 +957,10 @@ export class ScreenerReadService {
     // buy list, so pricing them made a re-sending stranger a recurring charge — they appear in
     // the re-ask ladder instead, where the price is seen before it is spent.
     const suggestable = pageRows
-      .filter((r) => !stored.has(r.fromAddress.toLowerCase()))
+      .filter((r) => {
+        const advice = stored.get(r.fromAddress.toLowerCase());
+        return !advice || advice.failed;
+      })
       .map((r) => r.fromAddress.toLowerCase());
 
     // The CURSOR is anchored to the last row the QUERY consumed (`unfiltered`), never to the
@@ -1830,15 +1832,18 @@ export class ScreenerReadService {
    * already be lower-cased: raw addresses get misses, not a silent mismatch.
    */
   protected async senderSuggestions(
-    ctx: ServiceContext, senders: string[], ohboxPolicy: OhboxPolicy,
+    ctx: ServiceContext, page: readonly ScreenerRow[], ohboxPolicy: OhboxPolicy,
   ): Promise<Map<string, ScreenerItem["aiSuggestion"]>> {
     const out = new Map<string, ScreenerItem["aiSuggestion"]>();
-    const rows = await screenerSuggestionsBySender(asTx(ctx), ctx.accountId, senders);
+    const representative = new Map(page.map((r) => [r.fromAddress.toLowerCase(), r.messageId]));
+    const rows = await screenerSuggestionsBySender(asTx(ctx), ctx.accountId, [...representative.keys()], true);
     for (const [sender, r] of rows) {
+      if (r.failed && r.messageId !== representative.get(sender)) continue;
       out.set(sender, {
         ...suggestionAdvice(r.destination, r.spam, r.rationale ?? "", ohboxPolicy),
         confidence: r.confidence ?? 0,
         rationale: r.rationale ?? "",
+        ...(r.failed ? { failed: true } : {}),
       });
     }
     return out;
@@ -1869,6 +1874,7 @@ export class ScreenerReadService {
       .where(and(
         eq(routingDecisions.accountId, ctx.accountId),
         eq(routingDecisions.inputProvenance, SUGGESTION_PROVENANCE),
+        ne(routingDecisions.status, SCREENER_SUGGESTION_FAILED),
         inArray(routingDecisions.messageId, messageIds),
       ))
       .orderBy(desc(routingDecisions.createdAt), desc(routingDecisions.id));
@@ -2030,9 +2036,8 @@ export class ScreenerService extends ScreenerReadService {
      * bound by construction, not a limit somebody has to remember to raise.
      */
     // A removed mailbox's held mail is no representative: its decision could never be applied.
-    const { reps } = this.heldSenderReps(
-      ctx, inArray(sql`lower(${messages.fromAddress})`, senders), await readGoneMailboxIds(asTx(ctx), ctx.accountId),
-    );
+    const gone = await readGoneMailboxIds(asTx(ctx), ctx.accountId);
+    const { reps } = this.heldSenderReps(ctx, inArray(sql`lower(${messages.fromAddress})`, senders), gone);
     // scoped-by: `heldSenderReps` leads its predicate with eq(messages.accountId, ctx.accountId)
     const rows = (await ctx.db.select().from(reps).where(eq(reps.rank, 1))).map(toScreenerRow);
     const rep = new Map<string, ScreenerRow>(
@@ -2140,6 +2145,7 @@ export class ScreenerService extends ScreenerReadService {
     const refused: Array<ScreenerSuggestResult["skipped"][number] | undefined> = senders.map(() => undefined);
     const stops: Array<ScreenerSuggestResult["stopped"] | undefined> = senders.map(() => undefined);
     const refusals: Array<GateRefusal | undefined> = senders.map(() => undefined);
+    const queuedForWorker = new Set<number>();
     const purchases: Purchase[] = [];
     const pairs: Array<ScreenerQuoteGrant["pairs"][number]> = [];
     // The same check the always-on pass runs, over the senders THIS press named — the pressed
@@ -2220,6 +2226,22 @@ export class ScreenerService extends ScreenerReadService {
       : undefined;
     const consent = suggestionConsentGate(asTx(ctx), ctx.accountId, grant, this.access);
 
+    let workerRetry: ReturnType<ScreenerService["workerRetryCandidates"]> | undefined;
+    const queueRetry = async (r: ScreenerRow): Promise<boolean> => {
+      if (automatic) return false;
+      try {
+        workerRetry ??= this.workerRetryCandidates(ctx, purchases.map((p) => p.row), gone);
+        const retry = await workerRetry;
+        if (!retry?.ids.has(r.messageId)) return false;
+        return await recordScreenerSuggestionRetry(asTx(ctx), ctx.accountId, r.messageId, { grant: retry.grant }) === "pending";
+      } catch (err) {
+        suggestLog.warn("screener_suggest_retry_record_failed", {
+          accountId: ctx.accountId, messageId: r.messageId, requestId: ctx.requestId, err,
+        });
+        return false;
+      }
+    };
+
     /** One sender's purchase, end to end. Everything below used to be the body of the loop. */
     const buy = async ({ index, sender, row: r }: Purchase): Promise<void> => {
       /**
@@ -2237,6 +2259,7 @@ export class ScreenerService extends ScreenerReadService {
         return;
       }
       if (!(await laneGate.acquire(laneDeadline))) {
+        if (await queueRetry(r)) queuedForWorker.add(index);
         refused[index] = { sender, reason: "spend_unavailable" };
         stops[index] = "spend_unavailable";
         refusals[index] = { refusal: "fault", verdict: "no_slot" };
@@ -2259,18 +2282,10 @@ export class ScreenerService extends ScreenerReadService {
       // what makes the cron and this press claim the same work. The source is composed by
       // whoever answers.
       const attemptKey = screenerAttemptKey(r.messageId);
-      /**
-       * WHAT A RELEASE MUST NAME, AND THE REFUND FLAG. Set when this lane charged; cleared once
-       * the work is delivered or a model fault leaves the charge standing to buy a free retry.
-       * Still set at the door means the lane charged and delivered nothing — the store faulted —
-       * so the one release reverses it.
-       */
+      // This request refunds only attempts it charged and did not deliver.
       let chargedAttempt: string | null = null;
-      /** Set only where the gate hands this lane the claim; `inflight` names another holder. */
       let claimed = false;
       let released = false;
-      /** A withheld or declined request leaves `charged` once the refund settles. */
-      let refundedIfSettled = false;
       /** The model call's usage, carried by the release below — a model fault's line included. */
       const usage = usageLines(this.usageHost, ctx.accountId, "screener");
       /**
@@ -2294,7 +2309,7 @@ export class ScreenerService extends ScreenerReadService {
           accountId: ctx.accountId, action: "screener", attemptKey, attempt: refunding, reason: "drafter_failed", meta,
           ...usage.field(),
         }, (f) => saySuggestRefund(f, ctx.accountId, refunding));
-        if (refundedIfSettled && receipt === "settled") charged -= price ?? 0;
+        if (receipt === "settled") charged -= price ?? 0;
       };
       try {
         if (gate) {
@@ -2327,6 +2342,7 @@ export class ScreenerService extends ScreenerReadService {
             // `spend_unavailable` already tells a client — so no new wire value is minted for a
             // state whose whole content is "retry". It is NOT `out_of_credits`: this account is
             // fully funded, and a 402 here would be a bill for somebody else's concurrency.
+            if (await queueRetry(r)) queuedForWorker.add(index);
             refused[index] = { sender, reason: "spend_unavailable" };
             stops[index] = "spend_unavailable";
             // `fault`, so a run that produced nothing at all answers 503 "temporarily unavailable;
@@ -2397,34 +2413,39 @@ export class ScreenerService extends ScreenerReadService {
           // BETWEEN LANES in any meaningful way, and it is the point: no connection, no lock, no
           // claim-blocking transaction, ~2 s long.
           const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
-          result = await askScreeningQuestion(classifier, {
+          const ask = () => askScreeningQuestion(classifier, {
             fromAddress: r.fromAddress,
             subject: r.subject,
             snippet: r.snippet,
             ...(ohboxBar ? { ohboxBar } : {}),
             ...(facts ? { senderFacts: facts } : {}),
           }, { ...usage.call, beforeDispatch: consent.beforeDispatch });
+          try {
+            result = await ask();
+          } catch (err) {
+            // Keep the same spend and claim. Try once more only if the invocation can still fit a call.
+            if (automatic || Date.now() >= laneDeadline || err instanceof ModelConsentWithdrawn
+              || err instanceof SensitivePayloadRefusal
+              || (err instanceof ModelDeclinedError && err.stopReason === "refusal")) throw err;
+            result = await ask();
+          }
         } catch (err) {
           if (err instanceof ModelConsentWithdrawn) {
             refused[index] = { sender, reason: "spend_unavailable" };
-            refundedIfSettled = true;
             return;
           }
-          // A DECLINE IS SAID FOR THIS SENDER AND REFUNDED. Asking again draws the same refusal, so
-          // the free retry `model_unavailable` promises would be a promise about nothing: the charge
-          // stays set for the door below to reverse, and leaves `charged` once that reversal settles.
+          if (!automatic && (err instanceof ModelDeclinedError
+            ? err.stopReason === "max_tokens" : !(err instanceof SensitivePayloadRefusal))) {
+            await queueRetry(r);
+          }
           if (err instanceof ModelDeclinedError) {
             refused[index] = { sender, reason: "model_declined" };
-            refundedIfSettled = true;
             return;
           }
           suggestLog.warn("screener_suggest_model_failed", {
             accountId: ctx.accountId, messageId: r.messageId, requestId: ctx.requestId, err,
           });
           refused[index] = { sender, reason: "model_unavailable" };
-          // The claim goes back at the door and the CHARGE STANDS: the source is stable, so the
-          // next attempt over this message answers `duplicate` and is free.
-          chargedAttempt = null;
           return;
         }
 
@@ -2539,6 +2560,14 @@ export class ScreenerService extends ScreenerReadService {
         refusal ??= refusals[i];
       }
 
+      if (stops.includes("out_of_credits")) {
+        stopped = "out_of_credits";
+        refusal = refusals.find((why) => why?.refusal === "quantity") ?? refusal;
+      }
+
+      const deferred = queuedForWorker.size > 0
+        && stops.every((stop, index) => stop === undefined || queuedForWorker.has(index));
+
       // ── A RUN THAT PRODUCED NOTHING BECAUSE OF THE GATE IS NOT A SUCCESS ────────────────────
       //
       // `DraftingService` already decides these three answers and they are decided the same way
@@ -2547,7 +2576,7 @@ export class ScreenerService extends ScreenerReadService {
       // The condition is `suggestions.length === 0` rather than "the first refusal": a set where
       // eight senders were served and two ran out of credit is a 200 that says where it stopped,
       // because throwing there would discard eight results the account has already paid for.
-      if (refusal && suggestions.length === 0) {
+      if (refusal && suggestions.length === 0 && !deferred) {
         // ONE PLACE DECIDES, for this call site and the drafting one — see `ai-refusal.ts`. It
         // writes the line naming the verdict and the reason (neither was logged anywhere before,
         // so a refusal could not be attributed at all), and it refuses to turn a `state` refusal
@@ -2588,6 +2617,7 @@ export class ScreenerService extends ScreenerReadService {
           quoteGrant: { pairs, proof: this.quoteProof(ctx.accountId, senders, pairs, quoted * price) },
         } : {}),
         ...(stopped ? { stopped } : {}),
+        ...(deferred ? { deferred: true } : {}),
         ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
         suggestions, skipped,
       };
@@ -2617,14 +2647,39 @@ export class ScreenerService extends ScreenerReadService {
     }
   }
 
-  /**
-   * ONE suggestion, in its own transaction — `storeScreenerSuggestion`, unchanged in behaviour.
-   *
-   * The body of this method moved to `@trafficflow/db` when the worker's always-on pass became a
-   * second writer of these rows: the delete-then-insert, the provenance it is scoped to and the
-   * per-message transaction are the row's definition, and the worker cannot reach this class. See
-   * that module for the argument; this stays a method so the call sites above read the same.
-   */
+  /** A deferred press can bypass the worker's watermark for the same held letter only. */
+  private async workerRetryCandidates(ctx: ServiceContext, rows: readonly ScreenerRow[], gone: readonly string[]) {
+    const settings = await readAccountSettings(asTx(ctx), ctx.accountId);
+    const grant = settings?.autoSuggestAt;
+    if (!(grant instanceof Date) || !Number.isFinite(grant.getTime())) return null;
+    const cutline = resolveCutline({
+      baselineAt: settings.screeningBaselineAt ?? null,
+      dormancyDays: settings.dormancyDays ?? null,
+      scope: settings.screeningScope ?? null,
+      now: ctx.now(),
+    });
+    const sender = sql`lower(${messages.fromAddress})`;
+    const { reps, d } = this.heldSenderReps(ctx, inArray(sender, rows.map((r) => r.fromAddress.toLowerCase())), gone);
+    const eligible = await ctx.db.select({ id: messages.id, from: messages.fromAddress }).from(messages)
+      .innerJoin(reps, and(eq(reps.messageId, messages.id), eq(reps.rank, 1))).where(and(
+        eq(messages.accountId, ctx.accountId),
+        inArray(messages.id, rows.map((r) => r.messageId)),
+        automaticAiAdmits(messages),
+        sql`not ${screenerSuggestionExhausted(ctx.accountId, sql`${messages.id}`)}`,
+        sql`not ${screenerSuggestedSenderExists(d, ctx.accountId, sender)}`,
+        sql`not ${senderIsDecidedSql(d, ctx.accountId, sender)}`,
+        sql`not ${senderIsOwnSql(d, ctx.accountId, sender)}`,
+        sql`(${senderHasHeldArrivalSql(d, ctx.accountId, sender, cutline, gone)}
+          or ${senderIsActiveSql(d, ctx.accountId, sender, cutline, gone)})`,
+        sql`exists (select 1 from ${messageInstances} copy where copy.message_id = ${messages.id})`,
+      ));
+    const correspondents = await correspondentsAmong(asTx(ctx), {
+      accountId: ctx.accountId, senders: eligible.map((r) => r.from), references: "held",
+    });
+    const ids = new Set(eligible.filter((r) => !correspondents.has(r.from.trim().toLowerCase())).map((r) => r.id));
+    return { grant, ids };
+  }
+
   /**
    * WAIT FOR THE CALLER THAT HOLDS THIS MESSAGE TO FINISH, then read what they bought. Reached
    * only from `suggest`'s `inflight` branch — the spend gate has said, on a committed claim row,
@@ -2649,6 +2704,14 @@ export class ScreenerService extends ScreenerReadService {
     }
   }
 
+  /**
+   * ONE suggestion, in its own transaction — `storeScreenerSuggestion`, unchanged in behaviour.
+   *
+   * The body of this method moved to `@trafficflow/db` when the worker's always-on pass became a
+   * second writer of these rows: the delete-then-insert, the provenance it is scoped to and the
+   * per-message transaction are the row's definition, and the worker cannot reach this class. See
+   * that module for the argument; this stays a method so the call sites above read the same.
+   */
   private async store(ctx: ServiceContext, messageId: string, result: ClassifierResultLike): Promise<void> {
     await storeScreenerSuggestion(asTx(ctx), {
       accountId: ctx.accountId,
@@ -2734,6 +2797,7 @@ async function automaticallyAskable(
     eq(messages.accountId, ctx.accountId),
     inArray(messages.id, rows.map((r) => r.messageId)),
     automaticAiAdmits(messages),
+    sql`not ${screenerSuggestionExhausted(ctx.accountId, sql`${messages.id}`)}`,
   ));
   return new Set(admitted.map((m) => m.id));
 }
@@ -2748,7 +2812,7 @@ async function automaticallyAskable(
 function withSenderCheck(
   advice: ScreenerItem["aiSuggestion"], signals: SenderSignals | undefined, ohboxPolicy: OhboxPolicy,
 ): ScreenerItem["aiSuggestion"] {
-  if (!advice || !signals?.reasonCode) return advice;
+  if (!advice || advice.failed || !signals?.reasonCode) return advice;
   const capped = capSuggestion({
     destination: advice.destination, confidence: advice.confidence,
     rationale: advice.rationale, spam: advice.spam,

@@ -95,7 +95,7 @@ export {
   SEED_MAX_ADDRESSES, SEED_SCAN_LIMIT, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setAutoAct, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
-  setDraftReplies, setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setSubjectHeading, setThemeFace,
+  acknowledgeScreener, setDraftReplies, setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setSubjectHeading, setThemeFace,
   setOnboardingCompleted,
   mailboxSignatures, mailboxSignatureHtmls, effectiveMailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
   hasMachineSentHeaders, isMachineSent, isRobotAddress, parseAddressList,

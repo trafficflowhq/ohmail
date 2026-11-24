@@ -136,7 +136,9 @@ describe("the auto-suggest confirm", () => {
 describe("the Screener's suggest quote", () => {
   it("CONTROL — a managed host quotes senders and credits", async () => {
     const view = within(await mountQuote("#/screener", "en", true, 4));
-    expect(view.getByText("4 senders · 4 credits")).toBeTruthy();
+    const ask = within(view.getByRole("dialog", { name: en.screener.suggest.aria }));
+    expect(ask.getByText("4 credits")).toBeTruthy();
+    expect(ask.getByRole("button", { name: "Suggest for all 4 senders" })).toBeTruthy();
   });
 
   it.each(["en", "de"] as const)("%s: an unmetered host quotes senders only", async (locale) => {

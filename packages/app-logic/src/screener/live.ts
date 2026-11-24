@@ -16,7 +16,12 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useMemo } from "react";
-import { autoUnsubscribeConfirms, mirrorSuggestionIdOf, screeningDegrade } from "@ohmail/client-engine";
+import {
+  autoUnsubscribeConfirms,
+  mirrorSuggestionIdOf,
+  screeningDegrade,
+  senderKey,
+} from "@ohmail/client-engine";
 import { useConsent } from "../consent/consent-row.js";
 import { usePartition } from "../consent/partition.js";
 import { useDemoMode, useDerivedVersion, useEngine, useResolvedDemoMode } from "../engine/index.js";
@@ -277,5 +282,12 @@ function suggestForSenders(
     model.suggestedSenders,
     model.waitingCount - model.suggestedCount,
     model.queueSettled,
+    {
+      readQueue: model.waitingMore?.available === true,
+      retry: model.waiting
+        .filter((row) => row.ai?.noAnswer === "model_unavailable" || row.ai?.noAnswer === "model_declined")
+        .map((row) => senderKey(row.from.address))
+        .filter((sender) => model.unsuggestedSenders.includes(sender)),
+    },
   );
 }

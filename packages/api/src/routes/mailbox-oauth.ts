@@ -160,12 +160,16 @@ async function resolveConfig(deps: ApiDeps): Promise<ResolvedOAuthConfig> {
  * Exactly what `POST …/start` will accept — the one predicate the webapp reads to decide whether
  * to offer the Outlook door. `cfg.enabled` is already the resolver's whole verdict; the redirect
  * and the tenant are re-checked here so this expression and the gate in `…/start` are the same
- * three clauses, and a button can never be shown for a press that would 503. It is the boolean
- * the capability read publishes, and the only thing about the registration that ever reaches a
- * browser — no client id, no tenant, no secret, no redirect URI.
+ * three clauses, and a button can never be shown for a press that would 503.
  */
 export function microsoftOAuthAvailable(cfg: ResolvedOAuthConfig): boolean {
   return cfg.enabled && webRedirectUri(cfg) !== null && MS_TENANT_RE.test(cfg.tenant);
+}
+
+function adminApprovalUrl(clientId: string): string {
+  const url = new URL("https://login.microsoftonline.com/organizations/adminconsent");
+  url.searchParams.set("client_id", clientId);
+  return url.href;
 }
 
 /**
@@ -231,21 +235,21 @@ export const mailboxOAuthRoutes: Route[] = [
     /**
      * Is the Outlook door armed — the one bit the webapp needs to render the Connect/Reconnect
      * affordances, so a dormant registration shows no button that 503s. `cost: "read"`, behind a
-     * session: no reason to let an anonymous caller enumerate config state. The body is two
-     * booleans and nothing else. `device` joined this payload rather than getting its own route —
-     * the pane must know which of the two Microsoft ceremonies this deployment runs before
-     * rendering. `available` is the redirect ceremony; `device` the device-code flow (a separate
-     * public client, self-host only); independent. On the hosted deployment `device` is always
-     * `false`.
+     * session: no reason to let an anonymous caller enumerate config state. A returned
+     * admin-consent refusal can explicitly ask for the configured application’s approval link.
+     * `available` is the redirect ceremony. `device` is the self-host device-code flow and
+     * stays false on the hosted deployment.
      */
     method: "GET",
     pattern: "/mailboxes/oauth/microsoft/availability",
     relay: true,
     cost: "read",
-    handler: async (_req, deps) => {
+    handler: async (req, deps) => {
       const cfg = await resolveConfig(deps);
+      const approval = new URL(req.url).searchParams.get("approval") === "1";
       return jsonResponse({
         available: microsoftOAuthAvailable(cfg),
+        ...(approval && cfg.enabled ? { adminApprovalUrl: adminApprovalUrl(cfg.clientId) } : {}),
         /*
          * The predicate comes from `packages/core`, NOT from the device route module. Importing that
          * module here would drag both device handlers into the graph of every composition that
@@ -382,6 +386,14 @@ export const mailboxOAuthRoutes: Route[] = [
       const state = q(url, "state");
       const code = q(url, "code");
       const error = q(url, "error");
+      const adminConsent = q(url, "admin_consent");
+
+      // The standalone admin link has no mailbox ceremony to complete.
+      if (!state && !code && adminConsent && (error === "access_denied" || (!error && adminConsent === "True"))) {
+        const result = new URL("/microsoft-approval", appOrigin(deps));
+        result.searchParams.set("oauth", error ? "declined" : "approved");
+        return seeOther(result.toString());
+      }
 
       // THE PROVIDER'S OWN REFUSAL, classified. Checked before the shape tests below, because an
       // error redirect carries no `code` and would otherwise be reported as a malformed callback.

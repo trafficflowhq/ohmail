@@ -5,3 +5,4 @@ export * from "./consent-state.js";
 export * from "./consent-wire.js";
 export * from "./partition.js";
 export * from "./travelled-change.js";
+export * from "./screener-acknowledgements.js";

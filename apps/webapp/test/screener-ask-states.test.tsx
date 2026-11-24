@@ -38,7 +38,8 @@ describe("the ask well's state", () => {
     mount({ quote: { senders: 12, credits: 12 } });
     expect(confirm().disabled).toBe(false);
     expect(confirm().getAttribute("aria-busy")).toBeNull();
-    expect(dialog().getByText("12 senders · 12 credits", { exact: true })).toBeTruthy();
+    expect(confirm().textContent).toBe("Suggest for 12 senders");
+    expect(dialog().getByText("12 credits", { exact: true })).toBeTruthy();
   });
 
   it("working while the price is being checked — the mark beside the sentence, nothing pressable", () => {
@@ -57,9 +58,9 @@ describe("the ask well's state", () => {
     expect(tools.getByRole("status").textContent).toBe("3 of 40 suggested…");
     expect(screen.getAllByText("3 of 40 suggested…", { exact: true })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^Suggest for / })).toBeNull();
-    expect(screen.queryByText("40 senders · 40 credits", { exact: true })).toBeNull();
+    expect(screen.queryByText("40 credits", { exact: true })).toBeNull();
     expect(screen.queryByRole("group", { name: S.aria })).toBeNull();
-    expect(screen.queryAllByRole("button", { name: /^(?:10|25|50|All 74)$/ })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /^(?:10|25|50|All(?: 74)?)$/ })).toHaveLength(0);
     expect(control.choose).not.toHaveBeenCalled();
   });
 
@@ -83,7 +84,7 @@ describe("the ask well's state", () => {
     expect(screen.getByRole("button", { name: /^Apply 1$/ })).toBeTruthy();
     closed.view.unmount();
 
-    mount({ quote: { senders: 12, credits: 12 } });
+    mount({ quote: { senders: 25, credits: 25 } });
     const sizes = within(dialog().getByRole("group", { name: S.aria }));
     expect(sizes.getAllByRole("button").map((button) => button.textContent)).toEqual(["10", "25", "50", "All 74"]);
     expect(sizes.getByRole("button", { name: "25", pressed: true })).toBeTruthy();

@@ -480,8 +480,9 @@ export {
   // same closure rule: these name `messages` and `routing_decisions` and nothing else.
   screenerSuggestedSenderExists, screenerSuggestionsBySender, hasScreenerSuggestionForSender,
   // Which held mail an AUTOMATIC buyer may ask a model about — the pass's and the route's one rule.
-  automaticAiAdmits,
-  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
+  automaticAiAdmits, screenerSuggestionExhausted, screenerSuggestionRetryDue,
+  recordScreenerSuggestionRetry, clearScreenerSuggestionRetries,
+  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED,
   type ScreenerSuggestionRow, type StoredSenderSuggestion,
 } from "./screener-suggestion.js";
 

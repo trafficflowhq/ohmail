@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { Dialog, Notice } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
@@ -7,6 +8,7 @@ import type { ScreenerJunk } from "../ports.js";
 export function QuarantineMove({ sweep }: { sweep: NonNullable<ScreenerJunk["sweep"]> }) {
   const t = useText("screener");
   const [question, setQuestion] = useState<string | null>(null);
+  const acknowledgements = useScreenerAcknowledgements();
   const { preview, phase } = sweep;
   const confirmation = preview?.confirmation;
   const canMove =
@@ -21,7 +23,11 @@ export function QuarantineMove({ sweep }: { sweep: NonNullable<ScreenerJunk["swe
   const move = {
     label: t("junkSweepAction"),
     busy: sweep.requesting,
-    onPress: () => setQuestion(confirmation ?? null),
+    onPress: () => {
+      if (!canMove || sweep.requesting) return;
+      if (acknowledgements.has("moveToJunk")) sweep.request(confirmation);
+      else setQuestion(confirmation);
+    },
   };
   const dismiss = {
     label: t("junkSweepDismiss"),
@@ -78,7 +84,10 @@ export function QuarantineMove({ sweep }: { sweep: NonNullable<ScreenerJunk["swe
           label: t("junkSweepConfirm", { count: movable }),
           onPress: () => {
             close();
-            if (open && confirmation !== undefined) sweep.request(confirmation);
+            if (open && confirmation !== undefined) {
+              acknowledgements.remember?.("moveToJunk");
+              sweep.request(confirmation);
+            }
           },
         }}
         cancel={{ label: t("junkSweepCancel") }}

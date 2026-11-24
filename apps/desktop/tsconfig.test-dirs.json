@@ -29,6 +29,7 @@
       "@trafficflow/core/image-dimensions": ["../../packages/core/src/image-dimensions.ts"],
       "@trafficflow/core/folder-name": ["../../packages/core/src/folder-name.ts"],
       "@trafficflow/core/away-scope": ["../../packages/core/src/away-scope.ts"],
+      "@trafficflow/core/screener-acknowledgements": ["../../packages/core/src/screener-acknowledgements.ts"],
       "@trafficflow/core/destinations": ["../../packages/core/src/destinations.ts"],
       "@trafficflow/core/drain-policy": ["../../packages/core/src/drain-policy.ts"],
       "@trafficflow/core/reply-subject": ["../../packages/core/src/reply-subject.ts"],

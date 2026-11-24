@@ -167,6 +167,33 @@ describe("the Cloud-door mirror carries a bought suggestion", () => {
       .not.toContain("rationale");
   });
 
+  it("mirrors a failed suggestion and re-serves it as failed", async () => {
+    const { opened, world, cursorPath } = await standUp();
+    const db = opened.db;
+    const msgId = randomUUID();
+    const sgId = randomUUID();
+    const from = `sender@${"example.test"}`;
+    const failed: ScreenerSuggestionDTO = {
+      ...suggestionDTO(sgId, msgId, from),
+      decision: "hold", destination: "ohmail/Screener", confidence: 0, failed: true,
+    };
+    const page = syncPage([
+      change("message", msgId, "create", 1, messageDTO(msgId, from)),
+      change("screener_suggestion", sgId, "create", 2, failed),
+    ], "c2", false);
+    await createCloudMirror({
+      db, world, auth: fakeAuth([page]), cursorPath, now: () => new Date(),
+    }).pullOnce();
+
+    const [row] = await db.select({ status: routingDecisions.status }).from(routingDecisions)
+      .where(eq(routingDecisions.id, sgId));
+    const local = await syncService.getChanges(ctxFor(opened, world), { since: "0" });
+    const served = [...local.changes.creates, ...local.changes.updates]
+      .find((c) => c.type === "screener_suggestion" && c.id === sgId);
+    expect.soft(row?.status).toBe("suggestion_failed");
+    expect(served?.entity).toMatchObject({ failed: true });
+  });
+
   it("skips a suggestion whose message this mirror does not hold — the cursor never wedges", async () => {
     const { opened, world, cursorPath } = await standUp();
     const db = opened.db;

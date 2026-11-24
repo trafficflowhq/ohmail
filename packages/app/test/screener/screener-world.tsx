@@ -10,6 +10,7 @@ import { Frame } from "../../src/frame/Frame.js";
 import { NONE } from "../../src/host/index.js";
 import { ScreenerAbove, screenerPlace, type ScreenerBeside } from "../../src/screener/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
+import { ConsentContext, useConsentState, type ConsentTransport } from "@ohmail/app-logic/consent";
 import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { fakeHost } from "../support/fake-host.js";
@@ -174,6 +175,19 @@ export function sender(id: string, name: string, over: Record<string, unknown> =
   } as never;
 }
 
+export function TestConsent({
+  scope,
+  transport,
+  children,
+}: {
+  scope: string;
+  transport: ConsentTransport | "none";
+  children: ReactNode;
+}) {
+  const row = useConsentState(true, scope, transport);
+  return <ConsentContext.Provider value={row}>{children}</ConsentContext.Provider>;
+}
+
 /** The Screener's place in the real frame, `ScreenerAbove` standing over it as the seating step stands it. */
 export function mountPlace(
   model: ScreenerState,
@@ -183,6 +197,7 @@ export function mountPlace(
     room?: "desktop" | "phone";
     lang?: "en" | "de";
     engine?: OhmailEngine;
+    consent?: ConsentTransport;
     presented?: ContextType<typeof PresentedMirrorContext>;
     /** The stages the host hands (the first run's, for a press that opens it). */
     stages?: Partial<FrameStages>;
@@ -200,11 +215,13 @@ export function mountPlace(
   });
   const tree = (m: ScreenerState) =>
     inWords(
-      <ScreenerAbove model={m} beside={opts.beside ?? BESIDE}>
-        <PresentedMirrorContext.Provider value={opts.presented ?? null}>
-          <Frame host={host} />
-        </PresentedMirrorContext.Provider>
-      </ScreenerAbove>,
+      <TestConsent scope={model.accountScope ?? "acct-1"} transport={opts.consent ?? "none"}>
+        <ScreenerAbove model={m} beside={opts.beside ?? BESIDE}>
+          <PresentedMirrorContext.Provider value={opts.presented ?? null}>
+            <Frame host={host} />
+          </PresentedMirrorContext.Provider>
+        </ScreenerAbove>
+      </TestConsent>,
       opts.lang,
     );
   const view = render(tree(model));

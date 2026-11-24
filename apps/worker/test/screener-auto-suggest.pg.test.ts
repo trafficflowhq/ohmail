@@ -303,6 +303,19 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     // THE MONEY MOVED, once, under the shared Screener source — the same string the client's
     // on-open batch and the manual ladder use, which is what makes a double-buy a `duplicate`.
     expect(await debitsOf(w)).toEqual([{ delta: -1, source: screenerLedgerSource(newId) }]);
+
+    // An already-approved model call failed on the old letter. It is still eligible for its retry.
+    await db.insert(routingDecisions).values({
+      accountId: w.accountId, messageId: oldId, destination: SCREENER,
+      inputProvenance: "screener_suggestion_retry", status: "retry_due",
+    });
+    const retry = await screenerAutoSuggestPass(db, {
+      accountId: w.accountId, classifier: spyClassifier(), credits: w.gate,
+    });
+    expect(retry.bought).toBe(1);
+    expect(await suggestionsOf(w)).toContainEqual({
+      messageId: oldId, destination: "ohmail/News", status: SCREENER_SUGGESTION_STATUS,
+    });
   });
 
   it("each candidate's release carries its own model call's line, as screener, success or fault", async () => {
@@ -821,7 +834,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     expect(await debitsOf(w)).toHaveLength(1);
   });
 
-  /* ── A MODEL FAULT STOPS THE ACCOUNT, AND THE CHARGE BUYS THE RETRY ───────────────────── */
+  /* ── A MODEL FAULT STOPS THE ACCOUNT AND REFUNDS THE ATTEMPT ───────────────────── */
 
   it("a model fault stops this cycle after ONE charge, and the retry next cycle is free", async () => {
     const w = await newWorld({ credits: 50 });
@@ -837,14 +850,61 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     expect(broken.screened, "the SECOND sender was never asked about").toHaveLength(1);
     expect(await debitsOf(w)).toHaveLength(1);
 
-    // The ledger source is the MESSAGE, so the next attempt over it is a `duplicate`: the account
-    // pays once for a suggestion it eventually receives, not once per outage.
+    expect(w.gate.releases.map((release) => release.refund)).toEqual([true]);
+    expect(r1.chargedAttempts).toBe(0);
+
+    // The two delivered suggestions are the only net charges across the two cycles.
     const working = spyClassifier();
     const r2 = await screenerAutoSuggestPass(db, {
       accountId: w.accountId, classifier: working, credits: w.gate,
     });
     expect(r2.bought).toBe(2);
-    expect(r2.chargedAttempts, "the first sender's retry cost nothing").toBe(1);
+    expect(r2.chargedAttempts).toBe(2);
+    expect(await debitsOf(w)).toHaveLength(3);
+    expect(w.gate.releases.map((release) => release.refund)).toEqual([true, false, false]);
+
+    const other = await newWorld({ credits: 50 });
+    const first = await held(other, "first@example.test", AFTER);
+    const next = await held(other, "next@example.test", new Date(AFTER.getTime() + 1000));
+    const fail = spyClassifier({ throws: true });
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await screenerAutoSuggestPass(db, { accountId: other.accountId, classifier: fail, credits: other.gate });
+    }
+    expect(fail.screened).toHaveLength(3);
+    const refunds = other.gate.releases.filter((release) => release.refund);
+    expect(refunds).toHaveLength(3);
+    expect(new Set(refunds.map((release) => release.attempt)).size).toBe(3);
+    expect(await suggestionsOf(other)).toContainEqual({
+      messageId: first, destination: SCREENER, status: "suggestion_failed",
+    });
+    const recovered = await screenerAutoSuggestPass(db, {
+      accountId: other.accountId, classifier: spyClassifier(), credits: other.gate,
+    });
+    expect(recovered.bought).toBe(1);
+    expect(await suggestionsOf(other)).toContainEqual({
+      messageId: next, destination: "ohmail/News", status: "suggestion",
+    });
+
+    // A newer letter can take the old one out of the candidate set before the next cycle.
+    {
+      const w = await newWorld({ credits: 50 });
+      const from = `returning@${"example.test"}`;
+      const first = await held(w, from, AFTER);
+      const run = (classifier: ClassifierPort) => screenerAutoSuggestPass(db, {
+        accountId: w.accountId, classifier, credits: w.gate, obligations: refundObligationsOn(db),
+      });
+      expect((await run(spyClassifier({ throws: true }))).stopped).toBe("model_unavailable");
+      const newer = await held(w, from, new Date(AFTER.getTime() + 1000));
+      await db.update(messages).set({ date: AFTER }).where(eq(messages.id, newer));
+      expect((await run(spyClassifier())).bought).toBe(1);
+      expect(await suggestionsOf(w)).toContainEqual({
+        messageId: newer, destination: "ohmail/News", status: SCREENER_SUGGESTION_STATUS,
+      });
+      expect(w.gate.releases.filter((release) => release.refund)).toEqual([
+        expect.objectContaining({ refund: true, attemptKey: screenerAttemptKey(first) }),
+      ]);
+      expect(await debitsOf(w)).toHaveLength(2);
+    }
   });
 
   /* ── A DECLINE SKIPS ONE SENDER, AND THE BATCH GOES ON ─────────────────────────────────────
@@ -1474,17 +1534,17 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     expect(thrown, "the store fault must still reach the pass's caller").toBe("store 08006");
     expect(spy.screened, "the model was asked, so the claim really was held").toHaveLength(1);
     expect(await suggestionsOf(w), "nothing was stored — that is the fault").toEqual([]);
-    // ONE release for THIS message, and not a reversal: the charge stands and buys the free retry
-    // next cycle, which is the claim this pass's caller already makes for a fault.
     expect(w.gate.releases.map((r) => ({ key: r.attemptKey, refund: r.refund })))
-      .toEqual([{ key: screenerAttemptKey(id), refund: false }]);
+      .toEqual([{ key: screenerAttemptKey(id), refund: true }]);
 
     // THE SYMPTOM THE LEAK PRODUCED, driven: the same sender, the next cycle, a healthy model.
     const r2 = await screenerAutoSuggestPass(db, {
       accountId: w.accountId, classifier: spyClassifier(), credits: w.gate,
     });
     expect(r2.bought, "the next cycle was answered `inflight` on a claim nobody holds").toBe(1);
-    expect(r2.chargedAttempts, "the retry over the same message was free").toBe(0);
+    expect(r2.chargedAttempts).toBe(1);
+    expect(await debitsOf(w)).toHaveLength(2);
+    expect(w.gate.releases.map((release) => release.refund)).toEqual([true, false]);
   });
 
   it("an `inflight` candidate's claim is never handed back — it belongs to the other caller", async () => {
