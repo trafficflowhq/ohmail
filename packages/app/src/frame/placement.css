@@ -199,6 +199,13 @@
   position: relative;
 }
 
+/* What floats over the foot of the pane (a column's way back to its start) stands this much higher while the dock
+   stands there: the dock's height and a step. One measure for every list under the dock. */
+.fr-frame[data-rail="dock"]:has(.fr-dockbox) {
+  --oh-dock-room: calc(var(--h-xl) + var(--s3));
+  --oh-jumpback-lift: var(--oh-dock-room);
+}
+
 .fr-dockbox {
   position: absolute;
   left: var(--s3);

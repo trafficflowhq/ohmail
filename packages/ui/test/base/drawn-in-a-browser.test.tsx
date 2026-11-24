@@ -59,6 +59,7 @@ import {
   RailEntry,
   ReadingHead,
   ReadingLine,
+  ReadSquares,
   Row,
   Rows,
   RuleLine,
@@ -1150,6 +1151,277 @@ describe("a message's head", () => {
       expect(
         await drawn(<div style={{ width: 358 }}>{head}</div>, over, { entry: "mail", device: "phone", lang }),
       ).toEqual([]);
+    },
+    60_000,
+  );
+
+  /* A News card on a phone: the card's head at the width a 412 and a 360 wide phone leave it. The sender reads as the
+     reader's head does: the name on one line, the address on one line (its local part cut first), never a word broken. */
+  it.each([356, 304])(
+    "in a News card on a phone %i wide, keeps the sender's name and address on a line each",
+    async (width) => {
+      const card = (
+        <div data-stream-phone-list="">
+          <div data-stream-window="">
+            <div
+              data-stream-item=""
+              style={{ width, containerType: "inline-size", containerName: "stream-card" }}
+            >
+              <MessageHead
+                preview
+                sender={{ name: "Lichtgrat Weekly", address: "newsletter@lichtgrat-weekly.example" }}
+                delivery={<span className="oh-badge">Delivered to Studio</span>}
+                menu={{ label: "Message" }}
+                stamp={{ when: "yesterday 20:59", full: false, title: "yesterday 20:59" }}
+                to={[{ word: "to", people: [{ name: "you" }] }]}
+                details={{ label: "details", open: false, lines: [] }}
+              />
+            </div>
+          </div>
+        </div>
+      );
+      const read = await drawn(
+        card,
+        () => {
+          /* How many lines it takes: its height in its own line's height. */
+          const lines = (selector: string) => {
+            const el = document.querySelector<HTMLElement>(selector)!;
+            return Math.round(
+              el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight),
+            );
+          };
+          const domain = document.querySelector<HTMLElement>(".oh-messagehead-address .oh-address-domain")!;
+          const name = document.querySelector<HTMLElement>(".oh-messagehead-name")!;
+          const stamp = document.querySelector<HTMLElement>(".oh-messagehead-stamp")!.getBoundingClientRect();
+          const address = document
+            .querySelector<HTMLElement>(".oh-messagehead-address")!
+            .getBoundingClientRect();
+          return {
+            stampBelowAddress: stamp.width > 0 && stamp.top >= address.bottom - 1,
+            name: lines(".oh-messagehead-name"),
+            nameWhole: name.scrollWidth <= name.clientWidth + 1,
+            address: lines(".oh-messagehead-address"),
+            domainWhole: domain.scrollWidth <= domain.clientWidth + 1,
+          };
+        },
+        { entry: "mail", device: "phone", window: [width + 56, 800] },
+      );
+      expect(read).toEqual({
+        stampBelowAddress: true,
+        name: 1,
+        nameWhole: true,
+        address: 1,
+        domainWhole: true,
+      });
+    },
+    60_000,
+  );
+
+  /* Without a recipients' line (list mail to one address of someone else's) the sender keeps the same lines, and the
+     time stands under the address: beside it the time would leave the address a second line at these widths, and cut
+     the name in German at a larger text. */
+  it.each([356, 304])(
+    "in a News card on a phone %i wide without a recipients' line, keeps the sender's name and address on a line each",
+    async (width) => {
+      const card = (
+        <div data-stream-phone-list="">
+          <div data-stream-window="">
+            <div
+              data-stream-item=""
+              style={{ width, containerType: "inline-size", containerName: "stream-card" }}
+            >
+              <MessageHead
+                preview
+                sender={{ name: "Lichtgrat Weekly", address: "newsletter@lichtgrat-weekly.example" }}
+                delivery={<span className="oh-badge">Delivered to Studio</span>}
+                menu={{ label: "Message" }}
+                stamp={{ when: "yesterday 20:59", full: false, title: "yesterday 20:59" }}
+                details={{ label: "details", open: false, lines: [] }}
+              />
+            </div>
+          </div>
+        </div>
+      );
+      const read = await drawn(
+        card,
+        () => {
+          const box = (selector: string) =>
+            document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+          const name = box(".oh-messagehead-name");
+          const stamp = box(".oh-messagehead-stamp");
+          const lines = (selector: string) => {
+            const el = document.querySelector<HTMLElement>(selector)!;
+            return Math.round(
+              el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight),
+            );
+          };
+          const domain = document.querySelector<HTMLElement>(".oh-messagehead-address .oh-address-domain")!;
+          const address = box(".oh-messagehead-address");
+          return {
+            stampSeen: stamp.width > 0 && stamp.left >= name.left,
+            stampBelowAddress: stamp.top >= address.bottom - 1,
+            name: lines(".oh-messagehead-name"),
+            address: lines(".oh-messagehead-address"),
+            domainWhole: domain.scrollWidth <= domain.clientWidth + 1,
+          };
+        },
+        { entry: "mail", device: "phone", window: [width + 56, 800] },
+      );
+      expect(read).toEqual({
+        stampSeen: true,
+        stampBelowAddress: true,
+        name: 1,
+        address: 1,
+        domainWhole: true,
+      });
+    },
+    60_000,
+  );
+});
+
+/* Every mail row carries the sender's address after the name while there is room. Short of room the time, the clip and
+   the squares keep theirs, the name keeps its own length, and the address takes what is left with an ellipsis; below
+   a few characters it leaves the line whole, never a stub. */
+describe("a mail row's address", () => {
+  const row = (address: string, keepAddressDomain?: boolean) => (
+    <Rows>
+      <Row
+        who="Raffaele Carmine"
+        address={address}
+        keepAddressDomain={keepAddressDomain}
+        people={[{ name: "Raffaele Carmine", address }]}
+        subject="Exchange admin"
+        preview="Done, check whether it works."
+        when="Mon 21:15"
+        file="Has a file"
+        squares={
+          <ReadSquares
+            squares={["seen", "seen", "own", "seen", "unseen", "seen", "own"]}
+            axis="row"
+            label="7 messages, 1 unread"
+          />
+        }
+      />
+    </Rows>
+  );
+  const read = () => {
+    const address = document.querySelector<HTMLElement>(".oh-row-address");
+    const probe = document.createElement("span");
+    probe.style.cssText = "position:absolute;visibility:hidden;font-size:var(--t-meta)";
+    probe.textContent = "000000";
+    document.querySelector(".oh-row-first")!.append(probe);
+    const six = probe.getBoundingClientRect().width;
+    probe.remove();
+    const line = document.querySelector<HTMLElement>(".oh-row-first")!.getBoundingClientRect();
+    const time = document.querySelector<HTMLElement>(".oh-row-when")!.getBoundingClientRect();
+    const squares = document.querySelector<HTMLElement>(".oh-readsquares")!.getBoundingClientRect();
+    /* What of the address a person sees on line one: the part of its text inside its own box. */
+    let seen = 0;
+    if (address && address.checkVisibility({ visibilityProperty: true })) {
+      const box = address.getBoundingClientRect();
+      const text = document.createRange();
+      text.selectNodeContents(address);
+      for (const r of text.getClientRects()) {
+        if (r.top >= box.bottom - 1 || r.bottom <= box.top + 1) continue;
+        seen += Math.max(0, Math.min(r.right, box.right) - Math.max(r.left, box.left));
+      }
+    }
+    return {
+      seen,
+      six,
+      timeInside: time.right <= line.right + 0.5 && time.width > 0,
+      squaresInside: squares.right <= time.left + 0.5 && squares.width > 0,
+    };
+  };
+
+  it.each([false, true])(
+    "stands after the name on a conversation's row with room (domain kept: %s)",
+    async (keep) => {
+      const seen = await drawn(
+        <div style={{ width: 640 }}>{row("raffaele@kingnature.example", keep)}</div>,
+        read,
+        {
+          entry: "mail",
+        },
+      );
+      expect(seen.timeInside && seen.squaresInside).toBe(true);
+      expect(seen.seen, "the address is not seen on a row with room").toBeGreaterThan(seen.six * 2);
+    },
+    60_000,
+  );
+
+  it.each([340, 380, 420])(
+    "leaves a narrow conversation's row whole, never as a stub (%i wide)",
+    async (width) => {
+      const seen = await drawn(
+        <div style={{ width }}>{row("raffaele.carmine@kingnature.example")}</div>,
+        read,
+        { entry: "mail", device: "phone" },
+      );
+      expect(seen.timeInside && seen.squaresInside).toBe(true);
+      if (seen.seen > 0)
+        expect(seen.seen, "a stub of the address stands").toBeGreaterThanOrEqual(seen.six - 1);
+    },
+    60_000,
+  );
+
+  it("stands cut short with an ellipsis where a phone's row has some room for it", async () => {
+    const seen = await drawn(
+      <div style={{ width: 480 }}>{row("raffaele.carmine@kingnature.example")}</div>,
+      () => {
+        const words = document.querySelector<HTMLElement>(".oh-row-address-words")!;
+        return { cut: words.scrollWidth > words.clientWidth + 1 };
+      },
+      { entry: "mail", device: "phone" },
+    );
+    const sizes = await drawn(
+      <div style={{ width: 480 }}>{row("raffaele.carmine@kingnature.example")}</div>,
+      read,
+      { entry: "mail", device: "phone" },
+    );
+    expect(sizes.timeInside && sizes.squaresInside).toBe(true);
+    expect(sizes.seen, "the address is not seen at all").toBeGreaterThanOrEqual(sizes.six - 1);
+    expect(seen.cut, "the address is whole: no ellipsis was drawn").toBe(true);
+  }, 60_000);
+
+  /* The address is the way to the sender's card; the blank rest of the line is the row's, and opens the letter. */
+  it.each([
+    [380, "phone"],
+    [900, "desktop"],
+  ] as const)(
+    "leaves the blank end of line one to the row, not to the sender's card (%i wide)",
+    async (width, device) => {
+      const hit = await drawn(
+        <div style={{ width }}>
+          <Rows>
+            <Row
+              who="Raffaele Carmine"
+              address="rc@kn.example"
+              addressAction={() => undefined}
+              people={[{ name: "Raffaele Carmine", address: "rc@kn.example" }]}
+              subject="Exchange admin"
+              when="Mon 21:15"
+            />
+          </Rows>
+        </div>,
+        () => {
+          const words = document.createRange();
+          words.selectNodeContents(document.querySelector(".oh-row-address-words")!);
+          const text = words.getBoundingClientRect();
+          const time = document.querySelector(".oh-row-when")!.getBoundingClientRect();
+          const x = (text.right + time.left) / 2;
+          const y = text.top + text.height / 2;
+          const at = document.elementFromPoint(x, y);
+          return {
+            blank: time.left - text.right,
+            onAddress: Boolean(at?.closest(".oh-row-address")),
+            onRow: Boolean(at?.closest(".oh-row")),
+          };
+        },
+        { entry: "mail", device },
+      );
+      expect(hit.blank, "no blank room on the line to try").toBeGreaterThan(16);
+      expect(hit).toMatchObject({ onAddress: false, onRow: true });
     },
     60_000,
   );

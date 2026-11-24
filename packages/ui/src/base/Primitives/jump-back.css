@@ -1,11 +1,16 @@
 /* One round control at a column's foot that takes you back to where the column starts. */
 @layer oh {
+  /* How much higher it stands over what floats at the foot: the frame that draws a dock there says it. */
+  :root {
+    --oh-jumpback-lift: 0px;
+  }
+
   .oh-button.oh-jumpback {
     --oh-jumpback-ring: var(--oh-ring-btn), var(--lift);
     position: absolute;
     right: var(--s3);
-    /* Its own margin, or the system's bar where that is more. */
-    bottom: max(var(--s3), var(--oh-inset-foot));
+    /* Its own margin, or the system's bar where that is more; over the dock where one stands at the foot. */
+    bottom: calc(max(var(--s3), var(--oh-inset-foot)) + var(--oh-jumpback-lift));
     z-index: var(--oh-layer-jump);
     visibility: hidden;
     /* On the sheet of its column, unless what holds it says the ground of its second buttons. */
@@ -31,6 +36,13 @@
     transform: none;
     transition-timing-function:
       var(--e-std), var(--e-arrive), var(--e-out), var(--e-std), var(--e-std), step-start;
+  }
+  /* A column set aside under another (a list under the letter opened over it) keeps its way back out of sight: it would
+     stand over what is read, and take you nowhere you can see. */
+  [inert] .oh-button.oh-jumpback[data-on] {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
   }
   :root[data-touch="0"] .oh-jumpback:hover {
     background: var(--solid);

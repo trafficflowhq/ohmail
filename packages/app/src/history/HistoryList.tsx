@@ -120,7 +120,6 @@ export function HistoryList({ plan }: PaneProps) {
               stamp={model.stamp}
               file={t("row.file")}
               who={(m) => m.from.name ?? m.from.address}
-              fitAddress
               where={model.placeOf}
               squares={(m) => {
                 const marks = model.conversationMarks?.get(m.id);

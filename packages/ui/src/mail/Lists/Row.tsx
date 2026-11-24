@@ -60,8 +60,6 @@ export interface RowProps {
   senderCheck?: { label: string; title: string };
   /** The address is identity evidence on this row: let the name yield before its domain. */
   keepAddressDomain?: boolean;
-  /** Omit the address if clipping would leave less than the byline fit floor or three fifths of it. */
-  fitAddress?: boolean;
   /** The circles: who the row leads with, then one other voice. Empty: the row is no person and shows its `sign`. */
   people: readonly RowPerson[];
   /** From three people on, the small circle counts the others: "+2". */

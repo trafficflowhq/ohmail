@@ -63,6 +63,8 @@ function ItemRow({
   const sent = answered && sentLabel(answered);
   const recipient = sent && answered ? sentRowRecipient(answered) : null;
   const shown = sent && answered ? answered : m;
+  /* "Me → name" says the one it went to by address too, as a sender's row does; not for several. */
+  const sentAddress = recipient?.extra === 0 && answered?.to?.[0]?.name ? recipient.address : undefined;
   const byline = sent?.label ?? who.name;
   const stamp = stampOf(shown.date, t, locale);
   const pick = selection.rowProps(m.id);
@@ -72,7 +74,7 @@ function ItemRow({
       {...pick}
       {...(sent ? {} : contact.rowProps(m.from, m.id))}
       who={byline}
-      address={sent ? undefined : who.address}
+      address={sent ? sentAddress : who.address}
       {...rowPeople(m, recipient ?? who)}
       subject={m.subject || ""}
       preview={shown.snippet ?? undefined}
