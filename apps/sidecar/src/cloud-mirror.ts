@@ -38,7 +38,7 @@ import {
   junkRescues, listAddresses, mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messages,
   messageTags,
-  organizerRequests, outboundSends, routingDecisions, rules, tags, threadNotes, threads,
+  organizerRequests, outboundSends, routingDecisions, rules, screenerLearning, tags, threadNotes, threads,
   trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
@@ -1358,7 +1358,7 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
 export const MAILBOX_REFERENCE_TABLES: readonly string[] = [
   "messages", "drafts", "message_instances", "message_failures", "unsubscribe_records",
   "mailbox_folders", "mailbox_credentials", "folder_ops", "away_replies",
-  "mailbox_profile_mirror", "organizer_requests", "junk_rescues",
+  "mailbox_profile_mirror", "organizer_requests", "junk_rescues", "screener_learning",
 ];
 
 /**
@@ -1384,6 +1384,7 @@ async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
   if (await hit(tx.select({ x: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: organizerRequests.id }).from(organizerRequests).where(eq(organizerRequests.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: junkRescues.id }).from(junkRescues).where(eq(junkRescues.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: screenerLearning.mailboxId }).from(screenerLearning).where(eq(screenerLearning.mailboxId, id)).limit(1))) return true;
   return false;
 }
 

@@ -413,7 +413,7 @@ export function worldOf(at: WorldState): World {
   const entries = (type: string) => (kinds[type] ?? []).map((entity) => ({ entity }));
   const subscribe = () => () => undefined;
   const engine = {
-    store: { entries },
+    store: { entries, get: (type: string, id: string) => kinds[type]?.find((entity) => entity.id === id) },
     subscribe,
     read: () => ({ version: () => 1 }),
   } as unknown as OhmailEngine;

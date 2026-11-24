@@ -152,6 +152,7 @@ export function cycleTailSection(scope: WorkerScope): void {
               scope.forAccount(accountId).db as unknown as Tx,
               {
                 accountId, log: scope.log, until: sliceUntil(),
+                noteFault: scope.tailFaultNote("cycle.screenerAutoSuggestPass"),
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
                 // meter, so it has no open charge to clear or refund (`ClassifierCircuit.port`).
                 classifier: scope.classifierCircuit?.port(),
@@ -691,6 +692,7 @@ export function cycleTailSection(scope: WorkerScope): void {
               scope.forAccount(accountId).db as unknown as Tx,
               {
                 accountId, log: scope.log, until: sliceUntil(),
+                noteFault: scope.tailFaultNote("cycle.screenerAutoSuggestPass"),
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
                 // meter, so it has no open charge to clear or refund (`ClassifierCircuit.port`).
                 classifier: scope.classifierCircuit?.port(),

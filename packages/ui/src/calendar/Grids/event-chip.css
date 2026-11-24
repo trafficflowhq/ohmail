@@ -321,7 +321,7 @@
     box-shadow: var(--oh-ev-apart), var(--oh-ev-out);
   }
   .oh-ev[aria-busy="true"] {
-    opacity: var(--o-cal-saving, 0.72);
+    opacity: 0.72;
   }
 
   /* Found in mail, a draft, a proposed time: dashed. Found has no colour yet: the letter's glyph instead. */

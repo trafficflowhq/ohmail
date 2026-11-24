@@ -1,5 +1,5 @@
 import sanitizeHtml from "sanitize-html";
-import { AUTHORED_CODE_STYLE, hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
+import { AUTHORED_CODE_STYLE, AUTHORED_PARAGRAPH_STYLE, hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
 import { DRAFT_BODY_MAX_BYTES, htmlToPlainText } from "@trafficflow/core/mail";
 
 /**
@@ -49,7 +49,7 @@ const AUTHORED_CODE = "data-ohmail-code";
 const AUTHORED_PRE = `<pre ${AUTHORED_CODE}="1">`;
 /** The complete inline values the composer writes and the sanitizer admits. */
 const LETTER_STYLES: Record<string, string> = {
-  p: "margin:0",
+  p: AUTHORED_PARAGRAPH_STYLE,
   ul: "margin-top:0;margin-bottom:0",
   ol: "margin-top:0;margin-bottom:0",
   h1: headingStyle(28),

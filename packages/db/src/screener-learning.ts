@@ -57,17 +57,20 @@ export async function updateScreenerLearning(
   });
 }
 
-/** Use inside a transaction which already fenced the account. */
+/**
+ * Update existing learning inside an account-fenced transaction. Filing and reset can already
+ * hold the change-log counter here. Lock only the learning row so they never wait on a mailbox
+ * lock at that point. Erasure deletes this same row with the mailbox stamp, in one transaction.
+ * If erasure wins the row lock there is nothing to update. Only the separately fenced setup path
+ * above can insert a row.
+ */
 export async function withScreenerLearning(
   tx: Tx, scope: ScreenerLearningScope,
   update: (state: ScreenerLearningState, tx: Tx) => Promise<ScreenerLearningState> | ScreenerLearningState,
 ): Promise<ScreenerLearningState | null> {
-  const d = dialect(tx);
-  const [mailbox] = await d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes)
-    .where(mailboxMatch(scope)), { mode: "share" });
-  if (!mailbox) return null;
-  const [row] = await d.forUpdate(tx.select({ data: screenerLearning.data }).from(screenerLearning)
-    .where(learningMatch(scope)));
+  const [row] = await dialect(tx).forUpdate(tx.select({ data: screenerLearning.data }).from(screenerLearning)
+    .innerJoin(mailboxes, and(eq(mailboxes.id, screenerLearning.mailboxId), eq(mailboxes.accountId, screenerLearning.accountId)))
+    .where(and(learningMatch(scope), mailboxMatch(scope))), { of: screenerLearning });
   if (!row) return null;
   const next = await update(row.data, tx);
   if (next !== row.data) await tx.update(screenerLearning).set({ data: next }).where(learningMatch(scope));

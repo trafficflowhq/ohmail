@@ -149,7 +149,7 @@ function mirror(load: CalendarPort["load"] = "none") {
     };
   };
   const engine = {
-    store: { entries },
+    store: { entries, get: (type: string, id: string) => kinds.get(type)?.get(id) },
     subscribe,
     read: () => ({ version: () => version }),
   } as unknown as OhmailEngine;

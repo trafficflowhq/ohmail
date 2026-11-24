@@ -85,7 +85,7 @@
       "events": "{count, plural, one {# Termin} other {# Termine}}",
       "slow": "Das dauert einen Moment. Du kannst weitermachen; ohmail sagt dir Bescheid, sobald deine Kalender bereit sind.",
       "keepGoing": "Weitermachen",
-      "none": "Keine Kalender in diesem Konto",
+      "none": "Keine Kalender für diese Verbindung",
       "closeNone": "Schließen",
       "ready": "{provider}: {count, plural, one {# Kalender bereit} other {# Kalender bereit}}",
       "readyShow": "Zeigen",

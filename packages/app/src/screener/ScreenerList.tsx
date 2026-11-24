@@ -230,7 +230,6 @@ export function ScreenerList(pane: PaneProps) {
   );
   /* On a phone an open sender takes the whole screen: while none does, no row is drawn open. */
   const phone = pane.plan.device === "phone";
-  const listed = phone ? { ...view, openId: null } : view;
   if (junkOn && junkView.full && junkView.open !== null)
     return <JunkLetter junk={junk} item={junkView.open} onBack={junkView.close} />;
   if (view.full && (!junkOn || quarantine))
@@ -273,7 +272,6 @@ export function ScreenerList(pane: PaneProps) {
                   junk={junk}
                   view={{
                     ...junkView,
-                    openKey: phone ? null : junkView.openKey,
                     select: (key) => {
                       setShelfPicked(false);
                       junkView.select(key);
@@ -292,7 +290,7 @@ export function ScreenerList(pane: PaneProps) {
                     selection={selection}
                     view={{
                       ...view,
-                      openId: quarantine && !phone ? view.openId : null,
+                      openId: quarantine ? view.openId : null,
                       select: (id) => {
                         setShelfPicked(true);
                         view.select(id);
@@ -305,7 +303,7 @@ export function ScreenerList(pane: PaneProps) {
           ) : (
             <>
               <Tools view={view} touch={pane.plan.pointer === "coarse"} />
-              <Rows view={listed} scroller={listScroller} selection={selection} contact={contact} />
+              <Rows view={view} scroller={listScroller} selection={selection} contact={contact} />
               <Empty view={view} />
               {segment === "waiting" ? <Tail /> : null}
             </>

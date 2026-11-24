@@ -23,6 +23,7 @@ import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../api/test/he
 const app = createApp(apiRoutes);
 const TO = [{ name: null, address: "lena@atelier.example" }];
 const BOLD = "<p><strong>bold</strong></p>";
+const STORED_BOLD = '<p style="margin:0"><strong>bold</strong></p>';
 
 async function world() {
   const delivered: OutboundMessage[] = [];
@@ -134,7 +135,7 @@ describe("a draft whose formatting was removed", () => {
     expect(other.status).toBe(200);
     const mine = await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "mine", html: null });
     expect([mine.status, mine.error?.status, mine.error?.code]).toEqual(["rolled_back", 400, "validation_failed"]);
-    expect((await w.row(id)).html).toBe("<p><strong>theirs</strong></p>");
+    expect((await w.row(id)).html).toBe('<p style="margin:0"><strong>theirs</strong></p>');
   });
 
   it("offline, two cleared saves queue: back online the row holds the last words, plain", async () => {
@@ -171,7 +172,7 @@ describe("a draft whose formatting was removed", () => {
     const id = c.entityId!;
     w.net.loseAnswer = true;
     expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "bold", html: BOLD })).status).toBe("queued");
-    expect((await w.row(id)).html).toBe(BOLD);
+    expect((await w.row(id)).html).toBe(STORED_BOLD);
     w.net.offline = true;
     expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "plain one", html: null })).status).toBe("queued");
     expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "plain two", html: null })).status).toBe("queued");
@@ -195,13 +196,13 @@ describe("a draft whose formatting was removed", () => {
     const w = await world();
     const id = await w.boldDraft();
     await w.engine.syncOnce();
-    expect(draftEditOf(w.engine.read().get<EngineDraft>("draft", id)!)?.html).toBe(BOLD);
+    expect(draftEditOf(w.engine.read().get<EngineDraft>("draft", id)!)?.html).toBe(STORED_BOLD);
 
     const codeMarkup = "<p><code>bold</code></p>";
     expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "bold", html: codeMarkup })).status).toBe("confirmed");
     await w.engine.syncOnce();
     const formatted = w.engine.read().get<EngineDraft>("draft", id)!;
-    expect(formatted.html).toBe(codeMarkup);
+    expect(formatted.html).toBe('<p style="margin:0"><code>bold</code></p>');
     expect(draftEditOf(formatted), "the phone cannot preserve inline code").toBeNull();
     expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "plain now", html: null })).status).toBe("confirmed");
     await w.engine.syncOnce();

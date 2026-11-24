@@ -160,7 +160,7 @@ describe("the phone shell's answers, per setting", () => {
   const cases = table.flatMap(([setting, want]) =>
     ([NONE, calendarFrame] as const).map((calendar) => ({ setting, want, calendar, frame: calendar === NONE ? "absent" : "present" })),
   );
-  it.each(cases)("answers the whole record on $setting with the Calendar frame $frame and no transport", async ({ setting, want, calendar }) => {
+  it.each(cases)("answers the whole record on $setting with the Calendar frame $frame and the mail bridge", async ({ setting, want, calendar }) => {
     const w = want as { session: { state: string; account: string | null; signOut: unknown }; capabilities: object };
     const hosted = calendar !== NONE && (setting === "managed" || setting === "selfHosted");
     const host = of(setting, calendar);
@@ -172,7 +172,14 @@ describe("the phone shell's answers, per setting", () => {
         recover: has.frame.recover, today: NONE,
       },
       reads: { mailboxes: expect.any(Function), copyAge: NONE, access: NONE },
-      wires: { ...NO_WIRE, consent: expect.objectContaining({ state: expect.any(Function) }) },
+      wires: {
+        ...NO_WIRE,
+        consent: expect.objectContaining({ state: expect.any(Function) }),
+        screening: {
+          read: expect.any(Function), change: expect.any(Function),
+          readLearning: expect.any(Function), changeLearning: expect.any(Function),
+        },
+      },
       capabilities: {
         ...w.capabilities,
         ...(calendar === NONE ? {} : { products: "calendar" }),

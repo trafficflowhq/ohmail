@@ -9,6 +9,9 @@
  * shows. In `core` because both generated-draft writers live in different packages.
  */
 
+/** Paragraph presentation shared by the draft serializer and phone editor. */
+export const AUTHORED_PARAGRAPH_STYLE = "margin:0";
+
 /** Inline code-block presentation shared by the draft serializer and editor. */
 export const AUTHORED_CODE_STYLE =
   "font-family:monospace;font-size:0.9em;color:#12100e;background-color:#f0ebe3;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;padding:8px 12px";

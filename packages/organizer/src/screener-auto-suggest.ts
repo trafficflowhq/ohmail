@@ -162,6 +162,7 @@ export interface ScreenerAutoSuggestDeps {
    *  `screener`, and its line rides that candidate's release. Absent ⇒ nothing is recorded. */
   usageHook?: UsageHook;
   recordRewriteUsage?: (line: AiUsageLine) => void;
+  noteFault?: (err: unknown) => void;
   log?: Logger;
   /** Test seam. Default {@link AUTO_SUGGEST_BATCH}. */
   batch?: number;
@@ -480,8 +481,9 @@ export async function screenerAutoSuggestPass(
         if (personalized && settings.screenerAutoActAt) {
           try {
             filing = capSuggestion(await askScreeningQuestion(classifier, letter, { ...call, beforeDispatch: consent.beforeDispatch }), checked);
-          } catch {
+          } catch (err) {
             // The personalized answer is already bought. Automatic filing can wait for ordinary advice.
+            deps.noteFault?.(err);
           }
         }
       } catch (err) {

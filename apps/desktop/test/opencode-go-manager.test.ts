@@ -142,7 +142,7 @@ describe("OpenCode Go configuration verification through the local-AI manager", 
       destination: "ohmail/Receipts", confidence: 0.8, rationale: "A synthetic receipt.", spam: false,
     };
     const screenResult = {
-      destination: "ohmail/Quarantine", confidence: 0.9, rationale: "Synthetic unwanted mail.", spam: true,
+      destination: "ohmail/Quarantine", confidence: 0.9, rationale: "Synthetic unwanted mail.", spam: true, topic: "other",
     };
     const draftResult = {
       subject: "Re: synthetic question", body: "A synthetic reply.", rationale: "Uses the supplied fixture.",

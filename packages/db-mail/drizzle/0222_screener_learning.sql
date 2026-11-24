@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS "screener_learning" (
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "screener_learning_account_idx" ON "screener_learning" ("account_id");
 --> statement-breakpoint
-ALTER TABLE "routing_decisions" ADD COLUMN "screener_topic" text;
+ALTER TABLE "routing_decisions" ADD COLUMN IF NOT EXISTS "screener_topic" text;
 --> statement-breakpoint

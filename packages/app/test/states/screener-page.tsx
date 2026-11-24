@@ -10,6 +10,7 @@ import type { FailedAtGateDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import type { OhmailEngine } from "@ohmail/client-engine";
+import { ConsentContext, useConsentRow } from "@ohmail/app-logic/consent";
 import { APPLY_PILE_ORDER, NO_RUN, type ScreenerState, type SpamRow } from "@ohmail/app-logic/screener";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
@@ -857,7 +858,10 @@ const model = {
 } as unknown as ScreenerState;
 
 const engine = {
-  read: () => ({ get: (type: string, id: string) => (type === "message_body" ? bodies.get(id) : undefined) }),
+  read: () => ({
+    get: (type: string, id: string) => (type === "message_body" ? bodies.get(id) : undefined),
+    entries: () => [],
+  }),
   verbRead: () => ({ get: () => undefined }),
   subscribe: () => () => undefined,
   hydrateBodies: async () => undefined,
@@ -1134,6 +1138,14 @@ const byName = (role: string, name: string) =>
   );
 
 function Page() {
+  const consent = useConsentRow({
+    engine,
+    derived: 0,
+    facts: null,
+    active: false,
+    scope: host.session.scope,
+    transport: NONE,
+  });
   useEffect(() => {
     /* Each step waits for the draw the step before it caused: the reading column draws after the list. */
     const steps: (() => void)[] = [];
@@ -1177,9 +1189,11 @@ function Page() {
     return () => timers.forEach(clearTimeout);
   }, []);
   return (
-    <ScreenerAbove model={model} beside={beside}>
-      <Frame host={host} />
-    </ScreenerAbove>
+    <ConsentContext.Provider value={consent}>
+      <ScreenerAbove model={model} beside={beside}>
+        <Frame host={host} />
+      </ScreenerAbove>
+    </ConsentContext.Provider>
   );
 }
 

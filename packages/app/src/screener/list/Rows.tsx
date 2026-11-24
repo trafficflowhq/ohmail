@@ -1,3 +1,4 @@
+import { useFrame } from "../../frame/commands.js";
 import { MailRow } from "../../place-list/MailRowMenu.js";
 /**
  * THE SECTION'S ROWS: first the letters their provider failed that no sender's decision covers, each opened and
@@ -105,6 +106,7 @@ export function SenderRow({
   /* `held` is oldest first: the row speaks for the newest letter, the one its time is. */
   const t = useText("screener");
   const ohbox = useText("ohbox");
+  const { plan } = useFrame();
   const { mailboxWord } = useScreenerBeside();
   const mailbox = sender.mailboxId ? mailboxWord(sender.mailboxId, "short") : null;
   const deliveredTo = mailbox ? t("place.deliveredTo", { label: mailbox }) : undefined;
@@ -138,7 +140,7 @@ export function SenderRow({
       place={place}
       leaving={leaving}
       unread={unread}
-      open={open}
+      open={open && plan.device !== "phone"}
       cursor={open}
       listing={{
         name: subject ? `${who}: ${subject}` : who,
