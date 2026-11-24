@@ -5,6 +5,7 @@ import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
   liveAccountFetch,
 } from "./fixtures/live-walk-shell";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
 
 /**
  * A letter filed in News carries a picture in its body (`<img src="cid:…">`) and the part beside it.
@@ -111,10 +112,12 @@ const theCard = (): HTMLElement => {
   expect(card, "News does not show the letter").not.toBeNull();
   return card!;
 };
-function expectThePicture(card: HTMLElement): void {
-  expect(drawnOf(card), "the card never drew the letter's html").toContain("An inline image:");
-  expect(fetched, "opening the card never fetched the letter's picture").toEqual([PART]);
-  expect(picturesOf(card), "the card does not draw the letter's own picture").toContain(DRAWN);
+const readingRegion = () => within(document.body).getByRole("region", { name: "Reading" });
+
+function expectThePicture(letterView: HTMLElement): void {
+  expect(drawnOf(letterView), "the letter's HTML is visible").toContain("An inline image:");
+  expect(fetched, "opening the letter fetched its picture").toEqual([PART]);
+  expect(picturesOf(letterView), "the letter draws its own picture").toContain(DRAWN);
 }
 
 describe("a letter filed in News draws its own picture", () => {
@@ -128,6 +131,7 @@ describe("a letter filed in News draws its own picture", () => {
     expectThePicture(card);
   }, 60_000);
 
+  // The coverage ledger keeps this case's original name. A News hit now opens in Search's reader.
   it("a Search hit opened into News draws it", async () => {
     await mountWithTheLetter();
     await goHash("#/search");
@@ -135,22 +139,21 @@ describe("a letter filed in News draws its own picture", () => {
     expect(box, "no search box").not.toBeNull();
     await act(async () => { fireEvent.change(box!, { target: { value: "quillfen" } }); });
     await tick(1_000);
-    const hit = document.querySelector<HTMLElement>(`[data-hit="${LETTER}"] .oh-row-subject`);
-    expect(hit, "Search does not list the letter").not.toBeNull();
-    await act(async () => { hit!.click(); });
-    // The landing opens the card once the stream has scrolled to it (its anchoring budget).
-    for (let i = 0; i < 40 && expansionOf(mountedCard(LETTER))?.getAttribute("aria-expanded") !== "true"; i += 1) await tick(250);
-    expect(window.location.hash, "the hit did not open News").toContain("#/reads");
-    expect(theCard().querySelector(".oh-files"), "the landed card is not open").not.toBeNull();
+    const hit = within(document.body).getByRole("button", { name: new RegExp(letter.subject) });
+    await act(async () => { hit.click(); });
     await tick(3_000);
-    expectThePicture(theCard());
+
+    expect(window.location.hash).toBe(`#/search/m/${LETTER}?q=quillfen`);
+    const reader = readingRegion();
+    expect(within(reader).getByRole("heading", { name: letter.subject })).toBeTruthy();
+    expect(reader.querySelector(".oh-files"), "the reader shows the letter's files").not.toBeNull();
+    expectThePicture(reader);
   }, 60_000);
 });
 
 /**
- * A News or Receipts letter opened from Search lands open, and the open is the person's: the read
- * rule counts from the landing (first lines on screen for the dwell, the sender line seen). A link
- * to it is a preview and reads nothing. The stream is laid out by hand: a 600px port, 200px cards.
+ * Search keeps the selected News or Receipts letter in its reader. Its first lines still need
+ * to be on screen for the dwell before it turns read. A direct stream link is a passive preview.
  */
 describe("a stream letter opened from Search turns read", () => {
   const pile = [
@@ -168,6 +171,7 @@ describe("a stream letter opened from Search turns read", () => {
   const tops = new WeakMap<Element, number>();
   const saved: Record<string, PropertyDescriptor | undefined> = {};
   let savedRect: typeof Element.prototype.getBoundingClientRect;
+  let searchLayout: ThreadLayout | undefined;
   const zero = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) };
   const rect = (top: number, bottom: number): DOMRect => ({ ...zero, top, bottom, height: bottom - top, width: 600, right: 600 }) as DOMRect;
   const isStream = (el: Element): boolean => el.hasAttribute("data-reading-scroll");
@@ -231,6 +235,8 @@ describe("a stream letter opened from Search turns read", () => {
     Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true });
   });
   afterEach(() => {
+    searchLayout?.restore();
+    searchLayout = undefined;
     release();
     held = null;
     for (const [k, d] of Object.entries(saved)) {
@@ -259,22 +265,30 @@ describe("a stream letter opened from Search turns read", () => {
     expect(expansionOf(cardOf(p))?.getAttribute("aria-expanded"), "the landed card is open").toBe("true");
   }
 
+  const previewLetter = (p: (typeof pile)[number]): HTMLElement => {
+    const panel = readingRegion().querySelector<HTMLElement>(`[data-conv-id="${p.id}"]`);
+    expect(panel, "the Search reader shows the selected letter").not.toBeNull();
+    return panel!;
+  };
+
   async function openFromSearch(p: (typeof pile)[number]): Promise<void> {
+    searchLayout = stubThreadLayout();
     await goHash("#/search");
     const box = within(document.body).getByRole("textbox", { name: "Search" });
     await act(async () => { fireEvent.change(box, { target: { value: `SR2 ${p.view}` } }); });
     await tick(1_000);
-    const hit = document.querySelector<HTMLElement>(`[data-hit="${p.id}"] .oh-row-subject`);
-    expect(hit, "Search lists the letter").not.toBeNull();
-    await act(async () => { hit!.click(); });
-    await landed(p);
+    const hit = within(document.body).getByRole("button", { name: new RegExp(entity(p).subject) });
+    await act(async () => { hit.click(); });
+    await tick(100);
+    expect(window.location.hash).toBe(`#/search/m/${p.id}?q=SR2+${p.view}`);
+    expect(within(readingRegion()).getByRole("heading", { name: entity(p).subject })).toBeTruthy();
   }
 
   for (const p of pile) {
     it(`${p.view}: the hit lands open and is read once after the dwell`, async () => {
       await mountThePile();
       await openFromSearch(p);
-      expect(window.location.hash).toContain(`#/${p.view}`);
+      expect(previewLetter(p).hasAttribute("data-body-ready")).toBe(true);
       expect(reads, "nothing read before the dwell").toEqual([]);
       await tick(3_000);
       expect(reads).toEqual([p.id]);
@@ -286,12 +300,14 @@ describe("a stream letter opened from Search turns read", () => {
       // deadline so this case measures arrival after landing instead of a failed fetch.
       await mountThePile(1_000);
       await openFromSearch(p);
-      expect(cardOf(p)!.classList.contains("st-pend"), "the landed card is still on its way").toBe(true);
+      expect(previewLetter(p).hasAttribute("data-body-ready"), "the body is still on its way").toBe(false);
       await tick(3_000);
       expect(reads).toEqual([]);
-      release();
+      await act(async () => { release(); });
+      await tick(100);
+      expect(previewLetter(p).hasAttribute("data-body-ready")).toBe(true);
+      expect(reads, "the body needs its own dwell").toEqual([]);
       await tick(3_000);
-      expect(cardOf(p)!.classList.contains("st-pend")).toBe(false);
       expect(reads).toEqual([p.id]);
     }, 60_000);
 

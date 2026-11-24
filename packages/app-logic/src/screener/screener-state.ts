@@ -1005,7 +1005,7 @@ export function useScreenerState(
         ...(change.kind === "rule_create" && prior ? { existingRuleId: prior.id } : {}),
       };
       const reverse = { messageIds, from: wanted, to: from };
-      void engine.mutate({ ...change, release }).then((result) => {
+      void releaseWindow.send({ ...change, release }).then((result) => {
         const verdict = result.pendingWith
           ? pressVerdict({ status: "awaiting_organizer", queuedWith: result.pendingWith })
           : pressVerdict(result);

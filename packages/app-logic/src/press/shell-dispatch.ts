@@ -345,6 +345,8 @@ export function useShellDispatch({
     }),
     [t],
   );
+  /* A rule can refile mail, so re-read the filing facts once its receipt arrives. */
+  const sendRouting = useStableCallback((mutation: EngineMutation) => fileAndRefresh(engine.mutate(mutation)));
   /**
    * THE ROUTING VERBS' OWN WINDOW. Move, File and Junk write a sender's ROUTING, and no rule
    * mutation has a wire inverse — so the mail moves at the press and the rule is HELD for
@@ -354,9 +356,7 @@ export function useShellDispatch({
   const routing = useRoutingUndo({
     scope,
     read: () => engine.verbRead(),
-    /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — a rule landing re-places the
-       sender's mail, so the filing strip's counts are stale until the facts are re-read. */
-    send: (m) => fileAndRefresh(engine.mutate(m)),
+    send: sendRouting,
     toast,
     enabled: !demo,
     subscribe: (listener) => engine.subscribe(listener),
@@ -667,8 +667,9 @@ export function useShellDispatch({
   const cancelRelease = useStableCallback((address: string) => routing.undo(routing.subjectOf(address)));
   const restartRelease = useStableCallback((address: string) => routing.restart(routing.subjectOf(address)));
   const screenerRelease = useMemo<ScreenerReleaseWindow | undefined>(() => (demo ? undefined : {
+    send: sendRouting,
     hold: routing.holdRelease, cancel: cancelRelease, restart: restartRelease, toastWithUndo, planOver: routing.planOver,
-  }), [demo, routing.holdRelease, cancelRelease, restartRelease, toastWithUndo, routing.planOver]);
+  }), [demo, sendRouting, routing.holdRelease, cancelRelease, restartRelease, toastWithUndo, routing.planOver]);
 
   return {
     fileAndRefresh,
