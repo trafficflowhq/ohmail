@@ -30,6 +30,9 @@ it("the tag and Waiting counts name what they count", async () => {
   expect.soft(tag.textContent).toContain("1");
   expect.soft(tag.title).toBe("1 message");
 
+  /* The Waiting queue derives after the first paint, on the host's idle callback (bounded at 500 ms): on a busy
+     host it lands after the frame stands, so the count is read once it is there. */
+  await waitFor(() => view.queryByRole("button", { name: /^Screener.*1/ }) !== null, "the Waiting count");
   const screener = view.getByRole("button", { name: /^Screener/ });
   fireEvent.click(screener);
   await waitFor(() => view.queryByRole("group", { name: "Screener sections" }) !== null, "Screener sections");

@@ -22,10 +22,6 @@
 .tc-pull-mark {
   display: flex;
 }
-.tc-pull-mark .spin {
-  width: var(--s5);
-  height: var(--s5);
-}
 
 /* The end of a list's run: as much room as the glass's inset, so the last row comes clear of the system's bar. On a
    phone's width the list already ends with the dock's room, which covers its own margin: only what the inset adds. */

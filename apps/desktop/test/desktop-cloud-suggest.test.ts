@@ -10,7 +10,7 @@ import { ScreenerAbove, screenerPlace } from "@ohmail/app/screener";
 import { NO_RUN } from "@ohmail/app-logic/screener";
 import { useScreenerSuggestions, type SenderSuggestion } from "@ohmail/app-logic/screener/screener-suggest";
 import type { SuggestStanding } from "@ohmail/app-logic/screener/no-suggestion";
-import { BESIDE, inWords, modelOf, screenerEngine } from "../../../packages/app/test/screener/screener-world.js";
+import { BESIDE, TestConsent, inWords, modelOf, screenerEngine } from "../../../packages/app/test/screener/screener-world.js";
 import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
 import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
 
@@ -167,10 +167,15 @@ describe("the hosted door's suggest control", () => {
       suggestedCount: resuggestable.length,
     });
     const control = suggestions.forSenders(senders, resuggestable, 0);
-    return inWords(h(ScreenerAbove, {
-      model,
-      beside: { ...BESIDE, suggest: { control, priced: true, noAdvice: NO_RUN } },
-      children: h(Frame, { host }),
+    // The consent row stands above the Screener as the mail ground stands it in the shell.
+    return inWords(h(TestConsent, {
+      scope: "suggestion-fixture",
+      transport: "none",
+      children: h(ScreenerAbove, {
+        model,
+        beside: { ...BESIDE, suggest: { control, priced: true, noAdvice: NO_RUN } },
+        children: h(Frame, { host }),
+      }),
     }));
   }
 

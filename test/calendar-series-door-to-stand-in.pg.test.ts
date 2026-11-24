@@ -195,7 +195,9 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
   } = {}) {
     const dav = await startCalDavStandIn({ autoSchedule: o.autoSchedule ?? false });
     servers.push(dav);
-    const held = dav.addCalendar("studio", { name: "Studio" }) as unknown as { members: Map<string, { ics: string; etag: string }> };
+    // The account's own calendar, as its server says by naming the sign-in its owner: where a server names no owner, a calendar
+    // is taken for one shared with the account, whose events by others its write access lets it change.
+    const held = dav.addCalendar("studio", { name: "Studio", owner: dav.paths.principal }) as unknown as { members: Map<string, { ics: string; etag: string }> };
     for (const [name, text] of Object.entries(members)) dav.put("studio", name, text, `"${name}-1"`);
     const serverUrl = `http://127.0.0.1:${dav.port}${dav.paths.start}`;
     const boxes = o.mailboxes ?? [];
@@ -211,7 +213,8 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     const proven = o.proven ?? { [proofPlaceOf("caldav", serverUrl)!]: o.shapes ?? PROVEN_REPEATS[BENCH_CALDAV_PLACE]! };
     const drain = calendarWriteDrain({ clock: { now: () => Date.now() }, zones: ZONES, log: capturedLog().log, proven });
     const withDrain = depsFor(w, providersOf({ caldav: provider }), { drainWrites: drain });
-    const readingOnly = depsFor(w, providersOf({ caldav: provider }));
+    // One memory for both, as the worker keeps it: the listing is asked again on its own hour, not by the first turn that drains.
+    const readingOnly = depsFor(w, providersOf({ caldav: provider }), { memory: withDrain.memory });
     const due = async () => {
       await w.db.update(calCalendars).set({ nextPollAt: null }).where(eq(calCalendars.accountId, t.accountId));
       await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, t.accountId));

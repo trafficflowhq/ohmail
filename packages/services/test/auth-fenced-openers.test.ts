@@ -144,8 +144,10 @@ describe("the auth family's transactions open on the erasure fence", () => {
     // and its burn with the session it writes, each fenced.
     // 35 -> 36 with `ring` (`device-doorbell.ts`): the settings change row after a path that made a named device
     // has committed, and a take-back's stamp with it, fenced; an erased account's ring writes nothing.
+    // 36 -> 37 with `completePasswordReset`: the link's burn, the password swap, the other sessions' revoke
+    // and the audit, fenced on the link's own account; an erased account's link is refused.
     expect({ fenced, byCreation, named: Object.keys(UNFENCED).length, raw: tree.raw.length })
-      .toEqual({ fenced: 36, byCreation: 1, named: 3, raw: 1 });
+      .toEqual({ fenced: 37, byCreation: 1, named: 3, raw: 1 });
   });
 
   it("RED: a planted unfenced opener is named", () => {

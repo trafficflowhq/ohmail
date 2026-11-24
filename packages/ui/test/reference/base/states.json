@@ -55,6 +55,11 @@
     { "component": "Dot", "state": "ink" },
     { "component": "Dot", "state": "ring" },
     {
+      "component": "Spinner",
+      "state": "pull",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    {
       "component": "KeyHint",
       "state": "one",
       "looks": [

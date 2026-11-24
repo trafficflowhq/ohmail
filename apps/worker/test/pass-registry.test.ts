@@ -63,6 +63,13 @@ const EXCLUDED: ReadonlyMap<string, string> = new Map([
    * be the same pass counted twice.
    */
   ["bubble-up-cron.ts::bubbleUpPass", "a re-export of the pass declared in bubble-up-pass.ts (rows: bubble_up + cron_bubble_up)"],
+  /**
+   * A STEP OF THE CALENDAR'S TURN, not a pass of its own: only `calendarSyncPass` calls it, inside
+   * one connection's turn after the sync settled, and its own clock (once an interval per
+   * connection) rides that turn. It is never scheduled, woken or run alone, so a row would name a
+   * second pass where there is one (registered: `calendar/sync-pass.ts::calendarSyncPass`).
+   */
+  ["calendar/exchange-invitations.ts::exchangeInvitationPass", "a step inside calendarSyncPass's turn for one connection, never scheduled on its own"],
 ]);
 
 /**
