@@ -552,7 +552,7 @@ export async function seedMessage(
   db: Db,
   o: {
     accountId: string; mailboxId?: string; threadId?: string;
-    subject?: string; fromAddress?: string; date?: Date; unread?: boolean; snippet?: string;
+    subject?: string; fromAddress?: string; date?: Date; arrivedAt?: Date; unread?: boolean; snippet?: string;
     folder?: string; observedFolder?: string; reconcileStatus?: string; lastSetBy?: string;
     dedupKey?: string; nativeLocator?: { folder: string; ref: string };
     // Sensitivity flags: seed a no_ai/no_kb/sensitive message.
@@ -568,6 +568,7 @@ export async function seedMessage(
     subject: o.subject ?? "Seed subject",
     fromAddress: o.fromAddress ?? "sender@example.com",
     date: o.date ?? null,
+    arrivedAt: o.arrivedAt ?? null,
     unread: o.unread ?? true,
     snippet: o.snippet ?? "seed snippet",
     threadId: o.threadId ?? null,

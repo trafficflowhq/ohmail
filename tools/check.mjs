@@ -251,32 +251,43 @@ function references(root) {
 
 function retirementBase(root, base) {
   if (!base) return base;
-  const next = "refs/remotes/origin/next";
-  const nextCommit = () => git(root, "rev-parse", "--verify", `${next}^{commit}`).trim();
-  let commit;
+  const next = "refs/ohmail-check/next";
+  let history;
   try {
-    commit = nextCommit();
+    const shallow = git(root, "rev-parse", "--is-shallow-repository").trim() === "true";
+    git(
+      root,
+      "fetch",
+      ...(shallow ? ["--depth=300"] : []),
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--refmap=",
+      "origin",
+      `+refs/heads/next:${next}`,
+    );
+    history = git(root, "log", "--format=%H %T", next)
+      .trimEnd()
+      .split("\n")
+      .map((line) => line.split(" "));
   } catch {
-    if (!git(root, "remote").split("\n").includes("origin")) return base;
-    try {
-      git(
-        root,
-        "fetch",
-        "--depth=1",
-        "--no-tags",
-        "--no-recurse-submodules",
-        "origin",
-        `refs/heads/next:${next}`,
-      );
-      commit = nextCommit();
-    } catch {
-      return base;
-    }
+    return base;
   }
-  if (git(root, "rev-parse", "HEAD").trim() === commit) return base;
+
+  const head = git(root, "rev-parse", "HEAD").trim();
+  if (history.some(([commit]) => commit === head)) return base;
+
   // A promotion carries retirements already checked on next, even with a different first parent.
-  const tree = git(root, "rev-parse", "--verify", `${commit}^{tree}`).trim();
-  return git(root, "rev-parse", "HEAD^{tree}").trim() === tree ? commit : base;
+  const tree = git(root, "rev-parse", "HEAD^{tree}").trim();
+  const match = history.find(([, nextTree]) => nextTree === tree)?.[0];
+  if (!match) return base;
+
+  // A change can restore an older tree by deleting tests that were added after it.
+  try {
+    git(root, "merge-base", "--is-ancestor", match, base);
+    return base;
+  } catch (error) {
+    return error.status === 1 ? match : base;
+  }
 }
 
 function retirement(root, files, base) {

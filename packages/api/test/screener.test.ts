@@ -500,8 +500,19 @@ describe("GET/POST /screener/unscreened — a pile's note", () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const mailboxId = await seedMailbox(db, { accountId: s.accountId });
-    const cold = await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example", date: new Date("2024-03-01T08:00:00Z") });
-    await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/Receipts", fromAddress: "shop@cold.example", date: new Date("2024-03-01T08:00:00Z") });
+    const cold = await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example",
+      date: FIXED_NOW, arrivedAt: FIXED_NOW,
+    });
+    // Importing older mail from the same sender does not bring it inside the screening window.
+    const older = await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example",
+      date: new Date("2024-03-01T08:00:00Z"), arrivedAt: FIXED_NOW,
+    });
+    await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/Receipts", fromAddress: "shop@cold.example",
+      date: FIXED_NOW, arrivedAt: FIXED_NOW,
+    });
 
     const news = await H(req("GET", "/screener/unscreened?pile=news", { bearer: s.token }), deps);
     expect(news.status).toBe(200);
@@ -519,13 +530,18 @@ describe("GET/POST /screener/unscreened — a pile's note", () => {
     expect(await pressed.json()).toMatchObject({ screened: [{ address: "deals@cold.example", count: 1 }], total: 1 });
     const [fs] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, cold.id));
     expect(fs!.d).toBe("ohmail/Screener");
+    const [olderFs] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, older.id));
+    expect(olderFs!.d).toBe("ohmail/News");
   });
 
   it("says `next` only for a read that has more to go on to, and refuses an `after` that is not one", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const mailboxId = await seedMailbox(db, { accountId: s.accountId });
-    await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example", date: new Date("2024-03-01T08:00:00Z") });
+    await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example",
+      date: FIXED_NOW, arrivedAt: FIXED_NOW,
+    });
 
     // A read that reached the end carries no `next`: nothing to go on to.
     const whole = await (await H(req("GET", "/screener/unscreened?pile=news", { bearer: s.token }), deps)).json();
