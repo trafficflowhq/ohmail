@@ -1,5 +1,5 @@
 import sanitizeHtml from "sanitize-html";
-import { hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
+import { AUTHORED_CODE_STYLE, hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
 import { DRAFT_BODY_MAX_BYTES, htmlToPlainText } from "@trafficflow/core/mail";
 
 /**
@@ -45,15 +45,25 @@ const ALLOWED_TAGS = [
   "code", "pre",
 ] as const;
 
-/**
- * A link target and the fixed authored-code flag on a draft block.
- *
- * No `target`, no `rel`, no `title`, no `id`, no `class`, no `style`. A mail client decides how
- * to open a link; the two attributes a web page would need for that are meaningless in a message
- * and are one more thing for a policy to be wrong about.
- */
 const AUTHORED_CODE = "data-ohmail-code";
 const AUTHORED_PRE = `<pre ${AUTHORED_CODE}="1">`;
+/** The complete inline values the composer writes and the sanitizer admits. */
+const LETTER_STYLES: Record<string, string> = {
+  p: "margin:0",
+  ul: "margin-top:0;margin-bottom:0",
+  ol: "margin-top:0;margin-bottom:0",
+  h1: headingStyle(28),
+  h2: headingStyle(20),
+  h3: headingStyle(17),
+  hr: "border:0;border-top:1px solid #8a8176;margin:12px 0",
+  pre: AUTHORED_CODE_STYLE,
+};
+
+function headingStyle(size: number): string {
+  return `font-size:${size}px;font-weight:700;line-height:1.6;margin:8px 0`;
+}
+
+/** Links carry only their destination. */
 const ALLOWED_ATTRIBUTES: sanitizeHtml.IOptions["allowedAttributes"] = {
   a: ["href"],
 };
@@ -81,12 +91,18 @@ const POLICY: sanitizeHtml.IOptions = {
   allowedTags: [...ALLOWED_TAGS],
   allowedAttributes: {
     ...ALLOWED_ATTRIBUTES,
-    pre: [AUTHORED_CODE],
+    ...Object.fromEntries(Object.keys(LETTER_STYLES).map((tag) => [tag, ["style"]])),
+    pre: [AUTHORED_CODE, "style"],
   },
   transformTags: {
+    "*": (tagName, attribs) => {
+      if (attribs.style !== LETTER_STYLES[tagName]) delete attribs.style;
+      return { tagName, attribs };
+    },
     pre: (tagName, attribs) => {
       const kept: Record<string, string> = {};
-      if (attribs[AUTHORED_CODE] === "1") kept[AUTHORED_CODE] = "1";
+      if (attribs.style === AUTHORED_CODE_STYLE) kept.style = AUTHORED_CODE_STYLE;
+      else if (attribs[AUTHORED_CODE] === "1") kept[AUTHORED_CODE] = "1";
       return { tagName, attribs: kept };
     },
   },
@@ -99,7 +115,8 @@ const POLICY: sanitizeHtml.IOptions = {
   // than omitted, so `allowedTags` above is the whole answer to "what can appear".
   allowedIframeHostnames: [],
   allowedClasses: {},
-  allowedStyles: {},
+  // Each style must match a complete, fixed value. The phone engine does not need a CSS parser.
+  parseStyleAttributes: false,
   // Comments carry no content a reader sees and are a favourite place to hide markup that a
   // second, laxer parser downstream will read as tags.
   allowedScriptDomains: [],
@@ -134,25 +151,22 @@ export function sanitizeOutboundHtml(html: string, keepQuotedHistory = false): s
   });
 }
 
-/**
- * Apply the letter styles to the already sanitized draft at delivery. Mail clients need inline
- * values. The heading sizes, weight, ink and code background use the Paper theme's default tokens.
- */
-export function prepareOutboundDelivery(rawHtml: string, draftText: string): OutboundBody {
-  const sanitized = sanitizeOutboundHtml(rawHtml);
+/** Serialize a composed draft for storage, including its recipient-facing formatting. */
+export function serializeDraftBody(rawHtml: string): OutboundBody {
+  const sanitized = sanitizeOutboundHtml(rawHtml, true);
+  // Sanitized text and attribute values contain no literal tag delimiters.
   const html = sanitized
-    .replaceAll("<p>", '<p style="margin:0">')
-    .replace(/<(ul|ol)>/g, '<$1 style="margin-top:0;margin-bottom:0">')
-    .replace(/<(h[1-3])>/g, (_tag, heading: "h1" | "h2" | "h3") => {
-      const size = { h1: 28, h2: 20, h3: 17 }[heading];
-      return `<${heading} style="font-size:${size}px;font-weight:700;line-height:1.6;margin:8px 0">`;
-    })
-    .replaceAll(AUTHORED_PRE, '<pre style="font-family:monospace;font-size:0.9em;color:#12100e;background-color:#f0ebe3;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;padding:8px 12px">')
-    .replace(/<hr \/>/g, '<hr style="border:0;border-top:1px solid #8a8176;margin:12px 0" />');
-  const text = sanitized.includes(AUTHORED_PRE)
-    ? htmlToPlainText(sanitized, { indentCode: true })
-    : draftText;
-  return { html, text };
+    .replace(/<(p|ul|ol|h[1-3]|hr)( \/)?>/g, (_tag, name: string, selfClosing = "") =>
+      `<${name} style="${LETTER_STYLES[name]}"${selfClosing}>`)
+    .replaceAll(AUTHORED_PRE, `<pre style="${AUTHORED_CODE_STYLE}">`);
+  const outgoing = hasEditedQuotedHistory(html) ? sanitizeOutboundHtml(html) : html;
+  return { html, text: htmlToPlainText(outgoing, { indentCode: true }) };
+}
+
+/** Keep the saved formatting and text. Strip draft-only quote boundaries and unsafe markup. */
+export function prepareOutboundDelivery(html: string, text: string): OutboundBody {
+  const safe = sanitizeOutboundHtml(html);
+  return { html: safe === html ? html : safe, text };
 }
 
 /**

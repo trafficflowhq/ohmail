@@ -13,7 +13,7 @@
 import { and, asc, eq, exists, inArray, isNotNull, isNull, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  approvals, attachments, auditLog, awayReplies,
+  approvals, attachments, auditLog, awayReplies, screenerLearning,
   drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders, passProgress,
   mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageInvitations, messageStates,
   messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends,
@@ -43,6 +43,7 @@ export const WIPED_TABLES: readonly string[] = [
   "drafts",
   "message_tags",
   "away_replies",
+  "screener_learning",
   "unsubscribe_examined",
   "unsubscribe_records",
   "attachments",
@@ -223,6 +224,7 @@ export async function deleteMailboxRows(
      the mailbox could not be removed at all once the responder had replied to anybody.
      `away_replies` is keyed on the mailbox as well as the message. */
   await db.delete(awayReplies).where(eq(awayReplies.mailboxId, mailboxId));
+  await db.delete(screenerLearning).where(eq(screenerLearning.mailboxId, mailboxId));
   // The per-message marks hang off the record by foreign key, so they go first.
   await db.delete(unsubscribeExamined).where(inArray(unsubscribeExamined.messageId, ownMessages));
   await db.delete(unsubscribeRecords).where(eq(unsubscribeRecords.mailboxId, mailboxId));

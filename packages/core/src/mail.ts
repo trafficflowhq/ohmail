@@ -117,3 +117,5 @@ export * from "./log.js";
 // that keeps a letter without one of its rows read the same classes.
 export * from "./statement-fault.js";
 export * from "./privacy/tracker-blocker.js";
+
+export { askScreenerRewrite, screenerLearnedReason, SCREENER_WEBINAR_REASON, type ScreenerRewriteInput, type ScreenerRewriteReference } from "./screener-learning-rewrite.js";

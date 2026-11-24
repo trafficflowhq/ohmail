@@ -10,6 +10,7 @@ export {
 } from "./MailSettings.js";
 export {
   PairedScreenerSettings,
+  useScreenerLearningSettings,
   useScreenerWindowSetting,
   useSuggestionSettings,
   useUnsubscribeSetting,

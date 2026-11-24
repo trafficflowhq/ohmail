@@ -37,6 +37,7 @@ import { scopeSuffix, type StorageScope } from "../storage/scope.js";
  * all, and replaying one this build cannot read would file mail somewhere nobody chose.
  */
 export interface ScreenerIntent {
+  shownSuggestionId?: string;
   v: 1;
   /** The queue row's id — a representative MESSAGE id on a derived row, a fixture id otherwise. */
   id: string;

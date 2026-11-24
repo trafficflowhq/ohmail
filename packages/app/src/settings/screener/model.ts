@@ -1,3 +1,4 @@
+import type { ScreenerLearningEdit, ScreenerLearningView } from "@ohmail/wire";
 import type { AskLeave } from "../../host/device.js";
 import { NONE, type HostContract } from "../../host/index.js";
 
@@ -139,7 +140,15 @@ export interface ScreenerReview {
   open(): void;
 }
 
+export interface ScreenerLearner {
+  readonly mailboxes: ReadonlyArray<{ id: string; label: string }>;
+  readonly metered: boolean;
+  read(mailboxId: string): Promise<ScreenerLearningView>;
+  change(mailboxId: string, edit: ScreenerLearningEdit): Promise<ScreenerLearningView>;
+}
+
 export interface ScreenerModel {
+  readonly learning?: ScreenerLearner | null;
   readonly ohbox: ScreenerOhbox | null;
   readonly window: ScreenerWindow | null;
   readonly suggest: ScreenerSuggest | null;

@@ -34,7 +34,7 @@ export const ENTITLEMENTS_CALL_BUDGET_MS = 5_000;
 
 /** The program's paths — a closed union, so `post` cannot be sent one nobody has priced. */
 export type EntitlementsPath =
-  | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release"
+  | "/v1/access" | "/v1/spend" | "/v1/spend/quote" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release"
   | "/v1/checkout/confirm" | "/v1/usage" | "/v1/ops";
 
 /**
@@ -496,8 +496,10 @@ function spendOf(body: unknown): SpendOutcome | { bad: string } {
     case "duplicate": {
       if (typeof b.attempt !== "string" || b.attempt.length === 0) return { bad: "attempt" };
       return b.verdict === "ok"
-        ? { verdict: "ok", charged: true, attempt: b.attempt }
-        : { verdict: "duplicate", charged: false, attempt: b.attempt };
+        ? { verdict: "ok", charged: true, attempt: b.attempt,
+          ...(b.chargedCredits === 1 || b.chargedCredits === 2 ? { chargedCredits: b.chargedCredits } : {}) }
+        : { verdict: "duplicate", charged: false, attempt: b.attempt,
+          ...(b.chargedCredits === 0 ? { chargedCredits: 0 as const } : {}) };
     }
     case "insufficient":
     case "refused": {
@@ -842,6 +844,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
 
     accessFaults: () => accessFaultCount,
 
+    async quoteScreenerLearning(accountId, count): Promise<number | null> {
+      const res = await post("/v1/spend/quote", { accountId, action: "screener", count, learning: true });
+      const amount = res?.status === 200 && res.bodyIsJson ? obj(res.body)?.credits : null;
+      return typeof amount === "number" && Number.isSafeInteger(amount) && amount >= count && amount <= 2 * count
+        ? amount : null;
+    },
+
     async spend(
       accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,
     ): Promise<SpendOutcome> {
@@ -850,7 +859,11 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       // below as `fault` — which would degrade AI silently on a caller bug. Same input, same
       // named refusal, whichever implementation is composed.
       assertAttemptKey(action, attemptKey);
-      const res = await post("/v1/spend", { accountId, action, attemptKey, ...(meta ? { meta } : {}) });
+      const { learning, ...details } = meta ?? {};
+      const res = await post("/v1/spend", {
+        accountId, action, attemptKey, ...(meta ? { meta: details } : {}),
+        ...(action === "screener" && learning === true ? { learning: true } : {}),
+      });
       if (!res || res.status !== 200) return { verdict: "fault" };
       const read = res.bodyIsJson ? spendOf(res.body) : { bad: "body" };
       if ("bad" in read) {

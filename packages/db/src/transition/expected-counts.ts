@@ -19,6 +19,8 @@ export interface MappedTable {
   readonly journal: MapJournal;
   /** Carries `account_id`: what an erasure, an export and the isolation's policies must each cover. */
   readonly account: boolean;
+  /** Created by the ordinary migrator after the transition window. */
+  readonly afterWindow?: true;
   /** `same`: as many rows as before. `empty`: a table the window makes and fills with nothing. Else SQL: one bigint. */
   readonly rows: "same" | "empty" | { readonly sql: string };
 }
@@ -122,6 +124,7 @@ export const MAP_2_0: Readonly<Record<string, MappedTable>> = {
   rule_removals: t("mail", true),
   rules: t("mail", true),
   scheduled_send_files: t("mail", true),
+  screener_learning: { ...t("mail", true, "empty"), afterWindow: true }, // mail migration 0222
   sessions: t("mail", true),
   snippets: t("mail", true),
   tags: t("mail", true),
@@ -188,11 +191,13 @@ export function holds(kind: StoreKind, journal: MapJournal): boolean {
 }
 
 /** The tables of the map a store of `kind` holds after the transition, by name. */
-export function tablesOf(kind: StoreKind): string[] {
-  return Object.keys(MAP_2_0).filter((name) => holds(kind, MAP_2_0[name]!.journal)).sort();
+export function tablesOf(kind: StoreKind, stage: "window" | "current" = "current"): string[] {
+  return Object.entries(MAP_2_0)
+    .filter(([, table]) => holds(kind, table.journal) && (stage === "current" || !table.afterWindow))
+    .map(([name]) => name).sort();
 }
 
 /** The tables that carry the account on a store of `kind`. */
-export function accountTablesOf(kind: StoreKind): string[] {
-  return tablesOf(kind).filter((name) => MAP_2_0[name]!.account);
+export function accountTablesOf(kind: StoreKind, stage: "window" | "current" = "current"): string[] {
+  return tablesOf(kind, stage).filter((name) => MAP_2_0[name]!.account);
 }

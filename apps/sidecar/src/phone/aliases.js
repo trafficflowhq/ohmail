@@ -132,10 +132,9 @@ const PACKAGE_ALIASES = {
      constructs one. The phone's app never asks for either route and the phone relays for nobody,
      so the archiver and its deflate library (about 316 KB) stay out and the shim refuses by name. */
   jszip: path.join(SHIMS, "jszip.js"),
-  /* sanitize-html parses CSS only for a `style` attribute its policy allows. The one policy this
-     engine runs (`packages/services/src/outbound-html.ts`) allows `a[href]` alone, so the parser
-     (about 211 KB) is unreachable; if a policy ever allows `style`, the shim's throw lands in
-     sanitize-html's own catch, which drops the attribute. */
+  /* The outbound sanitizer admits fixed style values by exact match with CSS parsing disabled.
+     The parser (about 211 KB) stays out. If parsing is enabled, sanitize-html catches the shim's
+     error and drops the attribute. */
   postcss: path.join(SHIMS, "postcss.js"),
 };
 

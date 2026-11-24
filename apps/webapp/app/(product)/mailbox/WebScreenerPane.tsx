@@ -7,7 +7,7 @@ import { useMailState } from "@ohmail/app-logic/mail-state";
 import { hasLiveMailbox, useSeedOfferHere } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 import { useFrame } from "@ohmail/app/frame";
 import { ScreenerPane, screenerOffers } from "@ohmail/app/settings/screener";
-import { useScreenerWindowSetting, useSuggestionSettings, useUnsubscribeSetting } from "@ohmail/app/settings/browser";
+import { useScreenerLearningSettings, useScreenerWindowSetting, useSuggestionSettings, useUnsubscribeSetting } from "@ohmail/app/settings/browser";
 import { useOhboxPreference, useFiledLetters } from "./use-screening-preferences";
 
 export function WebScreenerPane() {
@@ -18,6 +18,7 @@ export function WebScreenerPane() {
   const seed = useSeedOfferHere();
   const unsubscribe = useUnsubscribeSetting();
   const window = useScreenerWindowSetting();
+  const learning = useScreenerLearningSettings();
   const t = useTranslations("seed");
   const ohbox = useOhboxPreference(host.wires.screening);
   const filed = useFiledLetters(host.wires.autoFiled);
@@ -25,7 +26,7 @@ export function WebScreenerPane() {
   if (confirmedAccountForScope(host) === null) return null;
   return <ScreenerPane model={{
     ohbox: ohbox && { ...ohbox, holdLeave: (ask) => host.device.address.holdLeave(ask, "#/settings/screener") },
-    filed, ...suggestions, ownSuggest: null,
+    filed, ...suggestions, ownSuggest: null, learning,
     window,
     unsubscribe,
     review: offers.review && seed && consent.known && hasLiveMailbox(mailboxes) === true ? {

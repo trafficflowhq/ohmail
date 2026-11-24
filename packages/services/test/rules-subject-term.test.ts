@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { dbFor } from "../src/context.js";
+import { bridgeTx, dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, rules } from "@trafficflow/db";
+import { accounts, mailboxes, messages, changeScreenerLearning, readScreenerLearning, rules } from "@trafficflow/db";
 import { MAX_SUBJECT_CONTAINS_CHARS, rulesService } from "../src/rules-service.js";
 import { mutated } from "./helpers.js";
 import type { Db, ServiceContext } from "../src/context.js";
@@ -220,4 +220,21 @@ describe("editing the term", () => {
     expect(after.kind).toBe("sender");
     expect(after.subjectContains).toBe(TOKEN);
   });
+});
+
+
+it("learns from a committed Screener choice on mail still in the Ohbox", async () => {
+  const { db, ctx } = await world();
+  const mailboxId = randomUUID(), messageId = randomUUID();
+  const scope = { accountId: ctx.accountId, mailboxId };
+  await db.insert(mailboxes).values({ id: mailboxId, accountId: ctx.accountId, provider: "imap", address: "box@example.test" });
+  await db.insert(messages).values({
+    id: messageId, ...scope, fromAddress: SENDER, subject: "Webinar invitation",
+    dedupKey: "sample", bodyHash: "sample", noAi: false,
+  });
+  await changeScreenerLearning(bridgeTx(ctx.db), scope, { kind: "notice" }, NOW);
+  await createRule(ctx, { ...BODY, screenerMessageId: messageId });
+  expect((await readScreenerLearning(bridgeTx(ctx.db), scope, NOW))?.lessons).toMatchObject([
+    { topic: "webinar", kind: "independent", chosen: "ohmail/News" },
+  ]);
 });

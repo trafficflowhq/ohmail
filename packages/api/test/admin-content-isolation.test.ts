@@ -31,7 +31,7 @@ import {
   idempotencyKeys,
   kbEntries,
   learningSignals,
-  mailboxCredentials,
+  mailboxCredentials, screenerLearning,
   mailboxProfileMirror,
   mailboxes,
   messageFailures,
@@ -1645,6 +1645,10 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   const mailboxId = await seedMailbox(db, {
     accountId, address: `ops-${tag}@example.com`, folders: [{ folder: "INBOX" }],
   });
+  await db.insert(screenerLearning).values({ accountId, mailboxId, data: {
+    text: `Learning note ${tag}`, lessons: [], enabled: true, notice: false,
+    updatedAt: null, revision: 0, rewrittenRevision: 0,
+  } });
   await db.insert(mailboxCredentials).values({
     mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: `enc-${tag}`, keyVersion: 1,
     meta: { host: "imap.example.com", user: `ops-${tag}@example.com` },

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
-  mailboxes, organizerRequests, markRequestsApplied, markRequestsRefused, markRequestsSent,
+  mailboxes, readScreenerLearning, updateScreenerLearning, organizerRequests, markRequestsApplied, markRequestsRefused, markRequestsSent,
 } from "@trafficflow/db";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
@@ -137,4 +137,42 @@ describe("a reader's Screening change", () => {
     expect("change" in answer).toBe(false);
     expect("change" in (await get(w, s.token))).toBe(false);
   });
+});
+
+it("reads learning on PATCH with only a mailbox and rejects a malformed mailbox UUID", async () => {
+  const { w, token, accountId } = await readerWorld();
+  const [mailbox] = await w.db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
+  const learningMailbox = mailbox!.id;
+  const response = await H(req("GET", `/account/screening?learningMailbox=${learningMailbox}`, { bearer: token }), w.deps);
+  expect(response.status).toBe(200);
+  expect(await patch(w, token, { learningMailbox })).toEqual(await response.json());
+  expect((await H(req("GET", "/account/screening?learningMailbox=invalid", { bearer: token }), w.deps)).status).toBe(400);
+});
+
+it.each([
+  { kind: "forget", id: "a".repeat(64) },
+  { kind: "reset" },
+  { kind: "enable", enabled: false },
+])("allows a lapsed account to remove learning (%j)", async (learningEdit) => {
+  const { w, token, accountId } = await readerWorld();
+  const [mailbox] = await w.db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
+  const learningMailbox = mailbox!.id;
+  const scope = { accountId, mailboxId: learningMailbox };
+  await updateScreenerLearning(w.db, scope, state => ({
+    ...state, notice: false, text: "Keep receipts.", revision: 1, rewrittenRevision: 1,
+    lessons: [{
+      id: "a".repeat(64), decisionId: "decision", messageRef: "message", at: FIXED_NOW.getTime(),
+      kind: "independent", suggested: null, previous: null, chosen: "ohmail/Receipts", topic: "receipt",
+    }],
+  }));
+  const deps = { ...w.deps, services: { ...w.deps.services, entitlementsPort: {
+    access: async () => ({ ok: false, reason: "payment_required" }),
+  } } };
+  const request = (body: unknown) =>
+    H(req("PATCH", "/account/screening", { bearer: token, body: JSON.stringify(body) }), deps);
+  expect((await request({ ohboxBar: "Changed" })).status).toBe(402);
+  expect((await request({ learningMailbox, learningEdit: { kind: "enable", enabled: true } })).status).toBe(402);
+  expect((await request({ learningMailbox, learningEdit: { kind: "notice" } })).status).toBe(402);
+  expect((await request({ learningMailbox, learningEdit })).status).toBe(200);
+  expect(await readScreenerLearning(w.db, scope, FIXED_NOW)).toMatchObject({ text: "", lessons: [] });
 });

@@ -187,6 +187,8 @@ export function useWebHost(
       screening: {
         read: () => screeningSettings.get(scope),
         change: (change) => screeningSettings.set(change, scope),
+        readLearning: (mailboxId) => screeningSettings.readLearning(mailboxId, scope),
+        changeLearning: (mailboxId, edit) => screeningSettings.changeLearning(mailboxId, edit, scope),
       },
       autoFiled: {
         list: () => screenerAutoFiled.get(scope),

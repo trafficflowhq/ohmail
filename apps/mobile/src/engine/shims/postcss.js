@@ -2,10 +2,8 @@
  * THE CSS PARSER, REFUSED — imported at module scope by sanitize-html, reached only for a `style`
  * attribute the sanitizing policy allows.
  *
- * The engine's one policy (`packages/services/src/outbound-html.ts`) allows `a[href]` alone, so
- * no `style` attribute reaches the parser. If a policy ever allows one, this throw lands in
- * sanitize-html's own catch around the parse, which removes the attribute: the result fails
- * closed rather than passing unparsed CSS.
+ * The outbound policy admits fixed style values by exact match with CSS parsing disabled.
+ * If parsing is enabled, sanitize-html catches this error and drops the attribute.
  */
 "use strict";
 

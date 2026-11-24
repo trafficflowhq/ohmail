@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostCapabilities, HostWires } from "../../../src/host/index.js";
 import {
@@ -379,4 +379,79 @@ it("keeps edited Ohbox words until the person chooses to discard them", async ()
   expect(next).toHaveBeenCalledOnce();
   expect(field.value).toBe(stored);
   expect(ask).toBeUndefined();
+});
+
+it("shows learning as read-only and asks before starting over", async () => {
+  const read = vi.fn(async () => ({
+    enabled: true,
+    aiEnabled: true,
+    notice: false,
+    text: "Screen out webinar invitations.",
+    updatedAt: 1,
+    lessons: [
+      {
+        id: "first",
+        topic: "webinar",
+        kind: "correction",
+        suggested: "ohmail/News",
+        previous: null,
+        chosen: "ohmail/Screened",
+      },
+    ],
+  }));
+  const change = vi.fn(async () => ({ ...(await read()), text: "", lessons: [], updatedAt: null }));
+  drawn(
+    <ScreenerPane
+      model={only({
+        suggest: { ...STATES.rest.model.suggest!, priced: true },
+        learning: { mailboxes: [{ id: "mail", label: "Work" }], metered: true, read, change },
+      })}
+    />,
+  );
+  await settle();
+  expect(screen.getByText("Screen out webinar invitations.")).toBeTruthy();
+  expect(screen.queryByText("1 credit per sender")).toBeNull();
+  expect(
+    screen.getByText("Suggestions use 1.5 credits once the Screener has learned something for this mailbox."),
+  ).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+  expect(change).not.toHaveBeenCalled();
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Start over" }));
+  await settle();
+  expect(change).toHaveBeenCalledWith("mail", { kind: "reset" });
+});
+
+it("shows the learned card only with account AI and switches mailboxes through the shared menu", async () => {
+  const read = vi.fn(async (id: string) => ({
+    aiEnabled: id === "work",
+    enabled: true,
+    notice: false,
+    updatedAt: 1,
+    lessons: [],
+    text: "Keep shop receipts in Receipts.",
+  }));
+  drawn(
+    <ScreenerPane
+      model={only({
+        learning: {
+          mailboxes: [
+            { id: "work", label: "Work" },
+            { id: "home", label: "Home" },
+          ],
+          read,
+          change: async (id) => read(id),
+          metered: true,
+        },
+      })}
+    />,
+    "en",
+  );
+  await settle();
+  expect(screen.getByText("Keep shop receipts in Receipts.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Mailbox" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "Home" }));
+  await settle();
+  expect(read.mock.calls).toEqual([["work"], ["home"]]);
+  expect(screen.queryByText("What the Screener learned")).toBeNull();
 });

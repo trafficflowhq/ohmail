@@ -227,6 +227,10 @@ const PINNED: Record<string, { calls: number; why: string }> = {
     calls: 3,
     why: "The Calendar confirmation sheet formats recurrence weekdays and the date of the change. These are event dates.",
   },
+  "packages/app/src/calendar/RepeatMenu.tsx": {
+    calls: 1,
+    why: "The Calendar repeat picker formats short and long weekday labels for weekly recurrence.",
+  },
   "packages/app/src/stream/StreamList.tsx": {
     calls: 1,
     why: "The stream menu formats the unread count using the reader's digit grouping. No date is formatted here.",

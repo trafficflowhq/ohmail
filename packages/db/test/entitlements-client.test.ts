@@ -2711,3 +2711,18 @@ it.each([
   expect(c.paths).toHaveLength(prior.length + 2);
   expect(c.port.accessFaults!()).toBe(1);
 });
+
+it("quotes learning live and sends the learning mode on a Screener purchase", async () => {
+  const c = client([
+    { status: 200, body: { credits: 5 } },
+    { status: 200, body: { verdict: "ok", attempt: "example", chargedCredits: 2 } },
+  ]);
+  expect(await c.port.quoteScreenerLearning!(ACC, 3)).toBe(5);
+  expect(await c.port.spend(ACC, "screener", "m1", { messageId: "m1", learning: true })).toMatchObject({
+    verdict: "ok", chargedCredits: 2,
+  });
+  expect(c.bodies.map(body => JSON.parse(body))).toEqual([
+    { accountId: ACC, action: "screener", count: 3, learning: true },
+    { accountId: ACC, action: "screener", attemptKey: "m1", meta: { messageId: "m1" }, learning: true },
+  ]);
+});

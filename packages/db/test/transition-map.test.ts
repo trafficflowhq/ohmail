@@ -44,9 +44,11 @@ describe("the transition's map", () => {
     const formula = (t: string): string => { const r = MAP_2_0[t]!.rows; return typeof r === "string" ? r : "a formula"; };
     const moved = Object.keys(MAP_2_0).filter((t) => formula(t) === "a formula").sort();
     expect(moved).toEqual(["account_counters", "auth_throttle", "pass_progress"]);
-    const empty = Object.keys(MAP_2_0).filter((t) => formula(t) === "empty").sort();
+    const empty = tablesOf("server", "window").filter((t) => formula(t) === "empty");
     expect(empty).toEqual(["account_closures", "cal_alarms", "cal_attendees", "cal_calendars", "cal_connections", "cal_credentials",
       "cal_events", "cal_links", "cal_push_channels", "cal_settings", "cal_suggestions", "cal_writes", "message_invitations"]);
+    expect(tablesOf("server").filter(t => !tablesOf("server", "window").includes(t))).toEqual(["screener_learning"]);
+    expect(formula("screener_learning")).toBe("empty");
   });
 });
 

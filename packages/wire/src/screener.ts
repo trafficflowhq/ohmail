@@ -55,6 +55,8 @@ export interface ScreenerItem {
     spam: boolean;
     confidence: number;           // 0..1
     rationale: string;
+    id?: string;
+    learnedReason?: "webinar";
     failed?: true;
     /**
      * WHICH FACT OHMAIL CHECKED DECIDED THIS — absent for every suggestion the model's own answer
@@ -95,6 +97,9 @@ export interface ScreenerSuggestionDTO {
   destination: Folder;
   spam: boolean;
   confidence: number;
+  personalized?: true;
+  topic?: string;
+  learnedReason?: "webinar";
   failed?: true;
   reasonCode?: SenderReasonCode;
   reasonBrand?: string;
@@ -128,6 +133,9 @@ export interface ScreenerSuggestionEntity {
   destination: string;
   spam: boolean;
   confidence: number;
+  personalized?: true;
+  topic?: string;
+  learnedReason?: "webinar";
   failed?: true;
   reasonCode?: string;
   reasonBrand?: string;
@@ -267,6 +275,7 @@ export interface ScreenerSenderDTO {
      * of the mirror and the session's overlay (`joinSuggestion`). Absent on a fixture row and on
      * an answer the overlay holds; client-side only, never on the wire.
      */
+    learnedReason?: "webinar";
     id?: string;
     noAnswer?: "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable" | "model_declined";
     /**
@@ -331,5 +340,33 @@ export interface ScreenerSenderDTO {
 /** The exact held letters an interactive price approved for a single request. */
 export interface ScreenerQuoteGrant {
   readonly proof: string;
-  readonly pairs: ReadonlyArray<{ readonly sender: string; readonly messageId: string }>;
+  readonly pairs: ReadonlyArray<{ readonly sender: string; readonly messageId: string; readonly learning?: true }>;
+}
+
+/** The generic, non-identifying topic of a Screener suggestion. */
+export type ScreenerTopic =
+  | "receipt" | "invoice" | "order" | "delivery" | "travel" | "newsletter" | "promotion"
+  | "webinar" | "event" | "social" | "job" | "survey" | "security" | "family" | "banking"
+  | "health" | "government" | "subscription" | "community" | "personal" | "work" | "other";
+
+export type ScreenerLearningEdit =
+  | { kind: "enable"; enabled: boolean }
+  | { kind: "notice" }
+  | { kind: "reset" }
+  | { kind: "forget"; id: string };
+
+export interface ScreenerLearningView {
+  enabled: boolean;
+  aiEnabled: boolean;
+  notice: boolean;
+  text: string;
+  updatedAt: number | null;
+  lessons: Array<{
+    id: string;
+    kind: string;
+    topic: string;
+    suggested: string | null;
+    previous: string | null;
+    chosen: string;
+  }>;
 }

@@ -101,6 +101,7 @@ export default defineConfig({
       // first draft was Postgres-only and every other cutline test in the tree is a Postgres
       // twin, so this run is the only thing that could have refused it.
       "packages/db/test/sqlite-cutline.test.ts",
+      "packages/db/test/screener-learning.test.ts",
       // A rule's match as every SQL reader keys it: the phone runs the same readers.
       "packages/db/test/rule-match-sql.test.ts",
       // Mail 0144's two backfill classes and their controls, through this store's own file.

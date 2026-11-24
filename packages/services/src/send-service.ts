@@ -3278,8 +3278,7 @@ export class SendService {
         }
       }
 
-      // Re-sanitize at the envelope boundary for every draft writer. Add recipient-client styles here,
-      // after the grammar check, so draft storage and editing still use the same unstyled markup.
+      // The saved draft already carries its recipient formatting and plain-text alternative.
       const delivery = d.html ? prepareOutboundDelivery(d.html, d.body) : null;
       const html = delivery?.html ?? null;
       const text = delivery?.text ?? d.body;

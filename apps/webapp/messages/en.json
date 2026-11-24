@@ -852,6 +852,7 @@
     "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
   },
   "screener": {
+    "learnedWebinar": "You usually screen out webinar invitations",
     "pendingHolderUnknown": "whoever organizes this mailbox",
     "autoDetected": "Auto-detected",
     "handedBackWhy": "Nothing organizes it, so new senders go straight to the Ohbox.",
@@ -1042,7 +1043,7 @@
       "aria": "How many waiting senders to suggest for",
       "autoTitle": "Suggest for new senders automatically",
       "autoWhat": "While this is on, ohmail gets a suggestion for new senders as their mail arrives, and shows what it thinks and why — at most {count, plural, one {one sender} other {# senders}} at a time. The advice reaches every device you are signed in on within seconds. Senders already waiting are covered in batches of the same size when you open the Screener.",
-      "autoCost": "Each sender uses one credit of your AI budget. When the budget runs out it stops, and nothing else changes.",
+      "autoCost": "Suggestions use your AI budget. They pause when it runs out.",
       "autoQuoteDisclosure": "To calculate the quote, ohmail sends the email addresses of the waiting senders in this batch to your server. The quote does not ask an AI model or use credits.",
       "autoQuoteApprove": "Get a quote",
       "autoDecides": "It decides nothing. Every sender still waits for you, and no mail moves until you say so.",
@@ -7280,11 +7281,61 @@
     "summaryTime": "Daily summary time"
   },
   "settingsScreener": {
+    "learning": {
+      "mailbox": "Mailbox",
+      "switch": "Learn from my choices",
+      "description": "The Screener learns from your choices.",
+      "price": "Suggestions use 1.5 credits once the Screener has learned something for this mailbox.",
+      "notice": "Learning is on for this mailbox",
+      "ok": "OK",
+      "settings": "Settings",
+      "title": "What the Screener learned",
+      "empty": "After your first choices",
+      "updated": "Updated from your recent choices",
+      "recent": "Recent lessons",
+      "forget": "Forget",
+      "reset": "Start over",
+      "cancel": "Cancel",
+      "resetSummary": "This clears what the Screener learned for this mailbox.",
+      "failed": "Could not load or change Screener learning.",
+      "moved": "{topic}: {from} → {to}",
+      "chosen": "{topic} → {to}",
+      "topics": {
+        "webinar": "Webinar invitation",
+        "receipt": "Shop receipt",
+        "order": "Order confirmation",
+        "delivery": "Delivery update",
+        "newsletter": "Newsletter",
+        "event": "Event invitation",
+        "promotion": "Special offer",
+        "invoice": "Invoice or bill",
+        "travel": "Booking or travel",
+        "social": "Social notification",
+        "job": "Job alert",
+        "survey": "Survey",
+        "security": "Account or security notice",
+        "family": "School or family",
+        "banking": "Banking notice",
+        "health": "Health message",
+        "government": "Government notice",
+        "subscription": "Subscription",
+        "community": "Community or club",
+        "personal": "Personal message",
+        "work": "Work thread",
+        "other": "Other mail"
+      },
+      "places": {
+        "INBOX": "Ohbox",
+        "ohmail/News": "News",
+        "ohmail/Receipts": "Receipts",
+        "ohmail/Screened": "Screened out",
+        "ohmail/Quarantine": "Spam"
+      }
+    },
     "notApplied": "Not applied",
     "suggestions": "Suggestions",
     "details": "About {title}",
-    "confidence": "Only Screen out and Spam, at 90% or more.",
-    "creditPerSender": "1 credit per sender"
+    "confidence": "Only Screen out and Spam, at 90% or more."
   },
   "settingsAi": {
     "notRead": "Not read",

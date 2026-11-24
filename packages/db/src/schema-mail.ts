@@ -13,6 +13,7 @@ import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb
 import { shapeCheck } from "./closed-set-shape.js";
 import { sql, desc } from "drizzle-orm";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
+import type { ScreenerLearningState } from "./screener-learning-state.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1342,6 +1343,7 @@ export const routingDecisions = pgTable("routing_decisions", {
    * wire, not granted to staff. LAST.
    */
   senderReason: text("sender_reason"),
+  screenerTopic: text("screener_topic"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
   ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),
@@ -1965,6 +1967,19 @@ export const organizerRequests = pgTable("organizer_requests", {
   // `GET /screener` and asks by ACCOUNT, so the index above does not serve it — a different
   // leading column is a different index, and the miss is invisible to every test.
   ixAccountState: index("organizer_requests_account_state_idx").on(t.accountId, t.state),
+}));
+
+export const screenerLearning = pgTable("screener_learning", {
+  mailboxId: uuid("mailbox_id").primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  data: jsonb("data").$type<ScreenerLearningState>().notNull(),
+}, (t) => ({
+  mailbox: foreignKey({
+    name: "screener_learning_mailbox_account_fk",
+    columns: [t.mailboxId, t.accountId],
+    foreignColumns: [mailboxes.id, mailboxes.accountId],
+  }).onDelete("cascade"),
+  account: index("screener_learning_account_idx").on(t.accountId),
 }));
 
 /**

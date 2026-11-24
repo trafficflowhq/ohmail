@@ -155,9 +155,10 @@ export function cycleTailSection(scope: WorkerScope): void {
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
                 // meter, so it has no open charge to clear or refund (`ClassifierCircuit.port`).
                 classifier: scope.classifierCircuit?.port(),
-                ...(scope.spend ? { credits: scope.spend, access: scope.spend } : {}),
+                ...(scope.spend ? { credits: scope.spend, access: scope.spend } : { unmeteredLearning: true as const }),
                 ...(scope.obligations ? { obligations: scope.obligations } : {}),
                 ...(scope.usageRelay ? { usageHook: scope.usageRelay.hook } : {}),
+                ...(scope.usageBuffer ? { recordRewriteUsage: (line) => scope.usageBuffer?.push(line) } : {}),
                 ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
               },
             );
@@ -693,9 +694,10 @@ export function cycleTailSection(scope: WorkerScope): void {
                 // No mailbox, deliberately: this pass spends through `spend`, never the circuit's
                 // meter, so it has no open charge to clear or refund (`ClassifierCircuit.port`).
                 classifier: scope.classifierCircuit?.port(),
-                ...(scope.spend ? { credits: scope.spend, access: scope.spend } : {}),
+                ...(scope.spend ? { credits: scope.spend, access: scope.spend } : { unmeteredLearning: true as const }),
                 ...(scope.obligations ? { obligations: scope.obligations } : {}),
                 ...(scope.usageRelay ? { usageHook: scope.usageRelay.hook } : {}),
+                ...(scope.usageBuffer ? { recordRewriteUsage: (line) => scope.usageBuffer?.push(line) } : {}),
                 ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
               },
             );

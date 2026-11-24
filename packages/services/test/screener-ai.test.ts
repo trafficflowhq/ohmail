@@ -151,12 +151,14 @@ describe("GET is a READ: `list` cannot reach the model", () => {
 
     expect((await svc.list(w.ctx, {})).items[0]!.aiSuggestion).toBeNull();
 
-    await svc.suggest(w.ctx, { senders: ["alice@ex.example"] });
+    const bought = await svc.suggest(w.ctx, { senders: ["alice@ex.example"] });
+    const id = bought.suggestions[0]?.id;
+    expect(id).toEqual(expect.any(String));
 
     const after = await svc.list(w.ctx, {});
     expect(after.items[0]!.aiSuggestion)
       .toEqual({
-        decision: "yes", destination: "INBOX", spam: false,
+        id, decision: "yes", destination: "INBOX", spam: false,
         confidence: 0.92, rationale: "looks like a real person",
       });
     // …and reading it again still calls nothing: one model call in the whole test.
@@ -170,10 +172,12 @@ describe("GET is a READ: `list` cannot reach the model", () => {
     const svc = new ScreenerService({
       adapter: new FakeAdapter(), classifier: new SpyClassifier(NO), credits: w.credits, pricing: PLANE_PRICING,
     });
-    await svc.suggest(w.ctx, { senders: ["bulk@ex.example"] });
+    const bought = await svc.suggest(w.ctx, { senders: ["bulk@ex.example"] });
+    const id = bought.suggestions[0]?.id;
+    expect(id).toEqual(expect.any(String));
     expect((await svc.list(w.ctx, {})).items[0]!.aiSuggestion)
       .toEqual({
-        decision: "no", destination: "ohmail/Screened", spam: false,
+        id, decision: "no", destination: "ohmail/Screened", spam: false,
         confidence: 0.71, rationale: "bulk sender",
       });
   });

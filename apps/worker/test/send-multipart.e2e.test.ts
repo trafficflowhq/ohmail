@@ -107,7 +107,7 @@ describe("a generated reply leaves as multipart/alternative (GreenMail SMTP+IMAP
     const parsed = await normalizeMime(source);
     expect(parsed.textBody.trim()).toBe(MODEL_BODY);
     expect(parsed.htmlBody).toBeTruthy();
-    expect(parsed.htmlBody!).toContain("<p>Hi Alice</p>");
+    expect(parsed.htmlBody!).toContain('<p style="margin:0">Hi Alice</p>');
     expect(parsed.htmlBody!).toContain("<br />");
     // And the markup half is byte-identical to what was stored — the send-time sanitizer pass is
     // a no-op on promoted markup rather than a second, differently-rendered copy.

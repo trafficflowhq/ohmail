@@ -1,6 +1,6 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
-  rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
+  rules, messages, recordScreenerChoice, reviseScreenerDecision, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
   ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys, endGraduationOfRule, endOwedWalk,
   ruleKeyIsOwnAddress, owesWholeWalk, pendingRefileFrom, clearRuleRemovals, recordRuleRemovals, type FoundRule, type OrganizedBy, type RuleKey, type Tx,
 } from "@trafficflow/db";
@@ -22,6 +22,10 @@ import type { CreateRuleBody, Folder, PatchRuleBody, RuleDTO } from "@ohmail/wir
 
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
+
+function screenerReference(value: unknown): string | null {
+  return typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value) ? value : null;
+}
 
 const KINDS = new Set(["sender", "domain", "header"]);
 /** The six canonical folders a rule may route to (core `Destination`). */
@@ -431,6 +435,23 @@ export class RulesService {
         match,
       });
       const seq = out.lastSeq === null ? null : Number(out.lastSeq);
+      const messageId = screenerReference(body.screenerMessageId);
+      if (seq !== null && messageId && body.enabled !== false && subjectContains === null && bodyContains === null
+        && (kind === "sender" || kind === "domain")) {
+        const [mail] = await tx.select({ from: messages.fromAddress, mailboxId: messages.mailboxId })
+          .from(messages).where(and(eq(messages.accountId, ctx.accountId), eq(messages.id, messageId)));
+        if (mail && plan.organized.includes(mail.mailboxId)) {
+          const from = kind === "domain" ? mail.from.slice(mail.from.lastIndexOf("@") + 1) : mail.from;
+          if (ruleMatchKey(from) === ruleMatchKey(match)) {
+            const offer = screenerReference(body.shownSuggestionId);
+            await recordScreenerChoice(bridgeTx(tx), { accountId: ctx.accountId, mailboxId: mail.mailboxId }, {
+              messageId, decisionId: out.ruleId, actionId: String(seq), chosen: destination, at,
+              ...(offer ? { shownSuggestionId: offer } : {}),
+              ...(ctx.pressFloor ? { pressedAt: ctx.pressFloor } : {}),
+            });
+          }
+        }
+      }
 
       // Materialize INSIDE the tx so the DTO stored below is byte-for-byte the one the route returns.
       const rule = await materializeRule(asDb(tx), ctx.accountId, out.ruleId);
@@ -844,6 +865,13 @@ export class RulesService {
       // The key it moved onto has its rule again: that key's recorded removal ends.
       if (keyMoved) await clearRuleRemovals(bridgeTx(tx), ctx.accountId, [newKey]);
       const seq = (await recordRuleDelta(tx, ctx.accountId, [id], "update"))[0]!;
+      if (paused || keyMoved || keepProvenance) {
+        await reviseScreenerDecision(bridgeTx(tx), ctx.accountId, id, at);
+      } else if (destinationMoved) {
+        await reviseScreenerDecision(bridgeTx(tx), ctx.accountId, id, at, {
+          previous: acting.destination, chosen: set.destination as string, actionId: String(seq),
+        });
+      }
       if (paused) {
         await endLearnedRoutes(bridgeTx(tx), ctx.accountId, oldKey);
         if (keyMoved) await endLearnedRoutes(bridgeTx(tx), ctx.accountId, newKey);
@@ -960,6 +988,9 @@ export class RulesService {
       await recordRuleRemovals(bridgeTx(tx), ctx.accountId, [before], at);
       const seqs = await recordRuleDelta(tx, ctx.accountId, deleted.map((d) => d.id), "delete");
       const emitted = seqs[seqs.length - 1]!;
+      for (const { id: removedId } of deleted) {
+        await reviseScreenerDecision(bridgeTx(tx), ctx.accountId, removedId, at);
+      }
       await endLearnedRoutes(bridgeTx(tx), ctx.accountId, {
         kind: before.kind, match: before.matchKey, subjectContains: before.subjectContains, bodyContains: before.bodyContains,
       });

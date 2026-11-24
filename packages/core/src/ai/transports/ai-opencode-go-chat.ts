@@ -169,6 +169,11 @@ export function opencodeGoTransport(opts: AiKeyTransportOptions): AiTransport {
       return coerceScreeningResult(raw);
     },
 
+    async rewriteScreener(request, options) {
+      return call(opts.classifyModel, request.maxTokens, request.system, request.input,
+        "screening_note", request.schema, "screener", options);
+    },
+
     async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       const payload = draftUserPayload(input);
       const raw = await call(

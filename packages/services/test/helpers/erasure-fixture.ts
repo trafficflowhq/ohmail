@@ -56,7 +56,7 @@ import {
   kbEntries,
   learningSignals,
   listAddresses,
-  mailboxCredentials,
+  mailboxCredentials, screenerLearning,
   mailboxFolders,
   mailboxes,
   messageBodies,
@@ -361,6 +361,10 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
     accountId, provider: "imap", address: email,
   }).returning();
   const mailboxId = mb!.id;
+  await db.insert(screenerLearning).values({ accountId, mailboxId, data: {
+    text: `Learning note ${name}`, lessons: [], enabled: true, notice: false,
+    updatedAt: null, revision: 0, rewrittenRevision: 0,
+  } });
 
   await db.insert(mailboxCredentials).values({
     mailboxId, accountId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,

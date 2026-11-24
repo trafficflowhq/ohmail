@@ -31,6 +31,10 @@ const ADMITTED: Record<string, { count: number; why: string }> = {
     count: 2,
     why: "the page-scroll half: the ROOT scroller's scrollTop is viewport px under the zoom (measured)",
   },
+  "packages/app-logic/src/reader/thread-landing.ts": {
+    count: 3,
+    why: "the frame document's two caret range rectangles and one hit element rectangle use its own viewport, matching caret and hit-test coordinates without the shell zoom",
+  },
   "packages/ui/src/composites/StreamCard.tsx": {
     count: 1,
     why: "mirrors a `max-width: 640px` media query, and media queries are viewport px",
@@ -42,6 +46,10 @@ const ADMITTED: Record<string, { count: number; why: string }> = {
   "packages/ui/src/mail/Editor/recipient-drag.ts": {
     count: 4,
     why: "the lift's slop: two pointer reads compared, the hand's own travel; the ghost, the caret and the hit test go through cssPoint and cssRect",
+  },
+  "packages/letter-body/src/MessageBody.tsx": {
+    count: 1,
+    why: "the message frame's own window height minus its root client height measures the horizontal scrollbar strip inside that unzoomed document",
   },
 };
 

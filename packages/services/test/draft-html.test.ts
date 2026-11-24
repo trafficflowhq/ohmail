@@ -65,7 +65,8 @@ describe("a rich draft stores both parts, and the server owns the plain one", ()
     });
 
     expect(draft.html).toBe(
-      '<p>Yes — see <a href="https://a.example/q">the quote</a>.</p><ul><li>one</li><li>two</li></ul>',
+      '<p style="margin:0">Yes — see <a href="https://a.example/q">the quote</a>.</p>' +
+        '<ul style="margin-top:0;margin-bottom:0"><li>one</li><li>two</li></ul>',
     );
     // The link's TARGET survives into the plain part. A plaintext reader who gets the anchor
     // text and no href cannot follow the link, which is the two parts saying different things.
@@ -103,7 +104,7 @@ describe("a rich draft stores both parts, and the server owns the plain one", ()
     const { draft } = await draftsSvc.create(ctx, {
       mailboxId, html: `<p class="${padding}">short</p>`,
     });
-    expect(draft.html).toBe("<p>short</p>");
+    expect(draft.html).toBe('<p style="margin:0">short</p>');
   });
 });
 
@@ -112,7 +113,7 @@ describe("editing cannot leave the two parts disagreeing", () => {
     const { ctx, mailboxId } = await setup();
     const { draft } = await draftsSvc.create(ctx, { mailboxId, html: "<p>first</p>" });
     const upd = await draftsSvc.update(ctx, draft.id, { html: "<p><strong>second</strong></p>" });
-    expect(upd.draft.html).toBe("<p><strong>second</strong></p>");
+    expect(upd.draft.html).toBe('<p style="margin:0"><strong>second</strong></p>');
     expect(upd.draft.body).toBe("second");
   });
 
@@ -122,7 +123,7 @@ describe("editing cannot leave the two parts disagreeing", () => {
     await expect(draftsSvc.update(ctx, draft.id, { body: "plain now" }))
       .rejects.toMatchObject({ httpStatus: 400 });
     // …and nothing was written: the refusal happens before the UPDATE.
-    expect((await draftsSvc.get(ctx, draft.id)).html).toBe("<p><strong>rich</strong></p>");
+    expect((await draftsSvc.get(ctx, draft.id)).html).toBe('<p style="margin:0"><strong>rich</strong></p>');
   });
 
   it("allows the demotion when it is SPELT OUT — body plus an explicit html: null", async () => {
@@ -155,10 +156,30 @@ describe("the envelope carries both parts, and neither one carries a payload", (
     expect(res.status).toBe("sent");
 
     const msg = seen[0]!;
-    expect(msg.html).toBe('<p>Yes — see <a href="https://a.example/q">the quote</a>.</p>');
+    expect(msg.html).toBe('<p style="margin:0">Yes — see <a href="https://a.example/q">the quote</a>.</p>');
+    expect(msg.html).toBe(draft.html);
     expect(msg.text).toBe("Yes — see the quote (https://a.example/q).");
     // `imap.ts` forwards `msg.html` to BOTH nodemailer and the MailComposer that appends the
     // Sent copy, so this one object is why the delivered message and the stored copy agree.
+  });
+
+  it("keeps a legacy draft's saved body when updating its envelope before sending", async () => {
+    const { db, A, ctx, mailboxId } = await setup();
+    const html = "<h2>First</h2><p>Second</p><ul><li>Third</li></ul>";
+    const body = "First\nSecond\n- Third";
+    const [row] = await db.insert(drafts).values({
+      accountId: A, mailboxId, subject: "Draft", body, html,
+      to: [{ name: null, address: "you@example.com" }],
+      status: "draft",
+    }).returning();
+    const { draft } = await draftsSvc.update(ctx, row!.id, { subject: "Ready", html });
+    expect(draft.html).toBe(html);
+    expect(draft.body).toBe(body);
+
+    const { factory, seen } = captureAdapter();
+    await sendSvc.send(ctx, draft.id, "legacy-formatting", { openSendAdapter: factory });
+    expect(seen[0]!.html).toBe(html);
+    expect(seen[0]!.text).toBe(body);
   });
 
   it("a PLAIN draft still produces an envelope with no html part at all", async () => {

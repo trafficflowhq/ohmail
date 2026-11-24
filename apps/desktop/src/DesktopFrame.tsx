@@ -11,7 +11,7 @@ import type { CloudSessionWire } from "./cloud-session.js";
 import {
   BrowserGeneralSettings, BrowserSettingsAbove,
   BrowserFoldersPane, BrowserNotificationsPane, BrowserRulesPane, BrowserSignaturesPane, BrowserTagsPane,
-  useScreenerWindowSetting, useSuggestionSettings, useUnsubscribeSetting,
+  useScreenerLearningSettings, useScreenerWindowSetting, useSuggestionSettings, useUnsubscribeSetting,
 } from "@ohmail/app/settings/browser";
 import type { PaneBodyProps } from "@ohmail/app/settings";
 import { ScreenerPane, useFiledLetters } from "@ohmail/app/settings/screener";
@@ -270,6 +270,7 @@ function DesktopScreeningPane() {
   const filed = useFiledLetters(host.wires.autoFiled);
   const unsubscribe = useUnsubscribeSetting();
   const window = useScreenerWindowSetting();
+  const learning = useScreenerLearningSettings();
   const suggestions = useSuggestionSettings(
     host.capabilities.suggest === "pressed",
     host.capabilities.service === "managed",
@@ -278,7 +279,7 @@ function DesktopScreeningPane() {
   return screener === NONE ? null : <>
     {screener.render()}
     <ScreenerPane model={{
-      ohbox: null, filed, ...suggestions, ownSuggest: null, window, unsubscribe, review: null,
+      ohbox: null, filed, ...suggestions, ownSuggest: null, window, unsubscribe, review: null, learning,
     }} />
   </>;
 }

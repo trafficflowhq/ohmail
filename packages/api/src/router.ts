@@ -193,6 +193,8 @@ export interface RouteOptions {
   public?: boolean;
   /** Requires a recent 2FA (`withStepUp`); else 403 step_up_required. */
   stepUp?: boolean;
+  /** An otherwise locked route may admit an explicitly limited request under a lapsed plan. */
+  allowLapsedAccess?: (request: Request) => Promise<boolean>;
   /**
    * MIDDLEWARE THIS ROUTE CARRIES, run in its pipeline at the position `app.ts` names.
    *

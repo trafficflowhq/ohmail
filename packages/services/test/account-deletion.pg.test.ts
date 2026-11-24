@@ -101,6 +101,7 @@ describe.skipIf(!PG_UP)("Art. 17 erasure — real Postgres, real foreign keys", 
 
     // The seed is REAL before we believe anything about the delete.
     expect(await countFor("message_instances", seeded.accountId)).toBe(2);
+    expect(await countFor("screener_learning", seeded.accountId)).toBe(1);
     expect(await countFor("message_failures", seeded.accountId)).toBe(1);
     expect(await db.select().from(flagState).where(eq(flagState.messageId, seeded.messageId)))
       .toHaveLength(1);
@@ -111,6 +112,7 @@ describe.skipIf(!PG_UP)("Art. 17 erasure — real Postgres, real foreign keys", 
     expect(result.deleted.message_instances).toBe(2);
     expect(result.deleted.message_failures).toBe(1);
     expect(result.deleted.flag_state).toBe(1);
+    expect(await countFor("screener_learning", seeded.accountId)).toBe(0);
     // Both `routing_decisions` shapes — a pipeline decision and a bought screener suggestion,
     // which share the table and are told apart by `input_provenance`.
     expect(result.deleted.routing_decisions).toBe(2);

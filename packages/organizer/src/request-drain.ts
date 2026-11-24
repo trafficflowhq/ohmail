@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  applyScreenerDecision, confirmedScreenerRows, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
+  applyScreenerDecision, recordScreenerChoice, screenerMessageRef, confirmedScreenerRows, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
   applyMessageMove, validateMovePayload, validateFolderMovePayload, type MoveRefusal,
   resolveFolderDestination, type FolderDestinationRefusal,
   applyProfileUpdate, validateProfileUpdatePayload,
@@ -115,7 +115,7 @@ const ruleHandler = (kind: string): KindHandler => (payload, ctx) => {
   const req = validateRulePayload(kind, payload);
   if (!req) return null;
   return async (tx) => {
-    const r = await applyRuleRequest(tx, { accountId: ctx.accountId, payload: req, now: ctx.now, ownAddresses: ctx.ownAddresses });
+    const r = await applyRuleRequest(tx, { accountId: ctx.accountId, payload: req, now: ctx.now, ownAddresses: ctx.ownAddresses, learnFromPress: true });
     if (r.applied) return { applied: true };
     return { applied: false, reason: RULE_REFUSAL_REASON[r.refusal] };
   };
@@ -141,7 +141,7 @@ const KIND_HANDLERS: ReadonlyMap<string, KindHandler> = new Map(Object.entries<K
       // organizes and returns the rest as `heldElsewhere`, which the drain deliberately drops —
       // the requesting install already queued to every holder it could name, and a drain that
       // re-queued for mailboxes it reads as foreign would ping-pong two installs for ever.
-      await applyScreenerDecision(tx, {
+      const applied = await applyScreenerDecision(tx, {
         accountId: ctx.accountId,
         scope: decision.scope,
         address: decision.address,
@@ -162,6 +162,15 @@ const KIND_HANDLERS: ReadonlyMap<string, KindHandler> = new Map(Object.entries<K
         // The rows it would move are checked first, as on the install the press was made on.
         checkUnchecked: checkUncheckedById,
       });
+      if (decision.learningMessage && applied.createdRuleId) {
+        const representative = applied.rerouted.find(row => row.mailboxId === ctx.mailboxId
+          && screenerMessageRef(row.dedupKey) === decision.learningMessage);
+        if (representative) await recordScreenerChoice(tx, ctx, {
+          messageId: representative.messageId, decisionId: applied.createdRuleId, actionId: ctx.requestId,
+          chosen: decision.appliedFolder, at: ctx.now, pressedAt: ctx.decidedAt,
+          ...(decision.shownSuggestionId ? { shownSuggestionId: decision.shownSuggestionId } : {}),
+        });
+      }
       return { applied: true };
     };
   },
@@ -171,7 +180,7 @@ const KIND_HANDLERS: ReadonlyMap<string, KindHandler> = new Map(Object.entries<K
     if (!move) return null;
     return async (tx) => {
       const r = await applyMessageMove(tx, {
-        accountId: ctx.accountId, mailboxId: ctx.mailboxId, payload: move, now: ctx.now,
+        accountId: ctx.accountId, mailboxId: ctx.mailboxId, payload: move, now: ctx.now, learnFromPress: true,
         decidedAt: ctx.decidedAt,
       });
       if (r.applied) return { applied: true };

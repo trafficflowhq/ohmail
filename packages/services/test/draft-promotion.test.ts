@@ -169,7 +169,7 @@ describe("an AI draft is stored with both halves, and sends as multipart/alterna
 
     const stored = await draftsSvc.get(ctx, draftId);
     expect(stored.html).not.toBeNull();
-    expect(stored.html).toContain("<p>");
+    expect(stored.html).toContain('<p style="margin:0">');
     // The two halves of the row agree, and the plain one is still exactly the model's words.
     expect(htmlToPlainText(stored.html!)).toBe(stored.body);
     expect(stored.body).toBe(MODEL_BODY);
@@ -193,7 +193,7 @@ describe("an AI draft is stored with both halves, and sends as multipart/alterna
     expect(msg.html).toBeTruthy();
     expect(msg.text).toBe(MODEL_BODY);
     expect(htmlToPlainText(msg.html!)).toBe(msg.text);
-    expect(msg.html).toContain("<p>Hi Alice</p>");
+    expect(msg.html).toContain('<p style="margin:0">Hi Alice</p>');
 
     // And what went on the wire is what was stored — the send-time sanitizer pass is a no-op
     // on promoted markup rather than a second, differently-rendered copy.
