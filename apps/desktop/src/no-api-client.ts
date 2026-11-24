@@ -875,8 +875,7 @@ export interface ScreenerWirePage {
 }
 
 export type ScreenerSkipReason =
-  | "not_held" | "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable" | "model_declined"
-  | "no_auto_ai";
+  | "not_held" | "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable" | "model_declined" | "attempts_exhausted";
 
 export interface ScreenerSuggestWire {
     dryRun: boolean;

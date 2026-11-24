@@ -169,6 +169,52 @@ describe("Microsoft recurring event edits", () => {
     ]);
   });
 
+  it("answers one day of a meeting whose series moved on at Microsoft without that day changing", async () => {
+    // Exchange gives the series a new version for things nobody sees on the day (an exception made elsewhere, its own
+    // bookkeeping); the day the person answers is the same day, so the answer goes to it.
+    const meeting = { ...master, isOrganizer: false, changeKey: "master-2", "@odata.etag": 'W/"master-2"' };
+    const day = { ...occurrence, isOrganizer: false };
+    const fixture = graph((method, path) => {
+      if (method === "POST") return 202;
+      if (path.endsWith("/instances")) return { value: [day] };
+      // Graph's single read of the day may carry another tag than its listing did.
+      return path.endsWith("/master") ? meeting : { ...day, "@odata.etag": 'W/"day-read"' };
+    });
+    const result = await fixture.writer.answer(
+      connection,
+      cal,
+      target,
+      { as: audience.guests[0]!, reply: "ACCEPTED" },
+      signal,
+    );
+    expect(result.ok).toBe(true);
+    expect(fixture.writes()).toMatchObject([{ method: "POST", path: "/me/events/some-day/accept" }]);
+  });
+
+  it("still refuses an answer for a day that moved at Microsoft since it was shown", async () => {
+    const meeting = { ...master, isOrganizer: false };
+    const moved = {
+      ...occurrence,
+      isOrganizer: false,
+      type: "exception",
+      start: { dateTime: "2026-10-26T12:00:00", timeZone: "UTC" },
+    };
+    const fixture = graph((method, path) => {
+      if (method === "POST") return 202;
+      if (path.endsWith("/instances")) return { value: [moved] };
+      return path.endsWith("/master") ? meeting : moved;
+    });
+    const result = await fixture.writer.answer(
+      connection,
+      cal,
+      target,
+      { as: audience.guests[0]!, reply: "ACCEPTED" },
+      signal,
+    );
+    expect(result).toMatchObject({ ok: false, reason: "version_stale" });
+    expect(fixture.writes()).toEqual([]);
+  });
+
   it("recovers an occurrence answer after Microsoft applied it but the reply was lost", async () => {
     const meeting = { ...master, isOrganizer: false };
     let day: Record<string, unknown> = { ...occurrence, isOrganizer: false };

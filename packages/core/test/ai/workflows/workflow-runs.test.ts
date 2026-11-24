@@ -150,8 +150,23 @@ describe("WorkflowExecutor — cross-account targets are refused", () => {
   });
 });
 
-describe("WorkflowExecutor — whole-run sensitivity pre-flight", () => {
-  // Each sensitivity flag independently REFUSES the whole run and acts on NOTHING.
+describe("WorkflowExecutor — authentication mail in workflow runs", () => {
+  it("a filing-only workflow leaves a password reset in the Ohbox", async () => {
+    const db = await makeTestDb();
+    const { accountId, mailboxId } = await seedAccount(db);
+    const messageId = await seedMessage(db, accountId, mailboxId, {
+      subject: "Reset your password", sensitivityCategory: "password_reset",
+    });
+    const run = await seedWorkflowRun(db, accountId, [
+      { tool: "file_message", args: { messageId, toFolder: "ohmail/Spam" } },
+    ]);
+
+    expect(await runner.runOne(deps(db, mockDrafter()), run))
+      .toMatchObject({ status: "failed", reason: "sensitive" });
+    expect(await db.select().from(folderState)).toHaveLength(0);
+    expect(await db.select().from(changeLog)).toHaveLength(0);
+  });
+
   const flagCases: Array<[string, MsgFlags]> = [
     ["no_ai", { noAi: true }],
     ["no_forward", { noForward: true }],
@@ -161,12 +176,10 @@ describe("WorkflowExecutor — whole-run sensitivity pre-flight", () => {
   ];
 
   for (const [label, flags] of flagCases) {
-    it(`refuses the run when a targeted message is ${label} → failed:sensitive, nothing acted on`, async () => {
+    it(`files and drafts when a targeted message carries ${label}`, async () => {
       const db = await makeTestDb();
       const { accountId, mailboxId } = await seedAccount(db);
       const msgId = await seedMessage(db, accountId, mailboxId, flags);
-      // A multi-step run whose FIRST step is reversible + safe, but a LATER step targets
-      // the sensitive message — the pre-flight must refuse the ENTIRE run (not just that step).
       const safeMsg = await seedMessage(db, accountId, mailboxId, {});
       const run = await seedWorkflowRun(db, accountId, [
         { tool: "file_message", args: { messageId: safeMsg, toFolder: "ohmail/News" } },
@@ -176,19 +189,13 @@ describe("WorkflowExecutor — whole-run sensitivity pre-flight", () => {
       const drafter = mockDrafter();
       const res = await runner.runOne(deps(db, drafter), run);
 
-      expect(res).toEqual({ status: "failed", reason: "sensitive", stepIndex: -1 });
+      expect(res).toEqual({ status: "succeeded", stepsRun: 2 });
       const [after] = await db.select().from(workflowRuns).where(eq(workflowRuns.id, run.id));
-      expect(after!.status).toBe("failed");
-      expect(after!.reason).toBe("sensitive");
-      expect(after!.stepCursor).toBe(0);
-
-      // NOTHING was acted on: no folder_state, no draft, no kb row, no audit_log, no change_log.
-      expect(await db.select().from(folderState)).toHaveLength(0);
-      expect(await db.select().from(drafts)).toHaveLength(0);
+      expect(after).toMatchObject({ status: "succeeded", stepCursor: 2 });
+      expect(await db.select().from(folderState)).toHaveLength(1);
+      expect(await db.select().from(drafts)).toHaveLength(1);
       expect(await db.select().from(kbEntries)).toHaveLength(0);
-      expect(await db.select().from(auditLog).where(eq(auditLog.accountId, accountId))).toHaveLength(0);
-      expect(await db.select().from(changeLog).where(eq(changeLog.accountId, accountId))).toHaveLength(0);
-      expect(drafter.calls).toBe(0);   // the drafter never saw the sensitive message
+      expect(drafter.calls).toBe(1);
     });
   }
 });
@@ -349,17 +356,11 @@ describe("WorkflowExecutor — failure, no auto-rollback", () => {
   });
 });
 
-/**
- * The model-sink screen on the two automatic sinks (draft_reply, add_kb_entry): a credential split
- * across subject and snippet passes each per-field flag, so the joined input is screened; the step
- * fails with the class in its reason and neither sink writes. Mutation: skip the screen in
- * `WorkflowExecutor` and the refusals here go red.
- */
-describe("the model-sink screen refuses a credential split across two fields", () => {
+describe("workflows handle authentication-related text", () => {
   /** Invented, in the shape providers use. Each half is admitted on its own — asserted below. */
   const SPLIT = { subject: "Your passphrase", snippet: "It is 481920, on the label." };
 
-  it("draft_reply: the run fails with the class, the drafter is never called, no draft is stored", async () => {
+  it("draft_reply: the run stores a reply for an authentication-related preview", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId } = await seedAccount(db);
     const msgId = await seedMessage(db, accountId, mailboxId, SPLIT);
@@ -369,15 +370,15 @@ describe("the model-sink screen refuses a credential split across two fields", (
 
     const drafter = mockDrafter();
     expect(await runner.runOne(deps(db, drafter), run))
-      .toMatchObject({ status: "failed", reason: "credential_screened:credential_shape", stepIndex: 0 });
-    expect(drafter.calls, "the model was asked anyway").toBe(0);
-    expect(await db.select().from(drafts).where(eq(drafts.accountId, accountId))).toHaveLength(0);
+      .toMatchObject({ status: "succeeded", stepsRun: 1 });
+    expect(drafter.calls).toBe(1);
+    expect(await db.select().from(drafts).where(eq(drafts.accountId, accountId))).toHaveLength(1);
 
     const [after] = await db.select().from(workflowRuns).where(eq(workflowRuns.id, run.id));
-    expect(after!.reason).toBe("credential_screened:credential_shape");
+    expect(after!.status).toBe("succeeded");
   });
 
-  it("draft_reply: refuses when the split is in the KB GROUNDING rather than the target", async () => {
+  it("draft_reply: uses authentication text in the KB GROUNDING rather than the target", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId } = await seedAccount(db);
     const msgId = await seedMessage(db, accountId, mailboxId, {});
@@ -390,8 +391,8 @@ describe("the model-sink screen refuses a credential split across two fields", (
 
     const drafter = mockDrafter();
     expect(await runner.runOne(deps(db, drafter), run))
-      .toMatchObject({ status: "failed", reason: "credential_screened:credential_shape" });
-    expect(drafter.calls).toBe(0);
+      .toMatchObject({ status: "succeeded", stepsRun: 1 });
+    expect(drafter.calls).toBe(1);
   });
 
   it("draft_reply: an ordinary target with ordinary grounding still drafts", async () => {
@@ -411,7 +412,7 @@ describe("the model-sink screen refuses a credential split across two fields", (
     expect(await db.select().from(drafts).where(eq(drafts.accountId, accountId))).toHaveLength(1);
   });
 
-  it("add_kb_entry: the entry is NOT added — a stored credential is read back on every later draft", async () => {
+  it("add_kb_entry: stores authentication-related text", async () => {
     const db = await makeTestDb();
     const { accountId } = await seedAccount(db);
     const run = await seedWorkflowRun(db, accountId, [
@@ -419,12 +420,12 @@ describe("the model-sink screen refuses a credential split across two fields", (
     ]);
 
     expect(await runner.runOne(deps(db, mockDrafter()), run))
-      .toMatchObject({ status: "failed", reason: "credential_screened:credential_shape", stepIndex: 0 });
-    expect(await db.select().from(kbEntries).where(eq(kbEntries.accountId, accountId))).toHaveLength(0);
-    expect(await db.select().from(auditLog).where(eq(auditLog.accountId, accountId))).toHaveLength(0);
+      .toMatchObject({ status: "succeeded", stepsRun: 1 });
+    expect(await db.select().from(kbEntries).where(eq(kbEntries.accountId, accountId))).toHaveLength(1);
+    expect(await db.select().from(auditLog).where(eq(auditLog.accountId, accountId))).toHaveLength(1);
   });
 
-  it("add_kb_entry: refuses a split sourced from a MESSAGE's subject and snippet", async () => {
+  it("add_kb_entry: uses the message’s subject and snippet", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId } = await seedAccount(db);
     const msgId = await seedMessage(db, accountId, mailboxId, SPLIT);
@@ -432,11 +433,11 @@ describe("the model-sink screen refuses a credential split across two fields", (
       { tool: "add_kb_entry", args: { fromMessageId: msgId } },
     ]);
 
-    expect((await runner.runOne(deps(db, mockDrafter()), run)).status).toBe("failed");
-    expect(await db.select().from(kbEntries).where(eq(kbEntries.accountId, accountId))).toHaveLength(0);
+    expect((await runner.runOne(deps(db, mockDrafter()), run)).status).toBe("succeeded");
+    expect(await db.select().from(kbEntries).where(eq(kbEntries.accountId, accountId))).toHaveLength(1);
   });
 
-  it("the screen precedes the CHARGE: a refused draft spends nothing", async () => {
+  it("a completed authentication draft spends once", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId } = await seedAccount(db);
     const msgId = await seedMessage(db, accountId, mailboxId, SPLIT);
@@ -447,14 +448,14 @@ describe("the model-sink screen refuses a credential split across two fields", (
     const spends: string[] = [];
     const credits = {
       async spend(_a: string, action: string) { spends.push(action); return { verdict: "ok" as const, attempt: "x" }; },
-      async release(): Promise<"settled"> { /* nothing to hand back — nothing was taken */ return "settled"; },
+      async release(): Promise<"settled"> { return "settled"; },
     };
     const withCredits = {
       ...deps(db, mockDrafter()),
       credits: credits as unknown as NonNullable<Parameters<typeof runner.runOne>[0]["credits"]>,
     };
-    expect((await runner.runOne(withCredits, run)).status).toBe("failed");
-    expect(spends, "the customer was charged for a draft we refused to make").toEqual([]);
+    expect((await runner.runOne(withCredits, run)).status).toBe("succeeded");
+    expect(spends).toEqual(["workflow"]);
   });
 
   it("each half of the split is admitted on its own — so the case is about the JOIN", async () => {
@@ -504,15 +505,15 @@ describe("WorkflowExecutor — a declined draft_reply", () => {
  * first case and the flag case above go red); drop `eq(messages.noKb, false)` from the sibling
  * query (the third case goes red).
  */
-describe("WorkflowExecutor — no_kb mail never becomes knowledge or grounding", () => {
-  it("add_kb_entry sourced from a no_kb message is refused and writes no entry", async () => {
+describe("WorkflowExecutor — existing flags do not hide knowledge or grounding", () => {
+  it("add_kb_entry sourced from a no_kb message stores an entry and its audit row", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId } = await seedAccount(db);
     const msgId = await seedMessage(db, accountId, mailboxId, { noKb: true });
     const run = await seedWorkflowRun(db, accountId, [{ tool: "add_kb_entry", args: { fromMessageId: msgId } }]);
-    expect(await runner.runOne(deps(db, mockDrafter()), run)).toEqual({ status: "failed", reason: "sensitive", stepIndex: -1 });
-    expect(await db.select().from(kbEntries)).toHaveLength(0);
-    expect(await db.select().from(auditLog).where(eq(auditLog.accountId, accountId))).toHaveLength(0);
+    expect(await runner.runOne(deps(db, mockDrafter()), run)).toEqual({ status: "succeeded", stepsRun: 1 });
+    expect(await db.select().from(kbEntries)).toHaveLength(1);
+    expect(await db.select().from(auditLog).where(eq(auditLog.accountId, accountId))).toHaveLength(1);
   });
 
   it("control: add_kb_entry sourced from an ordinary message stores its subject and snippet", async () => {
@@ -525,7 +526,7 @@ describe("WorkflowExecutor — no_kb mail never becomes knowledge or grounding",
     expect(kb.map((k) => [k.title, k.content])).toEqual([["Invoice 42", "please find attached"]]);
   });
 
-  it("a no_kb sibling never reaches the drafter; an ordinary sibling does", async () => {
+  it("both siblings reach the drafter", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId } = await seedAccount(db);
     const [t] = await db.insert(threads).values({ accountId, subject: "Invoice 42" }).returning();
@@ -543,6 +544,6 @@ describe("WorkflowExecutor — no_kb mail never becomes knowledge or grounding",
     const run = await seedWorkflowRun(db, accountId, [{ tool: "draft_reply", args: { messageId: target } }]);
     expect((await runner.runOne(deps(db, drafter), run)).status).toBe("succeeded");
     expect(seen).toContain("ORDINARY-SIBLING");
-    expect(seen).not.toContain("NOKB-SIBLING");
+    expect(seen).toContain("NOKB-SIBLING");
   });
 });

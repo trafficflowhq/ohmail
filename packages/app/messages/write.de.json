@@ -256,7 +256,7 @@
     "sendAndDone": "Senden + Erledigt",
     "cancel": "Abbrechen",
     "hintEsc": "schließt den Editor",
-    "quotedProtected": "Bestätigungscode — von der KI ausgenommen",
+    "quotedProtected": "Bestätigungscode",
     "conversationAria": "Verlauf",
     "conversationCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}} in diesem Verlauf",
     "sending": "Wird gesendet",

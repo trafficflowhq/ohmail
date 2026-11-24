@@ -6,16 +6,19 @@ const session = (fetch: (url: string, init?: unknown) => Promise<Response>, stan
 });
 
 describe("Draft from text on the phone", () => {
-  it("uses the paired draft door, keeps the purchase key, and only reads the resulting draft", async () => {
+  it.each([
+    { text: "Notes", mailboxId: "studio" },
+    { text: "Ask where I should enter the verification code", inReplyToMessageId: "sign-in-mail" },
+  ])("uses the paired draft door with one purchase key for $text", async (input) => {
     const fetch = vi.fn(async (_url: string, _init?: unknown) => new Response(JSON.stringify({ draftId: "written", body: "Draft words." })));
     const wire = composer.phoneDraftWire(session(fetch));
     if (wire === "none" || wire.fromText === "none") throw new Error("Expected a drafter");
-    expect(await wire.fromText({ text: "Notes", mailboxId: "studio" }, "one-press")).toEqual({ draftId: "written" });
+    expect(await wire.fromText(input, "one-press")).toEqual({ draftId: "written" });
     expect(await wire.read("written")).toEqual({ body: "Draft words." });
     expect(fetch.mock.calls).toEqual([
       ["https://mail.example.test/api/drafts/from-text", {
         method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "one-press" },
-        body: JSON.stringify({ text: "Notes", mailboxId: "studio" }),
+        body: JSON.stringify(input),
       }],
       ["https://mail.example.test/api/drafts/written", undefined],
     ]);

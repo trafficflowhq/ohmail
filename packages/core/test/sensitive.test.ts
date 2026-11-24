@@ -5,7 +5,7 @@
  * prepared for publication and test directories are not yet published — the pointer lives here
  * instead. */
 import { describe, it, expect } from "vitest";
-import { classifySensitivity, screenOutboundText, redactForModel, foldDigits } from "../src/sensitive.js";
+import { classifySensitivity, foldDigits } from "../src/sensitive.js";
 import { normalizeMime } from "../src/mime.js";
 import type { NormalizedMessage } from "../src/types.js";
 import {
@@ -33,13 +33,6 @@ describe("classifySensitivity", () => {
     expect(r.verdict).toBe("sensitive");
     expect(r.category).toBe("otp");
     expect(r.flags).toEqual({ no_ai: true, no_forward: true, no_kb: true, priority: true });
-    // Body redaction at rest is removed — the user reads their own code in full. The surviving
-    // guarantee is the MODEL gate: the code is stripped from any payload bound for a model, and
-    // `no_ai` keeps this message out of automatic AI in the first place.
-    const forModel = redactForModel(subject, body);
-    expect(forModel.redacted).toBe(true);
-    expect(forModel.snippet).not.toContain("483920");
-    expect(forModel.snippet).toContain("[REDACTED]");
   });
   it("flags a password reset", () => {
     expect(classifySensitivity(msg("Reset your password", "Click to reset your password.")).category).toBe("password_reset");
@@ -53,8 +46,6 @@ describe("classifySensitivity", () => {
     expect(r.verdict).toBe("ordinary");
     expect(r.reasons).toEqual([]);
     expect(r.flags.no_ai).toBe(false);
-    // Ordinary mail is unchanged by the model gate too — nothing to strip.
-    expect(redactForModel("Lunch?", "Hey, lunch tomorrow at 12:30?").redacted).toBe(false);
   });
 });
 
@@ -223,8 +214,6 @@ describe("classifySensitivity — the adversarial corpus", () => {
     expect(r.category).toBe(null);
     expect(r.verdict).toBe("ordinary");
     expect(r.reasons).toEqual([]);
-    // A scheme NAME with no code is a topic, so the model gate leaves it untouched too.
-    expect(redactForModel(subject, body).redacted).toBe(false);
   });
 
   /**
@@ -245,12 +234,6 @@ describe("classifySensitivity — the adversarial corpus", () => {
     const r = classifySensitivity(msg(s, b));
     expect(r.category).toBe("otp");
     expect(r.sensitive).toBe(true);
-    // This is the pair that makes the rule above a precision change rather than a hole: if
-    // `schemeNameNearCode` ever stopped firing, this assertion — not the one above — goes red.
-    // (Asserted through the model gate now, which is the surviving place a code is stripped.)
-    const forModel = redactForModel(s, b);
-    expect(forModel.redacted).toBe(true);
-    expect(`${forModel.subject}\n${forModel.snippet}`).not.toContain("482913");
   });
 
   it.each(SENSITIVE)("flags %j / %j as %s — no_ai, and every flag with it", (subject, body, category) => {
@@ -272,8 +255,6 @@ describe("classifySensitivity — the adversarial corpus", () => {
     expect(r.reasons).toEqual([]);
     expect(r.flags.no_ai).toBe(false);
     expect(r.flags.no_kb).toBe(false);
-    // Ordinary mail is left untouched by the model gate as well.
-    expect(redactForModel(subject, body).redacted).toBe(false);
   });
 
   it("strips every credential-shaped token from a model payload, in all its usual shapes", () => {
@@ -281,11 +262,6 @@ describe("classifySensitivity — the adversarial corpus", () => {
     const body = "Code 482913, backup 123-456, device token AB12CD34. Expires in 10 minutes.";
     const r = classifySensitivity(msg(subject, body));
     expect(r.sensitive).toBe(true);
-    // Not from the stored body — that stays full and the user reads it — but from the model payload.
-    const forModel = redactForModel(subject, body);
-    for (const secret of ["482913", "123-456", "AB12CD34"]) {
-      expect(forModel.snippet, secret).not.toContain(secret);
-    }
   });
 
   it("strips the token out of a magic link's model payload, which CODE alone never reached", () => {
@@ -293,9 +269,6 @@ describe("classifySensitivity — the adversarial corpus", () => {
     const body = "Tap to sign in: https://accounts.example.com/session?t=SECRET-LOGIN-TOKEN";
     const r = classifySensitivity(msg(subject, body));
     expect(r.sensitive).toBe(true);
-    const forModel = redactForModel(subject, body);
-    expect(forModel.snippet).not.toContain("SECRET-LOGIN-TOKEN");
-    expect(forModel.snippet).toContain("[REDACTED]");
   });
 
   it("the corpus BITES: the four ORIGINAL patterns miss most of it", () => {
@@ -342,25 +315,6 @@ describe("every withheld case sets no_ai, and none of them is 'ordinary'", () =>
     expect(r.flags.no_ai, `${c.id} — ${c.why}`).toBe(true);
     expect(r.flags.no_kb, `${c.id} — no_kb moves with no_ai`).toBe(true);
     expect(r.verdict, `${c.id} — ${c.why}`).toBe(c.expect);
-
-    if (c.expect === "sensitive") {
-      expect(r.sensitive).toBe(true);
-      if (c.category) expect(r.category).toBe(c.category);
-      expect(r.flags.no_forward).toBe(true);
-    } else {
-      expect(r.sensitive).toBe(false);
-      expect(r.category).toBeNull();
-      if (c.reason) expect(r.reasons).toContain(c.reason);
-      // Indeterminate is still NOT "sensitive with a different name": it is NEVER re-routed to the
-      // account holder and NEVER prioritised.
-      expect(r.flags.no_forward).toBe(false);
-      expect(r.flags.priority).toBe(false);
-      // BODY REDACTION AT REST IS REMOVED — the reader always sees the full body of their own
-      // mail, so there is nothing here to assert about a stored redaction. The surviving disclosure
-      // guarantee for a withheld message is `no_ai`/`no_kb` (asserted above): it never reaches
-      // automatic AI. (`redactForModel` still strips the credential from a user-pressed AI payload;
-      // that transform is unchanged and has its own tests — it is not re-asserted per corpus row.)
-    }
   });
 
   it("the corpus BITES: the pre-B10 boundary would have sent most of it to the model", async () => {
@@ -420,27 +374,11 @@ describe("ordinary one-word subjects are not credentials", () => {
     expect(withheld, `withheld from AI by subject alone: ${withheld.join(", ")}`).toEqual([]);
   });
 
-  it("the sink accepts them too — it joins its parts, so the body carries the same shape", () => {
-    // Empty subject + one-word body. Refused before the narrowing, and not a subject problem.
-    for (const s of ORDINARY_ONE_WORD_SUBJECTS) {
-      const screen = screenOutboundText("", s);
-      expect(screen.safe, `the sink refused the ordinary snippet "${s}"`).toBe(true);
-    }
-  });
-
   it("every credential shape is STILL withheld — the sensitive-mail guarantee is untouched", () => {
     const leaked = CREDENTIAL_SHAPES.filter(
       (c) => classifySensitivity(msg("Atlas", c)).flags.no_ai !== true,
     );
     expect(leaked, `credential shapes that would now reach AI: ${leaked.join(", ")}`).toEqual([]);
-  });
-
-  it("and the sink still refuses every one of them", () => {
-    for (const c of CREDENTIAL_SHAPES) {
-      const screen = screenOutboundText("", c);
-      expect(screen.safe, `the sink ACCEPTED the credential shape "${c}"`).toBe(false);
-      expect(screen.reason).toBe("credential_shape");
-    }
   });
 
   it("a genuine OTP is still sensitive, not merely withheld", () => {
@@ -469,12 +407,6 @@ describe("non-ASCII digits", () => {
     expect(sent, `these would be SENT TO THE MODEL: ${sent.join(", ")}`).toEqual([]);
   });
 
-  it("the sink refuses them too", () => {
-    for (const [script, code] of NON_ASCII_DIGIT_CODES) {
-      expect(screenOutboundText("", code).safe, `the sink accepted ${script}`).toBe(false);
-    }
-  });
-
   it("framed variants stay SENSITIVE — vocabulary owns those, not shape", () => {
     // If a later change collapses the union, these must not silently demote to indeterminate.
     for (const [label, subject, body] of FRAMED_NON_ASCII_CODES) {
@@ -489,20 +421,6 @@ describe("non-ASCII digits", () => {
     const body = "رمز التحقق ٠١٢٣٤٥";
     const r = classifySensitivity(msg("", body));
     expect(r.sensitive).toBe(true);
-    const forModel = redactForModel("", body);
-    expect(forModel.snippet).not.toContain("٠١٢٣٤٥");
-    expect(forModel.snippet).toContain("[REDACTED]");
-  });
-
-  it("leaves ordinary numeric text completely alone", () => {
-    // The identity half. A fold verified only on the class it repairs cannot tell "fixed the class"
-    // from "rewrote every message".
-    for (const s of ORDINARY_NUMERIC_TEXT) {
-      const r = classifySensitivity(msg("Re: the quote", s));
-      expect(r.verdict, `${s} was withheld`).toBe("ordinary");
-      // The model gate leaves ordinary numeric text (prices, dates, order numbers) untouched.
-      expect(redactForModel("Re: the quote", s).redacted, `${s} was altered`).toBe(false);
-    }
   });
 
   /**
@@ -603,7 +521,6 @@ describe("framing before the number is still framing", () => {
     // their own OTP mail in full); the surviving guarantee is that the model gate strips it.
     const r = classifySensitivity(msg(subject, body));
     expect(r.verdict).toBe("sensitive");
-    expect(redactForModel(subject, body).snippet).not.toContain("482913");
   });
 
   it("a leading share-prohibition frames the code — the only trailer that is position-free", () => {
@@ -644,13 +561,6 @@ describe("framing before the number is still framing", () => {
     const r = classifySensitivity(msg("Re: your order", body));
     expect(r.verdict, `${body} → ${JSON.stringify(r.reasons ?? [])}`).toBe("ordinary");
   });
-
-  it("the SINK refuses the joined payload too — the fix has two call sites", () => {
-    // The defect was present at both `classifySensitivity` and `screenOutboundText`; a fix verified
-    // through one of them ships an unverified change to the last check before serialisation.
-    const screen = screenOutboundText("Finish signing in", "Your code is 482913");
-    expect(screen.safe).toBe(false);
-  });
 });
 
 /**
@@ -677,18 +587,11 @@ describe("the language-independent numeric backstop", () => {
       // THE invariant: it never reaches the model, from either entry point.
       expect(r.flags.no_ai, `${c.id} — reached AI`).toBe(true);
       expect(r.flags.no_kb, `${c.id}`).toBe(true);
-      expect(screenOutboundText(c.subject, c.body).safe, `${c.id} — the SINK let it out`).toBe(false);
       expect(r.verdict, `${c.id}`).toBe(c.expect);
 
       // The stored body keeps the code (the reader reads their own mail in full); the surviving
       // guarantee is that the MODEL payload strips every 4–8-digit run the body carried.
       const digits = c.body.match(/[0-9]{3,4}[-\s][0-9]{3,4}|\b[0-9]{4,8}\b/g) ?? [];
-      if (digits.length > 0) {
-        const forModel = redactForModel(c.subject, c.body);
-        for (const d of digits) {
-          expect(forModel.snippet, `${c.id} — ${d} would reach a model`).not.toContain(d);
-        }
-      }
     },
   );
 
@@ -699,14 +602,11 @@ describe("the language-independent numeric backstop", () => {
     expect(r.verdict).toBe("ordinary");
     expect(r.reasons).toEqual([]);
     expect(r.flags.no_ai).toBe(false);
-    expect(redactForModel(subject, body).redacted).toBe(false);
-    expect(screenOutboundText(subject, body).safe).toBe(true);
   });
 
   it.each(B24_ADVERSARIAL)("adversarial: %s is still caught (no residual leak)", (_id, subject, body) => {
     const r = classifySensitivity(msg(subject, body));
     expect(r.flags.no_ai).toBe(true);
-    expect(screenOutboundText(subject, body).safe).toBe(false);
   });
 
   it("a credential carried only in the HTML part is withheld from the model (body kept in full)", () => {

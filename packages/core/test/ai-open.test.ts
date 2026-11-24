@@ -1,274 +1,30 @@
 import { describe, it, expect } from "vitest";
-import {
-  redactForModel, redactSensitiveText, screenOutboundText, classifySensitivity,
-} from "../src/sensitive.js";
-import {
-  SCREENING_PREFIX, SensitivePayloadRefusal, buildScreeningParams, classifyUserPayload,
-} from "../src/ai/classify.js";
+import { SCREENING_PREFIX, classifyUserPayload } from "../src/ai/classify.js";
+import { askScreeningQuestion } from "../src/classify-prompt.js";
 import type { ClassifierInput } from "../src/classifier-port.js";
 
-/**
- * **AI-OPEN — the ruling of 2026-08-08, as guards.**
- *
- * The "Sensitive mail" invariant, amended: *"there is not one single [message] for AI to not read justified… scan
- * everything and remove the exceptions; if someone wants to use ai, they can, if not, they
- * won't."* What is withheld from a model is the credential VALUE; the subject matter is not.
- *
- * Three properties have to hold together, and each is satisfiable alone by a defect — which is
- * why they are pinned as a set:
- *
- *  1. A credential-bearing payload REACHES the model on a user-requested path (the ruling).
- *  2. The credential VALUE is not in it (the redaction).
- *  3. An ordinary payload is byte-identical to what it was before any of this existed (the
- *     anti-vacuity half, and the one that protects the rest of the Screener).
- *
- * Every test here has been mutated and watched red. Where the mutation is not obvious the test
- * says which one.
- */
+describe("authentication mail uses the ordinary model input", () => {
+  const mail = { subject: "Your verification code", snippet: "Your one-time passcode is 482913." };
 
-const CLIENT = { messages: { async create() { return { content: "{}" }; } } };
-
-function input(subject: string, snippet: string, extra: Partial<ClassifierInput> = {}): ClassifierInput {
-  return { from: { name: null, address: "x@y.invalid" }, subject, snippet, headersDigest: "", ...extra };
-}
-
-describe("redactForModel — the value goes, the subject matter stays", () => {
-  it("blanks a framed one-time code out of BOTH fields, and keeps the words", () => {
-    const out = redactForModel("Your sign-in code", "Use 482913 to sign in.");
-    expect(out.redacted).toBe(true);
-    expect(`${out.subject}\n${out.snippet}`).not.toContain("482913");
-    expect(out.snippet).toContain("[REDACTED]");
-    // The half the ruling is about: that this message CONCERNS signing in is not a secret, and
-    // it is exactly what the user paid the model to notice. A redaction that took the words too
-    // would leave the model guessing from an address.
-    expect(out.subject).toContain("sign-in code");
-    expect(out.snippet).toContain("to sign in");
+  it("builds the routing request for a sign-in message", () => {
+    expect(classifyUserPayload({ from: { name: null, address: "sender@example.test" }, ...mail, headersDigest: "" }))
+      .toMatchObject(mail);
   });
 
-  it("blanks the token tail of an authentication URL", () => {
-    // The class that was 107 of the reporting account's 163 hard stayers.
-    const out = redactForModel("Atlas", "https://accounts.example.com/session?t=SECRET-LOGIN-TOKEN");
-    expect(out.redacted).toBe(true);
-    expect(out.snippet).not.toContain("SECRET-LOGIN-TOKEN");
-    expect(out.snippet).toContain("[REDACTED]");
-  });
-
-  it("blanks a reset link hidden behind an ESP CLICK-TRACKER — the hole the live scan found", () => {
-    // MEASURED on the live account, 2026-08-08, before this shipped: a password-reset mail whose
-    // link was `http://url4821.mailer.test/ls/click?upn=<base64 of the real URL>`. `/ls/click` is
-    // not an authentication marker and `upn` is not an authentication parameter, so
-    // `redactAuthUrls` missed it entirely and the magic link would have gone to the model intact.
-    // It did not matter under the old policy because the whole message was withheld on the words
-    // "Reset password"; opening that path is what made the wrapper load-bearing.
-    //
-    // MUTATION: drop `redactUrlTails` from `redactForModel` ⇒ red on the first assertion.
-    const out = redactForModel(
-      "Reset password",
-      "Let's get your password reset: http://url4821.mailer.test/ls/click?upn=u001.HI0QrxI9QRZx-1Y4w2XAOHGskq1fCQrAabE9gbRCxGzPnFZrZufQeITjkKEnhj0",
-    );
-    expect(out.snippet).not.toContain("HI0QrxI9QRZx");
-    expect(out.snippet).toContain("[REDACTED]");
-    // THE HOST SURVIVES. It is the single most useful routing signal in the payload and it is not
-    // a secret; blanking it would protect nothing and make the suggestion worse.
-    expect(out.snippet).toContain("url4821.mailer.test");
-    expect(out.subject).toBe("Reset password");
-  });
-
-  it("the model path may redact MORE than storage, never less", () => {
-    // The asymmetry stated as a property. `classifySensitivity`'s output is pinned by a corpus and
-    // is what a person reads in their own client, so the click-tracker widening is deliberately
-    // confined to the model path. This pins the DIRECTION: whatever storage blanks, the model path
-    // blanks too.
-    const body = "Reset: http://t.example.com/ls/click?upn=AbCdEf0123456789XyZ and code 482913";
-    const stored = redactSensitiveText(body);
-    const sent = redactForModel("Reset your password", body).snippet;
-    expect(stored).not.toContain("482913");
-    expect(sent).not.toContain("482913");
-    // …and the model path went further on the wrapped token.
-    expect(stored).toContain("AbCdEf0123456789XyZ");
-    expect(sent).not.toContain("AbCdEf0123456789XyZ");
-  });
-
-  it("LEAVES ORDINARY MAIL ALONE — byte-identical, and this is the load-bearing half", () => {
-    // `CODE` matches `[A-Z0-9]{6,10}` and any 4-8 digit run, so an UNCONDITIONAL redaction would
-    // blank `NEWSLETTER`, `WELCOME`, every order number and every year range in the Screener —
-    // degrading every suggestion in the product to protect the few senders that carry a
-    // credential. The condition is `screenOutboundText`, per payload.
-    //
-    // MUTATION: make `redactForModel` redact unconditionally ⇒ this goes red on the first
-    // assertion while every other test in this file stays green. That asymmetry is the point.
-    const cases: Array<[string, string]> = [
-      ["Order 4429117 shipped", "Your parcel left the depot on Tuesday."],
-      ["NEWSLETTER — issue 42", "Read on: https://example.invalid/issues/42"],
-      ["Invoice 2026-0814", "Total CHF 1290.00, due 30 days."],
-      ["Re: Slot doppelt gebucht", "Kannst du dir das kurz anschauen?"],
-    ];
-    for (const [subject, snippet] of cases) {
-      const out = redactForModel(subject, snippet);
-      expect(out.redacted, `${subject} was needlessly redacted`).toBe(false);
-      expect(out.subject).toBe(subject);
-      expect(out.snippet).toBe(snippet);
-    }
-  });
-
-  it("redaction is the MODEL gate ONLY — the stored body is never redacted", () => {
-    // The ruling once turned on stored-body == model-payload (one representation, not two). Body
-    // redaction AT REST is now removed: `classifySensitivity` produces no redacted body at all —
-    // the reader sees their own code in full — and the ONLY place a credential is stripped is
-    // `redactForModel`, on the way to a model.
-    const body = "Your verification code is 482913. It expires in 10 minutes.";
-    const stored = classifySensitivity({
-      from: { name: null, address: "x@y.invalid" },
-      subject: "Your verification code", textBody: body, htmlBody: null, headers: {},
-    } as never);
-    expect(stored.sensitive).toBe(true);
-    expect(stored.flags.no_ai).toBe(true);
-    // The result carries no redacted-body field any more — storage is not a redaction site.
-    expect("redactedTextBody" in stored).toBe(false);
-    expect("storeRedactedBody" in stored).toBe(false);
-    // The model payload is still stripped, by the surviving transform.
-    const forModel = redactForModel("Your verification code", body);
-    expect(forModel.redacted).toBe(true);
-    expect(forModel.snippet).not.toContain("482913");
-    expect(forModel.snippet).toBe(redactSensitiveText(body));
-  });
-
-  it("does NOT report a residue, because there is no residual refusal to feed", () => {
-    // Redaction removes values; the detector also fires on authentication VOCABULARY, which
-    // redaction cannot remove because words are not values. A "did it come out clean" gate would
-    // therefore refuse every password reset and every "verify your email" — the exception the
-    // ruling removed, under a new name. This pins that the surviving screen is NOT consulted.
-    const out = redactForModel("Reset your password", "Follow the link to reset your password.");
-    expect(out.redacted).toBe(true);
-    // Still unsafe after redaction — the words are the match — and still sendable.
-    expect(screenOutboundText(out.subject, out.snippet).safe).toBe(false);
-    expect(Object.keys(out).sort()).toEqual(["redacted", "snippet", "subject"]);
-  });
-});
-
-describe("redactForModel — the ENCODED credential goes too, not only the plain one", () => {
-  /**
-   * `screenOutboundText` DECODES embedded base64/quoted-printable before judging — that is how a
-   * credential inside a forwarded raw part gets the payload flagged at all. Before the encoded
-   * pass, the redactor rewrote only the ORIGINAL bytes: `CODE`'s `\b` finds no boundary inside a
-   * contiguous mixed-case base64 run, so the payload left `redacted: true` while carrying the
-   * intact encoded credential — one trivial decode away from the plaintext the gate withholds.
-   * The subject is stored RAW, so a blob there reached the model even more directly.
-   *
-   * Every test asserts BOTH forms absent — the encoded run AND its decoded credential string —
-   * because either alone is satisfiable by a defect: keeping the blob satisfies the decoded
-   * assertion (the digits never appear in the raw bytes), and echoing the decode satisfies the
-   * encoded one.
-   */
-  const PLAIN = "Your one-time passcode is 482913. Do not share it.";
-  const BLOB = Buffer.from(PLAIN, "utf8").toString("base64");
-
-  it("premise: the embedded-base64 payload IS flagged — the detection this redaction leans on", () => {
-    // If this goes red the tests below are vacuous: `redactForModel` only rewrites what the
-    // screen flags, so a payload the screen stopped seeing would pass byte-identical.
-    const screen = screenOutboundText("Fwd: see below", `Content-Transfer-Encoding: base64\n\n${BLOB}`);
-    expect(screen.safe).toBe(false);
-  });
-
-  it("a base64-embedded passcode: NEITHER the blob NOR its decode reaches the payload", () => {
-    // MUTATION: drop `redactEncodedRuns` from `clean` ⇒ red on the blob assertion — the blob
-    // sails through `redactSensitiveText` untouched, exactly the defect this pins.
-    const out = redactForModel("Fwd: see below", `Content-Transfer-Encoding: base64\n\n${BLOB}`);
-    expect(out.redacted).toBe(true);
-    const sent = `${out.subject}\n${out.snippet}`;
-    expect(sent).not.toContain(BLOB);
-    expect(sent).not.toContain("482913");
-    // Categorical: no run of `decodeEmbedded`'s size survives at all, so there is nothing left
-    // for any model to decode — not this blob, and not a fragment of it either.
-    expect(sent).not.toMatch(/[A-Za-z0-9+/]{16,}/);
-    // The words around the blob survive — the value goes, the subject matter stays.
-    expect(out.subject).toContain("Fwd: see below");
-  });
-
-  it("the blob in the SUBJECT — the field stored raw — is blanked the same way", () => {
-    const out = redactForModel(`Fwd: ${BLOB}`, "forwarding this to you");
-    expect(out.redacted).toBe(true);
-    const sent = `${out.subject}\n${out.snippet}`;
-    expect(sent).not.toContain(BLOB);
-    expect(sent).not.toContain("482913");
-  });
-
-  it("a QP-encoded passcode — the digits themselves as hex escapes — is blanked", () => {
-    // `=34=38=32=39=31=33` decodes to `482913`. No digit appears in the raw bytes, so `CODE`
-    // has nothing to match; the decoder is what flags it, and the encoded pass is what strips it.
-    // MUTATION: drop the `QP_HEX_RUN` replace ⇒ red on the first assertion.
-    const out = redactForModel(
-      "Your verification code",
-      "Content-Transfer-Encoding: quoted-printable\n\nYour code is =34=38=32=39=31=33, enter it now.",
-    );
-    const sent = `${out.subject}\n${out.snippet}`;
-    expect(sent).not.toContain("=34=38");
-    expect(sent).not.toContain("482913");
-    expect(out.snippet).toContain("[REDACTED]");
-    expect(out.snippet).toContain("enter it now");
-  });
-
-  it("a code split across a QP soft line break is made contiguous before the pattern reads it", () => {
-    // `482=\n913` is two fragments, each below `CODE`'s four-digit floor; unfolded it is
-    // `482913`, which `CODE` blanks whole.
-    // MUTATION: drop the soft-break unfold from `clean` ⇒ red — `482` survives as a fragment.
-    const out = redactForModel("Your sign-in code", "Use code 482=\n913 to sign in.");
-    expect(out.snippet).not.toContain("482");
-    expect(out.snippet).not.toMatch(/\d{2,}/);
-    expect(out.snippet).toContain("to sign in");
-  });
-
-  it("ordinary mail with a long machine token is untouched — the encoded pass sits INSIDE the condition", () => {
-    // A tracking-number-shaped run would be eaten by `B64_RUN` if the pass ran unconditionally.
-    // The condition is `screenOutboundText`, per payload, same as every other redaction here.
-    const subject = "Order shipped";
-    const snippet = "Track it: parcel TN4829105573824617 arrives Tuesday.";
-    expect(screenOutboundText(subject, snippet).safe).toBe(true);
-    const out = redactForModel(subject, snippet);
-    expect(out.redacted).toBe(false);
-    expect(out.subject).toBe(subject);
-    expect(out.snippet).toBe(snippet);
-  });
-});
-
-describe("the outbound sink — absent means refuse, and that polarity is the guard", () => {
-  it("an input with NO `outbound` field is refused, exactly as before the ruling", () => {
-    // The automatic routing path never sets the field. It must stay refused, and the thousands of
-    // tests in packages that do not typecheck their tests must keep exercising THIS branch.
-    expect(() => classifyUserPayload(input("Your verification code", "Code 482913")))
-      .toThrow(SensitivePayloadRefusal);
-  });
-
-  it("`outbound: \"refuse\"` written explicitly is refused too", () => {
-    expect(() => classifyUserPayload(input("Your verification code", "Code 482913", { outbound: "refuse" })))
-      .toThrow(SensitivePayloadRefusal);
-  });
-
-  it("`outbound: \"prescreened\"` is served — the caller redacted and said so", () => {
-    const safe = redactForModel("Your sign-in code", "Use 482913 to sign in.");
-    const payload = classifyUserPayload(input(safe.subject, safe.snippet, { outbound: "prescreened" }));
-    expect(payload.subject).toContain("sign-in code");
-    expect(`${payload.subject}\n${payload.snippet}`).not.toContain("482913");
-  });
-
-  it("`prescreened` is not a licence to send the RAW value — the caller is what redacts", () => {
-    // Stated so nobody reads the flag as "sensitivity off". It is a declaration about work
-    // already done; if a caller lies, the raw text goes out, which is why the flag lives beside
-    // `redactForModel` at exactly one call site (`ScreenerService.suggest`) and why the guard
-    // that matters is the one in `screener-ai.test.ts` asserting what the PORT received.
-    const payload = classifyUserPayload(input("Your sign-in code", "Use 482913 to sign in.", { outbound: "prescreened" }));
-    expect(payload.snippet).toContain("482913");
-  });
-
-  it("the screening request builder honours the same flag", () => {
-    const safe = redactForModel("Your sign-in code", "Use 482913 to sign in.");
-    expect(() => buildScreeningParams(input(safe.subject, safe.snippet), { client: CLIENT as never }))
-      .toThrow(SensitivePayloadRefusal);
-    const params = buildScreeningParams(
-      input(safe.subject, safe.snippet, { outbound: "prescreened" }), { client: CLIENT as never },
-    ) as { messages: Array<{ content: string }> };
-    expect(params.messages[0]!.content).not.toContain("482913");
-    expect(params.messages[0]!.content).toContain("sign-in code");
+  it("suggests using the original preview after checking consent", async () => {
+    const seen: ClassifierInput[] = [];
+    const steps: string[] = [];
+    const result = { destination: "ohmail/News" as const, confidence: 0.9, rationale: "service notice", spam: false };
+    const classify = async (input: ClassifierInput) => {
+      steps.push("model");
+      seen.push(input);
+      return result;
+    };
+    await expect(askScreeningQuestion({ classify, screen: classify }, { ...mail, fromAddress: "sender@example.test" }, {
+      beforeDispatch: async () => { steps.push("consent"); },
+    })).resolves.toEqual(result);
+    expect(steps).toEqual(["consent", "model"]);
+    expect(seen).toEqual([expect.objectContaining(mail)]);
   });
 });
 

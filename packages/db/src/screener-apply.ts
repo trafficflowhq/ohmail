@@ -13,7 +13,6 @@ import { recordLearningSignal } from "./learning-signal.js";
 import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { endOwedWalk, findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
 import { storedAuthScreens, unconfirmedSql } from "./screening-verdicts.js";
-import { automaticAiAdmits } from "./screener-suggestion.js";
 import { auditAction } from "./staff-channels.js";
 
 /**
@@ -365,6 +364,11 @@ export async function rerouteOwnHeldBag(
   return { rerouted: moved.rerouted.length, lastSeq: moved.lastSeq };
 }
 
+/** Keep sensitive mail in place when a Screener suggestion leads to automatic filing. */
+export function automaticFilingAdmits(): SQL {
+  return and(eq(messages.noAi, false), isNull(messages.sensitivityCategory))!;
+}
+
 /** What {@link rerouteUnconfirmedHeld} or {@link rerouteAdvisedLetter} did. */
 export interface UnconfirmedRerouteResult {
   /** `ruled`: the sender's key has a rule, enabled or paused, and nothing was filed. */
@@ -400,22 +404,21 @@ export async function rerouteUnconfirmedHeld(
  * capped by other senders' mail (one subject from other first-time senders) or stored before its
  * reason was is no fact about the address. It files exactly the held letter it was bought about,
  * whatever its verdict, and nothing else of the address's; nothing standing, each filing listed with
- * its undo, as {@link rerouteUnconfirmedHeld}. Never a letter put back, deleted, or one no automatic
- * path may read (`automaticAiAdmits`: `no_ai`, a sensitivity category). Same fences and refusals.
+ * its undo, as {@link rerouteUnconfirmedHeld}. Leaves deleted letters, put-back letters, and sensitive mail in place.
  */
 export async function rerouteAdvisedLetter(
   tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date; messageId: string },
 ): Promise<UnconfirmedRerouteResult> {
   return actFiling(tx, input, "rerouteAdvisedLetter",
-    and(eq(messages.id, input.messageId), automaticAiAdmits(messages))!);
+    eq(messages.id, input.messageId));
 }
 
-/** The act's two doors: a bare sender rule decides the address, and no automatic path reads a `no_ai` letter. */
+/** The act's two doors: a standing sender rule decides the address, and sensitive mail stays in place. */
 async function actFiling(
   tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date }, name: string, within: SQL,
 ): Promise<UnconfirmedRerouteResult> {
   const filed = await fileWithoutRule(tx, input, {
-    name, within, admits: automaticAiAdmits(messages),
+    name, within, admits: automaticFilingAdmits(),
     decided: async (address) => (await findRulesByKey(tx, input.accountId, {
       kind: "sender", match: ruleMatchKey(address), subjectContains: null, bodyContains: null,
     })).length > 0,
@@ -428,7 +431,7 @@ interface WithoutRuleDoor {
   name: string;
   /** The caller's bag over `messages` and `folder_state`. */
   within: SQL;
-  /** What this automatic path may read: a code or a reset stays where the person sees it. */
+  /** Which letters this path may file. */
   admits: SQL;
   /** The address is not this door's; asked under the rule-key lock, before anything is read. */
   decided: (address: string) => Promise<boolean>;
@@ -769,7 +772,7 @@ export interface ApplyScreenerDecisionResult {
    * `ruled`: `overExisting: "skip"` met a key with a rule, and nothing was written or filed.
    * `identity`: a pass's yes met held mail carrying the identity fact (mail 0148), and nothing was
    * written or filed — only a person's press admits that sender.
-   * `sensitive`: a pass's decision met a held letter no automatic path may read (a code, a reset),
+   * `sensitive`: a pass's decision met sensitive held mail, such as a code or a reset,
    * and nothing was written or filed — the person decides that sender.
    */
   skipped?: "ruled" | "identity" | "sensitive";
@@ -879,7 +882,7 @@ export async function applyScreenerDecision(
   /* A PASS NEVER FILES A SENSITIVE LETTER: its bag holding one (a code, a reset) leaves the sender
      whole for the person, before anything is written. A person's press still moves it. */
   if (decidedBy === "pass") {
-    const closed = { skipPutBack: true, within: sql`not ${automaticAiAdmits(messages)}` };
+    const closed = { skipPutBack: true, within: sql`not ${automaticFilingAdmits()}` };
     const sensitive = scope === "domain"
       ? await heldRowsForDomain(tx, accountId, domain, undefined, closed)
       : await heldRowsForSender(tx, accountId, address, undefined, closed);

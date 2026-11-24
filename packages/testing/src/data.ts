@@ -228,11 +228,11 @@ export const ohbox: MessageFixture[] = [
     protected: {
       kind: "verification",
       label: "Verification code",
-      redactedNote: "kept out of AI",
+      redactedNote: "Verification code",
       policy:
-        "You see it in full — it's your own code. It's kept out of AI and never forwarded; only what a model would read is stripped.",
+        "You see it in full in your reader. Forwarding needs confirmation.",
     },
-    rationale: "Sensitive class: verification — labelled and kept out of AI; the body is shown in full",
+    rationale: "Sensitive class: verification. The body is shown in full.",
   },
   {
     id: "ben",

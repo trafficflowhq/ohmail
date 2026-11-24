@@ -42,6 +42,7 @@ import {
   Sentence,
   Sign,
   Slot,
+  Spinner,
   StepDots,
   SuggestionCredit,
   SuggestionList,
@@ -190,6 +191,9 @@ const titled = (kind: "hot" | "ink" | "ring"): KitSubject => ({
   ),
 });
 const dot: KitSubject[] = [titled("hot"), titled("ink"), titled("ring")];
+
+/* The waiting mark as a pull's release holds it: still, under reduced motion. */
+const spinner: KitSubject[] = [{ key: "Spinner/pull", render: () => <Spinner /> }];
 
 const keyHint: KitSubject[] = (
   [
@@ -1487,6 +1491,7 @@ export const subjects: KitSubject[] = [
   ...suggest,
   ...button,
   ...dot,
+  ...spinner,
   ...keyHint,
   ...sentence,
   ...slot,

@@ -318,7 +318,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // grouped read over the mailbox's own waiting rows, at most 101 (folder, class) pairs.
   "GET /mailboxes/:id/filings",
   "GET /mailboxes/:id/profile-import",
-  "GET /mailboxes/oauth/microsoft/availability",
   // The held-release summary: the caller writes nothing at all — no body, no query, not even
   // an id. The answer is one grouped read over their own rules and their own held mail, and
   // its own row count is bounded by `HELD_RELEASE_GROUPS_MAX` on the server's side of the wire.
@@ -633,6 +632,9 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "PATCH /mailboxes/:id": { door: "host, port, username and a credential — each stored as one column and dialled once" },
   "POST /mailboxes/oauth/microsoft/start": { door: "`returnTo` is compared against the allow-list, never concatenated" },
   "POST /mailboxes/oauth/microsoft/complete": { scalarsOnly: true },
+  // `?approval=1` alone: a closed-set switch, compared to "1" and never stored, that adds the
+  // configured application's admin-consent link to the answer. Nothing a caller sizes.
+  "GET /mailboxes/oauth/microsoft/availability": { scalarsOnly: true },
   // The counts come from a document in the mailbox, not from this body — the body is a
   // fingerprint. PROFILE_IMPORT_MAX bounds each of the document's four lists before the
   // transaction opens.
@@ -1319,6 +1321,8 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/kb.ts#cursor": "identifier",
   "routes/kb.ts#limit": "clamped",
   "routes/mailboxes.ts#counts": "closed-set",
+  // `=== "1"` is the whole comparison; it only adds the configured admin-consent link.
+  "routes/mailbox-oauth.ts#approval": "closed-set",
   /* `?erase=1` selects the irreversible removal; `?confirm=` is an older client's spelling of the
      body's `confirm`, the mailbox's own address compared to the row being erased. Both are sliced
      to `RECIPIENT_ADDRESS_MAX_CHARS` at the handler before either reaches the service. */
@@ -2063,6 +2067,13 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // The automatic request's admitted-set read: the representatives `rep` already holds.
   "screener-service.ts :: rows.map((r) => r.messageId)": {
     origin: { bounded: "one representative per named sender — MAX_SUGGEST_SENDERS, refused in parseSenderSet before any query" },
+    count: 2,
+  },
+  /* The press's deferred retry (`workerRetryCandidates`): the rows are the press's own purchases,
+     one per named sender, so both this list and the second `rows.map((r) => r.messageId)` above
+     are capped by MAX_SUGGEST_SENDERS, refused in parseSenderSet before any query. */
+  "screener-service.ts :: rows.map((r) => r.fromAddress.toLowerCase())": {
+    origin: { bounded: "the senders of one press's purchases — MAX_SUGGEST_SENDERS, refused in parseSenderSet before any query" },
     count: 1,
   },
   "screener-service.ts :: senders": {
@@ -2093,6 +2104,8 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // before it still points at the legacy folder. Two module constants, so the predicate is
   // two elements wide whatever the account holds.
   "message-service.ts :: [NEWS_FOLDER, LEGACY_NEWS_FOLDER]": { origin: "constant", count: 1 },
+  // A start-over removes the suggestion rows of both statuses, the ready and the failed: two names.
+  "consent-reset.ts :: [SCREENER_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED]": { origin: "constant", count: 1 },
   "mailbox-filings.ts :: [NEWS_FOLDER, LEGACY_NEWS_FOLDER]": { origin: "constant", count: 2 },
   "mailbox-filings.ts :: target": { origin: { subquery: "the press's own waiting rows of the caller's mailbox, LIMIT FILINGS_PRESS_MAX" }, count: 2 },
   // The four triage states the Ohbox holds out of "New for you", inside `newForYouFilters`'

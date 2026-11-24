@@ -419,6 +419,9 @@ const CALL_SITES: Record<string, Record<string, number>> = {
     "packages/organizer/src/screener-correspondent-retro.ts#retireAutoActRules": 1,
     "packages/organizer/src/act-admission-retire.ts#retireActAdmissionsPass": 1,
     "packages/services/src/screener-service.ts#markCorrespondents": 1,
+    // The press's deferred retry: at most one sender per purchase (MAX_SUGGEST_SENDERS), and the
+    // answer only takes a correspondent OUT of the retry set; it admits and files nothing.
+    "packages/services/src/screener-service.ts#workerRetryCandidates": 1,
     // The impersonation filing's ties, read once per page: a sender the account wrote to keeps its claims held.
     "packages/organizer/src/screener-impersonation.ts#readTies": 1,
   },

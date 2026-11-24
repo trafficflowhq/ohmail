@@ -129,39 +129,54 @@ export function RowFirst(
         onWhen();
       }
     : undefined;
+  const groupSender = keepAddressDomain && address && !props.flag && !props.senderCheck;
+  const sender = (
+    <b className="oh-row-who" data-domain={keepAddressDomain && !address ? "" : undefined}>
+      {groupSender ? <span className="oh-row-who-words">{name}</span> : name}
+    </b>
+  );
+  const addressControl =
+    !address || props.flag ? null : href ? (
+      <a {...addressStyle} className="oh-row-address oh-row-contact" href={href}>
+        {shownAddress}
+      </a>
+    ) : addressAction ? (
+      <button
+        {...addressStyle}
+        className="oh-control oh-row-address"
+        type="button"
+        aria-label={address}
+        aria-haspopup="dialog"
+        onClick={openContact(addressAction)}
+      >
+        {shownAddress}
+      </button>
+    ) : (
+      <span {...addressStyle}>{shownAddress}</span>
+    );
   return (
     <span ref={line} className="oh-row-first" aria-hidden={props.twin ? true : undefined}>
-      <b className="oh-row-who" data-domain={keepAddressDomain && !address ? "" : undefined}>
-        {keepAddressDomain && address ? <span className="oh-row-who-words">{name}</span> : name}
-      </b>
-      {props.senderCheck ? <Tag title={props.senderCheck.title}>{props.senderCheck.label}</Tag> : null}
-      {props.flag ? (
-        <span className="oh-row-flag">
-          <span className="oh-row-flag-sign" role="img" aria-label={props.flag.label}>
-            <Icon name="warn" size={18} />
-          </span>
-          <Tag>{props.flag.word}</Tag>
+      {groupSender ? (
+        <span className="oh-row-sender">
+          {sender}
+          {addressControl}
         </span>
-      ) : address ? (
-        href ? (
-          <a {...addressStyle} className="oh-row-address oh-row-contact" href={href}>
-            {shownAddress}
-          </a>
-        ) : addressAction ? (
-          <button
-            {...addressStyle}
-            className="oh-control oh-row-address"
-            type="button"
-            aria-label={address}
-            aria-haspopup="dialog"
-            onClick={openContact(addressAction)}
-          >
-            {shownAddress}
-          </button>
-        ) : (
-          <span {...addressStyle}>{shownAddress}</span>
-        )
-      ) : null}
+      ) : (
+        <>
+          {sender}
+          {props.senderCheck ? <Tag title={props.senderCheck.title}>{props.senderCheck.label}</Tag> : null}
+          {props.flag ? (
+            <span className="oh-row-flag">
+              <span className="oh-row-flag-sign" role="img" aria-label={props.flag.label}>
+                <Icon name="warn" size={18} />
+              </span>
+              <Tag>{props.flag.word}</Tag>
+            </span>
+          ) : (
+            addressControl
+          )}
+        </>
+      )}
       <span className="oh-row-room" />
       {props.labels && props.labels.length > 0 ? (
         <span className="oh-row-labels">

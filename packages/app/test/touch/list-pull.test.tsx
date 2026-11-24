@@ -93,7 +93,7 @@ function listWorld(
 }
 
 const room = () => document.querySelector<HTMLElement>(".tc-pull");
-const mark = () => document.querySelector(".tc-pull .spin");
+const mark = () => document.querySelector(".tc-pull .oh-spin");
 
 describe("a pull at a list place's top", () => {
   it("presses the ground's pull once, and holds the waiting mark until that pull is over", () => {

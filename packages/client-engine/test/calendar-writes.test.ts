@@ -87,6 +87,27 @@ describe("the one overlay", () => {
 
 });
 
+describe("an answer to one day of a series", () => {
+  const at = String(Date.UTC(2026, 11, 1, 8, 30));
+  const series = record("series", { uid: "monthly", myAnswer: "none", repeat: { rules: ["FREQ=MONTHLY"], added: [], excluded: [] } });
+  const answer: CalendarEventAct = { kind: "calendar_event_answer", eventId: series.id, base: BASE, scope: { kind: "occurrence", at }, answer: "accepted" };
+
+  it("waits on that day alone: the series keeps its own answer and no wait, the day carries the answer while it waits", () => {
+    const [shown] = eventsWithWrites([{ ...series, writes: [mark(answer)] }], []);
+    expect(shown).toMatchObject({ record: { myAnswer: "none" }, waiting: null, refusal: null });
+    expect(shown!.answers).toEqual([{ at, answer: "accepted", waiting: "provider", refusal: null, refusedWriteId: null }]);
+    const [onDevice] = eventsWithWrites([series], [{ key: "k-1", act: answer }]);
+    expect(onDevice).toMatchObject({ waiting: null });
+    expect(onDevice!.answers).toEqual([{ at, answer: "accepted", waiting: "device", refusal: null, refusedWriteId: null }]);
+  });
+
+  it("a refused answer is that day's refusal, not every day's, and lays nothing over", () => {
+    const [shown] = eventsWithWrites([{ ...series, writes: [mark(answer, { id: "w-5", state: "refused", reason: "version_stale" })] }], []);
+    expect(shown).toMatchObject({ record: { myAnswer: "none" }, waiting: null, refusal: null, refusedWriteId: null });
+    expect(shown!.answers).toEqual([{ at, answer: null, waiting: null, refusal: "version_stale", refusedWriteId: "w-5" }]);
+  });
+});
+
 describe("the selector", () => {
   it("restores an event and exposes the refusal when the provider rejects a queued edit", () => {
     const event = record("shared");

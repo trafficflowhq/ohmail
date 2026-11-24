@@ -995,8 +995,12 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     // `first-run-agree-step-up.test.tsx` drives them.
     expect(run).toContain("setAt(rerun || opts.stayOnFailure === true ? here : null);");
     /* Agree, the take-over and Forget are the run's own writes; Connect's step-up stays on its screen by the connect
-       form's own gate (`model.test.ts`, "the second factor, asked once"), so three stand here where four stood. */
-    expect(model("actions.ts").match(/stayOnFailure: true/g) ?? [], "only the step-up writes stay on a refusal").toHaveLength(3);
+       form's own gate (`model.test.ts`, "the second factor, asked once"). The fourth is Finish: a refused completion
+       stays on the summary with its sentence and its press again, where a cleared cursor would leave the person on a
+       screen that never says the account was not finished. */
+    const staying = model("actions.ts").match(/stayOnFailure: true/g) ?? [];
+    expect(staying, "only the step-up writes and Finish stay on a refusal").toHaveLength(4);
+    expect(model("actions.ts")).toContain(".run(() => verbs.complete(), undefined, { stayOnFailure: true })");
   });
 
   it("the pane retires a failed create's sentence on EVERY field edit, not only a host change", () => {

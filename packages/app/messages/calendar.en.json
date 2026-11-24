@@ -37,12 +37,13 @@
         "rule": "Repeat rule {rule}",
         "weekdays": "Every weekday",
         "ordinal": "{order, select, first {first} second {second} third {third} fourth {fourth} last {last} fromEnd {{count, selectordinal, one {#st} two {#nd} few {#rd} other {#th}} from last} other {{count, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}}}",
-        "monthlyDate": "Every month on the {day, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
-        "monthlyWeekday": "Every month on the {ordinal} {weekday}",
+        "monthlyDate": "{count, plural, one {Every month} other {Every # months}} on the {day, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+        "monthlyWeekday": "{count, plural, one {Every month} other {Every # months}} on the {ordinal} {weekday}",
         "yearlyDate": "Every year on {date}",
         "yearlyWeekday": "Every year on the {ordinal} {weekday} of {month}"
       },
-      "moveWhen": "Move to {when}"
+      "moveWhen": "Move to {when}",
+      "changeAnswer": "Change your answer to {answer}"
     },
     "draft": {
       "discarded": "Discarded",
@@ -223,6 +224,8 @@
     "closeAgenda": "Close Agenda",
     "toAnswer": "to answer",
     "stepBefore": "The {unit, select, month {month} year {year} week {week} other {day}} before",
-    "stepAfter": "The {unit, select, month {month} year {year} week {week} other {day}} after"
+    "stepAfter": "The {unit, select, month {month} year {year} week {week} other {day}} after",
+    "said": "you said {answer, select, accepted {yes} tentative {maybe} other {no}}",
+    "saidOne": "you said {answer, select, accepted {yes} tentative {maybe} other {no}} to this one"
   }
 }

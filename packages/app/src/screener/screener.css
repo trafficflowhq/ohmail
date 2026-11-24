@@ -144,8 +144,8 @@
   min-height: 0;
 }
 
-/* The mailbox gives way before the sender's address does: the address is what the row is decided by. It is readable
-   or not there: below a few letters' room the chip wraps out of the line, under its foot, as the row's labels do. */
+/* The mailbox gives way before the sender's name and address. Below a few letters' room the chip wraps
+   out of the line, under its foot, and takes its gap with it. */
 :root[data-device="phone"] .sc-mailbox-badge {
   --sc-mailbox-badge-h: 22px;
   --sc-mailbox-badge-least: 6ch;
@@ -157,6 +157,7 @@
   height: var(--sc-mailbox-badge-h);
   max-inline-size: 33.333%;
   min-inline-size: 0;
+  margin-inline-start: 0;
 }
 
 /* Nothing, first in the line and as high as it: so the chip too can leave the line whole. */
@@ -171,4 +172,5 @@
 :root[data-device="phone"] .sc-mailbox-badge > * {
   flex: 1 1 0;
   min-inline-size: var(--sc-mailbox-badge-least);
+  margin-inline-start: var(--oh-row-wrap-gap);
 }

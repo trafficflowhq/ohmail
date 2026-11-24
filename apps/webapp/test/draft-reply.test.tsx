@@ -399,7 +399,6 @@ describe("draft from your text: one press, one purchase", () => {
 
 describe("refusals say the right thing, and nothing retries by itself", () => {
   it.each([
-    [422, "sensitive_no_ai", "cannot AI-draft a sensitive message"],
     [503, "drafter_unconfigured", "this deployment has no AI drafter connected"],
   ])("renders the %i refusal verbatim and returns to the offer", async (status, code, message) => {
     const h = mount();

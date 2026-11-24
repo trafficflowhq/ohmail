@@ -104,14 +104,17 @@ export function EventAnswers({
     base: string;
     seriesBase: string;
   } | null>(null);
+  const words = useText("invitations");
   const record = reply.invitation(event.recordId);
   if (!record?.myAnswer) return null;
   const series = event.ref.occurrence !== null ? reply.invitation(event.ref.event) : null;
+  // The day's own answer: a day of a series can carry one the series' record does not (one waiting for that day alone).
+  const answer = event.said?.answer ?? record.myAnswer;
   return (
     <>
       <AnswerChoices
         on="sheet"
-        answer={record.myAnswer}
+        answer={answer}
         propose={propose}
         onAnswer={(value, anchor) => {
           if (series)
@@ -122,7 +125,11 @@ export function EventAnswers({
       {question && series && (
         <CalendarRecordScope
           anchor={question.anchor}
-          question={t("actions.answerScope", { title: event.title })}
+          question={
+            answer === "none"
+              ? t("actions.answerScope", { title: event.title })
+              : t("actions.changeAnswer", { answer: words(`answer.${question.answer}`) })
+          }
           occurrence={!record.thisAndFuture}
           onClose={() => setQuestion(null)}
           onChoose={(scope) => {

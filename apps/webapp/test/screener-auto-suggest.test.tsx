@@ -280,34 +280,49 @@ describe("mail 0040 — the auto-suggest opt-in buys, and buys only", () => {
 
   it("NOBODY PRESSED IT, AND THE WIRE SAYS SO: `automatic: true` rides the purchase", async () => {
     await mountView(TWELVE, { autoSuggest: true });
-    // Without the flag the server reads a press, which asks about every held sender
-    // (the "Sensitive mail" invariant) — the opt-in's batch would send what the always-on pass keeps out.
+    // The flag lets the server apply the automatic attempt budget.
     expect(purchases()).toHaveLength(1);
     expect(purchases()[0]!.body!.automatic).toBe(true);
   });
 
-  it("a sender the server keeps out of automatic AI is not re-posted, and stays a press away", async () => {
-    // The first two are `no_ai` on the mirror; the server answers them `no_auto_ai`, unasked.
+  it("suggests automatically for the previously excluded messages", async () => {
     const kept = ["s00@example.com", "s01@example.com"];
+    const retrySender = "s11@example.com";
+    const next = msg("new", retrySender, 10);
     const held = TWELVE.map((m, i) => (i < 2 ? { ...m, sensitivity: { ...m.sensitivity, no_ai: true } } : m));
+    let delivered = false;
     suggestReply = (body) => {
-      const asked = body.senders.filter((s) => !kept.includes(s));
+      const skipped = !delivered && body.senders.includes(retrySender)
+        ? [{ sender: retrySender, reason: "attempts_exhausted" }]
+        : [];
+      const asked = body.senders.filter((sender) => !skipped.some((entry) => entry.sender === sender));
       return json({
         dryRun: false, requested: body.senders.length, quoted: asked.length, quotedCredits: asked.length,
-        charged: asked.length, skipped: body.senders.filter((s) => kept.includes(s)).map((sender) => ({ sender, reason: "no_auto_ai" })),
-        suggestions: asked.map((s) => ({ sender: s, messageId: `m-${s}`, decision: "yes", confidence: 0.9, rationale: "r" })),
+        charged: asked.length, skipped,
+        suggestions: asked.map((sender) => ({
+          sender, messageId: sender === retrySender ? next.id : `m-${sender}`,
+          decision: "yes", confidence: 0.9, rationale: "r",
+        })),
       });
     };
     const view = await mountView(held, { autoSuggest: true });
     expect(purchases()[0]!.body!.senders).toEqual(expect.arrayContaining(kept));
-    // No chip: the row speaks from its own mirror flag, and the sender stays in the buy list.
-    expect(host!.textContent).not.toContain("no_auto_ai");
-    for (const k of kept) expect(view.unsuggested()).toContain(k);
+    for (const k of kept) expect(view.unsuggested()).not.toContain(k);
 
     await view.revisit();
-    // The next visit's batch moves PAST them; re-posting them would stall it on the same senders.
+    // The next visit moves on to the two senders who have no suggestion yet.
     expect(purchases()).toHaveLength(2);
-    expect(purchases()[1]!.body!.senders).toEqual(["s10@example.com", "s11@example.com"]);
+    expect(purchases()[1]!.body!.senders).toEqual(["s10@example.com", retrySender]);
+    expect(view.unsuggested()).toContain(retrySender);
+
+    // A new representative has its own server-side attempt budget.
+    delivered = true;
+    await view.deliver([next]);
+    await view.revisit();
+
+    expect(purchases()).toHaveLength(3);
+    expect(purchases()[2]!.body).toMatchObject({ automatic: true, senders: [retrySender] });
+    expect(view.unsuggested()).not.toContain(retrySender);
   });
 
   it("IT SUGGESTS, IT NEVER DECIDES: no decide call, and nothing moves", async () => {

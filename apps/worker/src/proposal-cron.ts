@@ -13,8 +13,8 @@ import { cronEvent, runCronCli } from "./cron-log.js";
 import { attributedProposer, type UsageHook } from "./ai-usage.js";
 
 /**
- * The AI PROPOSAL-generation pass — a `reconcile-cron` sibling. It assembles the account's REDACTED
- * recurring patterns (metadata only; sensitive mail structurally excluded) and asks the INJECTED
+ * The AI PROPOSAL-generation pass — a `reconcile-cron` sibling. It assembles the account's
+ * recurring patterns (metadata only) and asks the INJECTED
  * WorkflowPort for automation suggestions, REPLACING the account's OPEN proposals (dedup — a re-run never
  * piles up). Core `generateProposals` does the redaction + validation + storage; the worker only injects
  * the port + clock, so the dependency rule holds (worker imports core+db, NEVER services). Proposals are

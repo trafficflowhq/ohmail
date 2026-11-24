@@ -1,0 +1,40 @@
+/* The waiting mark: the full stop's outline in the hot colour, faint, with a quarter of it running. `pathLength` makes
+   the ring and the square one dash space, and the run moves along the outline, never round its centre, at the pull's
+   pace. Under reduced motion the run rests at the top. */
+@layer oh {
+  .oh-spin {
+    display: inline-block;
+    flex: none;
+    width: var(--s4);
+    height: var(--s4);
+    vertical-align: middle;
+  }
+  .oh-spin-track,
+  .oh-spin-run {
+    fill: none;
+    stroke: var(--hot);
+    stroke-width: 2.5;
+    rx: var(--dot-r);
+  }
+  .oh-spin-track {
+    stroke-opacity: 0.22;
+  }
+  .oh-spin-run {
+    stroke-dasharray: 25 75;
+    stroke-dashoffset: 12.5;
+    animation: oh-spin-lap var(--d-pull) linear infinite;
+  }
+  [data-rm="1"] .oh-spin-run {
+    animation: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-spin-run {
+      animation: none;
+    }
+  }
+  @keyframes oh-spin-lap {
+    to {
+      stroke-dashoffset: -87.5;
+    }
+  }
+}

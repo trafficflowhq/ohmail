@@ -189,7 +189,7 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     expect(calls.n).toBe(1);
   });
 
-  it("`automatic` over HTTP reaches the rule: a `no_ai` sender is skipped unasked; a bad flag is a 400", async () => {
+  it("automatic suggestions include sign-in mail, and a bad flag is a 400", async () => {
     // The opt-in's unpressed batch says so on the wire, and the route hands it through untouched.
     const calls = { n: 0 };
     const { db, deps } = await withClassifier(calls);
@@ -202,12 +202,12 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
 
     const res = await post({ senders: ["alice@ex.example", "bank@ex.example"], automatic: true });
     expect(res.status).toBe(200);
-    expect((await res.json()).skipped).toEqual([{ sender: "bank@ex.example", reason: "no_auto_ai" }]);
-    expect(calls.n).toBe(1);
+    expect((await res.json()).suggestions).toHaveLength(2);
+    expect(calls.n).toBe(2);
     const bad = await post({ senders: ["bank@ex.example"], automatic: "yes" });
     expect(bad.status).toBe(400);
     expect((await bad.json()).error.code).toBe("validation_failed");
-    expect(calls.n, "a malformed flag reached the model").toBe(1);
+    expect(calls.n, "a malformed flag reached the model").toBe(2);
   });
 
   it("an Idempotency-Key replay returns the stored response and calls the model ONCE", async () => {

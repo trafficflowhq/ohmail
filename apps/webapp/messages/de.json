@@ -1051,8 +1051,8 @@
       "autoTurnOn": "Einschalten",
       "autoTurnOff": "Ausschalten",
       "actTitle": "Sichere Vorschläge für mich umsetzen",
-      "actDescription": "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, dass es Spam ist oder aussortiert gehört, legt ohmail den Absender unter Spam oder Aussortiert ab und schreibt die Regel für dich. Hereingelassen wird so nie jemand: Ein Vorschlag für die Ohbox, News oder Belege wartet auf dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, und sensible Mails werden so nie abgelegt. Gilt der Vorschlag einer Nachricht, deren Absender nicht bestätigt wurde — weder von deinem Mailanbieter noch durch die Signatur, die die eigene Domain des Absenders auf die Nachricht gesetzt hat —, oder stützt er sich nur auf denselben Betreff von anderen neuen Absendern, legt ohmail nur diese Nachricht ab, schreibt keine Regel und führt sie unter „Automatisch einsortiert“ auf, wo du sie zurücklegen kannst. Standardmäßig aus.",
-      "actDescriptionUnmarked": "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, dass es Spam ist oder aussortiert gehört, legt ohmail den Absender unter Spam oder Aussortiert ab und schreibt die Regel für dich. Hereingelassen wird so nie jemand: Ein Vorschlag für die Ohbox, News oder Belege wartet auf dich. Jede solche Regel steht unter Einstellungen → Regeln, dort kannst du sie rückgängig machen. Absender, denen du geschrieben hast, und sensible Mails werden so nie abgelegt. Gilt der Vorschlag einer Nachricht, deren Absender nicht bestätigt wurde — weder von deinem Mailanbieter noch durch die Signatur, die die eigene Domain des Absenders auf die Nachricht gesetzt hat —, oder stützt er sich nur auf denselben Betreff von anderen neuen Absendern, legt ohmail nur diese Nachricht ab, schreibt keine Regel und führt sie unter „Automatisch einsortiert“ auf, wo du sie zurücklegen kannst. Standardmäßig aus.",
+      "actDescription": "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, dass es Spam ist oder aussortiert gehört, legt ohmail den Absender unter Spam oder Aussortiert ab und schreibt die Regel für dich. Hereingelassen wird so nie jemand: Ein Vorschlag für die Ohbox, News oder Belege wartet auf dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, werden so nie abgelegt. Gilt der Vorschlag einer Nachricht, deren Absender nicht bestätigt wurde — weder von deinem Mailanbieter noch durch die Signatur, die die eigene Domain des Absenders auf die Nachricht gesetzt hat —, oder stützt er sich nur auf denselben Betreff von anderen neuen Absendern, legt ohmail nur diese Nachricht ab, schreibt keine Regel und führt sie unter „Automatisch einsortiert“ auf, wo du sie zurücklegen kannst. Standardmäßig aus.",
+      "actDescriptionUnmarked": "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, dass es Spam ist oder aussortiert gehört, legt ohmail den Absender unter Spam oder Aussortiert ab und schreibt die Regel für dich. Hereingelassen wird so nie jemand: Ein Vorschlag für die Ohbox, News oder Belege wartet auf dich. Jede solche Regel steht unter Einstellungen → Regeln, dort kannst du sie rückgängig machen. Absender, denen du geschrieben hast, werden so nie abgelegt. Gilt der Vorschlag einer Nachricht, deren Absender nicht bestätigt wurde — weder von deinem Mailanbieter noch durch die Signatur, die die eigene Domain des Absenders auf die Nachricht gesetzt hat —, oder stützt er sich nur auf denselben Betreff von anderen neuen Absendern, legt ohmail nur diese Nachricht ab, schreibt keine Regel und führt sie unter „Automatisch einsortiert“ auf, wo du sie zurücklegen kannst. Standardmäßig aus.",
       "actNeedsSuggest": "Braucht automatische Vorschläge",
       "actReader": "Stell das auf der Installation ein, die deine Mails organisiert.",
       "actFailed": "Diese Einstellung wurde nicht gespeichert. Sie ist unverändert.",
@@ -1101,7 +1101,6 @@
     "noSuggestionAiOff": "KI-Vorschläge sind für diesen Account nicht verfügbar: KI ist ausgeschaltet.",
     "noSuggestionAiDown": "KI-Vorschläge sind gerade nicht verfügbar: Die KI antwortet nicht.",
     "noSuggestionRefused": "KI-Vorschläge sind gerade nicht verfügbar: Der Server hat die Anfrage abgelehnt.",
-    "noSuggestionNoAutoAi": "Die Mails dieses Absenders bleiben von der automatischen KI ausgenommen.",
     "aiSuggests": "KI schlägt vor",
     "aiActRefused": "ohmail wollte diesen Absender für dich ablegen und konnte es nicht. {accept} legt ihn jetzt ab.",
     "aiHoldChip": "Braucht dich",
@@ -2349,7 +2348,7 @@
       "youSender": "Du",
       "yesterday": "gestern {time}",
       "menu": "Nachricht",
-      "sensitive": "Bestätigungscode · von KI ausgenommen"
+      "sensitive": "Bestätigungscode"
     }
   },
   "body": {
@@ -2592,8 +2591,8 @@
     "unchanged": "unverändert",
     "pointGradTitle": "Muster werden zu Regeln",
     "pointGrad": "Entscheide dreimal gleich, und ohmail fragt, ob daraus eine Regel werden soll. Du gibst sie einmal frei — von da an läuft sie fest, ganz ohne KI.",
-    "pointOtpTitle": "Codes sind unantastbar",
-    "pointOtp": "Trägt eine Mail einen Bestätigungscode oder einen Anmeldelink, wird dieser Code entfernt, bevor irgendetwas eine KI erreicht, und die Mail wird nie weitergeleitet und nie automatisch einsortiert — strukturell, ohne Einstellung, die das abschalten könnte. Du siehst die Nachricht immer vollständig; entfernt wird nur, was ein Modell lesen würde.",
+    "pointOtpTitle": "Bestätigungscodes vollständig lesen",
+    "pointOtp": "Bestätigungsmails sind im Lesebereich vollständig sichtbar. Für Nachrichten, die ohmail als vertraulich erkennt, gilt ein Weiterleitungsschutz.",
     "pointByoTitle": "Dein Schlüssel, dein Rechner — oder unserer",
     "pointByo": "In der Desktop-App bleiben deine Mails auf deinem Rechner, ohne ohmail-Server dazwischen. KI, wenn du sie willst, läuft über deinen eigenen API-Key oder ein lokales Modell, eingestellt in der App; die Rechnung geht an dich. In der Cloud sind monatliche KI-Credits enthalten, und wenn sie aufgebraucht sind, laufen deine Mails nur nach Regeln weiter.",
     "illusRules": "Regeln · der meiste Teil",
@@ -2842,7 +2841,7 @@
     "cloudCost": "Ab 9 $ im Monat, 14 Tage gratis.",
     "same": "Die Cloud ist Selbst-Hosting, das wir für dich erledigen: derselbe offene Server, derselbe Organizer, dasselbe Postfach als Master. Was sich ändert, ist, wessen Maschine die Kopie hält — und dass wir fürs Betreiben Geld nehmen.",
     "honest": "Das Kleingedruckte zur Cloud: Sie ist nicht Ende-zu-Ende-verschlüsselt. Der Dienst liest Mails, um sie abzulegen und zu durchsuchen, und sehr wenige Leute mit Zugriff auf die Produktionsdatenbank könnten sie technisch lesen. Nie verkauft, nie ausgewertet, für nichts anderes genutzt, als dir den Dienst zu liefern.",
-    "aiNote": "KI in der Cloud läuft unter kommerziellen API-Bedingungen über Anthropic: Deine Mails werden nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Zero-Retention-Vereinbarung gibt es noch nicht. Auf jeder Stufe wird ein Zugangsgeheimnis in einer Mail (ein Code, ein Login-Link, ein Reset-Token) entfernt, bevor eine Anfrage gebaut wird, und die automatische Einsortierung lässt solche Mails ganz aus. Das ist eingebaut, keine Einstellung."
+    "aiNote": "KI in der Cloud läuft unter kommerziellen API-Bedingungen über Anthropic: Deine Mails werden nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Zero-Retention-Vereinbarung gibt es noch nicht."
   },
   "folders": {
     "title": "So sieht dein IMAP aus.",
@@ -3957,7 +3956,7 @@
     "remove": "Anbieter und Schlüssel vergessen",
     "forget": "Vergessen",
     "removeWhy": "Entfernt die gespeicherten Schlüssel von diesem Computer. Mails kommen weiter an und werden weiter einsortiert.",
-    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank. Trägt eine Nachricht einen Code oder einen Anmeldelink, wird dieser nie gesendet — egal welcher Anbieter gewählt ist."
+    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank."
   },
   "shortcuts": {
     "goPile": "Zu {pile}",
@@ -4398,7 +4397,7 @@
     "sendAndDone": "Senden + Erledigt",
     "cancel": "Abbrechen",
     "hintEsc": "schließt den Editor",
-    "quotedProtected": "Bestätigungscode — von der KI ausgenommen",
+    "quotedProtected": "Bestätigungscode",
     "conversationAria": "Verlauf",
     "conversationCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}} in diesem Verlauf",
     "sending": "Wird gesendet",
@@ -6663,6 +6662,7 @@
     "activate": "Einen Kalender verbinden",
     "leave": "Nicht jetzt",
     "back": "Zurück",
+    "close": "Einrichtung schließen",
     "continue": "Weiter",
     "unread": "Der Kalender kann auf diesem Gerät nicht gelesen werden",
     "way": {
@@ -6738,7 +6738,16 @@
       "show": "{name} zeigen",
       "notSaved": "Nicht gesichert.",
       "checking": "Deine Kalender werden gelesen",
-      "checkingLine": "Das kann einen Moment dauern. Du kannst gehen: Sie kommen von selbst.",
+      "connected": "Verbunden",
+      "finding": "Kalender werden gesucht",
+      "reading": "Termine werden gelesen",
+      "events": "{count, plural, one {# Termin} other {# Termine}}",
+      "slow": "Das dauert einen Moment. Du kannst weitermachen; ohmail sagt dir Bescheid, sobald deine Kalender bereit sind.",
+      "keepGoing": "Weitermachen",
+      "none": "Keine Kalender in diesem Konto",
+      "closeNone": "Schließen",
+      "ready": "{provider}: {count, plural, one {# Kalender bereit} other {# Kalender bereit}}",
+      "readyShow": "Zeigen",
       "refused": "Nichts wurde verbunden",
       "again": "Noch einmal"
     },
@@ -6895,6 +6904,7 @@
       "removeFromCalendar": "Aus meinem Kalender entfernen",
       "removeScope": "{title} entfernen",
       "answerScope": "Auf {title} antworten",
+      "changeAnswer": "Deine Antwort auf {answer} ändern",
       "delete": "Löschen",
       "moveTo": "Verschieben nach",
       "hideCalendar": "Diesen Kalender ausblenden",
@@ -6917,8 +6927,8 @@
         "rule": "Wiederholungsregel {rule}",
         "weekdays": "Jeden Werktag",
         "ordinal": "{order, select, first {ersten} second {zweiten} third {dritten} fourth {vierten} last {letzten} fromEnd {{count}. von hinten gezählten} other {{count}.}}",
-        "monthlyDate": "Jeden Monat am {day}.",
-        "monthlyWeekday": "Jeden Monat am {ordinal} {weekday}",
+        "monthlyDate": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {day}.",
+        "monthlyWeekday": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {ordinal} {weekday}",
         "yearlyDate": "Jedes Jahr am {date}",
         "yearlyWeekday": "Jedes Jahr am {ordinal} {weekday} im {month}"
       },
@@ -7102,6 +7112,8 @@
     },
     "closeAgenda": "Terminliste schließen",
     "toAnswer": "zu beantworten",
+    "said": "{answer, select, accepted {du hast zugesagt} tentative {du hast vielleicht gesagt} other {du hast abgesagt}}",
+    "saidOne": "{answer, select, accepted {du hast für diesen Termin zugesagt} tentative {du hast für diesen Termin vielleicht gesagt} other {du hast für diesen Termin abgesagt}}",
     "stepBefore": "{unit, select, month {Der vorige Monat} year {Das vorige Jahr} week {Die vorige Woche} other {Der vorige Tag}}",
     "stepAfter": "{unit, select, month {Der nächste Monat} year {Das nächste Jahr} week {Die nächste Woche} other {Der nächste Tag}}"
   },

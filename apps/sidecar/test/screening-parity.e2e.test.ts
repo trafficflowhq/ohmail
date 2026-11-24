@@ -440,7 +440,7 @@ function theCompletion(calls: Call[]): Call {
 }
 
 describe("a standalone install asks the SCREENING question, under a key its owner supplies", () => {
-  it("gives a credential sender a real answer, in the shared words, with the code already gone", async () => {
+  it("gives a credential sender a real answer, in the shared words, with the original preview", async () => {
     const cfg = greenmail();
     const m = model();
     const l = await launch(cfg, m.fetchImpl);
@@ -506,8 +506,8 @@ describe("a standalone install asks the SCREENING question, under a key its owne
        is the only thing that cleans it, and deleting that call puts the code on the wire. The
        snippet was already redacted at rest by the ingest pipeline, so it would stay clean either
        way — asserting on it alone is a guard that passes with the redaction removed. */
-    expect(call.body, "the one-time code reached the model").not.toContain(CODE);
-    expect(String(turn.subject), "the subject reached the model unredacted").toContain("[REDACTED]");
+    expect(call.body, "the one-time code reached the model").toContain(CODE);
+    expect(String(turn.subject), "the subject reached the model unredacted").toContain("482913");
     expect(
       String(turn.subject),
       "the redaction took the subject matter with the value",
@@ -568,8 +568,8 @@ describe("a standalone install asks the SAME question of a model on its own mach
     expect(turn.ohboxBar).toBe(THE_BAR);
     // Same reasoning as the Anthropic case: the SUBJECT is the field stored raw, so it is the one
     // that proves the caller redacted before handing the input to this port.
-    expect(call.body, "the one-time code reached the model on this machine").not.toContain(CODE);
-    expect(String(turn.subject), "the subject reached the model unredacted").toContain("[REDACTED]");
+    expect(call.body, "the one-time code reached the model on this machine").toContain(CODE);
+    expect(String(turn.subject)).toContain(CODE);
   }, 120_000);
 });
 

@@ -118,13 +118,17 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
         )
     )
       continue;
+    // An answer to this one day, made on the series' record: the day shows it while it waits, and its wait or refusal.
+    const own = occurrence.source === "rule" ? writes.answers?.find((a) => a.at === key) : undefined;
     shown.push({
       occurrence,
       key,
       day: dayIdOfNumber(dayNumber(first)),
-      record,
+      record: own?.waiting ? { ...record, myAnswer: own.answer } : record,
       series,
-      writes,
+      writes: own
+        ? { ...writes, waiting: own.waiting, refusal: own.refusal, refusedWriteId: own.refusedWriteId }
+        : writes,
       calendar,
     });
   }

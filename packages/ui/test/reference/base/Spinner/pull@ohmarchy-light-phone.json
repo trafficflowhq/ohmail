@@ -1,0 +1,36 @@
+{
+  "component": "Spinner",
+  "state": "pull",
+  "look": "ohmarchy-light-phone",
+  "place": "cell",
+  "target": [187, 78, 16, 16],
+  "clip": [187, 78, 16, 16],
+  "studioCommit": "68c6837413f9f5be864c516c36c5cf4d356a11ce",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    {
+      "boxShadow": "color(srgb 0.12549 0.368627 0.65098 / 0.22) 0px 0px 0px 2.5px inset",
+      "after.borderTop": "2px solid rgb(32, 94, 166)"
+    }
+  ],
+  "nodes": [],
+  "loose": {
+    "text": [],
+    "surfaces": [{ "box": [0, 0, 16, 16], "paint": 0, "parts": { "after": [0, 0, 16, 16] } }]
+  }
+}

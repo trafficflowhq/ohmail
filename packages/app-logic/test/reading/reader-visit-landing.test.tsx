@@ -27,7 +27,7 @@ it("ignores an old manual scroll anchor after automatic positioning resumes", ()
     ({ manual }) => useThreadPosition(scroller, manual, () => undefined, pin),
     { initialProps: { manual: true } },
   );
-  result.current.readingAnchor.current = { id: "m1", scroll: 300, offset: 14 };
+  result.current.readingAnchor.current = { id: "m1", scroll: 300, offset: 14, text: null };
   expect(result.current.wasClamped()).toBe(true);
   rerender({ manual: false });
   expect(result.current.wasClamped()).toBe(false);

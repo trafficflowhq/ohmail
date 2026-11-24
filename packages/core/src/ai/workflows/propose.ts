@@ -11,12 +11,11 @@ import { requestRulesFor } from "../../model-rules.js";
 /**
  * The AI WorkflowPort seam — mirrors the classifier and drafter: the PORT lives in core so the
  * worker cron and ProposalsService depend on it without a cycle; `makeOpusProposer` takes an
- * INJECTED client and never imports a model SDK at load. REDACTION: the input is non-sensitive
- * pattern METADATA only — sender/domain, destination, counts, provenance — never a body, snippet
+ * INJECTED client and never imports a model SDK at load. The input is pattern
+ * metadata only — sender/domain, destination, counts, provenance — never a body, snippet
  * or subject. `buildProposeParams` STRUCTURALLY asserts this: it rejects a pattern carrying any
  * key outside the allowed metadata set, so raw content cannot be serialized into a request even
- * by mistake; the caller also excludes patterns whose messages are sensitivity-flagged — the port
- * cannot see what the caller never assembles.
+ * by mistake.
  */
 
 /* The pattern SHAPE is declared with the workflow grammar, in `workflow-shapes.ts`: it is also
@@ -120,7 +119,7 @@ export const MAX_PROPOSALS_PER_PASS = 10;
  */
 const PROPOSE_PREFIX = [
   "You are the automation proposer for ohmail. You are given a list of the",
-  "owner's RECURRING mail-handling patterns as NON-SENSITIVE METADATA ONLY — a sender",
+  "account's recurring mail-handling patterns as routing metadata — a sender",
   "address or domain, the destination folder it was repeatedly routed to, how many",
   "times the pattern recurred, and where it was observed. You NEVER see message bodies,",
   "subjects, or snippets.",

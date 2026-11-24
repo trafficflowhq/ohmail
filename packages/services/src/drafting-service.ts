@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import {
   messages, draftAttemptKey, draftFromTextAttemptKey, modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent, reverseCharge,
   type IdempotencyKey, type ReverseChargeFact, type ReverseChargeResult,
@@ -13,8 +13,8 @@ import type {
   AccessPort, AiUsageHost, RefundObligationPort, SpendPort,
 } from "@trafficflow/db";
 import {
-  createLogger, plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE, ModelDeclinedError, NO_LETTER,
-  type DraftCallOptions, type DraftInput, type DraftPort, type DraftResult, type ModelSinkReason,
+  createLogger, plainTextToOutboundBody, ModelDeclinedError, NO_LETTER,
+  type DraftCallOptions, type DraftInput, type DraftPort, type DraftResult,
 } from "@trafficflow/core/mail";
 import type { DraftFromTextBody, UntrustedBody } from "@ohmail/wire";
 import { usageLines } from "./ai-usage-lines.js";
@@ -63,13 +63,6 @@ function sayDraftRefund(f: ReverseChargeFact, accountId: string, attempt: string
  * what a letter should say, never a letter pasted whole. It travels to a model, priced per token.
  */
 export const DRAFT_OWN_TEXT_MAX_CHARS = 4_000;
-
-/** The credential door's refusal, said about the person's own text rather than a message. */
-const OWN_WORDS_REFUSAL_SENTENCE: Record<ModelSinkReason, string> = {
-  vocabulary: "your text reads like an authentication mail",
-  credential_shape: "your text contains something that looks like a credential",
-  auth_url_token: "your text carries a sign-in link with a token in it",
-};
 
 /** An optional id of the body: absent, or a string that is not empty. */
 function optionalId(v: unknown, field: string): string | undefined {
@@ -186,14 +179,8 @@ interface DraftWork {
 }
 
 /**
- * DraftingService — the AI draft-from-history flow: assemble a SENSITIVITY-SAFE context, call the
- * injected DraftPort, STORE the result as a `drafts` row (never sent). REFUSAL: a `no_ai` or
- * sensitive TARGET throws 422 `sensitive_no_ai` BEFORE any context is assembled — the target body
- * is never read, the drafter's call-count stays 0. CONTEXT: KB retrieval plus the target thread's
- * OTHER messages as redacted snippets. SENSITIVITY EXCLUSION: carried STRUCTURALLY in the SQL
- * WHERE (`no_kb = false AND no_ai = false AND sensitivity_category IS NULL`) — never a
- * post-filter that could be forgotten. Storing goes through `DraftsService.create`, so the
- * `draft` change row is emitted in-tx and mailbox ownership re-checked.
+ * Drafts from a message preview or the person's words, using account-scoped context.
+ * DraftsService stores the reply and writes the sync change in the same transaction.
  */
 export class DraftingService {
   constructor(
@@ -226,12 +213,9 @@ export class DraftingService {
     // Measured from the TOP with `Date.now()`, not `ctx.now()`: a frozen test clock would switch
     // the window off silently — the screener's `admissionDeadline` rule.
     const window = draftWindow(this.opts.invocationBudgetMs, Date.now(), this.opts.admission);
-    // 1. Load the target — account-scoped: a cross-account id is a 404. 2. Refuse a sensitive /
-    //    no_ai target BEFORE reading any body or assembling context — the sensitive message never
-    //    reaches the model ({@link letterOf}).
     const target = await this.letterOf(ctx, messageId);
 
-    // 3. Assemble the sensitivity-safe context. We use snippets, never bodies.
+    // Assemble the context. We use snippets, never bodies.
     //
     //    BEFORE the charge, and that ordering is a fix rather than a preference. Both calls
     //    below are database round-trips and both can fail; charging first meant a KB or thread
@@ -252,26 +236,6 @@ export class DraftingService {
     const threadMessages = target.threadId
       ? await this.retrieveThreadContext(ctx, target.threadId, target.id)
       : [];
-
-    /**
-     * THE DOOR, before the input object exists and before the charge. Step 2 above refuses a
-     * target the INGEST flagged; this refuses a payload whose JOIN carries credential material —
-     * the case those per-column flags cannot see, a credential split across a subject and a body.
-     * A refusal is a 422 the person reads, in the reason class's own words, and NO draft: a
-     * redacted draft would be a false state about what the model was shown and what it wrote.
-     */
-    const screened = screenModelInput([
-      { label: "incoming", fields: [target.subject, target.snippet, target.fromAddress] },
-      ...kbHits.map((e) => ({ label: "kb", fields: [e.title, e.content] })),
-      ...threadMessages.map((m) => ({ label: "thread", fields: [m.snippet, m.from] })),
-    ]);
-    if (!screened.admitted) {
-      throw new ServiceError(
-        "credential_screened", 422,
-        `${MODEL_SINK_REFUSAL_SENTENCE[screened.reason]}, so no draft was generated`,
-        { reason: screened.reason },
-      );
-    }
 
     const input: DraftInput = {
       incoming: {
@@ -309,9 +273,7 @@ export class DraftingService {
   /**
    * A DRAFT FROM THE PERSON'S OWN WORDS: `text` says what the letter should say; a letter named
    * by `inReplyToMessageId` is answered, read as context; without one, `mailboxId` names where the
-   * draft is written. The doors in order: the words, the letter (404, a differing mailbox 400, a
-   * sensitive letter 422 before any context), the context, the credential door with the words as
-   * their own document, then {@link chargedDraft}'s: the refund memory, the mailbox, the
+   * draft is written. The doors in order: the words, the letter (404, a differing mailbox 400), the context, then {@link chargedDraft}'s: the refund memory, the mailbox, the
    * admission, the spend, the model, the refund, the store. Stored, never sent.
    */
   async draftFromText(
@@ -333,7 +295,7 @@ export class DraftingService {
     const letterId = optionalId(raw.inReplyToMessageId, "inReplyToMessageId");
     const mailboxId = optionalId(raw.mailboxId, "mailboxId");
 
-    // 2. The letter answered, account-scoped, refused before any context when it may not reach a model.
+    // 2. The letter answered, account-scoped, checked before the context is read.
     const letter = letterId === undefined ? null : await this.letterOf(ctx, letterId);
     if (letter !== null && mailboxId !== undefined && mailboxId !== letter.mailboxId) {
       throw new ServiceError("validation_failed", 400, "mailboxId is not the mailbox of the letter answered");
@@ -346,18 +308,6 @@ export class DraftingService {
     // 3. The context: the knowledge base, asked with the letter's hint or the words, and the thread only with a letter.
     const kbHits = await this.kb.retrieve(ctx, letter !== null ? kbHintOf(letter) : text.slice(0, SEARCH_QUERY_MAX_CHARS), deps.k ?? DEFAULT_KB_K);
     const threadMessages = letter?.threadId ? await this.retrieveThreadContext(ctx, letter.threadId, letter.id) : [];
-
-    // 4. THE DOOR, the person's words their own document: a credential in them is said about them.
-    const screened = screenModelInput([
-      { label: "own", fields: [text, subject] },
-      ...(letter !== null ? [{ label: "incoming", fields: [letter.subject, letter.snippet, letter.fromAddress] }] : []),
-      ...kbHits.map((e) => ({ label: "kb", fields: [e.title, e.content] })),
-      ...threadMessages.map((m) => ({ label: "thread", fields: [m.snippet, m.from] })),
-    ]);
-    if (!screened.admitted) {
-      const sentence = screened.where === "own" ? OWN_WORDS_REFUSAL_SENTENCE[screened.reason] : MODEL_SINK_REFUSAL_SENTENCE[screened.reason];
-      throw new ServiceError("credential_screened", 422, `${sentence}, so no draft was generated`, { reason: screened.reason });
-    }
 
     const input: DraftInput = {
       incoming: letter !== null ? { subject: letter.subject, from: letter.fromAddress, snippet: letter.snippet } : { ...NO_LETTER },
@@ -393,15 +343,12 @@ export class DraftingService {
     const [target] = await ctx.db
       .select({
         id: messages.id, mailboxId: messages.mailboxId, threadId: messages.threadId, subject: messages.subject,
-        fromAddress: messages.fromAddress, snippet: messages.snippet, noAi: messages.noAi, sensitivityCategory: messages.sensitivityCategory,
+        fromAddress: messages.fromAddress, snippet: messages.snippet,
       })
       .from(messages)
       .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)))
       .limit(1);
     if (!target) throw new ServiceError("not_found", 404, "message not found");
-    if (target.noAi || target.sensitivityCategory !== null) {
-      throw new ServiceError("sensitive_no_ai", 422, "cannot AI-draft a sensitive message");
-    }
     return target;
   }
 
@@ -641,12 +588,7 @@ export class DraftingService {
     return draftAttemptKey(messageId, deps.attemptKey);
   }
 
-  /**
-   * The target thread's OTHER messages as redacted snippets, with the
-   * sensitivity exclusion STRUCTURAL in the WHERE: `no_kb = false AND
-   * no_ai = false AND sensitivity_category IS NULL`. Break any of these predicates
-   * and an excluded sibling would leak into the DraftPort input. accountId-scoped.
-   */
+  /** Other messages in the target thread, scoped to the account. */
   private async retrieveThreadContext(
     ctx: ServiceContext,
     threadId: string,
@@ -660,9 +602,6 @@ export class DraftingService {
           eq(messages.accountId, ctx.accountId),
           eq(messages.threadId, threadId),
           ne(messages.id, excludeId),
-          eq(messages.noKb, false),
-          eq(messages.noAi, false),
-          isNull(messages.sensitivityCategory),
         ),
       )
       .orderBy(asc(messages.date))

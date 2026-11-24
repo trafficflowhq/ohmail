@@ -5,7 +5,7 @@ import {
   applyScreenerDecision, rerouteAdvisedLetter, rerouteUnconfirmedHeld, unconfirmedSql, recordChanges, fencedAccountWrite,
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
-  screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, onServerPool, senderIsActiveSql, heldSenderKeysSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
+  screenerSuggestionsBySender, automaticFilingAdmits, resolveCutline, onServerPool, senderIsActiveSql, heldSenderKeysSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
   notGoneSql, readGoneMailboxIds, readListAddressesLetIn,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
@@ -570,7 +570,7 @@ async function checkUncheckedHeld(db: Tx, accountId: string, senders: readonly s
 /**
  * Which of these advised letters a one-letter deny's door would still file: held, not deleted, not
  * put back, and not confirmed (`rerouteUnconfirmedHeld`'s bag for one letter) or, on confirmed
- * advice, one an automatic path may read (`rerouteAdvisedLetter`'s). Read once per page; each door
+ * advice, a letter eligible for automatic filing (`rerouteAdvisedLetter`'s). Read once per page; each door
  * asks again in its own transaction.
  */
 async function advisedLettersFileable(
@@ -581,7 +581,7 @@ async function advisedLettersFileable(
   const advised = letters.filter((l) => l.confirmed).map((l) => l.id);
   const bags: SQL[] = [];
   if (unconfirmed.length > 0) bags.push(and(inArray(messages.id, unconfirmed), unconfirmedSql(sql`${messages.authVerdict}`))!);
-  if (advised.length > 0) bags.push(and(inArray(messages.id, advised), automaticAiAdmits(messages))!);
+  if (advised.length > 0) bags.push(and(inArray(messages.id, advised), automaticFilingAdmits())!);
   const rows = await db.select({ id: messages.id }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .where(and(
@@ -613,7 +613,7 @@ interface WaitingSender {
  * The differences from that pass, each deliberate: NO watermark (advice that already exists is
  * owed an act whenever the consent was given) and no advice predicate here — the advice is
  * read per sender through its one read path. The sensitivity exclusion reaches every held letter of
- * the sender, not the representative alone (`automaticAiAdmits`): the door files the whole bag, so a
+ * the sender, not the representative alone (`automaticFilingAdmits`): the door files the whole bag, so a
  * held code or reset leaves its sender whole for the person.
  */
 async function selectWaitingSenders(
@@ -703,7 +703,7 @@ async function selectWaitingSenders(
       // Asked per representative by its id (`is true` keeps it from becoming a join the planner
       // runs as a scan of every copy per representative).
       sql`${copyOnRecord(sql`${sql.identifier("reps")}.${sql.identifier(messages.id.name)}`)} is true`,
-      // No held letter of the sender, with `identityHeld`'s reach, that an automatic path may not read.
+      // No sensitive held letter of the sender, with the same reach as `identityHeld`.
       // One set, hashed: a correlated probe per sender became a nested loop.
       sql`(${repSender} in (
         select lower(${messages.fromAddress}) from ${messages}
@@ -711,7 +711,7 @@ async function selectWaitingSenders(
          where ${messages.accountId} = ${opts.accountId}
            and ${folderState.desiredFolder} = ${SCREENER_FOLDER}
            and ${messages.deletedAt} is null
-           and not ${automaticAiAdmits(messages)}
+           and not ${automaticFilingAdmits()}
       )) is not true`,
       sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone, { candidates })})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,

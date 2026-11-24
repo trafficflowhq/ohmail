@@ -126,7 +126,7 @@ describe("a refused sign-in", () => {
 
   it("says it is still checking while nothing has answered, and follows the calendars when they arrive", async () => {
     const world = mirror();
-    world.put("calendar_connection", "conn-1", connectionRecord());
+    world.put("calendar_connection", "conn-1", connectionRecord({ lastSyncedAt: null }));
     mountFrame(
       "#/cal/cal-setup?step=calendars&way=caldav&connection=conn-1",
       world,

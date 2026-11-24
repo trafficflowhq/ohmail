@@ -176,10 +176,19 @@ describe("Desktop AI reply drafts", () => {
     })).toBe(said);
   }, 15_000);
 
-  it("renders the 422 sensitive refusal as the engine wrote it", async () => {
-    expect(await refusedNotice({
-      status: 422, body: envelope("sensitive_no_ai", "cannot AI-draft a sensitive message"),
-    })).toBe("cannot AI-draft a sensitive message");
+  it("opens the generated reply for a sign-in message", async () => {
+    const source = message("m1", {
+      subject: "Your sign-in code",
+      sensitivity: { sensitive: true, category: "otp", no_ai: true, no_forward: true, no_kb: true, priority: true },
+    });
+    const shell = await mountShell("#/ohbox", [source], [], { draftReplyWire: draftReplyOverBridge });
+    await pressDraftReply(shell);
+    await waitFor(() => replySurface(shell.el)?.textContent?.includes("Thursday works.") === true, "the draft");
+    expect(engineRequests.map(({ method, url }) => [method, url])).toEqual([
+      ["POST", "/messages/m1/draft"],
+      ["GET", "/drafts/d1"],
+    ]);
+    expect(draftNote(shell.el)).toBeNull();
   }, 15_000);
 
   it("creates and reads through the engine, keeps the press key, and lands text in the editor", async () => {

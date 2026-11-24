@@ -3654,9 +3654,7 @@ export interface ScreenerWirePage {
  */
 export type ScreenerSkipReason =
   | "not_held" | "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable"
-  | "model_declined"
-  // Only ever an answer to `automatic`: the sender's mail is kept out of automatic AI.
-  | "no_auto_ai";
+  | "model_declined" | "attempts_exhausted";
 
 export interface ScreenerSuggestWire {
   dryRun: boolean;

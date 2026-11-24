@@ -37,6 +37,8 @@ export interface StoredCalendar {
   readonly windowEnd: string | null;
   readonly nextPollAt: Date | null;
   readonly errorCode: string | null;
+  /** When a reading of it last wrote; null until its first reading has ended. */
+  readonly lastSyncedAt: Date | null;
 }
 
 export async function storedCalendars(tx: Tx, key: ConnectionKey): Promise<StoredCalendar[]> {
@@ -44,7 +46,7 @@ export async function storedCalendars(tx: Tx, key: ConnectionKey): Promise<Store
     id: calCalendars.id, providerId: calCalendars.providerId, name: calCalendars.name, color: calCalendars.color,
     access: calCalendars.access, nativeMove: calCalendars.nativeMove, timeZone: calCalendars.timeZone, syncToken: calCalendars.syncToken,
     windowStart: calCalendars.windowStart, windowEnd: calCalendars.windowEnd, nextPollAt: calCalendars.nextPollAt,
-    errorCode: calCalendars.errorCode,
+    errorCode: calCalendars.errorCode, lastSyncedAt: calCalendars.lastSyncedAt,
   }).from(calCalendars)
     .where(and(eq(calCalendars.accountId, key.accountId), eq(calCalendars.connectionId, key.id)))
     .orderBy(asc(calCalendars.createdAt), asc(calCalendars.id));

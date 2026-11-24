@@ -78,6 +78,19 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.3" date="2026-11-24">
+      <description>
+        <ul>
+          <li>Draft replies and get AI suggestions for any mail</li>
+          <li>Google Play offers the Android app on devices without a portrait screen</li>
+          <li>Connecting a calendar shows what is happening</li>
+          <li>The desktop apps for Linux and macOS are built again</li>
+          <li>Letters keep their written line breaks</li>
+          <li>The reader holds your place as pictures load</li>
+          <li>Screener sender details fit better on phones</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.2" date="2026-11-24">
       <description>
         <ul>
@@ -401,18 +414,6 @@
           <li>The Screener's offer answers on a large account</li>
           <li>A letter your mail server accepts late is recorded as sent</li>
           <li>A send waits for a busy server instead of failing</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.12" date="2026-11-14">
-      <description>
-        <ul>
-          <li>One organizer fetches mail, also when its database connection goes silent</li>
-          <li>The apps say when new mail is not being fetched</li>
-          <li>The organizer waits out a database outage and resumes by itself</li>
-          <li>A screen reader hears which Settings section is open</li>
-          <li>ohmail says so when it is too old for its server, or its server is being updated</li>
-          <li>The iPhone app's "please update" card opens the App Store</li>
         </ul>
       </description>
     </release>
