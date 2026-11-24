@@ -801,19 +801,21 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
 });
 
 describe("a letter opened from Search: the open enters it, as ↵ on its row does", () => {
-  const letters = () => [msg("p1", 0), msg("p2", 10), msg("s1", 40, { threadId: "S", subject: "Harbour kettle" })];
+  const firstHit = () => msg("s1", 40, { threadId: "S", subject: "Harbour kettle" });
+  const letters = () => [msg("p1", 0), msg("p2", 10), firstHit()];
   const openHit = (): HTMLElement | null => {
     const row = screen.queryAllByRole("listitem").find((item) => item.getAttribute("data-hit") === "s1");
     return row ? within(row).queryByRole("button", { name: /Harbour kettle/ }) : null;
   };
-  /** Search asks the store: `GET /search?q=` answers s1 for "harbour". */
-  async function search(q: string): Promise<HTMLInputElement> {
-    const s1 = (msg("s1", 40, { threadId: "S", subject: "Harbour kettle" }) as { entity: unknown }).entity;
+  /** Search asks the store for the Harbour letters. */
+  async function search(q: string, hits = [firstHit()]): Promise<HTMLInputElement> {
     const inner = globalThis.fetch;
     globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
       const url = String(input);
       if (!/\/search\?/.test(url)) return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-      const items = /harbour/i.test(new URL(url, "https://harness.invalid").searchParams.get("q") ?? "") ? [s1] : [];
+      const items = /harbour/i.test(new URL(url, "https://harness.invalid").searchParams.get("q") ?? "")
+        ? hits.map(({ entity }) => entity)
+        : [];
       return liveAccountResponse(Response.json({ items, total: items.length, totalExact: true, ms: 4 }));
     }) as unknown as typeof globalThis.fetch;
     await goTo("search");
@@ -836,7 +838,7 @@ describe("a letter opened from Search: the open enters it, as ↵ on its row doe
       box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     });
     await settle();
-    expect(window.location.hash).toContain("ohbox");
+    expect(window.location.hash).toBe("#/search/m/s1?q=Harbour");
     expect(unseen("s1"), "unread on arrival").toBe(true);
     expect(glances(), "nothing before the dwell").toEqual([]);
     await dwell();
@@ -867,15 +869,19 @@ describe("a letter opened from Search: the open enters it, as ↵ on its row doe
   }, 60_000);
 
   it("j within the dwell moves on: s1 is not read", async () => {
-    await mountThread(letters());
-    await search("Harbour");
+    const next = msg("s2", 30, { threadId: "U", subject: "Harbour teapot" });
+    await mountThread([...letters(), next]);
+    await search("Harbour", [firstHit(), next]);
     await click(openHit(), "the hit");
-    expect(panel("s1")).not.toBeNull();
+    expect(unseen("s1"), "the opened result starts unread").toBe(true);
+    expect(glances(), "nothing before walking away").toEqual([]);
     await key("j");
-    expect(window.location.hash).not.toContain("/m/s1");
+    expect(window.location.hash).toBe("#/search/m/s2?q=Harbour");
+    expect(unseen("s2"), "walking opens the next result unread").toBe(true);
     await dwell();
     await dwell();
     expect(glances().flat()).not.toContain("s1");
+    expect(unseen("s2"), "walking leaves the next result unread").toBe(true);
   }, 60_000);
 
   it("a link to the letter is still a preview: nothing read", async () => {

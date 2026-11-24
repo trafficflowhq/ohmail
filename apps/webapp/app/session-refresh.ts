@@ -1428,6 +1428,9 @@ const NEVER_REFRESH = [
    */
   "/auth/step-up/",
   "/pair/redeem",
+  // Calendar consent returns carry a single-use provider code and follow a session confirmation.
+  "/calendar/oauth/google/complete",
+  "/calendar/oauth/microsoft/complete",
   // A phone app's handoff: a native rotation, whose 401 is the refresh token's verdict.
   "/pair/handoff",
   // The password change checks the current password on the sign-in lockout: its 401 is a verdict.

@@ -18,7 +18,7 @@ import { buildProgram, type Program } from "../src/program.js";
 import { loadSettings } from "../src/settings.js";
 import { PROCESS_DOOR, env, fixture, functionDoor, functionInput, processInput, recordingLogger } from "./_envs.js";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
-import { doorOf, namedBy, refusedOf, unmetOf } from "../../../test/support/wire-doors.js";
+import { doorOf, namedBy, refusedOf, statementText, unmetOf } from "../../../test/support/wire-doors.js";
 
 /**
  * THE BINDING AT EVERY DOOR OF THE API, READ OFF THE WIRE.
@@ -35,10 +35,10 @@ import { doorOf, namedBy, refusedOf, unmetOf } from "../../../test/support/wire-
  * (`TF_POOLER_ADDRESS`, `host:port`, in front of the test database; `TF_REQUIRE_POOLER=1` makes its
  * absence a failure). Without a pooler the managed program dials the database itself and says so.
  *
- * WHAT ONE BACKEND SEES IN TURN. A and B take turns on one backend, through every way a request
- * ends: answered, refused inside its transaction, cancelled from outside, timed out on a lock, left
- * by its client, its connection cut. After each, a statement outside any transaction on that same
- * backend reads both of the binding's settings empty, and the next request names its own account.
+ * WHAT ONE BACKEND SEES IN TURN. A and B take turns through every way a request ends: answered,
+ * refused inside its transaction, cancelled from outside, timed out on a lock, left by its client,
+ * its connection cut. After each, a statement outside any transaction checks both binding settings
+ * on the backend serving that request. Direct managed reads and writes use separate pools.
  */
 const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
@@ -138,9 +138,9 @@ interface Arm {
   /** The program A's requests go through, and B's: one program, or two clients of one pooler. */
   readonly forA: Program;
   readonly forB: Program;
-  /** The pool's own handle of A's program: a statement outside any transaction on its backend. */
-  readonly own: Handle;
-  /** Who reads the backend between two requests: the pool's own handle, or the pooler's second client. */
+  /** The handle A's writes and their session look-ups use. */
+  readonly write: Handle;
+  /** Who reads the read backend between requests: the read pool, or the pooler's second client. */
   readonly between: Handle;
   readonly origin: string;
   /** The program has a staff door. */
@@ -236,7 +236,7 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
     programs.push(server);
     const own = server.runtime.db.request() as unknown as Handle;
     arms.push({
-      name: "the server's own pool", forA: server, forB: server, own, between: own,
+      name: "the server's own pool", forA: server, forB: server, write: own, between: own,
       origin: "http://localhost", staffed: false, pooled: false,
     });
 
@@ -256,15 +256,16 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
       return { program, handle };
     };
     const first = managed("wire-managed-1");
+    const write = first.program.runtime.db.request(true) as unknown as Handle;
     if (POOLER_UP) {
       const second = managed("wire-managed-2");
       arms.push({
-        name: "the pooled handle, through the pooler", forA: first.program, forB: second.program, own: first.handle,
+        name: "the pooled handle, through the pooler", forA: first.program, forB: second.program, write,
         between: second.handle, origin: "https://api.ohmail.app", staffed: true, pooled: true,
       });
     } else {
       arms.push({
-        name: "the pooled handle, dialed directly", forA: first.program, forB: first.program, own: first.handle,
+        name: "the pooled handle, dialed directly", forA: first.program, forB: first.program, write,
         between: first.handle, origin: "https://api.ohmail.app", staffed: true, pooled: false,
       });
     }
@@ -366,6 +367,21 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
     return flights.slice(at + 1);
   };
 
+  /** A cold postgres.js connection discovers array types before the request sends its first flight. */
+  function afterTypeDiscovery(flights: PgWireFlight[]): PgWireFlight[] {
+    const [first, ...rest] = flights;
+    if (first?.door !== "plain") return flights;
+    expect(first.statements.map(statementText)).toEqual([statementText(`
+      select b.oid, b.typarray
+      from pg_catalog.pg_type a
+      left join pg_catalog.pg_type b on b.oid = a.typelem
+      where a.typcategory = 'A'
+      group by b.oid, b.typarray
+      order by b.oid
+    `)]);
+    return rest;
+  }
+
   /** `who`'s request, answered: its look-up, then flights that name `who` and nobody else. */
   async function own(arm: Arm, who: Person, method = "GET", path = "/messages?view=imbox", body?: unknown): Promise<PgWireFlight[]> {
     const other = who === A() ? B() : A();
@@ -382,18 +398,11 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
   }
 
   /** The backend's own word between two requests: both settings read empty, outside any transaction. */
-  async function leftNothing(arm: Arm): Promise<number> {
-    await settled();
-    const [row] = rowsOf<{ account: string | null; key: string | null; pid: number }>(await arm.between.execute(sql`
+  async function leftNothing(handle: Handle): Promise<number> {
+    const [row] = rowsOf<{ account: string | null; key: string | null; pid: number }>(await handle.execute(sql`
       select current_setting('ohmail.account', true) as account, current_setting('ohmail.key', true) as key, pg_backend_pid() as pid`));
     expect(row!.account ?? "").toBe("");
     expect(row!.key ?? "").toBe("");
-    return row!.pid;
-  }
-
-  /** The backend A's program writes on. */
-  async function backendOf(arm: Arm): Promise<number> {
-    const [row] = rowsOf<{ pid: number }>(await arm.own.execute(sql`select pg_backend_pid() as pid`));
     return row!.pid;
   }
 
@@ -410,7 +419,9 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
         const until = Date.now() + 15_000;
         for (;;) {
           const waiting = rowsOf<{ n: number }>(await tx.execute(
-            sql`select count(*)::int as n from pg_stat_activity where pid = ${pid} and wait_event_type = 'Lock'`));
+            sql`select count(*)::int as n from pg_stat_activity
+              where pid = ${pid} and wait_event_type = 'Lock'
+                and pg_backend_pid() = any(pg_blocking_pids(pid))`));
           if (waiting[0]!.n > 0) return;
           if (Date.now() > until) throw new Error("the request never waited on the held row");
           await new Promise((r) => setTimeout(r, 20));
@@ -510,20 +521,15 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
         const x = arm();
         await own(x, a);
         await own(x, b);
-        let pid = await backendOf(x);
-        // The backend is the same one from here on where something holds it: the pooler its one
-        // backend, the server's own pool a connection it never closes. The pooled handle dialed
-        // directly closes an idle connection after a second, so there the backend is read each time.
-        const held = x.pooled || !x.staffed;
-        const nothingLeft = async (): Promise<void> => {
-          const at = await leftNothing(x);
-          if (held) expect(at).toBe(pid);
-          else pid = at;
+        const readPid = await leftNothing(x.between);
+        // Direct managed reads and writes have separate pools. The owned pool and the transaction
+        // pooler each use one backend for both in this test.
+        const sharedBackend = x.pooled || x.write === x.between;
+        const readLeftNothing = async (): Promise<void> => {
+          const at = await leftNothing(x.between);
+          if (sharedBackend) expect(at).toBe(readPid);
         };
-        if (x.pooled) {
-          // The pooler keeps one backend: its second client reads what the first one's requests left.
-          await nothingLeft();
-        } else {
+        if (!x.staffed) {
           // One connection carries everything this program sends: its pool dialed no second one.
           const open = rowsOf<{ n: number }>(await seed.execute(
             sql`select count(*)::int as n from pg_stat_activity where application_name = ${SERVER_POOL}`));
@@ -533,9 +539,9 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
         // Twelve rounds each: a prepared statement has taken its generic plan long before the last.
         for (let round = 0; round < 12; round++) {
           await own(x, a);
-          await nothingLeft();
+          await readLeftNothing();
           await own(x, b);
-          await nothingLeft();
+          await readLeftNothing();
         }
 
         // A token no session answers: its look-up rides its own digest, and nothing follows it.
@@ -544,7 +550,7 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
         expect(nobody.status).toBe(401);
         expect(nobody.flights.filter((f) => f.account !== null)).toEqual([]);
         expect(nobody.flights.filter((f) => f.keyed).map((f) => keyEquals(f, hashToken(stranger)))).toEqual([true]);
-        await nothingLeft();
+        await readLeftNothing();
         await own(x, b);
 
         // Refused inside its transaction: A asks to change B's letter. Rolled back, under A.
@@ -552,9 +558,17 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
         expect(refusedInside.status).toBe(404);
         const undone = afterTheLookUp(refusedInside.flights, a).filter((f) => f.door === "write");
         expect(undone.map((f) => [f.account, f.closed])).toEqual([[a.accountId, "rollback"]]);
-        await nothingLeft();
-        await own(x, b);
-        await nothingLeft();
+        const writeBetween = x.pooled ? x.between : x.write;
+        const pid = await leftNothing(writeBetween);
+        if (sharedBackend) expect(pid).toBe(readPid);
+        const nextWriter = async (): Promise<void> => {
+          expect(await leftNothing(writeBetween)).toBe(pid);
+          await own(x, b);
+          await readLeftNothing();
+          await own(x, b, "PATCH", `/messages/${b.letters[1]}`, { unread: false });
+          expect(await leftNothing(writeBetween)).toBe(pid);
+        };
+        await nextWriter();
 
         // Cancelled from a second connection while its write waits on a row another connection holds.
         const letter = a.letters[2]!;
@@ -571,12 +585,10 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
           expect(ended.map((f) => [f.account, f.closed])).toEqual([[a.accountId, "rollback"]]);
         });
         expect(await unreadOf(letter)).toBe(true);
-        await nothingLeft();
-        await own(x, b);
-        await nothingLeft();
+        await nextWriter();
 
         // Timed out waiting on the same row: the backend gives the wait up by itself.
-        await x.own.execute(sql`set lock_timeout = '300ms'`);
+        await x.write.execute(sql`set lock_timeout = '300ms'`);
         try {
           await whileHeld(a, pid, async () => {
             const late = await through(x, x.forA, "PATCH", `/messages/${letter}`, { as: a, body: { unread: false } });
@@ -585,12 +597,10 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
             expect(ended.map((f) => [f.account, f.closed])).toEqual([[a.accountId, "rollback"]]);
           });
         } finally {
-          await x.own.execute(sql`reset lock_timeout`);
+          await x.write.execute(sql`reset lock_timeout`);
         }
         expect(await unreadOf(letter)).toBe(true);
-        await nothingLeft();
-        await own(x, b);
-        await nothingLeft();
+        await nextWriter();
 
         // Left by its client mid-write: nothing lets go of the transaction's connection. It runs
         // to its close, and only then does the backend serve the next request.
@@ -611,9 +621,7 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
         expect(closing).toHaveLength(1);
         expect(closing[0]!.account).toBe(a.accountId);
         expect(closing[0]!.closed).not.toBeNull();
-        await nothingLeft();
-        await own(x, b);
-        await nothingLeft();
+        await nextWriter();
         await seed.update(messages).set({ unread: true }).where(eq(messages.id, letter));
 
         if (x.pooled) {
@@ -628,7 +636,7 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
             expect(await cut).toBeGreaterThanOrEqual(500);
             // B is served while the row is still held: on a backend the cut transaction is not on.
             await own(x, b);
-            await leftNothing(x);
+            await leftNothing(x.between);
           });
           // The cut backend is gone, and its write with it.
           const until = Date.now() + 15_000;
@@ -641,7 +649,7 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
           expect(await unreadOf(letter)).toBe(true);
           // The pool dials again and serves A as before.
           await own(x, a);
-          await leftNothing(x);
+          await leftNothing(x.between);
           await own(x, b);
         }
       }, 180_000);
@@ -840,23 +848,25 @@ describe.skipIf(!PG_UP)("the binding at every door of the API, on the wire (the 
           bearer: CONSOLE_WORD, body: { sessionToken: staffToken, mailboxId: randomUUID(), note: NOTE },
         });
         expect(refused.status).toBe(404);
-        expect(refused.flights.filter((f) => f.door === "plain")).toEqual([]);
-        expect(refused.flights.filter((f) => f.account !== null)).toEqual([]);
-        expect(refused.flights.map((f) => doorOf(f))).toEqual(refused.flights.map(() => "staff"));
-        const audits = refused.flights.filter((f) => f.statements.some((s) => s.includes("\"staff_audit_events\"")));
+        const refusal = afterTypeDiscovery(refused.flights);
+        expect(refusal.filter((f) => f.door === "plain")).toEqual([]);
+        expect(refusal.filter((f) => f.account !== null)).toEqual([]);
+        expect(refusal.map((f) => doorOf(f))).toEqual(refusal.map(() => "staff"));
+        const audits = refusal.filter((f) => f.statements.some((s) => s.includes("\"staff_audit_events\"")));
         expect(audits.map((f) => [f.door, f.statements.length])).toEqual([["lone", 1]]);
-        expect(refused.flights.some((f) => f.statements.some((s) => s.includes("\"staff_sessions\"")))).toBe(true);
+        expect(refusal.some((f) => f.statements.some((s) => s.includes("\"staff_sessions\"")))).toBe(true);
 
         // A mailbox of A's: the id finds its row at the door, and the act names the row's account.
         const acted = await through(x, x.forA, "POST", "/admin/mailboxes/resync", {
           bearer: CONSOLE_WORD, body: { sessionToken: staffToken, mailboxId: a.mailboxId, note: NOTE },
         });
         expect(acted.status, acted.text).toBe(200);
-        expect(acted.flights.filter((f) => f.door === "plain")).toEqual([]);
-        const bound = acted.flights.filter((f) => f.account !== null);
+        const action = afterTypeDiscovery(acted.flights);
+        expect(action.filter((f) => f.door === "plain")).toEqual([]);
+        const bound = action.filter((f) => f.account !== null);
         expect(bound.map((f) => [f.door, f.account, f.keyed])).toEqual([["write", a.accountId, false]]);
         // Everything else is at the door, and the door's word never rides beside an account.
-        for (const f of acted.flights) if (f.account === null) expect(doorOf(f)).toBe("staff");
+        for (const f of action) if (f.account === null) expect(doorOf(f)).toBe("staff");
         // The staff's own tables are named at the door alone; the one row of the act's own audit is owed.
         const staffTables = ["staff_sessions", "staff_users", "staff_role_grants", "staff_audit_log"];
         expect(bound.filter((f) => f.statements.some((s) => staffTables.some((t) => s.includes(`"${t}"`))))).toEqual([]);
