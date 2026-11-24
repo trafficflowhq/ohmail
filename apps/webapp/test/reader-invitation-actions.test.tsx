@@ -27,8 +27,8 @@ const nativeEvent = {
 Element.prototype.animate ??= () => ({ cancel() {} }) as Animation;
 afterEach(closeMailPage);
 
-async function reader({ invitation = asks, native = false, collision = false, duplicate = false, metadataOnly = false }:
-  { invitation?: MessageInvitationDTO; native?: boolean; collision?: boolean; duplicate?: boolean; metadataOnly?: boolean } = {}) {
+async function reader({ invitation = asks, native = false, collision = false, duplicate = false, metadataOnly = false, text = GOOGLE.text, place, title }:
+  { invitation?: MessageInvitationDTO; native?: boolean; collision?: boolean; duplicate?: boolean; metadataOnly?: boolean; text?: string; place?: string; title?: string } = {}) {
   const id = "calendar-letter";
   const parts = (metadataOnly ? [] : GOOGLE.parts).map((part) => ({
     ...part,
@@ -51,7 +51,7 @@ async function reader({ invitation = asks, native = false, collision = false, du
     ["settings", { id: ACCOUNT, accountId: ACCOUNT, calendarEnabledAt: ISO, updatedAt: ISO }],
     ["calendar_connection", connection({ grantMailboxId: MAILBOX.id })],
     ["calendar", studio], ["calendar", personal],
-    ...(native ? [["calendar_event", { ...nativeEvent, sequence: invitation.sequence }] as const] : []),
+    ...(native ? [["calendar_event", { ...nativeEvent, sequence: invitation.sequence, ...(place && { place }), ...(title && { title }) }] as const] : []),
     ...(collision ? [["calendar_event", { ...nativeEvent, id: "other-event", uid: "other", myAnswer: null, title: "Workshop" }] as const] : []),
   ] as const;
   const server = await prepareMailPage({
@@ -65,7 +65,7 @@ async function reader({ invitation = asks, native = false, collision = false, du
         updates: [], moves: [], deletes: [] }, cursor: "calendar-letter", hasMore: false, serverTime: ISO,
     }),
     [`GET /api/messages/${id}/body`]: () => scopedSyncResponse({
-      text: GOOGLE.text, html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
+      text, html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
     }),
     [`GET /api/messages/${id}/attachments`]: () => scopedSyncResponse({
       items: parts.map((part) => ({ id: part.id, messageId: id, filename: part.filename,
@@ -179,4 +179,25 @@ it("shows and removes a cancellation without an attached event time", async () =
   expect(result.card.getByText("Cancelled")).toBeTruthy();
   expect(result.card.getByRole("button", { name: "Show in calendar" })).toBeTruthy();
   expect(result.card.getByRole("button", { name: "Remove from my calendar" })).toBeTruthy();
+});
+
+/** An invitation Exchange sent as an Outlook Web App link: no calendar part, the event is in the person's Microsoft calendar. */
+const OWA_STUB = [
+  "Microsoft Outlook Web Access:",
+  "https://outlook.office365.com/owa/tenant.example/?itemid=AAMkADJh%2FTaHJ8AAV95f1jAAA%3D&exvsurl=1&path=/calendar/item",
+  "",
+  "To receive meeting invitations as .iCalendar attachments instead of Outlook Web App links, go to",
+  "https://outlook.office365.com/owa/tenant.example/?path=/options/popandimap and select Send meeting invitations in iCalendar format.",
+].join("\n");
+
+it("an invitation that came as an Outlook Web App link shows its card and answers through the provider calendar", async () => {
+  const result = await reader({ native: true, metadataOnly: true, text: OWA_STUB, place: "Room 4", title: "Quarterly planning, floor 3" });
+  const { card } = result;
+  expect(card.getByRole("heading", { name: "Quarterly planning, floor 3" })).toBeTruthy();
+  expect(card.getByText(/is on Studio/)).toBeTruthy();
+  expect(card.getByText("Room 4")).toBeTruthy();
+  fireEvent.click(card.getByRole("button", { name: "Yes" }));
+  await tick(1_000);
+  expect(result.writes).toMatchObject([{ kind: "calendar_event_answer", eventId: nativeEvent.id, answer: "accepted" }]);
+  expect(result.replies).toEqual([]);
 });

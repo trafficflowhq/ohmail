@@ -14,6 +14,7 @@ import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
 import { calCalendars } from "@trafficflow/db";
 import { applyListing, pruneUnlistedCalendars, storedCalendars, type StoredCalendar } from "./calendars.js";
 import { inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./connection.js";
+import { exchangeInvitationPass } from "./exchange-invitations.js";
 import { releaseReadings, remember } from "./memory.js";
 import { holdCalendar, ownAddressesOf, readCalendar, type ReadingContext, type TurnBudget } from "./reading.js";
 import { CalendarKeyRingFault, openPassSignIn, sealedCredentialOf, type PassSignIn } from "./sign-in.js";
@@ -241,6 +242,19 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   }, { lock: "no key update" });
   if (settled === "gone") return { kind: "gone" };
   deps.memory.failures.delete(key.id);
+
+  // Invitations that came as an Outlook Web App link are looked up in this connection's own calendar.
+  // What it finds or fails at is no part of the turn's outcome.
+  if (!more && p.invitations !== undefined && !stopping()) {
+    try {
+      await exchangeInvitationPass({
+        db, key, provider: p, connection: signIn.connection, memory: deps.memory, zones: deps.zones,
+        now: () => deps.clock.now(), signal, log: deps.log,
+      });
+    } catch (err) {
+      deps.log.warn("calendar_exchange_invitations_failed", { accountId: key.accountId, err });
+    }
+  }
 
   if (!more && deps.notices !== undefined && read > 0) {
     const live = calendars.filter((cal) => cal.errorCode !== "ended").map((cal) => ({ id: cal.id, providerId: cal.providerId }));

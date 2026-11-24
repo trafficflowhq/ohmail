@@ -40,6 +40,7 @@ import { Notices } from "./list/Notices.js";
 import { Rows } from "./list/Rows.js";
 import { Tail } from "./list/Tail.js";
 import { Tools } from "./list/Tools.js";
+import { PullScroll } from "../touch/index.js";
 import { JunkLetter } from "./held/JunkLetter.js";
 import type { ScreenerJunkItem } from "./ports.js";
 import { Failed } from "./sender/Failed.js";
@@ -231,7 +232,7 @@ export function ScreenerList(pane: PaneProps) {
       <Head view={view} go={go} spamCount={spamCount} />
       <Notices view={view} />
       {junkOn && junk.sweep ? <QuarantineMove sweep={junk.sweep} /> : null}
-      <div className="sc-scroll" ref={listScroller}>
+      <PullScroll className="sc-scroll" scroller={listScroller}>
         {junkOn ? (
           <>
             <Tools
@@ -290,7 +291,7 @@ export function ScreenerList(pane: PaneProps) {
             {segment === "waiting" ? <Tail /> : null}
           </>
         )}
-      </div>
+      </PullScroll>
       {foot}
       {contact.card}
       {asks}

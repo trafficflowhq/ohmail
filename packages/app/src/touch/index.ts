@@ -2,3 +2,4 @@
 export type { ListPull, ListTouchProps, RowSides, SideVerb, UseRowSwipe } from "./contract.js";
 export { ListTouch } from "./ListTouch.js";
 export { useRowSwipe } from "./use-row-swipe.js";
+export { PullScroll, useGroundPull } from "./ground-pull.js";

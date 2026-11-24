@@ -10,6 +10,8 @@ import "./base.css";
 
 export { Icon, icons, ICON_SIZES } from "../icons/Icon.js";
 export type { IconName, IconProps, IconSize } from "../icons/Icon.js";
+export { Spinner } from "../primitives/Spinner.js";
+export type { SpinnerProps } from "../primitives/Spinner.js";
 export {
   animate,
   flipPlay,

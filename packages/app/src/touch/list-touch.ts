@@ -34,6 +34,8 @@ export interface ListTouchStore {
   pulledOf(id: string): number;
   /** How far the list is drawn down by a pull, in px. */
   pullOf(): number;
+  /** How many releases have pulled: each one holds the spinner while the pull it asked for runs. */
+  askedOf(): number;
   subscribe(changed: () => void): () => void;
   /** The verbs at a row's sides, by the row's id (its `data-id`). */
   sides(id: string, sides: RowSides): () => void;
@@ -81,6 +83,8 @@ function swallowRelease(scroller: HTMLElement, press: Press): void {
 interface Drawn {
   row(next: { id: string; dx: number } | null): void;
   pull(down: number): void;
+  /** A release past the mark: the spinner holds, whether this release starts the pull or one already runs. */
+  asked(): void;
   verbs(id: string): RowSides | undefined;
 }
 
@@ -196,8 +200,10 @@ function pullListeners(scroller: HTMLElement, press: Press, drawn: Drawn, live: 
     drawn.pull(0);
     if (!cancelled) swallowRelease(scroller, press);
     const now = live().pull;
-    if (cancelled || now === NONE || now.busy || !pullFires(p.dy)) return;
-    now.run();
+    if (cancelled || now === NONE || !pullFires(p.dy)) return;
+    drawn.asked();
+    /* One pull at a time: a release while one runs only holds the spinner for it. */
+    if (!now.busy) now.run();
   };
   return [
     ["touchstart", start, PASSIVE],
@@ -212,6 +218,7 @@ export function createListTouch(): ListTouchStore {
   const verbs = new Map<string, RowSides>();
   let pulled: { id: string; dx: number } | null = null;
   let pull = 0;
+  let asked = 0;
   const tell = () => {
     for (const changed of [...told]) changed();
   };
@@ -226,12 +233,17 @@ export function createListTouch(): ListTouchStore {
       pull = down;
       tell();
     },
+    asked() {
+      asked += 1;
+      tell();
+    },
     verbs: (id) => verbs.get(id),
   };
 
   return {
     pulledOf: (id) => (pulled?.id === id ? pulled.dx : 0),
     pullOf: () => pull,
+    askedOf: () => asked,
     subscribe(changed) {
       told.add(changed);
       return () => told.delete(changed);

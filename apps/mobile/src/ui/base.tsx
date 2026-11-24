@@ -197,8 +197,8 @@ export interface PullRefresh {
 
 /**
  * The standard pull gesture, themed once so every refreshing list speaks the same voice: the
- * spinner in the quiet ink (iOS — `tintColor` on UIRefreshControl), the accent on the material
- * indicator (Android — `colors`/`progressBackgroundColor` on SwipeRefreshLayout). Screens hand
+ * spinner in the theme's accent on both platforms (iOS — `tintColor` on UIRefreshControl; Android —
+ * `colors`/`progressBackgroundColor` on SwipeRefreshLayout). Screens hand
  * in `usePullToSync()`, whose spinner settles when the sync round actually completes
  * (`state/pull.ts`). Read by `Scroller` and `MailList`.
  */
@@ -210,7 +210,7 @@ export function pullRefreshControl(
     <RefreshControl
       refreshing={refresh.refreshing}
       onRefresh={refresh.onRefresh}
-      tintColor={t.c.ink3}
+      tintColor={t.c.accentInk}
       colors={[t.c.accentInk]}
       progressBackgroundColor={t.c.float}
     />

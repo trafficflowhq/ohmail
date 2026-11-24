@@ -170,9 +170,13 @@ function useLetterActions(props: LetterCardProps, view: LetterView) {
 }
 
 function LetterCard(props: LetterCardProps) {
-  const { invitation, title, place, from, port } = props;
+  const { invitation, from, port } = props;
   const view = useLetterView(props);
   const { current, record, calendar, target, cancelled, conflicts, previous, mailAnswer, text } = view;
+  // A letter that carries no event of its own (an Outlook Web App link) shows its calendar event's title and place.
+  const eventOnly = props.when === null && current && record ? record : null;
+  const title = eventOnly?.title || props.title;
+  const place = props.place ?? eventOnly?.place ?? null;
   const { send, open, remove, add, gone, answer } = useLetterActions(props, view);
   const calendarText = useText("calendar");
   return (

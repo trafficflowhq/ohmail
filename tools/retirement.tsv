@@ -229,6 +229,7 @@ apps/mobile/test/press-reader-census.test.ts	source-text	reads source as text (t
 apps/mobile/test/privacy.test.ts	source-text	an import census: reads source as text (js, ts, tsx)	bundle contents	tools	
 apps/mobile/test/process-standin-covers-the-bundle.test.ts	source-text	reads source as text (mjs)	layer 2	phone-screens	
 apps/mobile/test/profile-import-card.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/pull-spinner-ends.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/push.test.ts	source-text	reads source as text (ts)	layer 2	phone-shell	
 apps/mobile/test/queued-discard-is-listed.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/quoted-history-fold.test.tsx	data	reads data files (json): the message catalogue	none	phone-shell	
