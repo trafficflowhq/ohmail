@@ -44,6 +44,7 @@ import { publicRel } from "./support/public-root.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_RS = join(ROOT, "apps/desktop/src-tauri/src/engine.rs");
+const CONFIG_RS = join(ROOT, "apps/desktop/src-tauri/src/config.rs");
 const WORKFLOW = join(ROOT, publicRel("github/workflows/build.yml"));
 const README = join(ROOT, "apps/desktop/README.md");
 
@@ -174,12 +175,23 @@ describe("the desktop's first-party addresses are written down identically in fo
     });
   }
 
+  // The binary keeps its string constants side by side, so the URL grep can run the Cloud origin
+  // into the constant stored after it. Two kinds of glue are known: lowercase letters, and the
+  // sealed session's file name (itself followed by letters). The file name is read from the
+  // desktop's config, so a rename turns this case red here rather than at the release build.
+  // Every real host that starts with the origin stays refused, also after the file name.
   it.skipIf(process.platform === "win32").each(jobs)("the %s audit accepts only the Cloud API origin and binary glue", (job) => {
     const origin = "https://api.ohmail.app";
+    const seal = /pub const CLOUD_SESSION_SEAL: &str = "([^"]+)";/.exec(readFileSync(CONFIG_RS, "utf8"))?.[1];
+    expect(seal, "config.rs: the sealed session's file name").toBe("cloud-tokens.seal");
     const arm = allowLists.get(job)!.cloudArm;
     for (const [url, expected] of [
       [origin, 0], [`${origin}mailbox`, 0], [`${origin}.other.example`, 1], [`${origin}/unexpected`, 1],
       [`${origin}x.other.example`, 1], [`${origin}x/unexpected`, 1],
+      [`${origin}.evil.example`, 1], [`${origin}x.example`, 1], [`${origin}-secure.example`, 1],
+      [`${origin}${seal}`, 0], [`${origin}${seal}the`, 0],
+      [`${origin}${seal}.evil.example`, 1], [`${origin}${seal}-secure.example`, 1], [`${origin}${seal}/unexpected`, 1],
+      [`${origin}x${seal}`, 1], [`${origin}cloud-tokens`, 1],
     ] as const) {
       const result = spawnSync("bash", ["-O", "extglob", "-c", `CLOUD_URL=$1; case "$2" in
         ${arm}
