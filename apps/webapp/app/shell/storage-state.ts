@@ -48,7 +48,12 @@ export interface StorageOffer {
   plans: Array<{ plan: StoragePlanName; mailboxes: number; roomBytes: number; amount: number }>;
   /** The interval of the quoted amount, or the plan interval when absent. */
   addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
-  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" } | null;
+  /** One extra mailbox: its monthly price and the unit cap; absent where none is offered. */
+  mailboxAddon?: { amount: number; maxUnits: number };
+  /** `addonMailboxes`: the extra mailboxes paid or scheduled, where the server states them. */
+  current: {
+    plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment"; addonMailboxes?: number;
+  } | null;
   fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean } | null;
   canChange: boolean;
 }
@@ -138,12 +143,21 @@ export function storageOfferOf(raw: unknown): StorageOffer | null {
       ...(a.interval === undefined ? {} : { interval: a.interval }),
     };
   }
+  let mailboxAddon: StorageOffer["mailboxAddon"];
+  if (o.mailboxAddon !== undefined && o.mailboxAddon !== null) {
+    const m = rec(o.mailboxAddon);
+    if (m === null || !isCount(m.amount) || !isCount(m.maxUnits)) return null;
+    mailboxAddon = { amount: m.amount, maxUnits: m.maxUnits };
+  }
   let current: StorageOffer["current"] = null;
   if (o.current !== null) {
     const c = rec(o.current);
     if (c === null || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
       || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")) return null;
-    current = { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom };
+    current = {
+      plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom,
+      ...(isCount(c.addonMailboxes) ? { addonMailboxes: c.addonMailboxes } : {}),
+    };
   }
   let fit: StorageOffer["fit"] = null;
   if (o.fit !== null) {
@@ -153,8 +167,8 @@ export function storageOfferOf(raw: unknown): StorageOffer | null {
     fit = { plan: f.plan, addonUnits: f.addonUnits, roomBytes: f.roomBytes, amount: f.amount, keepsAll: f.keepsAll };
   }
   return {
-    currency: o.currency.toLowerCase(), interval: o.interval, plans, addon, current, fit,
-    canChange: o.canChange === true,
+    currency: o.currency.toLowerCase(), interval: o.interval, plans, addon, ...(mailboxAddon ? { mailboxAddon } : {}),
+    current, fit, canChange: o.canChange === true,
   };
 }
 

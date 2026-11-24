@@ -2681,7 +2681,7 @@ export type AccountAccess =
     };
 
 export function accessAiCredits(a: AccountAccess | null | undefined): AiCredits | null {
-  return a?.metered && a.access === "open" ? aiCreditsOf(a.aiCredits) : null;
+  return a?.metered && a.access === "open" ? aiCreditsOf(a.aiCredits, a.lifecycle) : null;
 }
 
 /** The answer's storage block, narrowed (`shell/storage-state.ts`), or `null` where there is none. */

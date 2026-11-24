@@ -119,7 +119,7 @@ describe("access — the program's own body, and what the open side derives from
         lifecycleEpoch: "2026-09-22T00:00:00.000Z",
       },
       prices: { classify_ingest: 1, screener: 1, draft: 15, propose: 20, workflow: 15 },
-      aiCredits: { remaining: 1832 },
+      aiCredits: { remaining: 1832, setup: { remaining: 40, expiresAt: "2026-12-01T00:00:00.000Z" } },
     });
     expect(c.paths).toEqual(["/v1/access"]);
     expect(JSON.parse(c.bodies[0]!)).toEqual({ accountId: ACC });
@@ -134,9 +134,34 @@ describe("access — the program's own body, and what the open side derives from
     await expect(c.port.access(ACC)).resolves.toMatchObject({ aiCredits: { remaining: 1350, total: 1000 } });
   });
 
+  it("carries the setup pool beside the balance, never added to it", async () => {
+    const active = wire("access-200-active") as Record<string, unknown>;
+    const c = client([{ status: 200, body: {
+      ...active, balance: 2885, creditAllowance: 4000,
+      setupCredits: { remaining: 16000, expiresAt: "2027-02-01T00:00:00.000Z" },
+    } }]);
+    const v = await c.port.access(ACC);
+    expect(v.ok && v.aiCredits).toEqual({
+      remaining: 2885, total: 4000, setup: { remaining: 16000, expiresAt: "2027-02-01T00:00:00.000Z" },
+    });
+  });
+
+  it.each([
+    ["spent or expired", { remaining: 0, expiresAt: null }],
+    ["not a count", { remaining: -3, expiresAt: null }],
+    ["absent", undefined],
+  ])("leaves the setup pool out when it is %s", async (_, setupCredits) => {
+    const active = wire("access-200-active") as Record<string, unknown>;
+    const c = client([{ status: 200, body: { ...active, balance: 40, creditAllowance: 100, setupCredits } }]);
+    const v = await c.port.access(ACC);
+    expect(v.ok && v.aiCredits).toEqual({ remaining: 40, total: 100 });
+  });
+
   it.each([0, -1])("carries the balance alone when the allowance is %s", async (creditAllowance) => {
     const active = wire("access-200-active") as Record<string, unknown>;
-    const c = client([{ status: 200, body: { ...active, balance: 40, creditAllowance } }]);
+    const c = client([{ status: 200, body: {
+      ...active, balance: 40, creditAllowance, setupCredits: { remaining: 0, expiresAt: null },
+    } }]);
     expect((await c.port.access(ACC)).aiCredits).toEqual({ remaining: 40 });
   });
 
@@ -1469,6 +1494,30 @@ describe("access — the storage offer and the confirmed decrease", () => {
     expect(c.faults).toEqual([]);
   });
 
+  it("reads the extra-mailbox unit at its monthly price on either plan interval, and the extra mailboxes held", async () => {
+    for (const interval of ["month", "year"] as const) {
+      const storageOffer = {
+        ...OFFER,
+        card: { ...OFFER.card, interval, mailboxUnit: { priceMinor: 300, interval: "month", maxUnits: 10 } },
+        current: { ...OFFER.current, addonMailboxes: 2 },
+      };
+      const c = client([{ status: 200, body: withBlocks({ storageOffer }) }]);
+      const v = await c.port.access(ACC, { storageNeed: NEED });
+      expect(v.ok && v.storageOffer).toMatchObject({
+        mailboxAddon: { amount: 300, interval: "month", maxUnits: 10 },
+        current: { addonMailboxes: 2 },
+      });
+      expect(c.faults).toEqual([]);
+    }
+  });
+
+  it("an offer without an extra-mailbox unit offers none", async () => {
+    const c = client([{ status: 200, body: withBlocks({ storageOffer: { ...OFFER, card: { ...OFFER.card, mailboxUnit: null } } }) }]);
+    const v = await c.port.access(ACC, { storageNeed: NEED });
+    expect(v.ok && v.storageOffer).not.toHaveProperty("mailboxAddon");
+    expect(c.faults).toEqual([]);
+  });
+
   it("a read carrying the need never rides a call in flight that did not ask", async () => {
     const plane = countedPlane(30, [{ status: 200, body: withBlocks({}) }]);
     const bodies: string[] = [];
@@ -1485,6 +1534,7 @@ describe("access — the storage offer and the confirmed decrease", () => {
     ["an unknown plan", { ...OFFER, card: { ...OFFER.card, plans: [{ ...OFFER.card.plans[0], plan: "gold" }] } }, "storageOffer.card.plans"],
     ["a currency that is not a code", { ...OFFER, card: { ...OFFER.card, currency: "US dollars" } }, "storageOffer.card.currency"],
     ["an unreadable storage unit", { ...OFFER, card: { ...OFFER.card, storageUnit: { ...OFFER.card.storageUnit, interval: "year" } } }, "storageOffer.card.storageUnit"],
+    ["an unreadable extra-mailbox unit", { ...OFFER, card: { ...OFFER.card, mailboxUnit: { priceMinor: 3.5, interval: "month", maxUnits: 10 } } }, "storageOffer.card.mailboxUnit"],
     ["a reason in prose", { ...OFFER, canChange: false, reason: "Your payment is overdue." }, "storageOffer.reason"],
     ["a block that is not an object", [OFFER], "storageOffer"],
   ] as const) {

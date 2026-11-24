@@ -249,9 +249,23 @@ describe("The desktop's native Settings panes", () => {
       },
     });
     const pane = within(await screen.findByRole("region", { name: en.settings.ai }));
-    await pane.findByText("120 of 150 left");
+    await pane.findByText("120 of 150 this month");
     expect(screen.getByRole("region", { name: en.settings.ai }).querySelector("progress")?.max).toBe(150);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("says the AI budget in the Settings list the way the panes say it", async () => {
+    mount("D-m", "#/settings", {
+      respond: (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/account/ai") return Response.json({ aiEnabled: true });
+        if (path === "/account/access") return Response.json({
+          metered: true, access: "open", aiCredits: { remaining: 18_885, total: 4_000 },
+        });
+      },
+    });
+    expect(await screen.findByText("4,000 of 4,000 this month")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("18,885");
   });
 
   it("changes the signed-in account's storage mail preference in Storage", async () => {

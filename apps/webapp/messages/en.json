@@ -6005,7 +6005,10 @@
     "then": "Then",
     "price": "Price",
     "organizingUntil": "Organizing until {date}.",
-    "mailboxesConnected": "{used, number} of {count, number}"
+    "mailboxesConnected": "{used, number} of {count, number}",
+    "addMailbox": "Add an extra mailbox",
+    "mailboxAddonOffer": "+1 mailbox · {price}",
+    "mailboxAddonMost": "All {count, number} extra mailboxes added"
   },
   "accountStorage": {
     "notOpened": "Not opened"
@@ -7264,12 +7267,17 @@
     "draftCost": "{credits, number} credits a draft",
     "draftReply": "Draft reply",
     "budget": "AI budget left",
-    "creditsAmount": "{remaining, number} of {total, number}",
     "creditsLeft": "{remaining, number} of {total, number} left",
-    "creditsDetail": "{remaining, number} of {total, number} credits",
     "creditsEmpty": "0 credits",
     "plans": "Plans",
-    "creditsBalance": "{remaining, number} credits left"
+    "creditsBalance": "{remaining, number} credits left",
+    "creditsMonth": "{remaining, number} of {total, number} this month",
+    "creditsExtra": "Extra credits",
+    "creditsExtraLeft": "{count, number} left",
+    "setupCredits": "Screening credits",
+    "setupCreditsLeft": "{count, number} left",
+    "setupCreditsNote": "Spent on Screener suggestions before your plan’s budget.",
+    "setupCreditsNoteUntil": "Spent on Screener suggestions before your plan’s budget. Usable until {date}."
   },
   "settingsAway": {
     "notRead": "Not read"

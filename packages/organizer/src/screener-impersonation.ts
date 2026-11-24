@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, contacts, folderState, messageInstances, messages, rules,
   fencedAccountWrite, fileImpersonationLetters, impersonationReturnedSenders, AccountErasedError,
-  resolveCutline, onServerPool, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
+  resolveCutline, onServerPool, senderIsActiveSql, heldSenderKeysSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
   notGoneSql, readGoneMailboxIds, readListAddresses, readOwnAddresses, domainOf, ruleMatchKeySql,
   IMPERSONATION_FILING_IDS_MAX, SCREENER_FOLDER,
   type ResolvedCutline, type Tx,
@@ -272,9 +272,7 @@ async function selectClaimSenders(
       notGoneSql(d, messages.mailboxId, gone),
     ));
   const reps = held.as("reps");
-  const candidates = onServerPool(db) ? sql`
-    select lower(from_address) from (${held}) held
-    where rank = 1 and held_arrival = 0` : undefined;
+  const candidates = onServerPool(db) ? heldSenderKeysSql(d, opts.accountId, gone) : undefined;
   // The outer row's address named with its subquery's alias: see the act's selection for why.
   const repSender = sql`lower(${sql.identifier("reps")}.${sql.identifier(messages.fromAddress.name)})`;
   const latest = sql`${sql.identifier("reps")}.${sql.identifier("latest")}`;
@@ -284,19 +282,21 @@ async function selectClaimSenders(
   }).from(reps)
     .where(and(
       eq(reps.rank, 1),
-      copyOnRecord(sql`${sql.identifier("reps")}.${sql.identifier(messages.id.name)}`),
-      sql`exists (
-        select 1 from ${messages} cm
+      // Asked per representative by its id (`is true` keeps it from becoming a join the planner
+      // runs as a scan of every copy per representative).
+      sql`${copyOnRecord(sql`${sql.identifier("reps")}.${sql.identifier(messages.id.name)}`)} is true`,
+      // One set of claim senders, hashed: a correlated probe per sender became a nested loop.
+      sql`(${repSender} in (
+        select lower(cm.from_address) from ${messages} cm
           join ${folderState} cf on cf.message_id = cm.id
          where cm.account_id = ${d.castUuid(opts.accountId)}
-           and lower(cm.from_address) = ${repSender}
            and cf.desired_folder = ${SCREENER_FOLDER}
            and cm.deleted_at is null
            and cm.sender_check = 'impersonation'
            and cm.unconfirmed_hold is not true
            and cf.auto_filing_undone_at is null
            and cm.mailbox_id in (${organized})
-      )`,
+      )) is true`,
       sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone, { candidates })})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
       opts.after === null ? undefined : sql`(${latest}, ${repSender}) > (${d.ts(opts.after.at)}, ${opts.after.address})`,

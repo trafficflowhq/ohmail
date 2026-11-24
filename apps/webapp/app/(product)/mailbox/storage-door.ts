@@ -110,6 +110,14 @@ function plansOf(offer: StorageOffer, size: (bytes: number) => string, say: Stor
               interval: offer.addon.interval ?? offer.interval,
             }),
           },
+    ...(offer.mailboxAddon ? {
+      mailboxAddon: {
+        // An extra mailbox bills monthly on either plan interval.
+        price: say.price(offer.mailboxAddon.amount, { currency: offer.currency, interval: "month" }),
+        most: offer.mailboxAddon.maxUnits,
+        atLimit: (offer.current?.addonMailboxes ?? 0) >= offer.mailboxAddon.maxUnits,
+      },
+    } : {}),
     mayChange: offer.canChange && offer.current !== null,
   };
 }
