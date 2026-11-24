@@ -24,22 +24,21 @@ describe("list tails state only what is on screen", () => {
   });
 
   it("no copy line outside the search screen over-promises search — and the screen states its scope", () => {
-    // The claim to keep out moved with that change: a search SCREEN now exists and reads the device
-    // mirror, so the screen's own namespace (`search*`) carries its sentences — and the
-    // sentence that states coverage must say what the index does NOT hold. Everything
-    // outside that namespace may name search only as the bare label, or through the one
-    // webapp-parity exemption (`foldersUseOff`, held byte-equal by `folders-parity.test.ts` —
-    // it states what the SERVICE does with hidden folders, not what this phone searches), and the
-    // standalone door's About line, which names search as live and nothing about its scope.
+    // The search screen owns its scope statements. Elsewhere, the service's hidden-folder
+    // wording follows web parity, and About names the feature without describing its scope.
     const EXEMPT = new Set(["foldersUseOff", "aboutLiveHere"]);
+    // The folder button appears when server Search is available and opens Search for that
+    // folder. Match its navigation label verbatim to catch any added scope claim.
+    const olderSearchLabel = "Older in Search";
     const offenders = Object.entries(Copy)
       .filter(([k, v]) =>
         typeof v === "string" && /search/i.test(v as string) && !EXEMPT.has(k) && !k.startsWith("search"))
-      .filter(([, v]) => (v as string) !== "Search")
+      .filter(([k, v]) => v !== "Search" && !(k === "folderOlderSearch" && v === olderSearchLabel))
       .map(([k]) => k);
     expect(offenders).toEqual([]);
     // The exemption is not a dead rule — the sentence really is the catalogue's and mentions search.
     expect(Copy.foldersUseOff).toContain("search");
+    expect(Copy.folderOlderSearch).toBe(olderSearchLabel);
     // The screen's verdict states what it searched (ARCHIVE-024): the whole mailbox.
     expect(Copy.searchWholeSearching).toContain("whole mailbox");
     expect(Copy.searchWhole(3)).toContain("whole mailbox");

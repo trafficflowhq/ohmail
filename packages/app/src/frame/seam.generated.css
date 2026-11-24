@@ -9,13 +9,16 @@
   --row-open-dot: var(--on-row-open);
   --av-open-fg: var(--ink);
   --on-open-slot: var(--ink);
+  --row-focus-ring: inset 0 0 0 1px var(--key-focus);
   --on-pick: var(--on-solid);
   --pick-ring: transparent;
   --ink: #12100E;
   --ink2: #5A534B;
   --ink3: #6B645B;
   --focus: #12100E;
+  --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
   --key-focus-on-nav: color-mix(in srgb,var(--on-nav-on) 48%,var(--nav-on));
+  --key-focus-ring: inset 0 0 0 var(--key-focus-w) var(--key-focus);
   --key-focus-nav-ring: inset 0 0 0 var(--key-focus-w) var(--key-focus-on-nav);
   --sq-ring: var(--sq-mid);
   --scrim: rgba(18,16,14,.38);
@@ -29,6 +32,7 @@
   --ink2: #B8AFA3;
   --ink3: #A1988D;
   --focus: #F6F1E9;
+  --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
   --scrim: rgba(0,0,0,.56);
   --float: 0 18px 48px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
 }
@@ -39,6 +43,7 @@
     --ink2: #B8AFA3;
     --ink3: #A1988D;
     --focus: #F6F1E9;
+    --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
     --scrim: rgba(0,0,0,.56);
     --float: 0 18px 48px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(246,241,233,.08);
   }
@@ -58,6 +63,7 @@
   --ink2: #383635;
   --ink3: #5f5e5a;
   --focus: var(--hot);
+  --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
   --key-focus-on-nav: var(--key-focus);
   --sq-ring: var(--ink3);
   --scrim: rgba(255,252,240,.5);
@@ -69,6 +75,7 @@
   --ink2: #8d96bc;
   --ink3: #8a93b9;
   --focus: var(--hot);
+  --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
   --scrim: rgba(26,27,38,.5);
   --float: 0 0 0 2px var(--hot);
 }
@@ -79,6 +86,7 @@
     --ink2: #8d96bc;
     --ink3: #8a93b9;
     --focus: var(--hot);
+    --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
     --scrim: rgba(26,27,38,.5);
     --float: 0 0 0 2px var(--hot);
   }

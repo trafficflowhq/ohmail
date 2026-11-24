@@ -34,7 +34,7 @@ import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { accountCleanupOwed, finishRetiredComposeCleanup, isolateAccountScope, otherAccountCleanup, readIsolatedScope } from "../pending-sign-out-storage";
 import { listenBrowserSession, readSessionFamily } from "../signed-out-signal";
 import { waitForWakeSession } from "../session-refresh";
-import { serverHello } from "../hello";
+import { serverHello, type ServerHello } from "../hello";
 import { setDemoStorage } from "@ohmail/app-logic/storage/storage-owner";
 import { markStartup } from "@ohmail/app-logic/session/ui-vitals";
 import {
@@ -163,6 +163,7 @@ export function EngineProvider({
   onConfirmed,
   drawMail,
   edgeOwner,
+  firstHello,
   children,
 }: {
   demo: boolean;
@@ -182,6 +183,8 @@ export function EngineProvider({
   /** The web can preload a remembered mirror while its session is still being checked. */
   drawMail?: "now" | "wait" | "confirmed";
   edgeOwner?: string | null;
+  /** The web shell shares its capability handshake with the wake stream. */
+  firstHello?: () => Promise<ServerHello | null>;
   children: ReactNode;
 }) {
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -647,8 +650,8 @@ export function EngineProvider({
     // (visible only) and survives the stream's absence byte-identically.
     const wake = cloudWakeStream();
     const handshake = new AbortController();
-    const stream = wake === null ? null : serverHello({ signal: handshake.signal }).then((hello) =>
-      hello?.features?.sse === false ? cloudWakeStream(undefined, false) : wake);
+    const stream = wake === null ? null : (firstHello?.() ?? serverHello({ signal: handshake.signal }))
+      .then((hello) => hello?.features?.sse === false ? null : wake);
     let openWake = wake;
     const stop = startSyncScheduler(engine, {
       onStatus: onSyncStatus,
@@ -670,7 +673,7 @@ export function EngineProvider({
       handshake.abort();
       stop();
     };
-  }, [engine, live, onSyncStatus]);
+  }, [engine, live, onSyncStatus, firstHello]);
 
   /**
    * THE ONE PLACE A BOUNDARY IS WATCHING. See the confirm's `.catch`: a throw from a detached

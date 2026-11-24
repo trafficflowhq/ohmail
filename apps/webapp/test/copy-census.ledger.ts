@@ -76,7 +76,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "frame-src 'none'", why: "CSP directive — no nested frames in the mail frame" },
     { text: "form-action 'none'", why: "CSP directive — a mail body may not post anywhere" },
     { text: "base-uri 'none'", why: "CSP directive — no base rewriting inside the frame" },
-    { text: "<!doctype html><html{}{}{}><head><meta charset=\"utf-8\">", why: "the mail frame's document, opened" },
+    { text: "<!doctype html><html{}{}{}{}><head><meta charset=\"utf-8\">", why: "the mail frame's document opening and its rendering attributes, parsed by the browser" },
     { text: "<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">", why: "the policy tag that carries the directives above" },
     { text: "<meta name=\"referrer\" content=\"no-referrer\">", why: "a document meta tag, parsed not read" },
     { text: "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">", why: "a document meta tag, parsed not read" },

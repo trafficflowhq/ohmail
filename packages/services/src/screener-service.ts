@@ -1605,6 +1605,7 @@ export class ScreenerReadService {
     )) : held;
     const rows = dated.where(and(...filters));
     // The CTE reference supplies typed columns; the page spells out its materialized body below.
+    // scoped-by: `rows` inherits heldWindow's messages.accountId filter for ctx.accountId.
     const reps = d.name === "pg" && cutline
       ? ctx.db.$with("reps").as(ctx.db.select().from(rows.as("ranked")))
       : rows.as("reps");

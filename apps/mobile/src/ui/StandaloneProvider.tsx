@@ -53,6 +53,7 @@ export function StandaloneProvider({ back, later, choose }: {
             autoCorrect={false}
             keyboardType="email-address"
             keyboardAppearance={t.scheme}
+            disableFullscreenUI
             returnKeyType="next"
             value={typed}
             onChangeText={setTyped}

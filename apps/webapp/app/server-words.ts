@@ -31,7 +31,7 @@ const ASK_AGAIN_AT_MOST = 3;
  * three times: else a page whose first ask failed would offer no pictures, no Devices and no search by a person
  * for its life.
  */
-export function useServerWords(demo: boolean): ServerWords {
+export function useServerWords(demo: boolean, firstHello: () => ReturnType<typeof serverHello> = serverHello): ServerWords {
   const [words, setWords] = useState<ServerWords>(SAYS_NOTHING);
   useEffect(() => {
     if (demo) return;
@@ -39,7 +39,7 @@ export function useServerWords(demo: boolean): ServerWords {
     let again = 0;
     let disarm = (): void => undefined;
     const ask = (): void => {
-      void serverHello().then((h) => {
+      void (again === 0 ? firstHello() : serverHello()).then((h) => {
         if (!alive) return;
         const pairing = h?.features?.pairing === true;
         const remoteImages = h?.features?.remoteImages === true;
@@ -70,6 +70,6 @@ export function useServerWords(demo: boolean): ServerWords {
       alive = false;
       disarm();
     };
-  }, [demo]);
+  }, [demo, firstHello]);
   return words;
 }

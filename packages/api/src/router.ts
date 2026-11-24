@@ -244,12 +244,10 @@ export interface RouteOptions {
   /**
    * This route answers for the credential it resolved, not the session that carried the request —
    * the sign-in, token and pairing routes, whose handler mints a session from a credential in the
-   * body. The set is not listed here: a list of route names in a comment is a fact about who last
-   * counted; `account-header-census.test.ts` derives the set from the handlers and asserts the
-   * flags match. All are `public`, so the handler resolves a second credential out of the body —
-   * which must belong to the same account or be refused (`refuseCrossAccountCredential`). The
-   * flag changes only where {@link ACCOUNT_HEADER} takes its value; it grants nothing, so
-   * carrying it wrongly can only stop naming an account.
+   * body. Password reset also uses this flag to keep its response free of session attribution:
+   * requesting a link reveals no account, and completing a reset revokes sessions. The
+   * `account-header-census.test.ts` derives the set from the handlers and checks the flags.
+   * The flag changes only where {@link ACCOUNT_HEADER} takes its value. It grants no access.
    */
   credentialSubject?: boolean;
   /** A public ceremony may resolve a credential separate from the ambient session. */

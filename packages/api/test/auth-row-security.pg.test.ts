@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { ACCOUNT_HEADER, createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { accounts, accountSettings, pairingTokens, users } from "@trafficflow/db";
 import { createPolicyStatement } from "@trafficflow/db/admin";
 import {
@@ -264,11 +264,11 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     expect(mailer.ofTemplate("email_verification")).toHaveLength(1);
   });
 
-  const requestReset = (email: string, ip = "198.18.0.2") =>
-    request("POST", "/auth/password/reset", { email, locale: "de" }, undefined, undefined, ip);
+  const requestReset = (email: string, ip = "198.18.0.2", cookies?: Record<string, string>) =>
+    request("POST", "/auth/password/reset", { email, locale: "de" }, undefined, cookies, ip);
 
-  async function askReset(email: string, ip?: string) {
-    const response = await requestReset(email, ip);
+  async function askReset(email: string, ip?: string, cookies?: Record<string, string>) {
+    const response = await requestReset(email, ip, cookies);
     await Promise.all(afterAnswer.splice(0));
     return response;
   }
@@ -317,13 +317,15 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     expect(device.status).toBe(200);
     const { tokens } = await device.json() as { tokens: Tokens };
 
-    const unknown = await askReset(`unknown-${randomUUID()}@example.test`);
+    const unknown = await askReset(`unknown-${randomUUID()}@example.test`, undefined, cookies);
     expect(unknown.status, "unknown addresses get the public answer").toBe(202);
     expect(mailer.ofTemplate("password_reset")).toHaveLength(0);
-    const asked = await askReset(email);
+    const asked = await askReset(email, undefined, cookies);
     expect(asked.status).toBe(202);
     expect(await asked.json()).toEqual({ status: "ok" });
     expect(await unknown.json()).toEqual({ status: "ok" });
+    expect(unknown.headers.has(ACCOUNT_HEADER)).toBe(false);
+    expect(asked.headers.has(ACCOUNT_HEADER)).toBe(false);
     expect(asked.headers.has("set-cookie")).toBe(false);
     const first = resetToken();
     expect(mailer.only("password_reset").data.locale).toBe("de");
@@ -352,6 +354,7 @@ describe.skipIf(!pgUp)("sign-in doors under forced row security", () => {
     ]);
     expect(results.map((r) => r.status).sort()).toEqual([200, 400]);
     expect(results.every((r) => !r.headers.has("set-cookie"))).toBe(true);
+    expect(results.every((r) => !r.headers.has(ACCOUNT_HEADER))).toBe(true);
     expect((await completeReset(token, next)).status).toBe(400);
     expect((await request("GET", "/auth/session", undefined, undefined, cookies)).status).toBe(401);
     expect((await request("GET", "/auth/session", undefined, tokens.accessToken)).status).toBe(401);

@@ -38,6 +38,10 @@ const STATES: Array<[string, TemplateName, unknown]> = [
   ...(["en", "de"] as const).flatMap((lang): Array<[string, TemplateName, unknown]> => [
     [`confirm-address.${lang}`, "email_verification", {
       verifyUrl: "https://app.ohmail.app/verify-email?token=Zm9vYmFyLXRva2Vu", expiresIn: lang === "de" ? "24 Stunden" : "24 hours", supportEmail: SUPPORT, locale: lang }],
+    [`password-reset.${lang}`, "password_reset", {
+      resetUrl: "https://app.ohmail.app/reset-password?token=Zm9vYmFyLXRva2Vu", locale: lang }],
+    [`security-notice.password_changed.${lang}`, "security_notice", {
+      kind: "password_changed", at: AT[lang], resetUrl: "https://app.ohmail.app/forgot-password", locale: lang }],
     [`account-exists.${lang}`, "account_exists", { signInUrl: "https://ohmail.app/login", supportEmail: SUPPORT, locale: lang }],
     ...(["other", "gmail", "microsoft"] as const).map((provider): [string, TemplateName, unknown] =>
       [`connect-mailbox.${provider}.${lang}`, "connect_reminder", { locale: lang, provider, setupUrl: "https://app.ohmail.app/login?next=join", supportEmail: SUPPORT }]),
@@ -72,4 +76,10 @@ describe("ohmail's own mails, read by ohmail's own classifier", () => {
       expect(verdicts.get(id)?.flags.no_ai, id).toBe(true);
     }
   });
+
+  it.each(STATES.filter(([, template]) => template === "password_reset" || template === "security_notice"))(
+    "%s stays from any model", (_id, template, data) => {
+      expect(classified(template, data)).toMatchObject({ verdict: "sensitive", flags: { no_ai: true } });
+    },
+  );
 });

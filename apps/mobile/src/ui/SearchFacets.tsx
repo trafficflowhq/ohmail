@@ -114,7 +114,8 @@ export function SearchFacets({ filters, order, onFilters, onOrder, results }: {
       )}
       <Sheet open={menu !== null} onClose={close} label={menu ? labels[menu] : Copy.search} avoidKeyboard>
         {personMenu ? <>
-          <TextInput style={inputStyle} accessibilityLabel={Copy.searchNameOrAddress} placeholder={Copy.searchNameOrAddress}
+          <TextInput maxFontSizeMultiplier={t.textCap} keyboardAppearance={t.scheme} disableFullscreenUI
+            style={inputStyle} accessibilityLabel={Copy.searchNameOrAddress} placeholder={Copy.searchNameOrAddress}
             placeholderTextColor={t.c.ink3} autoCapitalize="none" value={person} onChangeText={setPerson} />
           <SheetRow label={Copy.searchAll} on={filters[personMenu] === undefined} onPress={() => set(personMenu, undefined)} />
           {literal && !people.some((entry) => entry.address === literal)
@@ -136,9 +137,11 @@ export function SearchFacets({ filters, order, onFilters, onOrder, results }: {
           }} />)}
           <SheetRow label={Copy.searchCustomDate} onPress={() => setCustom(true)} />
           {custom ? <>
-            <TextInput style={inputStyle} accessibilityLabel={Copy.searchSince} placeholder={Copy.searchSinceDate}
+            <TextInput maxFontSizeMultiplier={t.textCap} keyboardAppearance={t.scheme} disableFullscreenUI
+              style={inputStyle} accessibilityLabel={Copy.searchSince} placeholder={Copy.searchSinceDate}
               placeholderTextColor={t.c.ink3} value={since} onChangeText={setSince} />
-            <TextInput style={inputStyle} accessibilityLabel={Copy.searchUntil} placeholder={Copy.searchUntilDate}
+            <TextInput maxFontSizeMultiplier={t.textCap} keyboardAppearance={t.scheme} disableFullscreenUI
+              style={inputStyle} accessibilityLabel={Copy.searchUntil} placeholder={Copy.searchUntilDate}
               placeholderTextColor={t.c.ink3} value={until} onChangeText={setUntil} />
             {valid ? <SheetRow label={Copy.searchApply} onPress={() => dateRange(start ?? undefined, end ?? undefined)} /> : null}
           </> : null}

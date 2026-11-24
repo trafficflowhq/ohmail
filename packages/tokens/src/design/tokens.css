@@ -158,7 +158,7 @@
   --on-off: #5A534B;
   --ring: #F0EBE3;
   --focus: #12100E;
-  --key-focus: color-mix(in srgb,#6B645B 88%,#FFFFFF);
+  --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
   --key-focus-w: 2px;
   --key-focus-on-nav: color-mix(in srgb,var(--on-nav-on) 48%,var(--nav-on));
   --key-focus-ring: inset 0 0 0 var(--key-focus-w) var(--key-focus);
@@ -205,7 +205,7 @@
   --on-off: #B8AFA3;
   --ring: #23201C;
   --focus: #F6F1E9;
-  --key-focus: color-mix(in srgb,#A1988D 88%,#23201C);
+  --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
   --line: #34302B;
   --sq-mid: #8F877C;
   --sq-pale: #5F5952;
@@ -244,7 +244,7 @@
   --on-off: #B8AFA3;
   --ring: #23201C;
   --focus: #F6F1E9;
-  --key-focus: color-mix(in srgb,#A1988D 88%,#23201C);
+  --key-focus: color-mix(in srgb,var(--ink3) 88%,var(--sheet));
   --line: #34302B;
   --sq-mid: #8F877C;
   --sq-pale: #5F5952;

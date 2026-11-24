@@ -442,7 +442,9 @@ describe("a web tab's mount and its return, on the wire", () => {
     const confirm = rows.find((r) => r.path === "/api/auth/session");
     expect(confirm, show(rows, t0)).toBeDefined();
     expect(confirm!.start - t0, `the confirm waited:\n${show(rows, t0)}`).toBe(0);
-    // Main without the lane, same case: the confirm, the snapshot probe and the delta take one sibling
+    const hello = rows.filter((r) => r.path === "/api/hello");
+    expect(hello.map((r) => r.start - t0), show(rows, t0)).toEqual([0]);
+    // The confirm, the snapshot probe and the delta take one sibling
     // answer each, so the first mail shows at +180; the stream is dialled at the confirm's answer, +60.
     expect(seen, "the first mail never showed").toBeGreaterThanOrEqual(0);
     expect(seen, `the first mail waited:\n${show(rows, t0)}`).toBeLessThanOrEqual(3 * SIBLING_MS);

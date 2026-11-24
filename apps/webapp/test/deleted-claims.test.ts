@@ -72,7 +72,12 @@ describe("the delete-claims sweep", () => {
     // The allowlist is the audit. A new key matching the absolute shape lands here red and has
     // to be either scoped-and-true (add it WITH its argument, like the entries above) or
     // reworded to "on its own".
-    const audited = new Set(["host.offWhat"]);
+    const audited = new Set([
+      "host.offWhat",
+      // Scoped to Screen in News and Receipts. The pile action records moves to the
+      // Screener and their inverse, without deleting any message or writing a delete intent.
+      "screener.pileUnscreenedLine",
+    ]);
 
     const enHits = entries(en).filter(([, v]) => ABSOLUTE_EN.test(v)).map(([k]) => k);
     const deHits = entries(de).filter(([, v]) => ABSOLUTE_DE.test(v)).map(([k]) => k);

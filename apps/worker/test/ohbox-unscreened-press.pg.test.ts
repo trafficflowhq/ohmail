@@ -74,12 +74,12 @@ async function seedOhbox(w: World, from: string, arrivedAt = ARRIVED): Promise<s
 }
 
 /** A letter a pass or an old release placed in News, nobody's decision. */
-async function seedNews(w: World, from: string, arrivedAt: Date | null): Promise<string> {
+async function seedNews(w: World, from: string, arrivedAt: Date | null, date = ARRIVED): Promise<string> {
   const i = n++;
   const [m] = await db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `h${i}`,
     dedupKey: `oup:${randomUUID()}`, subject: `Letter ${i}`, fromAddress: from,
-    date: arrivedAt ?? OLD, createdAt: arrivedAt ?? OLD, arrivedAt, unread: true,
+    date, createdAt: arrivedAt ?? date, arrivedAt, unread: true,
     nativeLocator: { folder: NEWS, ref: `2:${i}` },
   }).returning();
   await db.insert(messageBodies).values({
@@ -170,6 +170,9 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
     const w = await newWorld();
     await db.insert(contacts).values({ accountId: w.accountId, address: "pal@x.test" });
     const fresh = await seedNews(w, "stranger@x.test", ARRIVED);
+    const second = await seedNews(w, "stranger@x.test", ARRIVED);
+    // The pile uses the same window as the Ohbox and requires a recorded arrival.
+    const imported = await seedNews(w, "stranger@x.test", ARRIVED, OLD);
     const undated = await seedNews(w, "stranger@x.test", null);
     const pal = await seedNews(w, "pal@x.test", ARRIVED);
     const door = await seedOhbox(w, "door@x.test");
@@ -180,14 +183,14 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
     expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toMatchObject({ total: 2 });
 
     const owed = await repo.listPendingFolderStates(w.mailboxId);
-    expect(owed.map((r) => r.messageId).sort()).toEqual([fresh, undated].sort());
+    expect(owed.map((r) => r.messageId).sort()).toEqual([fresh, second].sort());
     for (const row of owed) {
       expect(row.desiredFolder).toBe(GATE);
       expect(row.observedFolder).toBe(NEWS);
       expect(row.lastSetBy).toBe("us");
       expect(row.nativeLocator).toMatchObject({ folder: NEWS });
     }
-    for (const [id, at] of [[pal, NEWS], [door, OHBOX]] as const) {
+    for (const [id, at] of [[imported, NEWS], [undated, NEWS], [pal, NEWS], [door, OHBOX]] as const) {
       const [still] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id));
       expect(still!.d).toBe(at);
     }

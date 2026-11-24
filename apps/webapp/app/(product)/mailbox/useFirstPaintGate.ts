@@ -37,8 +37,9 @@ export function useFirstPaintGate(
      * that come first wait for its answer. The access read below is never held by it. Released when
      * the confirm settles, at the lane's bound, and here when this load will confirm nothing.
      */
-    const release = webLane.confirming();
-    if (readStoredVerdict(readOwner()) === "open") {
+    const wasOpen = readStoredVerdict(readOwner()) === "open";
+    const release = webLane.confirming({ alongsideHello: wasOpen });
+    if (wasOpen) {
       setPhase("open");
       return release;
     }

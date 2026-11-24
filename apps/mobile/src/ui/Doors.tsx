@@ -23,6 +23,7 @@ import { addressProblem, parseServerAddress } from "../net/server-base";
 import { linksOutToBilling } from "../distribution";
 import { Button, Panel, Rule, Section, TapRow, Txt } from "./base";
 import { Field } from "./Field";
+import { useModalKey } from "./Sheet";
 import { Icon, type IconName } from "./Icon";
 import { NavDrawnContext } from "./nav-drawn";
 import { OnboardingButton, OnboardingPage, OnboardingTag, OnboardingTitle, useOnboardingLook, useOnboardingButton } from "./OnboardingPage";
@@ -290,8 +291,9 @@ export function Doors({
 }
 
 function DoorModal({ close, children }: { close: () => void; children: ReactNode }) {
+  const modalKey = useModalKey();
   return (
-    <Modal animationType="slide" onRequestClose={close}>
+    <Modal key={modalKey} animationType="slide" onRequestClose={close}>
       {/* The underlying mailbox's rail cannot take a press through this modal. */}
       <NavDrawnContext.Provider value={false}>{children}</NavDrawnContext.Provider>
     </Modal>

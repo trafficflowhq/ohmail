@@ -4,7 +4,7 @@
  * notice the slot draws, in the frame's words. A failing read is "reconnecting", never "no mailbox": could
  * not look is not nothing there.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { MailState, StoreRefusals } from "@ohmail/app-logic/mail-state/mail-state";
 import { MIRROR_STORE_REFUSED_DETAIL, mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
 import type { HostConnectionState, HostSession } from "../host/index.js";
@@ -113,35 +113,25 @@ export const ANNOUNCE_MS = 8_000;
 const ANNOUNCE_STEP = 0.05;
 
 export function useGatedWords(say: string | null, progress: number | null): string | null {
-  const [said, setSaid] = useState(say);
-  const last = useRef<{ at: number; step: number } | null>(null);
+  const [last, setLast] = useState<{ words: string; at: number; step: number } | null>(null);
+  const step = progress === null ? -1 : Math.floor(progress / ANNOUNCE_STEP);
+  const changed =
+    say !== null &&
+    (last === null || ((step === -1 || step !== last.step) && (say !== last.words || step !== last.step)));
+  const remaining = last === null ? 0 : ANNOUNCE_MS - (Date.now() - last.at);
+
+  // Publish an eligible count in the render that received it. Only a count still inside
+  // the throttle window needs a timer and a later render.
+  if (say === null && last !== null) setLast(null);
+  if (changed && remaining <= 0) setLast({ words: say, at: Date.now(), step });
+
   useEffect(() => {
-    if (say === null) {
-      last.current = null;
-      setSaid(null);
-      return;
-    }
-    const step = progress === null ? -1 : Math.floor(progress / ANNOUNCE_STEP);
-    const now = Date.now();
-    const prev = last.current;
-    const timeOk = prev === null || now - prev.at >= ANNOUNCE_MS;
-    const stepOk = prev === null || step === -1 || step !== prev.step;
-    if (timeOk && stepOk) {
-      last.current = { at: now, step };
-      setSaid(say);
-      return;
-    }
-    if (!stepOk) return;
-    const timer = setTimeout(
-      () => {
-        last.current = { at: Date.now(), step };
-        setSaid(say);
-      },
-      ANNOUNCE_MS - (now - prev!.at),
-    );
+    if (!changed || remaining <= 0) return;
+    const timer = setTimeout(() => setLast({ words: say, at: Date.now(), step }), remaining);
     return () => clearTimeout(timer);
-  }, [say, progress]);
-  return say === null ? null : (said ?? say);
+  }, [changed, remaining, say, step]);
+
+  return say === null ? null : (last?.words ?? say);
 }
 
 /** A refusal count as a person reads it: the figure in the reader's locale, or "more than N" for a floor. */

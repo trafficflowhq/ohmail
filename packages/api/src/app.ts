@@ -260,7 +260,7 @@ async function dispatch(
   const composed = pipelineFor(m.route)
     .reduceRight<Handler>((next, mw) => mw(next, m.route), m.route.handler);
   const run = () => composed(req, deps, m.params);
-  const streamDraft = req.headers.get("accept") === "application/x-ndjson" &&
-    (m.route.pattern === "/messages/:id/draft" || m.route.pattern === "/drafts/from-text");
+  const streamDraft = (m.route.pattern === "/messages/:id/draft" || m.route.pattern === "/drafts/from-text") &&
+    req.headers.get("accept") === "application/x-ndjson";
   return { res: await (streamDraft ? draftStream(deps, run) : run()), route: m.route };
 }
