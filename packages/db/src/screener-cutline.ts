@@ -297,22 +297,24 @@ export function destinationIsDecisionSql(destination: SQL): SQL {
  * the set this excludes is the set a rule moves.
  */
 export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
-  const rule = { kind: sql`rd.kind`, match: sql`rd.match`, destination: sql`rd.destination` };
+  const kind = sql`rd.kind`;
+  const match = sql`rd.match`;
+  const destination = sql`rd.destination`;
   const ruleFor = (side: SQL): SQL => {
     const source = sql`from rules rd
      where rd.account_id = ${d.castUuid(accountId)}
        and rd.enabled
        and ${side}`;
-    return d.name === "pg" ? ruleSetNamesSenderSql(d, rule, senderExpr, source)
-      : sql`exists (select 1 ${source} and ${ruleNamesSenderSql(d, rule, senderExpr)})`;
+    return d.name === "pg" ? ruleSetNamesSenderSql(d, { kind, match, destination }, senderExpr, source)
+      : sql`exists (select 1 ${source} and ${ruleNamesSenderSql(d, { kind, match, destination }, senderExpr)})`;
   };
   const contacts = sql`from contacts cd where cd.account_id = ${d.castUuid(accountId)}`;
   const known = d.name === "pg"
     ? sql`(${senderExpr} in (select lower(cd.address) ${contacts})) is true`
     : sql`exists (select 1 ${contacts} and lower(cd.address) = ${senderExpr})`;
   return sql`(
-    ${ruleFor(destinationIsDecisionSql(rule.destination))}
-    or (${known} and not ${ruleFor(sql`rd.destination = ${CUTLINE_GATE_FOLDER}`)})
+    ${ruleFor(destinationIsDecisionSql(destination))}
+    or (${known} and not ${ruleFor(sql`${destination} = ${CUTLINE_GATE_FOLDER}`)})
   )`;
 }
 

@@ -1604,7 +1604,10 @@ export class ScreenerReadService {
       eq(mailboxes.id, messages.mailboxId), eq(mailboxes.accountId, ctx.accountId),
     )) : held;
     const rows = dated.where(and(...filters));
-    const reps = d.name === "pg" && cutline ? ctx.db.$with("reps").as(rows) : rows.as("reps");
+    // The CTE reference supplies typed columns; the page spells out its materialized body below.
+    const reps = d.name === "pg" && cutline
+      ? ctx.db.$with("reps").as(ctx.db.select().from(rows.as("ranked")))
+      : rows.as("reps");
     return { reps, rows, d };
   }
 
@@ -1777,12 +1780,8 @@ export class ScreenerReadService {
     // Both reads use one snapshot. A sender whose mail changes between them cannot slip through.
     const rows = cutline && onServerPool(ctx.db) && !inTransactionHandle(ctx.db)
       ? await asTx(ctx).transaction(async (tx) => {
-        await tx.execute(sql`set local jit = off`);
-        const keys = await d.exec(tx, needsActivity(sql`(${held.rows}) activity_reps`));
-        const json = sql`cast(${JSON.stringify(keys.map(([key]) => key))} as text)`;
-        const candidates = keys.length === 0 ? sql`select null where false`
-          : sql`select value from jsonb_array_elements_text(${d.castJsonb(json)})`;
-        return await read(bridgeDb(tx), candidates);
+        const candidates = await d.screenerActivityCandidates(tx, needsActivity(sql`(${held.rows}) activity_reps`));
+        return await read(bridgeDb(tx), candidates ?? undefined);
       }, { isolationLevel: "repeatable read", accessMode: "read only" })
       : await read(ctx.db);
 
@@ -1833,12 +1832,14 @@ export class ScreenerReadService {
    */
   private decisionInFlightSql(ctx: ServiceContext, d: ReturnType<typeof dialect>, sender: SQL): SQL {
     const field = (key: string) => d.jsonText(sql`o.payload`, key);
-    const rule = { kind: field("scope"), match: field("match"), destination: field("appliedFolder") };
+    const kind = field("scope");
+    const match = field("match");
+    const destination = field("appliedFolder");
     // scoped-by: `o.account_id` leads the in-flight read (organizer_requests is per account)
     const source = sql`from organizer_requests o
       where o.account_id = ${d.castUuid(ctx.accountId)} and o.state in ('pending', 'sent')`;
-    return d.name === "pg" ? ruleSetNamesSenderSql(d, rule, sender, source)
-      : sql`exists (select 1 ${source} and ${ruleNamesSenderSql(d, rule, sender)})`;
+    return d.name === "pg" ? ruleSetNamesSenderSql(d, { kind, match, destination }, sender, source)
+      : sql`exists (select 1 ${source} and ${ruleNamesSenderSql(d, { kind, match, destination }, sender)})`;
   }
 
   /**

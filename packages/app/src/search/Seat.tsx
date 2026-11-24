@@ -11,6 +11,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchLive, type SearchBy, type SearchLiveOwn } from "@ohmail/app-logic/search";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { displayTime, PLACE_LABEL, placeLabel } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useFrame, useSearchQuery } from "../frame/commands.js";
@@ -100,9 +101,8 @@ export function SearchSeat({ children }: { readonly children: ReactNode }): Reac
   }, [length, slotAt]);
   const { verbs } = usePlaceVerbs(args, usePlaceListOwn(), surface);
   const { onMessageAction } = verbs;
-  const move: ListMove = useMemo(
-    () => (message, destination) => onMessageAction(`move:${destination}`, message, "letter"),
-    [onMessageAction],
+  const move: ListMove = useStableCallback<ListMove>((message, destination) =>
+    onMessageAction(`move:${destination}`, message, "letter"),
   );
   const beside: SearchBeside = useMemo(
     () => ({

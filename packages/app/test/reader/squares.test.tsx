@@ -222,6 +222,24 @@ describe("the open", () => {
     expect(topOf("c")).toBe(before);
   });
 
+  it("keeps the latest letter in place if the scroll range shrinks before the layout observer runs", () => {
+    mountReader({ letters: unreadFrom("c"), open: "c" });
+    const scroller = layOut();
+    const before = topOf("c");
+    expect(before).toBe(14);
+    Object.defineProperty(scroller, "scrollHeight", {
+      get: () => geo.height + (parseFloat(scroller.style.getPropertyValue("--oh-thread-landing-room")) || 0),
+    });
+    act(() => {
+      geo.height = 2200;
+      scroller.scrollTop = 1400;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    grow();
+    expect(topOf("c")).toBe(before);
+    expect(ringAt()).toBe(2);
+  });
+
   it("a hand scroll lets it go: a body landing after it moves nothing", () => {
     mountReader({ letters: unreadFrom("c"), open: "c" });
     const scroller = layOut();

@@ -106,6 +106,12 @@ export function useThreadPosition(
     },
     [scroller, manual],
   );
+  const wasClamped = useCallback((): boolean => {
+    const previous = readingAnchor.current?.scroll;
+    if (!scroller || previous === undefined) return false;
+    const max = scrollMax(scroller);
+    return previous > max && Math.abs(scroller.scrollTop - max) <= 1;
+  }, [scroller]);
   const moved = useCallback(
     (hand: boolean): boolean => {
       if (!scroller) return false;
@@ -119,7 +125,7 @@ export function useThreadPosition(
     },
     [scroller, manual, releaseOpening, pin, rememberReadingAnchor],
   );
-  return { layout, readingAnchor, rememberReadingAnchor, moved };
+  return { layout, readingAnchor, rememberReadingAnchor, wasClamped, moved };
 }
 
 interface ReadingAnchor {

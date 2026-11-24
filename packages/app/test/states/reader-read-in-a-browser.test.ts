@@ -755,7 +755,20 @@ it.each([
       const before = await state();
       const cdp = await page.context().newCDPSession(page);
       const currentSquare = group.locator("[data-here]");
-      await currentSquare.tap({ trial: true });
+      if (axis === "column") {
+        await currentSquare.tap({ trial: true });
+      } else {
+        // A trial tap can scroll the sticky heading and move the reading line.
+        await expect
+          .poll(() =>
+            currentSquare.evaluate((square) => {
+              const { x, y, width, height } = square.getBoundingClientRect();
+              return square.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+            }),
+          )
+          .toBe(true);
+        expect(await here()).toBe(start);
+      }
       const current = (await currentSquare.boundingBox())!;
       const pitch = axis === "head" ? current.width : current.height;
       const x = current.x + current.width / 2;

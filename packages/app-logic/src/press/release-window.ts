@@ -1,5 +1,5 @@
 import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
-import type { EntityReader, RoutingOpen } from "@ohmail/client-engine";
+import type { EntityReader, MutationResult, RoutingOpen } from "@ohmail/client-engine";
 import type { ReleasePressInput } from "./routing-undo.js";
 
 /**
@@ -7,6 +7,8 @@ import type { ReleasePressInput } from "./routing-undo.js";
  * (`routing-undo.ts`), and the Undo offer every held window raises through the one door.
  */
 export interface ScreenerReleaseWindow {
+  /** Send a release through the filing dispatcher and keep its receipt for Undo. */
+  send: (mutation: EngineMutation) => Promise<MutationResult>;
   hold: (press: ReleasePressInput) => RoutingOpen;
   /** Take back the held press about this sender; `true` only while its window was open. */
   cancel: (address: string) => boolean;

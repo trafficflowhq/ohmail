@@ -82,7 +82,7 @@ export function useThreadWalk({
   const landingTop = useRef<number | null>(null);
   const releaseOpening = useOpeningRelease(scroller, keepLanding, anchored, landingTop);
   const manual = keepLanding && ids.length > 1;
-  const { layout, readingAnchor, rememberReadingAnchor, moved } = useThreadPosition(
+  const { layout, readingAnchor, rememberReadingAnchor, wasClamped, moved } = useThreadPosition(
     scroller,
     manual,
     releaseOpening,
@@ -169,7 +169,7 @@ export function useThreadWalk({
   const landOwed = useCallback(() => landPending(owedTo.current, list.current, land), [land]);
 
   useAnchorRelease(scroller, anchored, anchor, pin, initialId, measure, landingTop, releaseOpening);
-  useLayoutWatch(scroller, scope, ids.join(" "), measure, look, landOwed, moved);
+  useLayoutWatch(scroller, scope, ids.join(" "), measure, look, landOwed, wasClamped, moved);
 
   const shown = here !== null && ids.includes(here) ? here : null;
   useWalkChannel(channel, messages, shown, openedId, land);
@@ -250,6 +250,7 @@ function useLayoutWatch(
   measure: () => void,
   look: () => void,
   landOwed: () => void,
+  wasClamped: () => boolean,
   moved: (hand: boolean) => boolean,
 ): void {
   useLayoutEffect(() => {
@@ -269,7 +270,10 @@ function useLayoutWatch(
         });
     };
     const onScroll = (): void => {
-      if (moved(!stampLive(scroller)) && scroller.style.getPropertyValue(LANDING_ROOM) !== "") measure();
+      const hand = !stampLive(scroller);
+      // The browser can clamp scrollTop before ResizeObserver reports a shorter conversation.
+      if (hand && wasClamped()) measure();
+      else if (moved(hand) && scroller.style.getPropertyValue(LANDING_ROOM) !== "") measure();
       if (!looking)
         looking = nextFrame(win, () => {
           looking = null;
@@ -296,7 +300,7 @@ function useLayoutWatch(
       scroller.removeEventListener("scroll", onScroll);
       win.removeEventListener("resize", soon);
     };
-  }, [scroller, scope, key, measure, look, landOwed, moved]);
+  }, [scroller, scope, key, measure, look, landOwed, wasClamped, moved]);
 }
 
 /** The opening gives way to the visible letter after a gesture or the ceiling. */
